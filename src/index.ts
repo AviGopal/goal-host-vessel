@@ -1442,7 +1442,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
                   console.log(`[goal-host-vessel] auto-draft REUSE (LLM): no candidate selected (raw="${(lr.content ?? "").trim().slice(0, 20)}"); proceeding to author`);
                   // v2 mitosis: drop candidate refs + sync GC to release retained closures.
                   topN.length = 0;
-                  try { (globalThis as { Bun?: { gc?: (b: boolean) => number } }).Bun?.gc?.(true); } catch {}
+                  try { (globalThis as unknown as { Bun?: { gc?: ((b: boolean) => number) | undefined; } | undefined; }).Bun?.gc?.(true); } catch {}
                 }
               } catch (llmErr) {
                 clearTimeout(timer);
