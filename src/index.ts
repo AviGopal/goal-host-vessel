@@ -616,7 +616,7 @@ function registerBuiltinResolvers(): void {
   host.runtime.resolvers.register({
     id: "activity_recommendation",
     tier: "pattern" as const,
-    async resolve(context: Record<string, unknown>) {
+    async resolve(context: any): Promise<any> {
       const task = context.task as Record<string, unknown> | undefined;
       const config = (task?.config ?? {}) as Record<string, unknown>;
       const variables = (context.variables ?? {}) as Record<string, unknown>;
@@ -685,7 +685,7 @@ function registerBuiltinResolvers(): void {
   host.runtime.resolvers.register({
     id: "impulse_cooccurrence",
     tier: "pattern" as const,
-    async resolve(context: Record<string, unknown>) {
+    async resolve(context: any): Promise<any> {
       const random = context.random as { id: (prefix: string) => string };
       const id = random.id("cooccurrence");
       return [{
@@ -1348,22 +1348,28 @@ async function handleRunGoal(req: Request): Promise<Response> {
       const top = recommendations[0];
       const topScore = top?.score ?? 0;
       if (top && topScore >= threshold) return;
-      // Fix A: exploration picks (score < threshold but fallback_tier != "refused")
-      // should be executed by ias-executor directly — autoDraft only fires when
-      // fallback_tier=refused (genuinely nothing returned, no exploration picks).
+      // Exploration-floor routing (2026-06-18). Prior "Fix A" let any recommendation
+      // (even top_score=0.000) preempt autoDraft, firing autoDraft only on
+      // fallback_tier=refused — which almost never happens (fts_hybrid always returns
+      // SOME exploration pick). Net effect: a NOVEL goal the catalogue cannot service
+      // (e.g. a code-fix the substrate has no template for) ran an irrelevant
+      // high-Thompson template instead of routing to the drafter — so raw run_goal
+      // could never drive self-development. Restore the gap path with a floor: a pick
+      // at/above SUBSTRATE_AUTO_DRAFT_EXPLORE_FLOOR is a plausible exploration and runs
+      // via ias-executor; BELOW the floor there is no real fit, so fall through to
+      // autoDraft and author new capability from the goal.
       const fallbackTier = data.fallback_tier ?? "none";
-      if (top) {
-        // At least one recommendation exists (even with score=0, exploration=true).
-        // Let ias-executor handle selection; autoDraft would preempt a valid pick.
-        console.log(`[goal-host-vessel] auto-draft skipped: ${recommendations.length} exploration pick(s) available (top_score=${topScore.toFixed(3)}, fallback_tier=${fallbackTier})`);
+      const exploreFloor = parseFloat(process.env.SUBSTRATE_AUTO_DRAFT_EXPLORE_FLOOR ?? "0.1");
+      if (top && topScore >= exploreFloor) {
+        console.log(`[goal-host-vessel] auto-draft skipped: ${recommendations.length} exploration pick(s) available (top_score=${topScore.toFixed(3)} >= floor ${exploreFloor}, fallback_tier=${fallbackTier})`);
         return;
       }
-      if (fallbackTier !== "refused") {
-        // No top recommendation but fallback_tier indicates some tier returned
-        // something — still not a hard empty; skip autoDraft.
+      if (!top && fallbackTier !== "refused") {
+        // No top recommendation but some tier returned something — not a hard empty.
         console.log(`[goal-host-vessel] auto-draft skipped: fallback_tier=${fallbackTier} (not refused), no template selected but not a hard gap`);
         return;
       }
+      // top exists but top_score < floor (no real fit), OR no top and refused → autoDraft.
       console.log(`[goal-host-vessel] auto-draft trigger: goal="${(goal as string).slice(0, 80)}" fallback_tier=refused (top_score=${topScore})`);
       const triggerStart = Date.now();
       const candidatesConsidered = recommendations.slice(0, 5).map((r) => ({ id: r.template_id, score: r.score ?? 0 }));
