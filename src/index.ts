@@ -500,6 +500,51 @@ const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 const SHAPES = ["goal_execution", "activity_execution"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
+
+// Goal-reaching verification (2026-06-22). status=completed only means the
+// selected template EXECUTED, not that the GOAL was reached — many completions
+// are hollow (an unrelated wrapper runs and "succeeds"), which gives α-credit to
+// goal-irrelevant templates and is WHY the substrate doesn't compose to reach
+// goals. We judge reach against the goal via the LLM resolver (NOT a declared
+// target shape — the operator's point: identify the shapes of the completion
+// STATE, emergently). On not-reached we downgrade status to failed and β-penalise
+// the selected template so Thompson stops reinforcing hollow completions.
+interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; }
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string): Promise<GoalReachVerdict | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
+
+GOAL: ${goal}
+
+Produced output impulse shapes: ${JSON.stringify(producedShapes)}
+Task summary: ${taskSummary}
+
+Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
+
+Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
+  try {
+    const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    const m = String(text).match(/\{[\s\S]*\}/);
+    return m ? (JSON.parse(m[0]) as GoalReachVerdict) : null;
+  } catch { return null; }
+}
+async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ activity_id: activityId, direction: "negative", intensity: 2, reason: `hollow completion (goal not reached): ${reason}`.slice(0, 200) }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch { /* non-fatal */ }
+}
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
 // under Bun's ~300s fetch cap. Override via GOAL_HOST_PROXY_TIMEOUT_MS.
@@ -1652,6 +1697,27 @@ async function handleRunGoal(req: Request): Promise<Response> {
       record.status = result.trace.status === "failed" ? "failed" : "completed";
       record.executionId = result.trace.id;
       record.selectedTemplateId = result.selectedTemplateId;
+      // Goal-reaching gate: a "completed" execution that didn't reach the goal is
+      // a hollow completion — downgrade it and β-penalise the selected template so
+      // Thompson stops reinforcing goal-irrelevant gaming/wrapper templates. The
+      // verdict's completion_shapes surface the goal-shaped direction (the shapes
+      // of the completion state, emergent — not a goal-declared target).
+      if (goal && record.status === "completed" && result.selectedTemplateId) {
+        try {
+          const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+          const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
+          const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
+          if (verdict && verdict.reached === false) {
+            record.status = "failed";
+            (record as { goalReachReason?: string }).goalReachReason = verdict.reason;
+            await penaliseHollowTemplate(result.selectedTemplateId, verdict.reason ?? "goal not reached");
+            console.log(`[goal-host-vessel] goal-reach: HOLLOW completion of ${result.selectedTemplateId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+          } else if (verdict && verdict.reached === true) {
+            console.log(`[goal-host-vessel] goal-reach: REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+          }
+          (record as { completionShapes?: string[] | null }).completionShapes = verdict?.completion_shapes ?? null;
+        } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
+      }
     } catch (err) {
       record.status = "failed";
       record.error = (err as Error).message;
@@ -1821,12 +1887,32 @@ async function handleResolve(req: Request): Promise<Response> {
       parentExecutionId,
       compositionChain,
     });
+    // Goal-reaching gate (same as the async /run-goal path): a "completed" run
+    // that didn't reach the goal is hollow — report it as failed and β-penalise
+    // the selected template so Thompson stops reinforcing goal-irrelevant gaming/
+    // wrapper templates. completion_shapes surface the goal-shaped direction.
+    let reachStatus = result.trace.status;
+    let completionShapes: string[] | null = null;
+    if (goal && result.trace.status !== "failed" && result.selectedTemplateId) {
+      const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+      const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
+      const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
+      if (verdict && verdict.reached === false) {
+        reachStatus = "failed";
+        await penaliseHollowTemplate(result.selectedTemplateId, verdict.reason ?? "goal not reached");
+        console.log(`[goal-host-vessel] goal-reach(/resolve): HOLLOW ${result.selectedTemplateId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+      } else if (verdict && verdict.reached === true) {
+        console.log(`[goal-host-vessel] goal-reach(/resolve): REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+      }
+      completionShapes = verdict?.completion_shapes ?? null;
+    }
     return Response.json({
       resolved: true,
       shape: type === "goal_execution" ? "goalExecution" : "activityExecution",
       executionId: result.trace.id,
-      status: result.trace.status,
+      status: reachStatus,
       selectedTemplateId: result.selectedTemplateId,
+      completionShapes,
     });
   } catch (err) {
     console.error("[goal-host-vessel] /resolve error:", err);
