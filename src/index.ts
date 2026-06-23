@@ -620,6 +620,30 @@ async function recommendExcluding(goalText: string, exclude: string[]): Promise<
     return null;
   } catch { return null; }
 }
+// Reach → mint (operator: "the traces of the working attempts will be minted as
+// the beginnings of new activities"). When a goal genuinely REACHES, dispatch the
+// ribosome-extract activity on its trace so the working trajectory is assembled
+// into a new reusable activity. This is a far more reliable mint trigger than the
+// ribosome-vessel's WS all-tasks-succeeded heuristic — which is starved by WS
+// instability + a strict gate and has NEVER fired (0 ribosome-extract executions).
+// ribosome-extract dedupes against existing templates, so re-runs of known
+// activities don't mint duplicates — only NOVEL reached trajectories become seeds.
+async function mintReachedTrace(executionId: string): Promise<void> {
+  if (!executionId) return;
+  try {
+    // Execute ribosome-extract via the LOCAL executor (host.runGoal), not by
+    // POSTing activityDispatch to activity-api /v2/impulses/resolve — activity-api
+    // is the trace store, NOT an executor, so that dispatch never runs the activity
+    // (why ribosome-extract has 0 executions despite the ribosome-vessel dispatching
+    // it for ages). Calling host.runGoal directly runs the engine and bypasses the
+    // HTTP handler's reach gate, so there is no recursion / re-mint.
+    await host.runGoal(`extract reusable template from execution ${executionId}`, {
+      targetTemplateId: "activity:⟨ribosome-extract⟩",
+      variables: { executionId, lifecycle: { executionId } },
+    });
+    console.log(`[goal-host-vessel] reach→mint: ran ribosome-extract for reached trace ${executionId}`);
+  } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${executionId}: ${(e as Error).message}`); }
+}
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
 // under Bun's ~300s fetch cap. Override via GOAL_HOST_PROXY_TIMEOUT_MS.
@@ -1789,6 +1813,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
             console.log(`[goal-host-vessel] goal-reach: HOLLOW completion of ${result.selectedTemplateId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           } else if (verdict && verdict.reached === true) {
             console.log(`[goal-host-vessel] goal-reach: REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+            void mintReachedTrace(result.trace.id);  // reach → mint the working trace into a new activity seed
           }
           (record as { completionShapes?: string[] | null }).completionShapes = verdict?.completion_shapes ?? null;
           const tr = result.trace as { durationMs?: number; costUsd?: number };
@@ -2000,6 +2025,7 @@ async function handleResolve(req: Request): Promise<Response> {
         } else {
           reachStatus = result.trace.status;
           console.log(`[goal-host-vessel] goal-reach(/resolve) attempt ${attempt}/${MAX_ATTEMPTS}: REACHED via ${selId}. completion_shapes=${JSON.stringify(completionShapes)}`);
+          void mintReachedTrace(result.trace.id);  // reach → mint the working trace into a new activity seed
         }
       }
       // Per-goal learning: record this attempt's goal -> path -> reach outcome.
