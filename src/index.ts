@@ -591,6 +591,35 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
     return best?.path_activities?.[0] ?? null;
   } catch { return null; }
 }
+// In-flight approach-alteration (self-recovery DURING goal-seeking): recommend a
+// DIFFERENT activity for the goal, excluding approaches that already failed to
+// reach it this run. Returns the next template id to target, or null when no
+// fresh candidate remains (exhausted = honest failure). Paired with the reach
+// gate this turns goal-seeking into try → check → alter → retry, so the trace of
+// the attempt that finally REACHES is what the ribosome mints into a new activity.
+async function recommendExcluding(goalText: string, exclude: string[]): Promise<string | null> {
+  if (!goalText) return null;
+  try {
+    const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0 }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const recs = j?.recommendations ?? j?.body?.recommendations ?? [];
+    // Normalise ids (strip the activity:⟨…⟩ wrapper) so exclusion matches across
+    // the wrapped/unwrapped forms the recommend + runGoal paths use.
+    const norm = (s: string) => s.replace(/^activity:/, "").replace(/[⟨⟩]/g, "").trim();
+    const excludedNorm = new Set(exclude.map(norm));
+    for (const x of (Array.isArray(recs) ? recs : [])) {
+      const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
+      if (id && !excludedNorm.has(norm(id))) return id;
+    }
+    return null;
+  } catch { return null; }
+}
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
 // under Bun's ~300s fetch cap. Override via GOAL_HOST_PROXY_TIMEOUT_MS.
@@ -1929,50 +1958,72 @@ async function handleResolve(req: Request): Promise<Response> {
   }
 
   try {
-    // Per-goal improvement: if a prior attempt at THIS goal reached it via a
-    // known path, prefer that path (exploit) instead of re-rolling global
-    // template selection. First attempt / never-reached → null → normal recommend.
-    let effectiveTarget = targetTemplateId;
-    if (!effectiveTarget && goal) {
-      const reaching = await recommendReachingPath(goal);
-      if (reaching) { effectiveTarget = reaching; console.log(`[goal-host-vessel] /resolve: reusing known-reaching path ${reaching} for goal (per-goal learning)`); }
-    }
-    const result = await host.runGoal(goal ?? `execute template ${effectiveTarget}`, {
-      variables,
-      targetTemplateId: effectiveTarget,
-      parentExecutionId,
-      compositionChain,
-    });
-    // Goal-reaching gate (same as the async /run-goal path): a "completed" run
-    // that didn't reach the goal is hollow — report it as failed and β-penalise
-    // the selected template so Thompson stops reinforcing goal-irrelevant gaming/
-    // wrapper templates. completion_shapes surface the goal-shaped direction.
-    let reachStatus = result.trace.status;
+    // IN-FLIGHT GOAL-SEEKING with self-recovery (2026-06-22): make recovery part
+    // of reaching the goal, not a separate offline repair. Loop: try an approach →
+    // check reach (the gate) → on not-reached, β-penalise + EXCLUDE that approach +
+    // re-recommend a DIFFERENT one → retry, until reached or approaches exhausted.
+    // The attempt that REACHES leaves a trace the ribosome (postExecution) mints as
+    // a new activity seed. Bounded to keep the synchronous /resolve under the MCP
+    // ~290s timeout; the async /run-goal path can recover more deeply.
+    const MAX_ATTEMPTS = goal ? 2 : 1;
+    const excluded: string[] = [];
+    let result: Awaited<ReturnType<typeof host.runGoal>> | null = null;
+    let reachStatus = "failed";
     let completionShapes: string[] | null = null;
-    if (goal && result.trace.status !== "failed" && result.selectedTemplateId) {
-      const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
-      const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
-      const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
-      if (verdict && verdict.reached === false) {
-        reachStatus = "failed";
-        await penaliseHollowTemplate(result.selectedTemplateId, verdict.reason ?? "goal not reached");
-        console.log(`[goal-host-vessel] goal-reach(/resolve): HOLLOW ${result.selectedTemplateId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-      } else if (verdict && verdict.reached === true) {
-        console.log(`[goal-host-vessel] goal-reach(/resolve): REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-      }
-      completionShapes = verdict?.completion_shapes ?? null;
-      // Per-goal learning: record goal -> path -> reach (attribution + improvement
-      // over subsequent attempts at the same goal, regardless of source).
-      const tr = result.trace as { durationMs?: number; costUsd?: number };
-      void recordGoalPath(goal, [result.selectedTemplateId], reachStatus !== "failed", tr.durationMs ?? 0, tr.costUsd ?? 0);
+    let attempt = 0;
+
+    // First approach: explicit target > a known-reaching path for this goal > engine selection.
+    let nextTarget: string | undefined = targetTemplateId;
+    if (!nextTarget && goal) {
+      const reaching = await recommendReachingPath(goal);
+      if (reaching) { nextTarget = reaching; console.log(`[goal-host-vessel] /resolve: reusing known-reaching path ${reaching}`); }
     }
+
+    while (attempt < MAX_ATTEMPTS) {
+      attempt++;
+      result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
+        variables, targetTemplateId: nextTarget, parentExecutionId, compositionChain,
+      });
+      reachStatus = result.trace.status;
+      const selId = result.selectedTemplateId;
+      let reached = false;
+      if (goal && result.trace.status !== "failed" && selId) {
+        const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+        const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
+        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
+        completionShapes = verdict?.completion_shapes ?? null;
+        reached = verdict?.reached !== false;
+        if (!reached) {
+          reachStatus = "failed";
+          await penaliseHollowTemplate(selId, verdict?.reason ?? "goal not reached");
+          console.log(`[goal-host-vessel] goal-reach(/resolve) attempt ${attempt}/${MAX_ATTEMPTS}: NOT reached via ${selId} — ${verdict?.reason}; β-penalised`);
+        } else {
+          reachStatus = result.trace.status;
+          console.log(`[goal-host-vessel] goal-reach(/resolve) attempt ${attempt}/${MAX_ATTEMPTS}: REACHED via ${selId}. completion_shapes=${JSON.stringify(completionShapes)}`);
+        }
+      }
+      // Per-goal learning: record this attempt's goal -> path -> reach outcome.
+      const tr = result.trace as { durationMs?: number; costUsd?: number };
+      if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
+      if (reached || !goal) break;  // success (the reached trace is what the ribosome mints), or no goal to recover toward
+      if (selId) excluded.push(selId);
+      // Alter the approach for the next attempt.
+      if (attempt < MAX_ATTEMPTS) {
+        const alt = await recommendExcluding(goal, excluded);
+        if (!alt) { console.log(`[goal-host-vessel] /resolve: no fresh approach after ${attempt} attempts — honest failure`); break; }
+        nextTarget = alt;
+        console.log(`[goal-host-vessel] /resolve: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
+      }
+    }
+
     return Response.json({
       resolved: true,
       shape: type === "goal_execution" ? "goalExecution" : "activityExecution",
-      executionId: result.trace.id,
+      executionId: result?.trace?.id,
       status: reachStatus,
-      selectedTemplateId: result.selectedTemplateId,
+      selectedTemplateId: result?.selectedTemplateId,
       completionShapes,
+      attempts: attempt,
     });
   } catch (err) {
     console.error("[goal-host-vessel] /resolve error:", err);
