@@ -628,21 +628,42 @@ async function recommendExcluding(goalText: string, exclude: string[]): Promise<
 // instability + a strict gate and has NEVER fired (0 ribosome-extract executions).
 // ribosome-extract dedupes against existing templates, so re-runs of known
 // activities don't mint duplicates — only NOVEL reached trajectories become seeds.
-async function mintReachedTrace(executionId: string): Promise<void> {
+async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }): Promise<void> {
+  const executionId = trace?.id;
   if (!executionId) return;
   try {
     // Execute ribosome-extract via the LOCAL executor (host.runGoal), not by
     // POSTing activityDispatch to activity-api /v2/impulses/resolve — activity-api
     // is the trace store, NOT an executor, so that dispatch never runs the activity
-    // (why ribosome-extract has 0 executions despite the ribosome-vessel dispatching
-    // it for ages). Calling host.runGoal directly runs the engine and bypasses the
-    // HTTP handler's reach gate, so there is no recursion / re-mint.
+    // (why ribosome-extract had 0 executions despite the ribosome-vessel dispatching
+    // it for ages). Calling host.runGoal runs the engine and bypasses the HTTP reach
+    // gate (no goal text on the mint call → no recursion / re-mint).
+    // Supply the FULL lifecycle payload the template expects (normally set by the
+    // lifecycle dispatcher) so its LLM tasks (assess/synthesize/validate) have the
+    // trace metadata, not just executionId — otherwise placeholders are empty and
+    // synthesis produces garbage / fails.
+    const tasks = Array.isArray(trace.tasks) ? trace.tasks : [];
+    const outputShapes = [...new Set(tasks.flatMap((t) => t.outputShapes ?? []))];
+    const lifecycle = {
+      executionId,
+      status: trace.status === "failed" ? "failed" : "success",
+      taskCount: tasks.length,
+      durationMs: trace.durationMs ?? 0,
+      costUsd: trace.costUsd ?? 0,
+      templateId: trace.templateId ?? "",
+      templateName: trace.templateId ?? "",
+      templateAuthor: "",
+      outputShapes,
+      depth: Array.isArray(trace.compositionChain) ? trace.compositionChain.length : 0,
+      impulseCount: trace.outputImpulseIds?.length ?? 0,
+      hasGoalContext: true,
+    };
     await host.runGoal(`extract reusable template from execution ${executionId}`, {
       targetTemplateId: "activity:⟨ribosome-extract⟩",
-      variables: { executionId, lifecycle: { executionId } },
+      variables: { executionId, lifecycle },
     });
-    console.log(`[goal-host-vessel] reach→mint: ran ribosome-extract for reached trace ${executionId}`);
-  } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${executionId}: ${(e as Error).message}`); }
+    console.log(`[goal-host-vessel] reach→mint: ran ribosome-extract for ${executionId} (taskCount=${lifecycle.taskCount}, shapes=${JSON.stringify(outputShapes)})`);
+  } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${trace?.id}: ${(e as Error).message}`); }
 }
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
@@ -847,6 +868,28 @@ function registerBuiltinResolvers(): void {
   });
 
   console.log("[goal-host-vessel] registered built-in resolver: impulse_cooccurrence");
+
+  // noop — trivial pass-through. Several SHARED_TEMPLATES (ribosome-extract's
+  // dispatch_write_succeeded sentinel, etc.) declare resolver:"noop" expecting a
+  // no-op success, but goal-host only registered "lift_demo_noop" — so those tasks
+  // hit activities-as-resolvers (getTemplate("noop") → not found) and FAILED,
+  // failing the whole template (e.g. ribosome-extract minted nothing because its
+  // final sentinel task errored). Register a real noop.
+  host.runtime.resolvers.register({
+    id: "noop",
+    tier: "deterministic" as const,
+    async resolve(context: any) {
+      const random = context.random as { id: (p: string) => string };
+      return [{
+        id: random.id("noop"),
+        pointer: { type: "memo" },
+        metadata: { shape: "noop" },
+        loaded: true,
+        content: { ok: true },
+      }];
+    },
+  });
+  console.log("[goal-host-vessel] registered built-in resolver: noop");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1813,7 +1856,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
             console.log(`[goal-host-vessel] goal-reach: HOLLOW completion of ${result.selectedTemplateId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           } else if (verdict && verdict.reached === true) {
             console.log(`[goal-host-vessel] goal-reach: REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-            void mintReachedTrace(result.trace.id);  // reach → mint the working trace into a new activity seed
+            void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
           }
           (record as { completionShapes?: string[] | null }).completionShapes = verdict?.completion_shapes ?? null;
           const tr = result.trace as { durationMs?: number; costUsd?: number };
@@ -2025,7 +2068,7 @@ async function handleResolve(req: Request): Promise<Response> {
         } else {
           reachStatus = result.trace.status;
           console.log(`[goal-host-vessel] goal-reach(/resolve) attempt ${attempt}/${MAX_ATTEMPTS}: REACHED via ${selId}. completion_shapes=${JSON.stringify(completionShapes)}`);
-          void mintReachedTrace(result.trace.id);  // reach → mint the working trace into a new activity seed
+          void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
         }
       }
       // Per-goal learning: record this attempt's goal -> path -> reach outcome.
