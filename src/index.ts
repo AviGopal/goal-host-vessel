@@ -924,9 +924,36 @@ const registeredProxyShapes = new Set<string>();
  * Handles strings, arrays, and plain objects recursively. Unresolved
  * placeholders remain literal (matches llm-prompt behavior).
  */
-function interpolateProxyValue(value: unknown, variables: Record<string, unknown>): unknown {
+// Build a named-slot map { <slot> -> impulse.content } from a task's resolved
+// input impulses. The engine pulls impulses stamped with metadata.outputImpulseKey
+// into context.inputImpulses (Idiom-6 named-input slots); this exposes them for
+// `{{impulse:<slot>}}` interpolation in proxy configs (e.g. ribosome-extract's
+// dispatch_write_attempt body `"templateData": {{impulse:extracted_template}}`).
+function buildImpulseSlots(impulses: unknown): Map<string, unknown> {
+  const slots = new Map<string, unknown>();
+  if (!Array.isArray(impulses)) return slots;
+  for (const imp of impulses) {
+    const meta = (imp as { metadata?: Record<string, unknown> })?.metadata;
+    const key = meta && typeof meta["outputImpulseKey"] === "string" ? (meta["outputImpulseKey"] as string) : undefined;
+    if (key) slots.set(key, (imp as { content?: unknown }).content);
+  }
+  return slots;
+}
+
+function interpolateProxyValue(value: unknown, variables: Record<string, unknown>, impulseSlots?: Map<string, unknown>): unknown {
   if (typeof value === "string") {
-    return value.replace(/\{\{([\w]+(?:\.[\w]+)*)\}\}/g, (match, path: string) => {
+    // Token grammar now allows a single `impulse:<slot>` prefix (the colon) in
+    // addition to dotted variable paths. Without the colon the old regex left
+    // `{{impulse:extracted_template}}` LITERAL, so the ribosome's write body was
+    // malformed and never persisted a template.
+    return value.replace(/\{\{\s*(impulse:[\w.-]+|[\w]+(?:\.[\w]+)*)\s*\}\}/g, (match, path: string) => {
+      if (path.startsWith("impulse:")) {
+        const slot = path.slice("impulse:".length);
+        const content = impulseSlots?.get(slot);
+        if (content === undefined || content === null) return match; // unresolved → literal
+        if (typeof content === "string") return content;
+        try { return JSON.stringify(content); } catch { return match; }
+      }
       const segs = path.split(".");
       let cur: unknown = variables;
       for (const seg of segs) {
@@ -942,11 +969,11 @@ function interpolateProxyValue(value: unknown, variables: Record<string, unknown
       try { return JSON.stringify(cur); } catch { return match; }
     });
   }
-  if (Array.isArray(value)) return value.map((v) => interpolateProxyValue(v, variables));
+  if (Array.isArray(value)) return value.map((v) => interpolateProxyValue(v, variables, impulseSlots));
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = interpolateProxyValue(v, variables);
+      out[k] = interpolateProxyValue(v, variables, impulseSlots);
     }
     return out;
   }
@@ -966,7 +993,8 @@ function buildProxyResolver(shape: string) {
       // so dev-vessel resolvers receive substituted values rather than literal
       // placeholder strings (which were causing silent failures in
       // register_variant — see comment on interpolateProxyValue).
-      const config = interpolateProxyValue(configRaw, variables) as Record<string, unknown>;
+      const impulseSlots = buildImpulseSlots(context.inputImpulses);
+      const config = interpolateProxyValue(configRaw, variables, impulseSlots) as Record<string, unknown>;
       // Spread variables BEFORE config so the interpolated config wins on key
       // conflicts. Templates intentionally use variable names that match
       // config-key meanings inside the activity layer (e.g. target_branch
@@ -1121,7 +1149,8 @@ function buildDiscoveryProxyResolver(shape: string) {
       const configRaw = (task.config ?? {}) as Record<string, unknown>;
       const variables = (context.variables ?? {}) as Record<string, unknown>;
       const random = context.random as { id: (prefix: string) => string };
-      const config = interpolateProxyValue(configRaw, variables) as Record<string, unknown>;
+      const impulseSlots = buildImpulseSlots(context.inputImpulses);
+      const config = interpolateProxyValue(configRaw, variables, impulseSlots) as Record<string, unknown>;
       const pointer: Record<string, unknown> = { type: shape, ...variables, ...config };
 
       // 1. Resolve the producer endpoint via discovery (lazy → survives restarts).
