@@ -665,6 +665,104 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
     console.log(`[goal-host-vessel] reach→mint: ran ribosome-extract for ${executionId} (taskCount=${lifecycle.taskCount}, shapes=${JSON.stringify(outputShapes)})`);
   } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${trace?.id}: ${(e as Error).message}`); }
 }
+
+interface GoalSeekResult {
+  result: Awaited<ReturnType<typeof host.runGoal>> | null;
+  status: "failed" | "completed";
+  selectedTemplateId?: string;
+  completionShapes: string[] | null;
+  attempts: number;
+  goalReachReason?: string;
+  reached: boolean;
+}
+
+// SINGLE goal-seeking-with-recovery implementation shared by BOTH dispatch
+// surfaces (async /run-goal + sync /resolve) — there must be exactly one copy of
+// this logic, not a duplicate per surface that can drift. Recovery is part of
+// reaching the goal, not a separate offline repair: try an approach → check reach
+// (the gate) → on not-reached β-penalise + EXCLUDE that approach + re-recommend a
+// DIFFERENT one → retry, until reached or approaches exhausted. The attempt that
+// REACHES leaves a trace the ribosome mints into a new activity seed. Callers
+// differ only in maxAttempts (sync /resolve is bounded by the MCP ~290s timeout;
+// async /run-goal can recover more deeply) and in how they pass options. An
+// explicit caller-pinned target is respected verbatim (no alteration).
+async function runGoalWithRecovery(
+  goal: string | undefined,
+  opts: {
+    firstTarget?: string;
+    callerPinned?: boolean;
+    maxAttempts: number;
+    variables: Record<string, unknown>;
+    tags?: string[];
+    parentExecutionId?: string;
+    compositionChain?: string[];
+    expectedOutputShapes?: string[];
+    surface: string;
+  },
+): Promise<GoalSeekResult> {
+  const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
+  const excluded: string[] = [];
+  let nextTarget: string | undefined = opts.firstTarget;
+  if (!nextTarget && goal) {
+    const reaching = await recommendReachingPath(goal);
+    if (reaching) { nextTarget = reaching; console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${reaching}`); }
+  }
+  let result: Awaited<ReturnType<typeof host.runGoal>> | null = null;
+  let status: "failed" | "completed" = "failed";
+  let completionShapes: string[] | null = null;
+  let goalReachReason: string | undefined;
+  let reached = false;
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    attempt++;
+    result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
+      variables: opts.variables,
+      targetTemplateId: nextTarget,
+      tags: opts.tags,
+      parentExecutionId: opts.parentExecutionId,
+      compositionChain: opts.compositionChain,
+      expectedOutputShapes: opts.expectedOutputShapes,
+    });
+    status = result.trace.status === "failed" ? "failed" : "completed";
+    const selId = result.selectedTemplateId;
+    reached = false;
+    // Goal-reaching gate: a "completed" execution that didn't reach the goal is a
+    // hollow completion — downgrade + β-penalise so Thompson stops reinforcing
+    // goal-irrelevant gaming/wrapper templates. completion_shapes surface the
+    // (emergent) goal-shaped direction, not a goal-declared target.
+    if (goal && status === "completed" && selId) {
+      try {
+        const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+        const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
+        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
+        completionShapes = verdict?.completion_shapes ?? null;
+        reached = verdict?.reached !== false;
+        if (verdict && verdict.reached === false) {
+          status = "failed";
+          goalReachReason = verdict.reason;
+          await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached");
+          console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        } else if (verdict && verdict.reached === true) {
+          console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+          void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
+        }
+      } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
+    }
+    // Per-goal learning: record this attempt's goal -> path -> reach outcome.
+    const tr = result.trace as { durationMs?: number; costUsd?: number };
+    if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
+    if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
+    if (selId) excluded.push(selId);
+    // Alter the approach for the next attempt (engine-selected approaches only).
+    if (attempt < maxAttempts) {
+      const alt = await recommendExcluding(goal, excluded);
+      if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
+      nextTarget = alt;
+      console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
+    }
+  }
+  return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
+}
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
 // under Bun's ~300s fetch cap. Override via GOAL_HOST_PROXY_TIMEOUT_MS.
@@ -1857,41 +1955,27 @@ async function handleRunGoal(req: Request): Promise<Response> {
             timestamp: new Date().toISOString(),
           });
       }
-      const result = await host.runGoal(goal ?? `execute template ${effectiveTargetId}`, {
+      // Async /run-goal is the agent (MCP) + boredom dispatch surface. It uses the
+      // SHARED runGoalWithRecovery (same loop as /resolve, no duplication) and can
+      // recover more deeply (maxAttempts 3) since it is polled, not timeout-bound.
+      const callerPinnedTarget = typeof targetTemplateId === "string" && targetTemplateId.length > 0;
+      const seek = await runGoalWithRecovery(goal, {
+        firstTarget: effectiveTargetId,
+        callerPinned: callerPinnedTarget,
+        maxAttempts: 3,
         variables,
-        targetTemplateId: effectiveTargetId,
         tags: effectiveTags,
         parentExecutionId,
         compositionChain,
         expectedOutputShapes,
+        surface: "/run-goal",
       });
-      record.status = result.trace.status === "failed" ? "failed" : "completed";
-      record.executionId = result.trace.id;
-      record.selectedTemplateId = result.selectedTemplateId;
-      // Goal-reaching gate: a "completed" execution that didn't reach the goal is
-      // a hollow completion — downgrade it and β-penalise the selected template so
-      // Thompson stops reinforcing goal-irrelevant gaming/wrapper templates. The
-      // verdict's completion_shapes surface the goal-shaped direction (the shapes
-      // of the completion state, emergent — not a goal-declared target).
-      if (goal && record.status === "completed" && result.selectedTemplateId) {
-        try {
-          const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
-          const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
-          const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
-          if (verdict && verdict.reached === false) {
-            record.status = "failed";
-            (record as { goalReachReason?: string }).goalReachReason = verdict.reason;
-            await penaliseHollowTemplate(result.selectedTemplateId, verdict.reason ?? "goal not reached");
-            console.log(`[goal-host-vessel] goal-reach: HOLLOW completion of ${result.selectedTemplateId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-          } else if (verdict && verdict.reached === true) {
-            console.log(`[goal-host-vessel] goal-reach: REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-            void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
-          }
-          (record as { completionShapes?: string[] | null }).completionShapes = verdict?.completion_shapes ?? null;
-          const tr = result.trace as { durationMs?: number; costUsd?: number };
-          void recordGoalPath(goal, [result.selectedTemplateId], record.status !== "failed", tr.durationMs ?? 0, tr.costUsd ?? 0);
-        } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
-      }
+      record.status = seek.status;
+      record.executionId = seek.result?.trace?.id;
+      record.selectedTemplateId = seek.selectedTemplateId;
+      (record as { attempts?: number }).attempts = seek.attempts;
+      (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
+      if (seek.goalReachReason) (record as { goalReachReason?: string }).goalReachReason = seek.goalReachReason;
     } catch (err) {
       record.status = "failed";
       record.error = (err as Error).message;
@@ -2055,73 +2139,28 @@ async function handleResolve(req: Request): Promise<Response> {
   }
 
   try {
-    // IN-FLIGHT GOAL-SEEKING with self-recovery (2026-06-22): make recovery part
-    // of reaching the goal, not a separate offline repair. Loop: try an approach →
-    // check reach (the gate) → on not-reached, β-penalise + EXCLUDE that approach +
-    // re-recommend a DIFFERENT one → retry, until reached or approaches exhausted.
-    // The attempt that REACHES leaves a trace the ribosome (postExecution) mints as
-    // a new activity seed. Bounded to keep the synchronous /resolve under the MCP
-    // ~290s timeout; the async /run-goal path can recover more deeply.
-    const MAX_ATTEMPTS = goal ? 2 : 1;
-    const excluded: string[] = [];
-    let result: Awaited<ReturnType<typeof host.runGoal>> | null = null;
-    let reachStatus = "failed";
-    let completionShapes: string[] | null = null;
-    let attempt = 0;
-
-    // First approach: explicit target > a known-reaching path for this goal > engine selection.
-    let nextTarget: string | undefined = targetTemplateId;
-    if (!nextTarget && goal) {
-      const reaching = await recommendReachingPath(goal);
-      if (reaching) { nextTarget = reaching; console.log(`[goal-host-vessel] /resolve: reusing known-reaching path ${reaching}`); }
-    }
-
-    while (attempt < MAX_ATTEMPTS) {
-      attempt++;
-      result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
-        variables, targetTemplateId: nextTarget, parentExecutionId, compositionChain,
-      });
-      reachStatus = result.trace.status;
-      const selId = result.selectedTemplateId;
-      let reached = false;
-      if (goal && result.trace.status !== "failed" && selId) {
-        const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
-        const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
-        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
-        completionShapes = verdict?.completion_shapes ?? null;
-        reached = verdict?.reached !== false;
-        if (!reached) {
-          reachStatus = "failed";
-          await penaliseHollowTemplate(selId, verdict?.reason ?? "goal not reached");
-          console.log(`[goal-host-vessel] goal-reach(/resolve) attempt ${attempt}/${MAX_ATTEMPTS}: NOT reached via ${selId} — ${verdict?.reason}; β-penalised`);
-        } else {
-          reachStatus = result.trace.status;
-          console.log(`[goal-host-vessel] goal-reach(/resolve) attempt ${attempt}/${MAX_ATTEMPTS}: REACHED via ${selId}. completion_shapes=${JSON.stringify(completionShapes)}`);
-          void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
-        }
-      }
-      // Per-goal learning: record this attempt's goal -> path -> reach outcome.
-      const tr = result.trace as { durationMs?: number; costUsd?: number };
-      if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
-      if (reached || !goal) break;  // success (the reached trace is what the ribosome mints), or no goal to recover toward
-      if (selId) excluded.push(selId);
-      // Alter the approach for the next attempt.
-      if (attempt < MAX_ATTEMPTS) {
-        const alt = await recommendExcluding(goal, excluded);
-        if (!alt) { console.log(`[goal-host-vessel] /resolve: no fresh approach after ${attempt} attempts — honest failure`); break; }
-        nextTarget = alt;
-        console.log(`[goal-host-vessel] /resolve: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
-      }
-    }
+    // Sync /resolve uses the SHARED runGoalWithRecovery (same loop as /run-goal, no
+    // duplication). Bounded to maxAttempts 2 to stay under the MCP ~290s timeout;
+    // the async /run-goal path recovers more deeply.
+    const callerPinnedTarget = typeof targetTemplateId === "string" && targetTemplateId.length > 0;
+    const seek = await runGoalWithRecovery(goal, {
+      firstTarget: targetTemplateId,
+      callerPinned: callerPinnedTarget,
+      maxAttempts: 2,
+      variables,
+      parentExecutionId,
+      compositionChain,
+      surface: "/resolve",
+    });
 
     return Response.json({
       resolved: true,
       shape: type === "goal_execution" ? "goalExecution" : "activityExecution",
-      executionId: result?.trace?.id,
-      status: reachStatus,
-      selectedTemplateId: result?.selectedTemplateId,
-      completionShapes,
-      attempts: attempt,
+      executionId: seek.result?.trace?.id,
+      status: seek.status,
+      selectedTemplateId: seek.selectedTemplateId,
+      completionShapes: seek.completionShapes,
+      attempts: seek.attempts,
     });
   } catch (err) {
     console.error("[goal-host-vessel] /resolve error:", err);
