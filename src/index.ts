@@ -545,6 +545,52 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
     });
   } catch { /* non-fatal */ }
 }
+// Per-goal learning (2026-06-22). Record goal -> path -> reach into
+// goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
+// here (MCP) or the human-facing obsidian-vessel — accumulates per-goal Thompson
+// α/β over subsequent attempts and the reaching path is attributable + reusable.
+// path_activities is the attribution unit (the composition that ran). reached is
+// the goal-reach verdict (NOT execution-status), so the per-goal posterior tracks
+// genuine goal achievement, not hollow completion.
+async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number): Promise<void> {
+  if (!goalText || pathActivities.length === 0) return;
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({
+        goal_text: goalText,
+        goal_category: "meta",
+        path_activities: pathActivities,
+        success: reached,
+        duration_ms: Math.round(durationMs) || 0,
+        cost_usd: costUsd || 0,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch { /* non-fatal */ }
+}
+// Consult per-goal learning before selection: if a prior attempt at THIS goal
+// reached it via a known path, prefer that path (improvement over subsequent
+// attempts). Returns a template id to target, or null to fall through to the
+// global template recommender.
+async function recommendReachingPath(goalText: string): Promise<string | null> {
+  if (!goalText) return null;
+  try {
+    const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths/recommend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ goal_text: goalText, goal_category: "meta" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const paths = j?.recommended_paths ?? j?.body?.recommended_paths ?? [];
+    // prefer a path that has genuinely reached this goal (success_rate>0) and is single-activity
+    const best = paths.find((p: any) => (p.success_rate ?? p.goal_achieved) && Array.isArray(p.path_activities) && p.path_activities.length >= 1);
+    return best?.path_activities?.[0] ?? null;
+  } catch { return null; }
+}
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
 // under Bun's ~300s fetch cap. Override via GOAL_HOST_PROXY_TIMEOUT_MS.
@@ -1716,6 +1762,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
             console.log(`[goal-host-vessel] goal-reach: REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           }
           (record as { completionShapes?: string[] | null }).completionShapes = verdict?.completion_shapes ?? null;
+          const tr = result.trace as { durationMs?: number; costUsd?: number };
+          void recordGoalPath(goal, [result.selectedTemplateId], record.status !== "failed", tr.durationMs ?? 0, tr.costUsd ?? 0);
         } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
       }
     } catch (err) {
@@ -1881,9 +1929,17 @@ async function handleResolve(req: Request): Promise<Response> {
   }
 
   try {
-    const result = await host.runGoal(goal ?? `execute template ${targetTemplateId}`, {
+    // Per-goal improvement: if a prior attempt at THIS goal reached it via a
+    // known path, prefer that path (exploit) instead of re-rolling global
+    // template selection. First attempt / never-reached → null → normal recommend.
+    let effectiveTarget = targetTemplateId;
+    if (!effectiveTarget && goal) {
+      const reaching = await recommendReachingPath(goal);
+      if (reaching) { effectiveTarget = reaching; console.log(`[goal-host-vessel] /resolve: reusing known-reaching path ${reaching} for goal (per-goal learning)`); }
+    }
+    const result = await host.runGoal(goal ?? `execute template ${effectiveTarget}`, {
       variables,
-      targetTemplateId,
+      targetTemplateId: effectiveTarget,
       parentExecutionId,
       compositionChain,
     });
@@ -1905,6 +1961,10 @@ async function handleResolve(req: Request): Promise<Response> {
         console.log(`[goal-host-vessel] goal-reach(/resolve): REACHED via ${result.selectedTemplateId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
       }
       completionShapes = verdict?.completion_shapes ?? null;
+      // Per-goal learning: record goal -> path -> reach (attribution + improvement
+      // over subsequent attempts at the same goal, regardless of source).
+      const tr = result.trace as { durationMs?: number; costUsd?: number };
+      void recordGoalPath(goal, [result.selectedTemplateId], reachStatus !== "failed", tr.durationMs ?? 0, tr.costUsd ?? 0);
     }
     return Response.json({
       resolved: true,
