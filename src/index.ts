@@ -827,6 +827,18 @@ async function runGoalAsPoolWalk(
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary));
   };
+  // DATA-FLOW BINDING: expose each pool impulse's CONTENT as a variable keyed by
+  // its shape, so a downstream task's `{{shape}}` placeholder interpolates from
+  // the UPSTREAM activity's output content. This is what turns activities from
+  // environmentally-grounded SOURCES into genuine LINKS (B consumes A's output).
+  const poolVars = (): Record<string, unknown> => {
+    const v: Record<string, unknown> = { ...opts.variables };
+    for (const imp of poolImpulses) {
+      const sh = (imp.metadata as { shape?: string } | undefined)?.shape;
+      if (sh && !(sh in v)) v[sh] = imp.content;
+    }
+    return v;
+  };
 
   // Goal impulse (shape "goal").
   addToPool("goal", { goal }, goal.slice(0, 200));
@@ -980,11 +992,12 @@ async function runGoalAsPoolWalk(
             try {
               const tmpl = await host.activityApi.getTemplate(c.id);
               if (!tmpl) return null;
-              return await host.runTemplate(tmpl, opts.variables, {
+              const bvars = poolVars();
+              return await host.runTemplate(tmpl, bvars, {
                 impulses: poolImpulses,
                 parentExecutionId: bundleParentExecId,
                 compositionChain: chainExecIds,
-                variables: opts.variables,
+                variables: bvars,
                 tags: opts.tags,
                 goalContext: { goal },
               });
@@ -1190,11 +1203,12 @@ async function runGoalAsPoolWalk(
 
     let trace: ExecutionTrace;
     try {
-      trace = await host.runTemplate(template, opts.variables, {
+      const bvars = poolVars();
+      trace = await host.runTemplate(template, bvars, {
         impulses: poolImpulses,
         parentExecutionId: lastExecId,
         compositionChain: chainExecIds,
-        variables: opts.variables,
+        variables: bvars,
         tags: opts.tags,
         goalContext: { goal },
       });
