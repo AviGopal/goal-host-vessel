@@ -912,17 +912,15 @@ async function runGoalAsPoolWalk(
 
     // (e) MERGE OUTPUTS — pull genuinely-new shapes from the trace tasks into the pool.
     const beforeSize = producedShapes.size;
-    // Advance the pool along the DECLARED shape graph: the activity was picked
-    // because it declares it produces these output shapes (the planning level of
-    // "walking the shapes"). Also fold in any actual trace-produced shapes. The
-    // reach-gate at the end is the reality check on whether the declared shapes
-    // were genuinely produced. (The engine derives a task's recorded output shape
-    // from the resolver type, not a resolver's returned shape, so declared is the
-    // reliable signal for cross-activity chaining.)
-    const newShapes = [...new Set([
-      ...(pick.outputShapes ?? []),
-      ...(trace.tasks ?? []).flatMap((t) => t.outputShapes ?? []),
-    ])];
+    // Advance the pool ONLY by shapes the activity GENUINELY produced — actual
+    // output shapes from SUCCESSFUL tasks of this execution. No optimistic
+    // declared-shape advancement: a composition step counts only if the data was
+    // really produced, so the reach-gate judges genuine artifacts, not promises.
+    const newShapes = [...new Set(
+      (trace.tasks ?? [])
+        .filter((t) => (t as { success?: boolean }).success !== false)
+        .flatMap((t) => t.outputShapes ?? []),
+    )];
     for (const s of newShapes) {
       if (s && s !== "activityExecutionSummary") addToPool(s, { producedBy: pick.id, executionId: trace.id }, `produced by ${pick.id}`);
     }
