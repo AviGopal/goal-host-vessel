@@ -918,10 +918,23 @@ async function runGoalAsPoolWalk(
 
     let pick: WalkCandidate | undefined;
     if (target.size > 0) {
-      // Goal-directed: only step onto a candidate that produces a missing target
-      // shape. If none does, fall through to backward-chain / mint-as-you-go.
-      pick = candidates.find((c) => notScaffold(c) && inputsSatisfied(c) && advancesTarget(c))
-        ?? candidates.find((c) => notScaffold(c) && advancesTarget(c));
+      // Goal-directed: step onto a producer of a missing target shape whose
+      // inputs are satisfied (or which needs none).
+      pick = candidates.find((c) => notScaffold(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s))));
+      // RECURSE: if the only target-producers have UNSATISFIED inputs, produce
+      // those inputs first (add as sub-targets) rather than executing the
+      // producer prematurely — this is how the chain is built backward.
+      if (!pick) {
+        const needsInputs = candidates.find((c) => notScaffold(c) && advancesTarget(c) && c.inputShapes.length > 0);
+        if (needsInputs) {
+          let added = false;
+          for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
+          if (added) {
+            console.log(`[goal-host-vessel] walk(${opts.surface}): recurse — ${normActivityId(needsInputs.id)} needs [${needsInputs.inputShapes.join(",")}]; producing inputs first`);
+            continue; // loop to produce the sub-target inputs, then re-pick this producer
+          }
+        }
+      }
     } else {
       // Opportunistic: any genuine forward progress.
       pick = candidates.find((c) => notScaffold(c) && inputsSatisfied(c) && makesProgress(c))
