@@ -916,11 +916,25 @@ async function runGoalAsPoolWalk(
     const notScaffold = (c: WalkCandidate): boolean =>
       !(c.outputShapes.length === 1 && c.outputShapes[0] === "activityExecutionSummary");
 
+    // Hollow-scaffold id families (compose wrappers, proposed-pattern autodrafts,
+    // learned-tick clones) shape-match a target but do no genuine work and get
+    // reach-gate-β-penalised. A target with a LIVE resolver can be bridge-authored
+    // fresh (genuine work), so we must NOT settle for a hollow scaffold of it.
+    const isHollowScaffold = (id: string): boolean =>
+      /^(compose-|proposed_pattern_authored_|learned-)/.test(normActivityId(id));
+    const liveSetB = target.size > 0 ? await liveShapes() : new Set<string>();
+    const bridgeableTarget = (c: WalkCandidate): boolean =>
+      c.outputShapes.some((s) => missingTargetsB.includes(s) && liveSetB.has(s));
+
     let pick: WalkCandidate | undefined;
     if (target.size > 0) {
-      // Goal-directed: step onto a producer of a missing target shape whose
-      // inputs are satisfied (or which needs none).
-      pick = candidates.find((c) => notScaffold(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s))));
+      const feasibleProducer = (c: WalkCandidate): boolean =>
+        notScaffold(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
+      // 1. A GENUINE (non-hollow-scaffold) feasible producer of a target shape.
+      pick = candidates.find((c) => feasibleProducer(c) && !isHollowScaffold(c.id))
+        // 2. A scaffold producer is acceptable ONLY for a target with no live
+        //    resolver (not bridge-authorable) — otherwise prefer bridge-authoring.
+        ?? candidates.find((c) => feasibleProducer(c) && !bridgeableTarget(c));
       // RECURSE: if the only target-producers have UNSATISFIED inputs, produce
       // those inputs first (add as sub-targets) rather than executing the
       // producer prematurely — this is how the chain is built backward.
@@ -957,9 +971,13 @@ async function runGoalAsPoolWalk(
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
             const producers = (Array.isArray(rows) ? rows : [])
               .map(readCandidateShapes)
-              .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
-            // Prefer a producer whose inputs are already satisfied by the pool.
-            pick = producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)))
+              .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id))
+              // Drop hollow scaffolds for bridge-authorable targets so the walk
+              // bridge-authors a genuine producer instead of reusing a scaffold.
+              .filter((c) => !(isHollowScaffold(c.id) && bridgeableTarget(c)));
+            // Prefer a GENUINE producer whose inputs are already satisfied.
+            pick = producers.find((c) => !isHollowScaffold(c.id) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s))))
+              ?? producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)))
               ?? producers[0];
           }
         } catch { /* discover failed */ }
