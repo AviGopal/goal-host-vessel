@@ -24,7 +24,12 @@ import {
   createLLMPort,
 } from "@avigopal/ias-executor-ts";
 import { BusForwardingEventSink } from "@avigopal/ias-executor-ts/adapters";
-import type { EventSink } from "@avigopal/ias-executor-ts";
+import type {
+  EventSink,
+  Impulse,
+  ActivityTemplate,
+  ExecutionTrace,
+} from "@avigopal/ias-executor-ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BoundedBusSink — L1 patch per openspec 2026-05-31-goal-host-oom-bounded-concurrency.
@@ -676,6 +681,309 @@ interface GoalSeekResult {
   reached: boolean;
 }
 
+// Normalise an activity id by stripping the `activity:⟨…⟩` wrapper the recommend +
+// runGoal paths use, so chain/exclusion membership matches across the wrapped and
+// unwrapped forms. Mirrors the `norm` helper in recommendExcluding.
+function normActivityId(s: string): string {
+  return s.replace(/^activity:/, "").replace(/[⟨⟩]/g, "").trim();
+}
+
+// A recommend/discover candidate normalised to the fields the walk reasons over.
+interface WalkCandidate {
+  id: string;            // raw id (used for fetch / chain record)
+  inputShapes: string[]; // declared input_shapes (bare names)
+  outputShapes: string[];// declared output_shapes (bare names)
+}
+
+function readCandidateShapes(x: any): WalkCandidate | null {
+  const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
+  if (!id) return null;
+  const norm = (arr: unknown): string[] =>
+    Array.isArray(arr) ? arr.map((s) => String(s)).filter(Boolean) : [];
+  // discover-by-shapes returns shapes under input_schema.required_shapes /
+  // output_schema.produces_shapes; recommend returns input_shapes/output_shapes.
+  // Read both so the walk sees a candidate's real input/output contract.
+  const inputShapes = norm(x.input_shapes ?? x.inputShapes ?? x.input_schema?.required_shapes);
+  const outputShapes = norm(x.output_shapes ?? x.outputShapes ?? x.output_schema?.produces_shapes);
+  return { id, inputShapes, outputShapes };
+}
+
+// Shape-graph WALK (2026-06-23). The DEFAULT goal-execution strategy: instead of
+// picking ONE whole template by goal-text and treating its status as "reached",
+// walk the shape graph across MULTIPLE activities — at each step pick an activity
+// whose declared inputs are satisfied by the accumulated impulse POOL and whose
+// outputs add a NEW shape (forward progress), seed it with the pool, execute it,
+// merge its produced shapes back into the pool, and continue until the target
+// output shapes are all produced (or no shape-feasible step remains). The selected
+// activities form the composition `chain`; the threaded parent/composition ids make
+// the steps a RECORDED chain, and recordGoalPath stores the full multi-activity path.
+//
+// There is NO env flag / opt-in toggle (operator forbade flags). MAX_STEPS is a
+// tuning constant. When the walk cannot take even one shape-feasible step
+// (chain.length === 0), runGoalWithRecovery falls through to the single-template
+// recovery loop — graceful degradation, not a break.
+async function runGoalAsPoolWalk(
+  goal: string,
+  opts: {
+    variables: Record<string, unknown>;
+    tags?: string[];
+    parentExecutionId?: string;
+    compositionChain?: string[];
+    expectedOutputShapes?: string[];
+    surface: string;
+  },
+): Promise<GoalSeekResult> {
+  const MAX_STEPS = parseInt(process.env.GOAL_HOST_WALK_MAX_STEPS ?? "40", 10);
+
+  // ── 1. Seed the POOL ───────────────────────────────────────────────────────
+  // producedShapes is the set of shapes currently available to consume; poolImpulses
+  // are the concrete impulses (with content) we seed into each step's execution.
+  const producedShapes = new Set<string>();
+  const poolImpulses: Impulse[] = [];
+  let impulseSeq = 0;
+  const mkImpulse = (shape: string, content: unknown, summary?: string): Impulse => ({
+    id: `walk-${shape}-${++impulseSeq}`,
+    pointer: { type: "memo" },
+    metadata: { shape, summary: summary ?? `pool impulse (${shape})`, producedBy: "goal-host-walk" },
+    loaded: true,
+    content,
+  });
+  const addToPool = (shape: string, content: unknown, summary?: string): void => {
+    if (!shape || producedShapes.has(shape)) return;
+    producedShapes.add(shape);
+    poolImpulses.push(mkImpulse(shape, content, summary));
+  };
+
+  // Goal impulse (shape "goal").
+  addToPool("goal", { goal }, goal.slice(0, 200));
+  // Seed any variable that looks like an impulse / carries a shape.
+  for (const [k, v] of Object.entries(opts.variables ?? {})) {
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      const shape =
+        (o.metadata && typeof (o.metadata as Record<string, unknown>).shape === "string"
+          ? ((o.metadata as Record<string, unknown>).shape as string)
+          : undefined) ??
+        (typeof o.shape === "string" ? (o.shape as string) : undefined);
+      if (shape) {
+        addToPool(shape, "content" in o ? o.content : o, `seed var ${k}`);
+        continue;
+      }
+    }
+    // Plain variable value — expose it as a named shape so a consumer declaring it can bind.
+    addToPool(k, v, `seed var ${k}`);
+  }
+
+  const target = new Set<string>(opts.expectedOutputShapes ?? []);
+  // With an explicit target, "met" = all target shapes produced. With NO target,
+  // never short-circuit here — walk opportunistically (progress-driven), stopping
+  // on MAX_STEPS or the consecutive-no-progress break below.
+  const targetMet = (): boolean => target.size > 0 && [...target].every((s) => producedShapes.has(s));
+
+  const chain: string[] = [];          // selected activity ids = the composition
+  const chainExecIds: string[] = [...(opts.compositionChain ?? [])]; // recorded composition chain (execution ids)
+  const exclude = new Set<string>();   // normalised activity ids already used / rejected
+  let lastTrace: ExecutionTrace | null = null;
+  let lastExecId: string | undefined = opts.parentExecutionId;
+  let lastPick = "";
+  let totalDurationMs = 0;
+  let totalCostUsd = 0;
+  let consecutiveNoProgress = 0;
+
+  // ── 2-3. Walk the shape graph ──────────────────────────────────────────────
+  while (chain.length < MAX_STEPS && !targetMet()) {
+    // (a) CANDIDATE GENERATION — shape-driven: consumers of the current pool.
+    let candidates: WalkCandidate[] = [];
+    try {
+      const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ required_shapes: [...producedShapes], mode: "backward", limit: 50 }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (r.ok) {
+        const j: any = await r.json();
+        const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
+        candidates = (Array.isArray(rows) ? rows : [])
+          .map(readCandidateShapes)
+          .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
+      }
+    } catch { /* discover failed — candidates stays empty */ }
+    // Secondary: if discover surfaced nothing, fall back to the recommend ranker.
+    if (candidates.length === 0) {
+      try {
+        const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0 }),
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (r.ok) {
+          const j: any = await r.json();
+          const recs = j?.recommendations ?? j?.body?.recommendations ?? [];
+          candidates = (Array.isArray(recs) ? recs : [])
+            .map(readCandidateShapes)
+            .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
+        }
+      } catch { /* recommend failed too */ }
+    }
+
+    // (b) SELECT BEST — prefer a genuine consumer of the pool that makes forward progress.
+    const makesProgress = (c: WalkCandidate): boolean =>
+      c.outputShapes.some((s) => s !== "activityExecutionSummary" && !producedShapes.has(s));
+    const inputsSatisfied = (c: WalkCandidate): boolean =>
+      c.inputShapes.length > 0 && c.inputShapes.every((s) => producedShapes.has(s));
+    const notScaffold = (c: WalkCandidate): boolean =>
+      !(c.outputShapes.length === 1 && c.outputShapes[0] === "activityExecutionSummary");
+
+    let pick: WalkCandidate | undefined = candidates.find(
+      (c) => notScaffold(c) && inputsSatisfied(c) && makesProgress(c),
+    );
+    // Fallback within recommend: first candidate that at least makes forward progress.
+    if (!pick) pick = candidates.find((c) => notScaffold(c) && makesProgress(c));
+
+    // (c) BACKWARD-CHAIN — find a producer of a missing target shape.
+    if (!pick) {
+      const missingTargets = [...target].filter((s) => !producedShapes.has(s));
+      if (missingTargets.length > 0) {
+        try {
+          const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ required_shapes: missingTargets, mode: "forward" }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (r.ok) {
+            const j: any = await r.json();
+            const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
+            const producers = (Array.isArray(rows) ? rows : [])
+              .map(readCandidateShapes)
+              .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
+            // Prefer a producer whose inputs are already satisfied by the pool.
+            pick = producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)))
+              ?? producers[0];
+          }
+        } catch { /* discover failed */ }
+      }
+    }
+
+    if (!pick) {
+      console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${[...target].filter((s) => !producedShapes.has(s)).length}) — escalating (stop)`);
+      break;
+    }
+
+    // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
+    //     with the accumulated pool impulses + thread parent/composition ids so the
+    //     steps form a recorded chain.
+    let template: ActivityTemplate | null = null;
+    try {
+      template = await host.activityApi.getTemplate(pick.id);
+    } catch (e) {
+      console.warn(`[goal-host-vessel] walk(${opts.surface}): getTemplate(${pick.id}) failed: ${(e as Error).message}`);
+    }
+    if (!template) {
+      // Can't fetch the template object — exclude and try another candidate.
+      exclude.add(normActivityId(pick.id));
+      console.log(`[goal-host-vessel] walk(${opts.surface}): template ${pick.id} unfetchable — excluding`);
+      continue;
+    }
+
+    let trace: ExecutionTrace;
+    try {
+      trace = await host.runTemplate(template, opts.variables, {
+        impulses: poolImpulses,
+        parentExecutionId: lastExecId,
+        compositionChain: chainExecIds,
+        variables: opts.variables,
+        tags: opts.tags,
+        goalContext: { goal },
+      });
+    } catch (e) {
+      exclude.add(normActivityId(pick.id));
+      console.warn(`[goal-host-vessel] walk(${opts.surface}): runTemplate(${pick.id}) threw: ${(e as Error).message} — excluding`);
+      continue;
+    }
+    lastTrace = trace;
+    lastPick = pick.id;
+    lastExecId = trace.id;
+    if (trace.id) chainExecIds.push(trace.id);
+    totalDurationMs += trace.durationMs ?? 0;
+    totalCostUsd += trace.costUsd ?? 0;
+
+    // (e) MERGE OUTPUTS — pull genuinely-new shapes from the trace tasks into the pool.
+    const beforeSize = producedShapes.size;
+    // Advance the pool along the DECLARED shape graph: the activity was picked
+    // because it declares it produces these output shapes (the planning level of
+    // "walking the shapes"). Also fold in any actual trace-produced shapes. The
+    // reach-gate at the end is the reality check on whether the declared shapes
+    // were genuinely produced. (The engine derives a task's recorded output shape
+    // from the resolver type, not a resolver's returned shape, so declared is the
+    // reliable signal for cross-activity chaining.)
+    const newShapes = [...new Set([
+      ...(pick.outputShapes ?? []),
+      ...(trace.tasks ?? []).flatMap((t) => t.outputShapes ?? []),
+    ])];
+    for (const s of newShapes) {
+      if (s && s !== "activityExecutionSummary") addToPool(s, { producedBy: pick.id, executionId: trace.id }, `produced by ${pick.id}`);
+    }
+    chain.push(pick.id);
+    exclude.add(normActivityId(pick.id));
+    const progressed = producedShapes.size > beforeSize;
+    console.log(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
+    if (!progressed) {
+      consecutiveNoProgress++;
+      if (consecutiveNoProgress >= 2) {
+        console.log(`[goal-host-vessel] walk(${opts.surface}): 2 consecutive no-progress steps — stopping`);
+        break;
+      }
+    } else {
+      consecutiveNoProgress = 0;
+    }
+  }
+
+  // ── 4. Reach gate + per-goal record + reach→mint (reuse existing logic) ──────
+  let status: "failed" | "completed" = lastTrace && lastTrace.status !== "failed" ? "completed" : "failed";
+  let completionShapes: string[] | null = null;
+  let goalReachReason: string | undefined;
+  let reached = false;
+
+  if (lastTrace && chain.length > 0) {
+    const chainSummary = `walk(${chain.length} steps): ${chain.map(normActivityId).join(" → ")}`;
+    try {
+      const verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary);
+      completionShapes = verdict?.completion_shapes ?? null;
+      reached = verdict?.reached !== false;
+      if (verdict && verdict.reached === false) {
+        status = "failed";
+        goalReachReason = verdict.reason;
+        await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached");
+        console.log(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+      } else if (verdict && verdict.reached === true) {
+        console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        void mintReachedTrace(lastTrace as any);
+      }
+    } catch (e) {
+      console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
+    }
+    // Per-goal learning: record the FULL multi-activity path -> reach outcome.
+    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd);
+  }
+
+  // Adapt the last ExecutionTrace into the GoalRunResult shape the callers read.
+  const result = lastTrace
+    ? ({ trace: lastTrace, selectedTemplateId: lastPick } as Awaited<ReturnType<typeof host.runGoal>>)
+    : null;
+  return {
+    result,
+    status,
+    selectedTemplateId: chain.length > 0 ? chain[chain.length - 1] : undefined,
+    completionShapes,
+    attempts: chain.length,
+    goalReachReason,
+    reached,
+  };
+}
+
 // SINGLE goal-seeking-with-recovery implementation shared by BOTH dispatch
 // surfaces (async /run-goal + sync /resolve) — there must be exactly one copy of
 // this logic, not a duplicate per surface that can drift. Recovery is part of
@@ -700,6 +1008,28 @@ async function runGoalWithRecovery(
     surface: string;
   },
 ): Promise<GoalSeekResult> {
+  // DEFAULT strategy (2026-06-23): when there's a goal, the caller did NOT pin a
+  // target, and no firstTarget is supplied, WALK THE SHAPE GRAPH across multiple
+  // activities instead of picking one whole template by goal-text. Automatic
+  // graceful fallback (NO flag): if the walk couldn't take even one shape-feasible
+  // step (chain.length === 0), fall through to the single-template recovery loop
+  // below. callerPinned / firstTarget / no-goal paths use the existing loop unchanged.
+  if (goal && !opts.callerPinned && !opts.firstTarget) {
+    try {
+      const walk = await runGoalAsPoolWalk(goal, {
+        variables: opts.variables,
+        tags: opts.tags,
+        parentExecutionId: opts.parentExecutionId,
+        compositionChain: opts.compositionChain,
+        expectedOutputShapes: opts.expectedOutputShapes,
+        surface: opts.surface,
+      });
+      if (walk.attempts > 0) return walk;
+      console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
+    } catch (e) {
+      console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`);
+    }
+  }
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget;
