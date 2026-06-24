@@ -515,16 +515,16 @@ const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://1
 // STATE, emergently). On not-reached we downgrade status to failed and β-penalise
 // the selected template so Thompson stops reinforcing hollow completions.
 interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; }
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string): Promise<GoalReachVerdict | null> {
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string): Promise<GoalReachVerdict | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
   const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
 
 GOAL: ${goal}
 
 Produced output impulse shapes: ${JSON.stringify(producedShapes)}
-Task summary: ${taskSummary}
+Task summary: ${taskSummary}${contentDigest ? `\n\nProduced output CONTENT (truncated — judge reach from the ACTUAL content, not just shape names):\n${contentDigest}` : ""}
 
-Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
+Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. A shape name alone is NOT evidence — when content is shown, require that the content substantively satisfies the goal (e.g. a problem_detection shape with actual problems + line numbers, not an empty list). Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
 
 Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
   try {
@@ -832,7 +832,11 @@ async function runGoalAsPoolWalk(
   // the UPSTREAM activity's output content. This is what turns activities from
   // environmentally-grounded SOURCES into genuine LINKS (B consumes A's output).
   const poolVars = (): Record<string, unknown> => {
-    const v: Record<string, unknown> = { ...opts.variables };
+    // Seed the goal TEXT as the default `{{goal}}` (2026-06-24). The goal impulse's
+    // content is an object ({ goal }), so without this default `{{goal}}` interpolated
+    // to a stringified object — breaking tasks that bind from the goal text (e.g.
+    // author_producer's goal_file_extract entry step). Explicit opts.variables win.
+    const v: Record<string, unknown> = { goal, ...opts.variables };
     for (const imp of poolImpulses) {
       const sh = (imp.metadata as { shape?: string } | undefined)?.shape;
       if (sh && !(sh in v)) v[sh] = imp.content;
@@ -1261,8 +1265,22 @@ async function runGoalAsPoolWalk(
 
   if (lastTrace && chain.length > 0) {
     const chainSummary = `walk(${chain.length} steps): ${chain.map(normActivityId).join(" → ")}`;
+    // Content digest: let the reach-gate judge from ACTUAL produced content, not
+    // just shape names (2026-06-24). Without this a genuine content-bearing output
+    // (e.g. problem_detection with real problems) is indistinguishable from a hollow
+    // shape-emitter, so the LLM verifier rejects genuine work non-deterministically.
+    const contentDigest = poolImpulses
+      .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
+      .map((imp) => {
+        const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
+        let c: string;
+        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        return `- ${s}: ${c.slice(0, 600)}`;
+      })
+      .join("\n")
+      .slice(0, 4000);
     try {
-      const verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary);
+      const verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict?.reached !== false;
       if (verdict && verdict.reached === false) {
