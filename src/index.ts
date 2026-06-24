@@ -963,11 +963,37 @@ async function runGoalAsPoolWalk(
       const live = await liveShapes();
       const X = missingTargets.find((s) => live.has(s) && !minted.has(s));
       if (X) {
-        const variantId = await mintResolverWrapper(X);
-        if (variantId) {
-          minted.add(X);
-          console.log(`[goal-host-vessel] walk(${opts.surface}): MINTED producer for "${X}" → ${variantId} (improvise/Reserve-Improvisation; no existing producer)`);
-          pick = { id: variantId, inputShapes: [], outputShapes: [X] };
+        minted.add(X);
+        // BRIDGE-AUTHOR: author a GENUINELY-PRODUCING invocation of X's resolver
+        // (author→validate→refine via the resolver's own errors), returning a
+        // validated producer + the input shapes it needs.
+        let authored: { id: string; inputShapes: string[] } | null = null;
+        try {
+          const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape: X, goal, available_shapes: [...producedShapes], max_attempts: 3 } } }),
+            signal: AbortSignal.timeout(180_000),
+          });
+          if (r.ok) {
+            const j: any = await r.json();
+            const b = j?.body ?? j;
+            if (b?.minted_activity_id && b?.validated) {
+              authored = { id: String(b.minted_activity_id), inputShapes: Array.isArray(b.input_shapes) ? b.input_shapes.map(String) : [] };
+            }
+          }
+        } catch { /* author failed → falls through to escalate/stop */ }
+        if (authored) {
+          console.log(`[goal-host-vessel] walk(${opts.surface}): BRIDGE-AUTHORED validated producer for "${X}" → ${authored.id} (inputs=[${authored.inputShapes.join(",")}])`);
+          // Recurse: add the producer's missing inputs as sub-targets so the walk
+          // produces them FIRST — mint-as-you-go builds the chain backward from
+          // the goal toward what the pool already has.
+          for (const s of authored.inputShapes) if (!producedShapes.has(s)) target.add(s);
+          if (authored.inputShapes.every((s) => producedShapes.has(s))) {
+            pick = { id: authored.id, inputShapes: authored.inputShapes, outputShapes: [X] };
+          } else {
+            continue; // produce the sub-target inputs first; re-discover this producer when ready
+          }
         }
       }
     }
@@ -1443,6 +1469,11 @@ function registerBuiltinResolvers(): void {
 // and qualified forms but the bare name is the canonical identity).
 const registeredProxyShapes = new Set<string>();
 
+// shape -> {endpoint, resolvePath} captured at registration time from the vessel
+// registry (which carries endpoints), because the per-resolve vesselCapability
+// lookup returns a null endpoint. The discovery-proxy uses this map first.
+const shapeEndpointMap = new Map<string, { endpoint: string; resolvePath: string }>();
+
 /**
  * Interpolate {{var}} and {{a.b}} placeholders in a value. Mirrors the
  * semantics in resolvers/llm-prompt.ts (the engine's llm path interpolates,
@@ -1689,20 +1720,27 @@ function buildDiscoveryProxyResolver(shape: string) {
       const discTimer = setTimeout(() => discCtrl.abort(), 5_000);
       let endpoint = "";
       let resolvePath = "/resolve";
-      try {
-        const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
-          signal: discCtrl.signal,
-        });
-        const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-        const v = dj?.content?.vessels?.[0];
-        if (!v?.endpoint) throw new Error(`discovery: no vessel advertises ${shape}`);
-        endpoint = v.endpoint.replace(/\/+$/, "");
-        resolvePath = v.resolve_endpoint || "/resolve";
-      } finally {
+      const mapped = shapeEndpointMap.get(shape);
+      if (mapped?.endpoint) {
+        endpoint = mapped.endpoint;
+        resolvePath = mapped.resolvePath;
         clearTimeout(discTimer);
+      } else {
+        try {
+          const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+            signal: discCtrl.signal,
+          });
+          const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+          const v = dj?.content?.vessels?.[0];
+          if (!v?.endpoint) throw new Error(`discovery: no vessel advertises ${shape}`);
+          endpoint = v.endpoint.replace(/\/+$/, "");
+          resolvePath = v.resolve_endpoint || "/resolve";
+        } finally {
+          clearTimeout(discTimer);
+        }
       }
 
       // 2. POST to the producer vessel (wrapped impulse-contract form; obsidian
@@ -1767,25 +1805,41 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     } finally {
       clearTimeout(t);
     }
-    const j = await r.json() as { content?: { vessels?: Array<{ shapes?: string[] }> } };
+    const j = await r.json() as { content?: { vessels?: Array<{ shapes?: string[]; endpoint?: string; resolve_endpoint?: string }> } };
     const vessels = j?.content?.vessels ?? [];
-    const obs = new Set<string>();
+    // Register a discovery-routed proxy for EVERY cross-vessel shape (not just
+    // obsidian:) so the executor can dispatch any resolver the substrate
+    // advertises — analysis-vessel problem_detection, concept-db, etc. This is
+    // what lets a bridge-authored activity (auto-bridge-<X>) genuinely RUN: the
+    // proxy POSTs to the vessel's resolve_endpoint — the SAME path author_producer
+    // validates against, so execute-path matches validate-path. Capture each
+    // shape's endpoint HERE (the registry carries it; the per-resolve
+    // vesselCapability lookup returns null).
+    const all = new Set<string>();
     for (const v of vessels) {
+      const ep = typeof v.endpoint === "string" ? v.endpoint.replace(/\/+$/, "") : "";
+      const rp = v.resolve_endpoint || "/resolve";
       for (const s of (v.shapes ?? [])) {
-        if (typeof s === "string" && s.startsWith("obsidian:")) obs.add(s);
+        if (typeof s === "string" && s) {
+          all.add(s);
+          if (ep) shapeEndpointMap.set(s, { endpoint: ep, resolvePath: rp });
+        }
       }
     }
-    if (obs.size > 0) {
-      shapes = [...obs];
+    if (all.size > 0) {
+      shapes = [...all];
       discoveredProxyShapes = shapes;
-      console.log(`[goal-host-vessel] discovered obsidian capability surface from registry: ${shapes.length} shapes`);
+      console.log(`[goal-host-vessel] discovered cross-vessel capability surface from registry: ${shapes.length} shapes`);
     }
   } catch (err) {
-    console.warn(`[goal-host-vessel] obsidian shape discovery failed, using fallback (${DISCOVERY_PROXY_SHAPE_FALLBACK.length}): ${(err as Error).message}`);
+    console.warn(`[goal-host-vessel] cross-vessel shape discovery failed, using fallback (${DISCOVERY_PROXY_SHAPE_FALLBACK.length}): ${(err as Error).message}`);
   }
   const added: string[] = [];
   for (const shape of shapes) {
     if (registeredProxyShapes.has(shape)) continue;
+    // Only fill GENUINELY cross-vessel gaps — skip shapes goal-host already
+    // resolves locally (built-in or dev-vessel proxy) so we never shadow them.
+    try { if (host.runtime.resolvers.get(shape)) { registeredProxyShapes.add(shape); continue; } } catch { /* no get → proceed */ }
     const resolver = buildDiscoveryProxyResolver(shape);
     host.runtime.resolvers.register(resolver as unknown as Parameters<typeof host.runtime.resolvers.register>[0]);
     registeredProxyShapes.add(shape);
