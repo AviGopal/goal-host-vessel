@@ -926,6 +926,130 @@ async function runGoalAsPoolWalk(
     const bridgeableTarget = (c: WalkCandidate): boolean =>
       c.outputShapes.some((s) => missingTargetsB.includes(s) && liveSetB.has(s));
 
+    // (b.horizontal) HORIZONTAL COMPOSITION — OR-edge / parallel-and-join
+    // (SUBSTRATE_AS_MDP §7). The single-pick path below composes VERTICALLY: one
+    // producer per step, depth-first, which lands on hollow scaffolds when many
+    // activities shape-match the same missing target. When >=2 currently-EXECUTABLE
+    // genuine producers of the SAME missing shape T exist (an OR-edge), dispatch
+    // them ALL in parallel as siblings under the shared parent, join their
+    // GENUINELY-produced output shapes into the pool by shape-union, and let the
+    // genuine producer win (hollow ones fail tasks / get reach-gate-β-penalised).
+    // Bonus: √k posterior speedup + OR-edge discovery for the composition graph.
+    // CREDIT CAVEAT: sibling credit should AVERAGE not sum at the shared ancestor
+    // (γ^k·(1/k)Σr_i) so a k-wide bundle doesn't k-fold-inflate the parent's
+    // posterior — that is an activity-api propagateCreditAlongChain change and is
+    // OUT OF SCOPE here (this branch only fans out execution + joins by shape).
+    if (target.size > 0) {
+      const missing = [...target].filter((s) => !producedShapes.has(s));
+      const T = missing[0];
+      // The OR-edge = the PRODUCERS of T (forward discovery), unioned with any
+      // backward candidates that also produce T. Filter to currently-executable
+      // (inputs ⊆ pool), non-scaffold producers.
+      let orEdge: WalkCandidate[] = [];
+      if (T) {
+        let forward: WalkCandidate[] = [];
+        try {
+          const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ required_shapes: [T], mode: "forward", limit: 12 }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (r.ok) {
+            const j: any = await r.json();
+            const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
+            forward = (Array.isArray(rows) ? rows : []).map(readCandidateShapes).filter((c): c is WalkCandidate => c !== null);
+          }
+        } catch { /* discover failed */ }
+        const seen = new Set<string>();
+        orEdge = [...candidates, ...forward].filter((c) => {
+          const id = normActivityId(c.id);
+          if (seen.has(id) || exclude.has(id) || chain.includes(c.id)) return false;
+          seen.add(id);
+          return notScaffold(c) && c.outputShapes.includes(T) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
+        });
+      }
+      if (orEdge.length >= 2) {
+        const K = Math.min(orEdge.length, parseInt(process.env.GOAL_HOST_HORIZONTAL_K ?? "4", 10));
+        const bundle = orEdge.slice(0, K);
+        const bundleParentExecId = lastExecId;
+        // Fan out: run each producer of T as a sibling (SAME parent/chain). Per-branch
+        // try/catch so one failure (incl. unfetchable template) doesn't abort the bundle.
+        const branchResults = await Promise.all(
+          bundle.map(async (c): Promise<ExecutionTrace | null> => {
+            try {
+              const tmpl = await host.activityApi.getTemplate(c.id);
+              if (!tmpl) return null;
+              return await host.runTemplate(tmpl, opts.variables, {
+                impulses: poolImpulses,
+                parentExecutionId: bundleParentExecId,
+                compositionChain: chainExecIds,
+                variables: opts.variables,
+                tags: opts.tags,
+                goalContext: { goal },
+              });
+            } catch (e) {
+              console.warn(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL branch ${c.id} threw: ${(e as Error).message}`);
+              return null;
+            }
+          }),
+        );
+        // JOIN by shape-union: pull genuinely-produced shapes from SUCCESSFUL tasks
+        // of every successful branch into the pool. Record every executed branch.
+        const beforeBundle = producedShapes.size;
+        let producedCount = 0;
+        let bestTrace: ExecutionTrace | null = null;
+        let bestExecId: string | undefined;
+        let bestPickId: string | undefined;
+        for (let i = 0; i < bundle.length; i++) {
+          const c = bundle[i];
+          const t = branchResults[i];
+          chain.push(c.id);
+          exclude.add(normActivityId(c.id));
+          if (!t) continue;
+          if (t.id) chainExecIds.push(t.id);
+          totalDurationMs += t.durationMs ?? 0;
+          totalCostUsd += t.costUsd ?? 0;
+          const branchShapes = [...new Set(
+            (t.tasks ?? [])
+              .filter((tk) => (tk as { success?: boolean }).success !== false)
+              .flatMap((tk) => tk.outputShapes ?? []),
+          )].filter((s) => s && s !== "activityExecutionSummary");
+          let branchProducedNew = false;
+          let branchProducedT = false;
+          for (const s of branchShapes) {
+            if (!producedShapes.has(s)) branchProducedNew = true;
+            if (s === T) branchProducedT = true;
+            addToPool(s, { producedBy: c.id, executionId: t.id }, `produced by ${c.id} (horizontal)`);
+          }
+          if (branchProducedNew) producedCount++;
+          // The genuine producer of T wins as the step's representative trace.
+          if (t.status !== "failed" && (bestTrace === null || branchProducedT)) {
+            bestTrace = t;
+            bestExecId = t.id;
+            bestPickId = c.id;
+          }
+        }
+        if (bestTrace) {
+          lastTrace = bestTrace;
+          lastExecId = bestExecId;
+          if (bestPickId) lastPick = bestPickId;
+        }
+        console.log(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL bundle for "${T}" — ran ${K} producers in parallel, ${producedCount} produced new shapes (OR-edge discovery)`);
+        const progressed = producedShapes.size > beforeBundle;
+        if (!progressed) {
+          consecutiveNoProgress++;
+          if (consecutiveNoProgress >= 2) {
+            console.log(`[goal-host-vessel] walk(${opts.surface}): 2 consecutive no-progress steps — stopping`);
+            break;
+          }
+        } else {
+          consecutiveNoProgress = 0;
+        }
+        continue; // the bundle WAS this step's progress; skip the single-pick path
+      }
+    }
+
     let pick: WalkCandidate | undefined;
     if (target.size > 0) {
       const feasibleProducer = (c: WalkCandidate): boolean =>
@@ -975,10 +1099,24 @@ async function runGoalAsPoolWalk(
               // Drop hollow scaffolds for bridge-authorable targets so the walk
               // bridge-authors a genuine producer instead of reusing a scaffold.
               .filter((c) => !(isHollowScaffold(c.id) && bridgeableTarget(c)));
-            // Prefer a GENUINE producer whose inputs are already satisfied.
+            // Prefer a GENUINE producer whose inputs are already satisfied (executable now).
             pick = producers.find((c) => !isHollowScaffold(c.id) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s))))
-              ?? producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)))
-              ?? producers[0];
+              ?? producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
+            // BACKWARD-CHAIN RECURSION: no executable producer, but a producer with
+            // UNSATISFIED inputs exists → produce its inputs first (add as sub-
+            // targets), don't execute it prematurely. This turns the goal target
+            // into a backward-built chain of producers (link_b←link_a, etc.).
+            if (!pick) {
+              const needsInputs = producers.find((c) => c.inputShapes.length > 0);
+              if (needsInputs) {
+                let added = false;
+                for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
+                if (added) {
+                  console.log(`[goal-host-vessel] walk(${opts.surface}): backward-chain — ${normActivityId(needsInputs.id)} needs [${needsInputs.inputShapes.join(",")}]; producing inputs first`);
+                  continue;
+                }
+              }
+            }
           }
         } catch { /* discover failed */ }
       }
