@@ -708,6 +708,57 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   return { id, inputShapes, outputShapes };
 }
 
+// MINT-AS-YOU-GO (the "Reserve Improvisation" slot at the WALK step level,
+// 2026-06-24). When the shape-graph walk needs a target shape that NO existing
+// activity produces (discover-by-shapes found no producer), but the substrate
+// HAS a live resolver for that shape (advertised by discovery at /registry/shapes),
+// mint a thin wrapper activity whose single task invokes that resolver. This
+// wraps the substrate's orphaned resolvers (live resolver shapes that no activity
+// invokes) on demand, so the walk can genuinely produce the shape and continue
+// instead of stopping at a phantom capability gap.
+//
+// Reuse-Before-Mint is already satisfied at the call site: we only reach the mint
+// after the backward-chain discover found no producer.
+async function mintResolverWrapper(shape: string): Promise<string | null> {
+  const template = {
+    id: `auto-mint-${shape}`,
+    name: `auto-mint:${shape}`,
+    description: `Auto-minted wrapper around the ${shape} resolver (Reserve-Improvisation): no existing activity produced this shape, so the walk wraps the live resolver on demand.`,
+    input_shapes: [] as string[],
+    inputShapes: [] as string[],
+    output_shapes: [shape],
+    outputShapes: [shape],
+    tags: ["auto_minted", "improvise", "horizon:walk"],
+    variables: [] as unknown[],
+    tasks: [
+      {
+        id: "produce",
+        description: `invoke ${shape} resolver`,
+        resolver: shape,
+        config: { type: shape },
+        output_shapes: [shape],
+        outputShapes: [shape],
+      },
+    ],
+    proposed: false,
+    org_id: "organizations:substrate",
+  };
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "activity_create_variant", pointer: { type: "activity_create_variant", template } } }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const variantId = j?.body?.variantId ?? j?.variantId ?? null;
+    return typeof variantId === "string" && variantId ? variantId : null;
+  } catch {
+    return null;
+  }
+}
+
 // Shape-graph WALK (2026-06-23). The DEFAULT goal-execution strategy: instead of
 // picking ONE whole template by goal-text and treating its status as "reached",
 // walk the shape graph across MULTIPLE activities — at each step pick an activity
@@ -734,6 +785,29 @@ async function runGoalAsPoolWalk(
   },
 ): Promise<GoalSeekResult> {
   const MAX_STEPS = parseInt(process.env.GOAL_HOST_WALK_MAX_STEPS ?? "40", 10);
+
+  // Live resolver shapes advertised by discovery — a shape present here is
+  // RESOLVABLE (some vessel resolves it), so a wrapper activity invoking it as a
+  // resolver genuinely produces the impulse. Lazily fetched once and cached;
+  // tolerant of failure (empty Set ⇒ never mint, fall through to escalate).
+  let liveResolverShapes: Set<string> | null = null;
+  const liveShapes = async (): Promise<Set<string>> => {
+    if (liveResolverShapes) return liveResolverShapes;
+    try {
+      const r = await fetch("http://127.0.0.1:8100/registry/shapes", { signal: AbortSignal.timeout(10_000) });
+      if (r.ok) {
+        const j: any = await r.json();
+        const shapes = Array.isArray(j?.shapes) ? j.shapes.map((s: unknown) => String(s)).filter(Boolean) : [];
+        liveResolverShapes = new Set<string>(shapes);
+      } else {
+        liveResolverShapes = new Set<string>();
+      }
+    } catch {
+      liveResolverShapes = new Set<string>();
+    }
+    return liveResolverShapes;
+  };
+  const minted = new Set<string>(); // shapes we've already minted a producer for this walk
 
   // ── 1. Seed the POOL ───────────────────────────────────────────────────────
   // producedShapes is the set of shapes currently available to consume; poolImpulses
@@ -828,19 +902,31 @@ async function runGoalAsPoolWalk(
       } catch { /* recommend failed too */ }
     }
 
-    // (b) SELECT BEST — prefer a genuine consumer of the pool that makes forward progress.
+    // (b) SELECT BEST — goal-gap weighted. With a target, prefer candidates that
+    // advance TOWARD it; do NOT grab unrelated progress-makers (that wanders into
+    // junk and starves the backward-chain/mint path). Without a target, walk
+    // opportunistically (any forward progress).
+    const missingTargetsB = [...target].filter((s) => !producedShapes.has(s));
     const makesProgress = (c: WalkCandidate): boolean =>
       c.outputShapes.some((s) => s !== "activityExecutionSummary" && !producedShapes.has(s));
+    const advancesTarget = (c: WalkCandidate): boolean =>
+      c.outputShapes.some((s) => missingTargetsB.includes(s));
     const inputsSatisfied = (c: WalkCandidate): boolean =>
       c.inputShapes.length > 0 && c.inputShapes.every((s) => producedShapes.has(s));
     const notScaffold = (c: WalkCandidate): boolean =>
       !(c.outputShapes.length === 1 && c.outputShapes[0] === "activityExecutionSummary");
 
-    let pick: WalkCandidate | undefined = candidates.find(
-      (c) => notScaffold(c) && inputsSatisfied(c) && makesProgress(c),
-    );
-    // Fallback within recommend: first candidate that at least makes forward progress.
-    if (!pick) pick = candidates.find((c) => notScaffold(c) && makesProgress(c));
+    let pick: WalkCandidate | undefined;
+    if (target.size > 0) {
+      // Goal-directed: only step onto a candidate that produces a missing target
+      // shape. If none does, fall through to backward-chain / mint-as-you-go.
+      pick = candidates.find((c) => notScaffold(c) && inputsSatisfied(c) && advancesTarget(c))
+        ?? candidates.find((c) => notScaffold(c) && advancesTarget(c));
+    } else {
+      // Opportunistic: any genuine forward progress.
+      pick = candidates.find((c) => notScaffold(c) && inputsSatisfied(c) && makesProgress(c))
+        ?? candidates.find((c) => notScaffold(c) && makesProgress(c));
+    }
 
     // (c) BACKWARD-CHAIN — find a producer of a missing target shape.
     if (!pick) {
@@ -864,6 +950,25 @@ async function runGoalAsPoolWalk(
               ?? producers[0];
           }
         } catch { /* discover failed */ }
+      }
+    }
+
+    // (c.2) MINT-AS-YOU-GO — Reserve Improvisation. Backward-chain found no
+    //       producer for a missing target shape. If the substrate has a LIVE
+    //       resolver for that shape, mint a thin wrapper activity around it so
+    //       the walk can genuinely produce the shape this iteration. Only true
+    //       capability gaps (no live resolver) fall through to escalate/stop.
+    if (!pick && target.size > 0) {
+      const missingTargets = [...target].filter((s) => !producedShapes.has(s));
+      const live = await liveShapes();
+      const X = missingTargets.find((s) => live.has(s) && !minted.has(s));
+      if (X) {
+        const variantId = await mintResolverWrapper(X);
+        if (variantId) {
+          minted.add(X);
+          console.log(`[goal-host-vessel] walk(${opts.surface}): MINTED producer for "${X}" → ${variantId} (improvise/Reserve-Improvisation; no existing producer)`);
+          pick = { id: variantId, inputShapes: [], outputShapes: [X] };
+        }
       }
     }
 
