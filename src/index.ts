@@ -1234,13 +1234,33 @@ async function runGoalAsPoolWalk(
     // output shapes from SUCCESSFUL tasks of this execution. No optimistic
     // declared-shape advancement: a composition step counts only if the data was
     // really produced, so the reach-gate judges genuine artifacts, not promises.
-    const newShapes = [...new Set(
-      (trace.tasks ?? [])
-        .filter((t) => (t as { success?: boolean }).success !== false)
-        .flatMap((t) => t.outputShapes ?? []),
-    )];
-    for (const s of newShapes) {
-      if (s && s !== "activityExecutionSummary") addToPool(s, { producedBy: pick.id, executionId: trace.id }, `produced by ${pick.id}`);
+    // Bind REAL produced content into the pool — not a metadata stub. A walk
+    // step's output impulses survive in the shared ImpulseStore (declared
+    // outputs are kept across nested executions, read via runtime.store.get),
+    // so the genuine artifact (e.g. problem_detection's actual problems) flows
+    // into the NEXT step's `{{shape}}` binding instead of `{producedBy,
+    // executionId}`. Without this, every cross-vessel chain is judged HOLLOW
+    // because the consumer only ever sees the producer's metadata, not its data.
+    const store = (host as { runtime?: { store?: { get(id: string): { content?: unknown; metadata?: { shape?: string } } | undefined } } }).runtime?.store;
+    for (const t of (trace.tasks ?? [])) {
+      if ((t as { success?: boolean }).success === false) continue;
+      const outIds = (t as { outputImpulseIds?: string[] }).outputImpulseIds ?? [];
+      // Prefer real content keyed by the impulse's ACTUAL shape.
+      for (const id of outIds) {
+        const imp = store?.get(id);
+        if (!imp) continue;
+        const shape = imp.metadata?.shape;
+        if (!shape || shape === "activityExecutionSummary") continue;
+        if (imp.content === undefined || imp.content === null) continue;
+        addToPool(shape, imp.content, `produced by ${pick.id}`);
+      }
+      // Fallback: declared output shapes whose content we could not recover
+      // still advance reachability (keep the walk progressing) as a stub.
+      for (const s of (t.outputShapes ?? [])) {
+        if (s && s !== "activityExecutionSummary" && !producedShapes.has(s)) {
+          addToPool(s, { producedBy: pick.id, executionId: trace.id }, `produced by ${pick.id} (stub)`);
+        }
+      }
     }
     chain.push(pick.id);
     exclude.add(normActivityId(pick.id));
@@ -1269,7 +1289,10 @@ async function runGoalAsPoolWalk(
     // just shape names (2026-06-24). Without this a genuine content-bearing output
     // (e.g. problem_detection with real problems) is indistinguishable from a hollow
     // shape-emitter, so the LLM verifier rejects genuine work non-deterministically.
-    const contentDigest = poolImpulses
+    // Prefer the emit-time captured digest of the LAST step's real outputs (the
+    // step that should have reached the goal); fall back to the running pool.
+    const capturedDigest = (lastExecId && reachContentDigests.get(lastExecId)) || "";
+    const contentDigest = capturedDigest || poolImpulses
       .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
       .map((imp) => {
         const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
@@ -1394,7 +1417,35 @@ async function runGoalWithRecovery(
       try {
         const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
         const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
-        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary);
+        // Content digest: judge reach from ACTUAL produced content, not just shape
+        // names. The trace's output impulses survive in the shared ImpulseStore
+        // until the next top-level runGoal clears it, so a genuine content-bearing
+        // single-template execution (e.g. analyze-source-to-concept, which really
+        // writes a concept) is no longer indistinguishable from a hollow shape-
+        // emitter. Mirrors the walk-path digest (2026-06-24). Degrades safely to
+        // no digest when the store is unavailable.
+        // Prefer the emit-time captured digest (real content, snapshotted before
+        // eviction); fall back to a post-hoc store read (works for nested execs).
+        const execId = (result.trace as { id?: string }).id;
+        let contentDigest = (execId && reachContentDigests.get(execId)) || "";
+        if (!contentDigest) {
+          const store = (host as { runtime?: { store?: { get(id: string): { content?: unknown; metadata?: { shape?: string } } | undefined } } }).runtime?.store;
+          const outImpulseIds = ((result.trace as { tasks?: Array<{ outputImpulseIds?: string[]; success?: boolean }> }).tasks ?? [])
+            .filter((t) => t.success !== false)
+            .flatMap((t) => t.outputImpulseIds ?? []);
+          contentDigest = outImpulseIds
+            .map((id) => store?.get(id))
+            .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp && imp.content !== undefined && imp.content !== null)
+            .map((imp) => {
+              const s = imp.metadata?.shape ?? "?";
+              let c: string;
+              try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+              return `- ${s}: ${c.slice(0, 600)}`;
+            })
+            .join("\n")
+            .slice(0, 4000);
+        }
+        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached !== false;
         if (verdict && verdict.reached === false) {
@@ -1513,13 +1564,62 @@ if (DISABLE_SUBSCRIBERS) {
   console.log("[startup] Lifecycle subscribers DISABLED via GOAL_HOST_DISABLE_SUBSCRIBERS=1 (iter-10 ablation)");
 }
 
+// Reach-gate content capture (2026-06-24). The engine evicts a top-level
+// execution's output impulses from the shared ImpulseStore *before*
+// runGoal/runTemplate returns (evictExecutionScope, isTopLevel), so the
+// reach-gate can't read produced content post-hoc — it would false-HOLLOW a
+// genuinely content-bearing single-template execution (e.g. analyze-source-to-
+// concept, which really writes a concept). But `lifecycle:execution:succeeded`
+// is emitted WHILE the store is still live (emit precedes eviction), carrying
+// executionId + outputImpulseIds. Snapshot the real content here, keyed by
+// executionId, so verifyGoalReached judges genuine artifacts. Best-effort and
+// bounded; degrades to the store/pool digest when absent.
+const reachContentDigests = new Map<string, string>();
+const REACH_DIGEST_CAP = 100;
+function captureReachDigest(event: unknown): void {
+  try {
+    const e = event as { type?: string; data?: Record<string, unknown> };
+    if (e?.type !== "lifecycle:execution:succeeded") return;
+    const data = e.data ?? {};
+    const execId = typeof data.executionId === "string" ? data.executionId : undefined;
+    const outIds = Array.isArray(data.outputImpulseIds) ? (data.outputImpulseIds as string[]) : [];
+    if (!execId || outIds.length === 0) return;
+    const store = (host as { runtime?: { store?: { get(id: string): { content?: unknown; metadata?: { shape?: string } } | undefined } } })?.runtime?.store;
+    if (!store) return;
+    const digest = outIds
+      .map((id) => store.get(id))
+      .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp && imp.content !== undefined && imp.content !== null)
+      .map((imp) => {
+        const s = imp.metadata?.shape ?? "?";
+        let c: string;
+        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        return `- ${s}: ${c.slice(0, 600)}`;
+      })
+      .join("\n")
+      .slice(0, 4000);
+    if (!digest) return;
+    if (reachContentDigests.size >= REACH_DIGEST_CAP) {
+      const first = reachContentDigests.keys().next().value;
+      if (first !== undefined) reachContentDigests.delete(first);
+    }
+    reachContentDigests.set(execId, digest);
+  } catch { /* capture is best-effort; never break the emit path */ }
+}
+class CapturingEventSink implements EventSink {
+  constructor(private readonly inner: EventSink) {}
+  emit(event: Parameters<EventSink["emit"]>[0]): void | Promise<void> {
+    captureReachDigest(event);
+    return this.inner.emit(event);
+  }
+}
+
 const host = new GoalHost({
   llm,
   activityApiEndpoint: ACTIVITY_API_ENDPOINT,
   apiKey: API_KEY,
   discoveryEndpoint: DISCOVERY_ENDPOINT,
   enableAgentFill: true,
-  eventSink: (useNoOpSink ? pureNoOpSink : boundedSink) as unknown as typeof busSink,
+  eventSink: (useNoOpSink ? pureNoOpSink : new CapturingEventSink(boundedSink)) as unknown as typeof busSink,
   ...(DISABLE_SUBSCRIBERS ? { subscriberTemplates: [] } : {}),
 });
 
