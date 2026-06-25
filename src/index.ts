@@ -879,6 +879,7 @@ async function runGoalAsPoolWalk(
   let totalDurationMs = 0;
   let totalCostUsd = 0;
   let consecutiveNoProgress = 0;
+  let earlyReachVerdict: GoalReachVerdict | null = null;
 
   // ── 2-3. Walk the shape graph ──────────────────────────────────────────────
   while (chain.length < MAX_STEPS && !targetMet()) {
@@ -1274,6 +1275,44 @@ async function runGoalAsPoolWalk(
       }
     } else {
       consecutiveNoProgress = 0;
+      // Incremental reach-check (2026-06-25): judge reach NOW, while the just-
+      // produced — and, for a sense-back bridge, freshly SENSED — evidence is at
+      // the front of the pool, and STOP before the walk wanders into no-progress
+      // steps whose errors (e.g. code-analysis ENOENT on a written note) pollute
+      // the pool and fool the end-of-walk gate into a false HOLLOW. Only runs on a
+      // step that produced something. Reaching goals stop early (cheaper); non-
+      // reaching goals pay one extra judge per progressed step.
+      // The pool holds provenance STUBS ({producedBy,executionId}) for a nested
+      // bridge's internal task outputs (the walk store can't recover them). The
+      // REAL content was snapshotted at emit time into reachContentDigests keyed
+      // by execId — fold the just-run step's captured digest in FIRST so the
+      // judge sees genuine artifacts (the written + sensed note), not stubs. (2026-06-25)
+      const interimCaptured = (lastExecId && reachContentDigests.get(lastExecId)) || "";
+      const interimPool = poolImpulses
+        .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
+        .map((imp) => {
+          const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
+          let c: string;
+          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+          return `- ${s}: ${c.slice(0, 1500)}`;
+        })
+        .join("\n");
+      const interimDigest = [interimCaptured, interimPool].filter(Boolean).join("\n").slice(0, 8000);
+      try {
+        const interim = await verifyGoalReached(
+          goal,
+          [...producedShapes],
+          `walk(${chain.length} steps): ${chain.map(normActivityId).join(" → ")}`,
+          interimDigest || undefined,
+        );
+        if (interim && interim.reached === true) {
+          earlyReachVerdict = interim;
+          console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED early at step ${chain.length} — stopping before pollution. completion_shapes=${JSON.stringify(interim.completion_shapes)}`);
+          break;
+        }
+      } catch (e) {
+        console.warn(`[goal-host-vessel] walk incremental reach-check error (non-fatal): ${(e as Error).message}`);
+      }
     }
   }
 
@@ -1292,18 +1331,34 @@ async function runGoalAsPoolWalk(
     // Prefer the emit-time captured digest of the LAST step's real outputs (the
     // step that should have reached the goal); fall back to the running pool.
     const capturedDigest = (lastExecId && reachContentDigests.get(lastExecId)) || "";
-    const contentDigest = capturedDigest || poolImpulses
+    // The walk frequently continues PAST the goal-reaching step into no-progress
+    // junk steps, so the LAST step's captured digest is NOT necessarily the
+    // goal-bearing one (e.g. a goal answered by code_quality at step 1, then the
+    // walk wanders into an inert problem_detection at step 4 whose empty output
+    // became the captured digest). Always fold in the FULL accumulated pool — all
+    // content-bearing shapes — so a goal-satisfying output produced at an earlier
+    // step is visible to the reach-gate, not just the terminal task's output. Pool
+    // content goes first so substantive earlier outputs survive the length cap.
+    // (2026-06-24)
+    const poolDigest = poolImpulses
       .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
       .map((imp) => {
         const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
         let c: string;
         try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
-        return `- ${s}: ${c.slice(0, 600)}`;
+        return `- ${s}: ${c.slice(0, 1500)}`;
       })
-      .join("\n")
-      .slice(0, 4000);
+      .join("\n");
+    // Caps sized so a real content-bearing output (e.g. a code_annotation list of
+    // functions+line-numbers, or code_quality metrics) survives intact for the LLM
+    // judge — the shape-name-era 600/4000 caps truncated list outputs mid-content,
+    // making the gate report "content not shown" on genuinely-reached goals.
+    const contentDigest = [poolDigest, capturedDigest].filter(Boolean).join("\n").slice(0, 8000);
     try {
-      const verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
+      // Honour an early reach verdict captured mid-walk (before pollution) instead
+      // of re-judging the now-polluted end-state pool. (2026-06-25)
+      const verdict = earlyReachVerdict
+        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict?.reached !== false;
       if (verdict && verdict.reached === false) {
@@ -2086,6 +2141,97 @@ function buildDiscoveryProxyResolver(shape: string) {
   };
 }
 
+/**
+ * Build-lint for auto-drafted templates. Verifies STRUCTURAL validity (every
+ * task.resolver is dispatchable through goal-host's proxy, and every
+ * {{impulse:<slot>}} consumer slot is backed by a producing task that declares it
+ * in outputImpulses) and auto-repairs the one mechanical defect the auto-draft
+ * path keeps making: raw `llm_completion` / `llmCompletion` (advertised but
+ * non-dispatchable — goal-host sends pointer.prompt, llm-resolver-vessel reads a
+ * body-level prompt) → the dispatch wrapper `llm_completion_dispatch`. Repair is
+ * persisted via activityTemplate_update (bare id + auditable evidence). This is
+ * validity only — it does NOT assert the template reaches the operator's goal.
+ */
+async function lintAndRepairAuthoredTemplate(
+  templateId: string,
+  dispatchId: string,
+  goalText: string,
+): Promise<{ repaired: string[]; invalidResolvers: string[]; unboundSlots: string[] }> {
+  const out = { repaired: [] as string[], invalidResolvers: [] as string[], unboundSlots: [] as string[] };
+  const RAW_LLM_ALIAS: Record<string, string> = { llm_completion: "llm_completion_dispatch", llmCompletion: "llm_completion_dispatch" };
+  // activityTemplate_update resolves the record by BARE id (no `activity:` / ⟨⟩ wrap).
+  const bareId = templateId.replace(/^activity:/, "").replace(/[⟨⟩]/g, "");
+  const apiKey = process.env.METABOB_API_KEY ?? "";
+  try {
+    const getRes = await fetch(
+      `${ACTIVITY_API_ENDPOINT}/v2/activities/templates?q=${encodeURIComponent(bareId)}&limit=10`,
+      { headers: { Authorization: `ApiKey ${apiKey}` } },
+    );
+    if (!getRes.ok) return out;
+    const lj = await getRes.json() as { templates?: Array<Record<string, unknown>> };
+    const tmpl = (lj.templates ?? []).find((t) => typeof t.id === "string" && (t.id as string).includes(bareId));
+    const tasks = Array.isArray(tmpl?.tasks) ? (tmpl!.tasks as Array<Record<string, unknown>>) : [];
+    if (tasks.length === 0) return out;
+
+    // Producer slots declared anywhere in the chain (task.outputImpulses).
+    const producerSlots = new Set<string>();
+    for (const t of tasks) {
+      const outs = Array.isArray(t.outputImpulses) ? t.outputImpulses : [];
+      for (const s of outs) if (typeof s === "string") producerSlots.add(s);
+    }
+    const isDispatchable = (id: string): boolean => {
+      if (id in RAW_LLM_ALIAS) return false;       // raw llm shapes: registered but envelope-incompatible
+      try { return !!host.runtime.resolvers.get(id); } catch { return false; }
+    };
+
+    let changed = false;
+    for (const t of tasks) {
+      const rid = typeof t.resolver === "string" ? t.resolver : "";
+      if (rid in RAW_LLM_ALIAS) {
+        t.resolver = RAW_LLM_ALIAS[rid];
+        out.repaired.push(`${String(t.id)}: ${rid}→${t.resolver}`);
+        changed = true;
+      } else if (rid && !isDispatchable(rid)) {
+        out.invalidResolvers.push(`${String(t.id)}:${rid}`);
+      }
+      const ins = Array.isArray(t.inputImpulses) ? t.inputImpulses : [];
+      for (const slot of ins) {
+        if (typeof slot === "string" && !producerSlots.has(slot)) out.unboundSlots.push(`${String(t.id)}:{{impulse:${slot}}}`);
+      }
+    }
+
+    if (changed) {
+      const body = JSON.stringify({ impulse: { type: "activityTemplate_update", pointer: {
+        type: "activityTemplate_update",
+        templateId: bareId,
+        updates: { tasks },
+        evidence: {
+          reason: `auto-draft build-lint repaired non-dispatchable resolver ids for goal "${goalText.slice(0, 80)}"`,
+          lint: "resolver_id_nondispatchable",
+          dispatchId,
+          repaired: out.repaired,
+        },
+      } } });
+      try {
+        const up = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `ApiKey ${apiKey}` },
+          body,
+        });
+        const ut = await up.text();
+        if (!up.ok || ut.includes('"success":false')) {
+          console.warn(`[goal-host-vessel] lint repair update did not persist: ${ut.slice(0, 160)}`);
+        }
+      } catch (e) {
+        console.warn(`[goal-host-vessel] lint repair update error:`, e instanceof Error ? e.message : e);
+      }
+    }
+  } catch (e) {
+    console.warn(`[goal-host-vessel] lintAndRepairAuthoredTemplate error:`, e instanceof Error ? e.message : e);
+  }
+  return out;
+}
+
 async function registerDiscoveryProxies(): Promise<string[]> {
   // Discover obsidian's FULL advertised capability surface from the vessel registry
   // so the substrate knows + can dispatch every shape obsidian actually offers
@@ -2576,6 +2722,20 @@ async function handleRunGoal(req: Request): Promise<Response> {
         Array.isArray(expectedOutputShapes) && expectedOutputShapes.length > 0
           ? expectedOutputShapes
           : [`autoDraftedOutput_${shortId}`];
+      // Resolver-dispatch contract for the auto-draft drafter. The remediation
+      // author (draft-activity-from-pattern, see topology_hint below) has always
+      // received this; the FIRST-attempt auto-draft path did not — so it authored
+      // tasks with raw, advertised-but-non-dispatchable resolver ids (e.g.
+      // `llm_completion`, which goal-host's proxy sends to llm-resolver-vessel as
+      // pointer.prompt while that vessel reads a body-level prompt → silent
+      // dispatch failure → HOLLOW). discoveredProxyShapes is the full registry
+      // surface; we EXCLUDE the raw llm shapes and steer all reasoning to the
+      // dispatch wrapper `llm_completion_dispatch` (which translates the envelope).
+      const NON_DISPATCHABLE_RAW = new Set(["llm_completion", "llmCompletion"]);
+      const dispatchableResolverIds = [...new Set([
+        ...discoveredProxyShapes.filter((s) => !NON_DISPATCHABLE_RAW.has(s)),
+        "llm_completion_dispatch",
+      ])];
       const scenario = {
         id: scenarioId,
         mode_class: "auto",
@@ -2588,6 +2748,15 @@ async function handleRunGoal(req: Request): Promise<Response> {
         expected_output_shapes: expectedOutputShapes ?? [],
         cited_concepts: ["concept_9ldsmRgqSTd5"],
         auto_draft_for_dispatch: dispatchId,
+        // RESOLVER DISPATCH CONTRACT — the drafter MUST honor this. A task whose
+        // resolver id is not in `use_only_these_resolver_ids` fails at dispatch.
+        resolver_contract: {
+          use_only_these_resolver_ids: dispatchableResolverIds,
+          reasoning_resolver: "llm_completion_dispatch",
+          forbidden_raw_aliases: { llm_completion: "llm_completion_dispatch", llmCompletion: "llm_completion_dispatch" },
+          slot_binding_rule: "To pass one task's output into a later task, the PRODUCER task must declare outputImpulses:[\"<slot>\"] and the CONSUMER task must declare inputImpulses:[\"<slot>\"] AND reference it in its config/prompt as {{impulse:<slot>}}. Every {{impulse:<slot>}} you write MUST have a producing task that declares that exact slot in outputImpulses, or it will not bind.",
+          note: "Every task.resolver MUST be one of use_only_these_resolver_ids. For ANY LLM reasoning/synthesis use llm_completion_dispatch (NEVER raw llm_completion / llmCompletion). Put each resolver's inputs in task.config — those keys become the pointer fields POSTed to the owning vessel.",
+        },
         expected_emergence: {
           class: "new",
           activity_signature: {
@@ -2648,7 +2817,19 @@ async function handleRunGoal(req: Request): Promise<Response> {
             );
             if (authored?.id) {
               authoredTemplateId = authored.id;
-              console.log(`[goal-host-vessel] auto-draft: authored ${authored.id}; promoting + overriding targetTemplateId`);
+              // BUILD LINT — verify the freshly-authored template is THEORETICALLY
+              // VALID (dispatchable resolver ids + coherent {{impulse:slot}}
+              // mappings) before promoting it, and auto-repair the known raw-llm
+              // alias in place. This is structural validity only — it does NOT
+              // assert the activity will reach the operator's goal. The auto-draft
+              // path used to promote non-dispatchable chains that then silently
+              // produced HOLLOW results; the lint makes the defect visible + fixes
+              // the one mechanical case (llm_completion → llm_completion_dispatch).
+              const lint = await lintAndRepairAuthoredTemplate(authored.id, dispatchId, goal as string);
+              if (lint.invalidResolvers.length > 0 || lint.unboundSlots.length > 0) {
+                console.warn(`[goal-host-vessel] auto-draft LINT flagged ${authored.id}: invalidResolvers=[${lint.invalidResolvers.join(", ")}] unboundSlots=[${lint.unboundSlots.join(", ")}]`);
+              }
+              console.log(`[goal-host-vessel] auto-draft: authored ${authored.id}; promoting + overriding targetTemplateId (lint: repaired=${lint.repaired.length}, invalid=${lint.invalidResolvers.length}, unboundSlots=${lint.unboundSlots.length})`);
               await fetch(
                 `${ACTIVITY_API_ENDPOINT}/v2/activities/templates/${encodeURIComponent(authored.id)}/promote`,
                 {
