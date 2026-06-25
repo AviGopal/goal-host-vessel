@@ -540,6 +540,40 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
     return m ? (JSON.parse(m[0]) as GoalReachVerdict) : null;
   } catch { return null; }
 }
+// Leaf→authoring escalation (2026-06-25, operator-approved "scope-narrowed +
+// verified"). When the walk hits a genuine CAPABILITY gap — a target shape with
+// no producer AND no live resolver to bridge — it used to just stop. Instead we
+// FILE a scope-narrowed substrateGap so the existing gap_to_feature →
+// feature_compose → mitosis-cutover pipeline AUTHORS the missing producer, and a
+// re-dispatch then reaches the goal. This is what makes capability EXPAND on goal
+// DEMAND rather than by operator hand-authoring (reuse-before-mint still fires
+// first: author_producer wraps any LIVE resolver; this only fires for a true code
+// gap). Scope narrowing is the safety guard the operator chose: the authored
+// producer must emit ONLY the missing shape X — by construction X is a
+// backward-chained dependency of the goal's targets, so [X] ⊆ goal targets
+// trivially. Verification (feature_compose typecheck+rollback, mitosis
+// evidence/freshness gate, self-recovery immune system) is the real safety, not
+// fencing authoring off the goal surface. The gap id is STABLE per missing shape
+// so re-emissions upsert one row (dedup), never flood. feature_compose stays
+// @shape-dispatch:private — the ONLY goal-reachable authoring path is this gap.
+async function fileCapabilityGap(missingShape: string, goal: string, goalTargets: string[]): Promise<string | null> {
+  const slug = missingShape.replace(/[^a-zA-Z0-9]+/g, "-").replace(/(^-+|-+$)/g, "").toLowerCase().slice(0, 48) || "shape";
+  const id = `capability-gap-${slug}`;
+  const summary = `Capability gap: the goal-walk needs a producer for shape "${missingShape}" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape "${missingShape}" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck.`;
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
+        id, category: "other", source: "substrate_detected", status: "open", summary,
+        detected_at: new Date().toISOString(),
+        classification_metadata: { kind: "capability_gap", missing_shape: missingShape, allowed_output_shapes: [missingShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true },
+      } } } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    return r.ok ? id : null;
+  } catch { return null; }
+}
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -1186,7 +1220,18 @@ async function runGoalAsPoolWalk(
     }
 
     if (!pick) {
-      console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${[...target].filter((s) => !producedShapes.has(s)).length}) — escalating (stop)`);
+      // LEAF→AUTHORING ESCALATION: a target shape has no producer and no live
+      // resolver to bridge (true capability gap). File a scope-narrowed
+      // substrateGap so the gap_to_feature → feature_compose → mitosis pipeline
+      // authors the missing producer; a re-dispatch then reaches the goal.
+      const missingNow = [...target].filter((s) => !producedShapes.has(s));
+      let filedGap: string | null = null;
+      if (missingNow.length > 0) {
+        const liveNow = await liveShapes();
+        const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
+        if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
+      }
+      console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
       break;
     }
 
@@ -1366,6 +1411,24 @@ async function runGoalAsPoolWalk(
         goalReachReason = verdict.reason;
         await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached");
         console.log(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
+        // shapes the goal needed but the walk could not produce. If any such
+        // shape has NO live resolver (a true CAPABILITY gap — not a selection
+        // miss a resolver could have served), file a scope-narrowed substrateGap
+        // so gap_to_feature → feature_compose → mitosis authors the missing
+        // producer; a re-dispatch then reaches the goal. This is the mechanism by
+        // which capability EXPANDS on goal demand. (2026-06-25)
+        try {
+          const needed = [...new Set([...(verdict.missing ?? []), ...((verdict.completion_shapes ?? []).filter((s) => !producedShapes.has(s)))])].map(String).filter(Boolean);
+          if (needed.length > 0) {
+            const live = await liveShapes();
+            const codeGap = needed.find((s) => !live.has(s));
+            if (codeGap) {
+              const gapId = await fileCapabilityGap(codeGap, goal, needed);
+              if (gapId) console.log(`[goal-host-vessel] walk(${opts.surface}): filed capability gap '${gapId}' for missing shape "${codeGap}" (no live resolver) — authoring escalation`);
+            }
+          }
+        } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
         console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         void mintReachedTrace(lastTrace as any);
