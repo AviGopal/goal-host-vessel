@@ -612,6 +612,39 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     return r.ok ? id : null;
   } catch { return null; }
 }
+// Author a VALIDATED producer of `shape` by wrapping its live resolver (the
+// author_producer author→validate-against-resolver→refine loop on dev-vessel).
+// Returns the minted activity id (immediately Thompson-selectable) or null. This is
+// the recovery-path twin of the walk's mint-as-you-go (≈index 1262): when the reach
+// residual won't close with existing activities but a LIVE resolver produces the
+// missing shape, author the wrapper NOW and retry targeting it — "write
+// authored-durable, then reach".
+async function authorProducer(shape: string, goal: string, availableShapes: string[]): Promise<string | null> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape, goal, available_shapes: availableShapes, max_attempts: 3 } } }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const b = j?.body ?? j;
+    return (b?.minted_activity_id && b?.validated) ? String(b.minted_activity_id) : null;
+  } catch { return null; }
+}
+// Module-level live-resolver-shape probe (discovery /registry/shapes), cached. A
+// shape present here is RESOLVABLE, so a wrapper activity invoking its resolver
+// genuinely produces it (author_producer's case) vs a true code gap (fileCapabilityGap).
+let _liveShapesCache: Set<string> | null = null;
+async function getLiveShapes(): Promise<Set<string>> {
+  if (_liveShapesCache) return _liveShapesCache;
+  try {
+    const r = await fetch("http://127.0.0.1:8100/registry/shapes", { signal: AbortSignal.timeout(10_000) });
+    _liveShapesCache = r.ok ? new Set<string>((((await r.json()) as { shapes?: unknown[] })?.shapes ?? []).map((s) => String(s)).filter(Boolean)) : new Set<string>();
+  } catch { _liveShapesCache = new Set<string>(); }
+  return _liveShapesCache;
+}
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -1608,7 +1641,8 @@ async function runGoalWithRecovery(
       console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`);
     }
   }
-  const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
+  let maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
+  let authoringTried = false;  // one-shot recovery→authoring escalation per run (no loops)
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget;
   if (!nextTarget && goal) {
@@ -1771,29 +1805,56 @@ async function runGoalWithRecovery(
     // reachFeedback), not just on the produced output shapes.
     seekPool.add("reachFeedback");
     console.log(`[goal-host-vessel] ${opts.surface}: seeded reachFeedback impulse → next attempt's pool + signature (missing=[${missing.join(", ")}], reason="${(goalReachReason ?? "").slice(0, 80)}")`);
-    // Progress guard: if the residual hasn't shrunk for NO_PROGRESS_LIMIT attempts,
-    // no existing approach is converging — stop and flag for authoring escalation
-    // rather than thrash the budget.
-    if (noProgressStreak >= NO_PROGRESS_LIMIT) {
-      console.log(`[goal-host-vessel] ${opts.surface}: reach-residual not shrinking for ${noProgressStreak} attempts (missing=[${missing.join(", ")}], produced=[${[...producedSoFar].join(", ")}]) — no existing approach converging; stopping recovery (authoring-escalation candidate). attempts=${attempt}`);
+    // Choose the next approach from EXISTING activities first: a steered retry of the
+    // same on-track approach (quality gap), else a genuinely different one.
+    let nextApproach: string | undefined;
+    let retrySame = false;
+    if (onTrack && selId && !retriedSame.has(selId)) {
+      retriedSame.add(selId); retrySame = true; nextApproach = selId;
+    } else {
+      if (selId) excluded.push(selId);
+      nextApproach = (await recommendExcluding(goal, excluded, [...seekPool])) ?? undefined;
+    }
+    // STUCK with existing activities — the reach-residual stalled (NO_PROGRESS_LIMIT)
+    // OR no fresh approach remains. Either way "no existing approach converges" →
+    // AUTHORING ESCALATION (mechanism c): author the missing producer rather than
+    // exhaust. Once per run (authoringTried), never from an authoring run (recursion
+    // guard). Mirror the walk:
+    //   • missing shape WITH a live resolver → author_producer mints a validated
+    //     wrapper NOW (immediately selectable); retry THIS run targeting it (author →
+    //     reach in ≤1 more try). The reached trace is what the ribosome mints into
+    //     learned-durable; the auto-bridge is reusable for later goals.
+    //   • missing shape with NO live resolver → fileCapabilityGap (async TS pipeline);
+    //     a later re-dispatch reaches once feature_compose lands the resolver.
+    const stuck = noProgressStreak >= NO_PROGRESS_LIMIT || !nextApproach;
+    if (stuck) {
+      const isAuthoringRun = (opts.tags ?? []).some((t) => t === "authoring-escalation");
+      if (goal && missing.length > 0 && !authoringTried && !isAuthoringRun) {
+        authoringTried = true;
+        const live = await getLiveShapes();
+        const wrapShape = missing.find((s) => live.has(s));
+        if (wrapShape) {
+          const authoredId = await authorProducer(wrapShape, goal, [...producedSoFar]);
+          if (authoredId) {
+            console.log(`[goal-host-vessel] ${opts.surface}: AUTHORED producer ${authoredId} for missing "${wrapShape}" — retrying goal targeting it (authored-durable → reach). attempts=${attempt}`);
+            nextTarget = authoredId; excluded.length = 0;
+            if (attempt >= maxAttempts) maxAttempts = attempt + 1;  // grant one attempt for the authored producer
+            continue;  // retry THIS run with the authored producer
+          }
+          console.log(`[goal-host-vessel] ${opts.surface}: author_producer could not mint a validated producer for "${wrapShape}". attempts=${attempt}`);
+        } else {
+          const codeGap = missing.find((s) => !live.has(s));
+          const gapId = codeGap ? await fileCapabilityGap(codeGap, goal, missing) : null;
+          console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — ${gapId ? `filed capability gap '${gapId}' (async authoring); re-dispatch reaches once authored` : "no live-resolver-bridgeable missing shape"}. attempts=${attempt}`);
+        }
+      }
+      console.log(`[goal-host-vessel] ${opts.surface}: recovery stuck after ${attempt} attempts (missing=[${missing.join(", ")}], produced=[${[...producedSoFar].join(", ")}]) — honest stop.`);
       break;
     }
-    if (attempt < maxAttempts) {
-      // Quality gap (on-track but hollow): give the SAME approach ONE steered retry —
-      // the augmented goal may let it correct content. Otherwise (wrong approach, or
-      // already retried) exclude it and alter to a genuinely different approach.
-      if (onTrack && selId && !retriedSame.has(selId)) {
-        retriedSame.add(selId);
-        console.log(`[goal-host-vessel] ${opts.surface}: attempt ${attempt} on-track (produced a completion shape) but hollow — steered retry of ${selId} (missing=[${missing.join(", ")}])`);
-        // keep nextTarget = selId
-      } else {
-        if (selId) excluded.push(selId);
-        const alt = await recommendExcluding(goal, excluded, [...seekPool]);
-        if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
-        nextTarget = alt;
-        console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length}, missing=[${missing.join(", ")}])`);
-      }
-    }
+    // Not stuck — proceed with the chosen existing approach next iteration.
+    nextTarget = nextApproach;
+    if (retrySame) console.log(`[goal-host-vessel] ${opts.surface}: attempt ${attempt} on-track but hollow — steered retry of ${selId} (missing=[${missing.join(", ")}])`);
+    else console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${nextApproach} (attempt ${attempt + 1}, excluded ${excluded.length}, missing=[${missing.join(", ")}])`);
   }
   return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
 }
