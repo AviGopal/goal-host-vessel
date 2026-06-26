@@ -629,21 +629,40 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
 // genuine goal achievement, not hollow completion.
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
-  try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({
-        goal_text: goalText,
-        goal_category: "meta",
-        path_activities: pathActivities,
-        success: reached,
-        duration_ms: Math.round(durationMs) || 0,
-        cost_usd: costUsd || 0,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch { /* non-fatal */ }
+  // OBSERVABLE + ROBUST (2026-06-26). Previously this was a bare fire-and-forget
+  // with a silent `catch{}`: under DB contention (goal-paths inserts are 500-prone)
+  // the POST could be dropped with no trace. Crucially, REACH writes (success=true)
+  // being lost while failure writes land means `recommendReachingPath` finds no
+  // reaching path to reuse — the reuse loop never closes. So: log the outcome, and
+  // RETRY ONCE on a non-2xx/transport error (reach writes are the load-bearing ones).
+  const body = JSON.stringify({
+    goal_text: goalText,
+    goal_category: "meta",
+    path_activities: pathActivities,
+    success: reached,
+    duration_ms: Math.round(durationMs) || 0,
+    cost_usd: costUsd || 0,
+  });
+  const post = async (): Promise<{ ok: boolean; status: number; err?: string }> => {
+    try {
+      const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body,
+        signal: AbortSignal.timeout(15_000),
+      });
+      return { ok: r.ok, status: r.status };
+    } catch (e) {
+      return { ok: false, status: 0, err: (e as Error).message };
+    }
+  };
+  let res = await post();
+  if (!res.ok) res = await post(); // one retry — reach-path success must land
+  if (res.ok) {
+    console.log(`[goal-host-vessel] recordGoalPath: ${reached ? "REACH" : "miss"} recorded for path=${JSON.stringify(pathActivities)} (goal_hash=${goalHashOf(goalText)})`);
+  } else {
+    console.warn(`[goal-host-vessel] recordGoalPath: FAILED to record ${reached ? "REACH" : "miss"} (status=${res.status}${res.err ? `, ${res.err}` : ""}) for path=${JSON.stringify(pathActivities)} — per-goal learning/reuse will miss this`);
+  }
 }
 // Persist the reach-gate verdict back onto the already-stored trace row (keyed by
 // execution_id) so reach is observable per-trace and joinable to `signature` — the
