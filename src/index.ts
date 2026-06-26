@@ -645,6 +645,24 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
     });
   } catch { /* non-fatal */ }
 }
+// Persist the reach-gate verdict back onto the already-stored trace row (keyed by
+// execution_id) so reach is observable per-trace and joinable to `signature` — the
+// C6 selection-quality metric (per-signature reach-rate). The engine INSERTs the
+// trace BEFORE the gate runs (the gate is post-execution), so this is an UPDATE via
+// activity-api's /v2/execution-traces/reach. Closes the "status=completed ≠ goal
+// reached" hole at the trace level: status is exit-cleanliness, reached is goal
+// achievement. Non-fatal — a failed patch never blocks completion. (2026-06-26)
+async function persistReachOnTrace(executionId: string | undefined, reached: boolean, completionShapes: string[] | null): Promise<void> {
+  if (!executionId) return;
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ execution_id: executionId, reached, completion_shapes: completionShapes ?? [] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch { /* non-fatal */ }
+}
 // Consult per-goal learning before selection: if a prior attempt at THIS goal
 // reached it via a known path, prefer that path (improvement over subsequent
 // attempts). Returns a template id to target, or null to fall through to the
@@ -1452,6 +1470,8 @@ async function runGoalAsPoolWalk(
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict?.reached !== false;
+      // Land the reach verdict on the trace (joinable to `signature`).
+      void persistReachOnTrace((lastTrace as { id?: string } | undefined)?.id, reached, completionShapes);
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
@@ -1637,6 +1657,8 @@ async function runGoalWithRecovery(
         const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached !== false;
+        // Land the reach verdict on the trace (joinable to `signature`).
+        void persistReachOnTrace(execId, reached, completionShapes);
         if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
