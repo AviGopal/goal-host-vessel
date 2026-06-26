@@ -645,6 +645,72 @@ async function getLiveShapes(): Promise<Set<string>> {
   } catch { _liveShapesCache = new Set<string>(); }
   return _liveShapesCache;
 }
+// CONTENT-GAP repair (mechanism c, content branch). The activity produced the right
+// completion shape but the reach gate rejected the CONTENT — e.g. an http template that
+// hardcodes its URL and ignores the goal's, or analyze-source producing a problem-concept
+// not a file-purpose one. author_producer (shape-existence) can't fix this. Instead:
+// fetch the offending template, LLM-rewrite its tasks to BIND FROM THE GOAL (consume the
+// goal's specifics instead of hardcoding), and register a VARIANT with parentTemplateId set
+// — the sanctioned variant-first repair, exempt from reuse-before-mint. Returns the new
+// selectable variant id or null. No pre-mint validation here; the reach gate on the retry
+// is the backstop, and authoringTried bounds it to one shot.
+async function repairTemplateBinding(templateId: string, goal: string, reason: string): Promise<string | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  try {
+    const tr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/templates/${encodeURIComponent(templateId)}`, {
+      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!tr.ok) { console.warn(`[goal-host-vessel] repair: template fetch failed (${tr.status}) for ${templateId}`); return null; }
+    const tj: any = await tr.json();
+    const tpl = tj?.body ?? tj?.template ?? tj;
+    const tasks = tpl?.tasks;
+    if (!Array.isArray(tasks) || tasks.length === 0) { console.warn(`[goal-host-vessel] repair: no tasks on ${templateId} (keys=${Object.keys(tpl ?? {}).slice(0, 8).join(",")})`); return null; }
+    const prompt = `An activity produced the right output shape but DID NOT reach the goal because: ${reason}\n\nGOAL: ${goal}\n\nCurrent tasks (JSON): ${JSON.stringify(tasks).slice(0, 6000)}\n\nRewrite the tasks so each BINDS FROM THE GOAL — replace any hardcoded value the goal should determine (a URL, file path, endpoint, or the subject of analysis) with a binding derived from the goal text (e.g. {{goal}}, or an extraction step over {{goal}}). Keep the same resolvers and output shapes; change only config/bindings. Respond with ONLY the corrected tasks as a JSON array.`;
+    const lr = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!lr.ok) { console.warn(`[goal-host-vessel] repair: llm rewrite call failed (${lr.status})`); return null; }
+    const lj: any = await lr.json();
+    const text = String(lj?.body?.content ?? lj?.content ?? lj?.body?.text ?? "");
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) { console.warn(`[goal-host-vessel] repair: llm rewrite returned no JSON array (text head="${text.slice(0, 120)}")`); return null; }
+    let correctedTasks: unknown;
+    try { correctedTasks = JSON.parse(m[0]); } catch (e) { console.warn(`[goal-host-vessel] repair: corrected-tasks JSON parse failed: ${(e as Error).message}`); return null; }
+    if (!Array.isArray(correctedTasks) || correctedTasks.length === 0) { console.warn(`[goal-host-vessel] repair: corrected tasks not a non-empty array`); return null; }
+    // Strip classifying prefixes so the repaired variant is NOT re-classified as
+    // `proposed`/`gap-closing` (invariant I6 demands authored_from_pattern metadata for
+    // proposed ids). A `repaired-` prefix is a clean, non-special namespace.
+    const base = String(tpl?.id ?? templateId).replace(/^activity:/, "").replace(/[⟨⟩]/g, "").replace(/-\d{10,}$/, "")
+      .replace(/^proposed_pattern_authored_/, "").replace(/^gap-closing:/, "").replace(/^learned-/, "").trim();
+    // Build a CLEAN ActivityTemplate — only schema-valid fields. Spreading the DB-enriched
+    // row leaks `category:"substrate"` (not in activity-api's enum), `account_id_version`,
+    // `metrics`, etc. → 400. Omit category (the resolver defaults it); non-empty tags pass
+    // the "at least one of tags/category" rule; metadata records the repair provenance.
+    const corrected = {
+      id: `repaired-${base}-${goalHashOf(goal)}`,
+      name: typeof tpl?.name === "string" ? tpl.name : base,
+      description: typeof tpl?.description === "string" ? tpl.description : `Goal-binding repair of ${base}`,
+      tasks: correctedTasks,
+      input_shapes: Array.isArray(tpl?.input_shapes) ? tpl.input_shapes : (Array.isArray(tpl?.inputShapes) ? tpl.inputShapes : []),
+      output_shapes: Array.isArray(tpl?.output_shapes) ? tpl.output_shapes : (Array.isArray(tpl?.outputShapes) ? tpl.outputShapes : []),
+      tags: Array.isArray(tpl?.tags) && tpl.tags.length > 0 ? tpl.tags : ["substrate.repaired", "goal-binding-fix"],
+      metadata: { authored_from_pattern: "goal-binding-repair", repaired_from: templateId },
+    };
+    const cv = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "activity_create_variant", pointer: { type: "activity_create_variant", template: corrected, parentTemplateId: templateId } } }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!cv.ok) { console.warn(`[goal-host-vessel] repair: activity_create_variant call failed (${cv.status})`); return null; }
+    const cj: any = await cv.json();
+    const vid = cj?.body?.variantId ?? cj?.variantId ?? cj?.body?.minted_activity_id ?? null;
+    if (!vid) console.warn(`[goal-host-vessel] repair: create_variant returned no variant id (resp=${JSON.stringify(cj?.body ?? cj).slice(0, 200)})`);
+    return vid ? String(vid) : null;
+  } catch (e) { console.warn(`[goal-host-vessel] repair: exception ${(e as Error).message}`); return null; }
+}
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -1829,23 +1895,40 @@ async function runGoalWithRecovery(
     const stuck = noProgressStreak >= NO_PROGRESS_LIMIT || !nextApproach;
     if (stuck) {
       const isAuthoringRun = (opts.tags ?? []).some((t) => t === "authoring-escalation");
-      if (goal && missing.length > 0 && !authoringTried && !isAuthoringRun) {
+      if (goal && !authoringTried && !isAuthoringRun) {
         authoringTried = true;
-        const live = await getLiveShapes();
-        const wrapShape = missing.find((s) => live.has(s));
-        if (wrapShape) {
-          const authoredId = await authorProducer(wrapShape, goal, [...producedSoFar]);
-          if (authoredId) {
-            console.log(`[goal-host-vessel] ${opts.surface}: AUTHORED producer ${authoredId} for missing "${wrapShape}" — retrying goal targeting it (authored-durable → reach). attempts=${attempt}`);
-            nextTarget = authoredId; excluded.length = 0;
-            if (attempt >= maxAttempts) maxAttempts = attempt + 1;  // grant one attempt for the authored producer
-            continue;  // retry THIS run with the authored producer
+        if (missing.length > 0) {
+          // SHAPE-EXISTENCE gap: a needed completion shape isn't produced. Live resolver
+          // → author_producer wraps it; no resolver → fileCapabilityGap routes the code
+          // gap to feature_compose.
+          const live = await getLiveShapes();
+          const wrapShape = missing.find((s) => live.has(s));
+          if (wrapShape) {
+            const authoredId = await authorProducer(wrapShape, goal, [...producedSoFar]);
+            if (authoredId) {
+              console.log(`[goal-host-vessel] ${opts.surface}: AUTHORED producer ${authoredId} for missing "${wrapShape}" — retrying goal targeting it (authored-durable → reach). attempts=${attempt}`);
+              nextTarget = authoredId; excluded.length = 0;
+              if (attempt >= maxAttempts) maxAttempts = attempt + 1;
+              continue;
+            }
+            console.log(`[goal-host-vessel] ${opts.surface}: author_producer could not mint a validated producer for "${wrapShape}". attempts=${attempt}`);
+          } else {
+            const codeGap = missing.find((s) => !live.has(s));
+            const gapId = codeGap ? await fileCapabilityGap(codeGap, goal, missing) : null;
+            console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — ${gapId ? `filed capability gap '${gapId}' (async authoring); re-dispatch reaches once authored` : "no live-resolver-bridgeable missing shape"}. attempts=${attempt}`);
           }
-          console.log(`[goal-host-vessel] ${opts.surface}: author_producer could not mint a validated producer for "${wrapShape}". attempts=${attempt}`);
-        } else {
-          const codeGap = missing.find((s) => !live.has(s));
-          const gapId = codeGap ? await fileCapabilityGap(codeGap, goal, missing) : null;
-          console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — ${gapId ? `filed capability gap '${gapId}' (async authoring); re-dispatch reaches once authored` : "no live-resolver-bridgeable missing shape"}. attempts=${attempt}`);
+        } else if (selId) {
+          // CONTENT-CORRECTNESS gap: the completion shape WAS produced (missing=[]) but the
+          // content didn't satisfy the goal (hardcoded value, wrong flavor). author_producer
+          // can't help — repair the OFFENDING template's goal-binding and retry the variant.
+          const repairedId = await repairTemplateBinding(selId, goal, goalReachReason ?? "the produced content did not satisfy the goal");
+          if (repairedId) {
+            console.log(`[goal-host-vessel] ${opts.surface}: REPAIRED goal-binding of ${selId} → ${repairedId} — retrying (content-gap repair → reach). attempts=${attempt}`);
+            nextTarget = repairedId; excluded.length = 0;
+            if (attempt >= maxAttempts) maxAttempts = attempt + 1;
+            continue;
+          }
+          console.log(`[goal-host-vessel] ${opts.surface}: could not repair goal-binding of ${selId}. attempts=${attempt}`);
         }
       }
       console.log(`[goal-host-vessel] ${opts.surface}: recovery stuck after ${attempt} attempts (missing=[${missing.join(", ")}], produced=[${[...producedSoFar].join(", ")}]) — honest stop.`);
