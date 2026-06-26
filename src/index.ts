@@ -672,13 +672,23 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
 // fresh candidate remains (exhausted = honest failure). Paired with the reach
 // gate this turns goal-seeking into try → check → alter → retry, so the trace of
 // the attempt that finally REACHES is what the ribosome mints into a new activity.
-async function recommendExcluding(goalText: string, exclude: string[]): Promise<string | null> {
+async function recommendExcluding(goalText: string, exclude: string[], availableShapes?: string[]): Promise<string | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0 }),
+      // C6: pass the available input-shape pool so activity-api derives the
+      // state-space signature for this context and reads back signature-conditioned
+      // posteriors (context_thompson_scores) when picking the next recovery approach —
+      // instead of selecting state-blind. effectiveShapes (= impulse_shapes ∪ implied)
+      // is what the read-side signature is keyed on, so this must be impulse_shapes,
+      // not expected_output_shapes. Falls back to the global per-template α/β when no
+      // signature-keyed row exists, and (when omitted) to the prior state-blind body.
+      body: JSON.stringify({
+        task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0,
+        ...(availableShapes?.length ? { impulse_shapes: availableShapes } : {}),
+      }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) return null;
@@ -1570,6 +1580,11 @@ async function runGoalWithRecovery(
   let goalReachReason: string | undefined;
   let reached = false;
   let attempt = 0;
+  // C6: accumulate the input-shape pool observed across attempts so the next
+  // recovery approach is selected under a state-space signature (read back from
+  // context_thompson_scores) rather than state-blind. Seeded with the goal's
+  // expected outputs (the only shape context known before the first attempt).
+  const seekPool = new Set<string>(opts.expectedOutputShapes ?? []);
   while (attempt < maxAttempts) {
     attempt++;
     result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
@@ -1638,9 +1653,14 @@ async function runGoalWithRecovery(
     if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
     if (selId) excluded.push(selId);
+    // C6: fold this attempt's produced shapes into the seek pool so the next
+    // approach is selected under the updated state-space signature.
+    for (const t of (((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks) ?? [])) {
+      for (const s of (t.outputShapes ?? [])) seekPool.add(s);
+    }
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
-      const alt = await recommendExcluding(goal, excluded);
+      const alt = await recommendExcluding(goal, excluded, [...seekPool]);
       if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
       nextTarget = alt;
       console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
