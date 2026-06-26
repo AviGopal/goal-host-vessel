@@ -18,6 +18,7 @@
 
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
+import { inferGoalTargetShapes, goalHashOf } from "./goal-target-inference";
 import {
   GoalHost,
   DiscoveryRegistrationLoop,
@@ -539,6 +540,41 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
     const m = String(text).match(/\{[\s\S]*\}/);
     return m ? (JSON.parse(m[0]) as GoalReachVerdict) : null;
   } catch { return null; }
+}
+
+// ── Goal→target-shape inference (lever 4, 2026-06-25) ───────────────────────
+// inferGoalTargetShapes + goalHashOf live in ./goal-target-inference (extracted so
+// they are unit-testable without booting this HTTP server). Below: the in-process
+// goal_hash cache and the known-shape vocabulary fetch (which use this module's
+// DISCOVERY_ENDPOINT / API_KEY and so stay here).
+const inferredTargetShapeCache = new Map<string, string[]>();
+
+// Known producible-shape vocabulary = discovery's advertised shapes (every shape
+// has a live resolver, so the walk can reach it via backward-chain or mint-as-you-go).
+// Cached briefly so we don't GET /registry/shapes on every fresh goal.
+let knownShapesCache: { shapes: string[]; fetchedAt: number } | null = null;
+const KNOWN_SHAPES_TTL_MS = 60_000;
+async function fetchKnownShapes(): Promise<string[]> {
+  const now = Date.now();
+  if (knownShapesCache && now - knownShapesCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
+    return knownShapesCache.shapes;
+  }
+  try {
+    const r = await fetch(`${DISCOVERY_ENDPOINT.replace(/\/$/, "")}/registry/shapes`, {
+      method: "GET",
+      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return knownShapesCache?.shapes ?? [];
+    const j: any = await r.json();
+    const shapes = (Array.isArray(j?.shapes) ? j.shapes : [])
+      .map((s: unknown) => String(s))
+      .filter(Boolean);
+    if (shapes.length > 0) knownShapesCache = { shapes, fetchedAt: now };
+    return shapes;
+  } catch {
+    return knownShapesCache?.shapes ?? [];
+  }
 }
 // Leaf→authoring escalation (2026-06-25, operator-approved "scope-narrowed +
 // verified"). When the walk hits a genuine CAPABILITY gap — a target shape with
@@ -1486,13 +1522,33 @@ async function runGoalWithRecovery(
   // step (chain.length === 0), fall through to the single-template recovery loop
   // below. callerPinned / firstTarget / no-goal paths use the existing loop unchanged.
   if (goal && !opts.callerPinned && !opts.firstTarget) {
+    // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
+    // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
+    // and pick the highest-Thompson tick regardless of goal relevance. Infer the
+    // goal-satisfying output shape(s) from the known producible vocabulary so the
+    // walk backward-chains toward a capability-matched producer. Explicit caller
+    // expected_output_shapes always wins (we only infer when it is empty). Fails
+    // open to the current opportunistic behavior on inference-empty / LLM-down.
+    let seededOutputShapes = opts.expectedOutputShapes;
+    if (!seededOutputShapes || seededOutputShapes.length === 0) {
+      const knownShapes = await fetchKnownShapes();
+      const inferred = await inferGoalTargetShapes(goal, knownShapes, {
+        llmEndpoint: LLM_VESSEL_ENDPOINT,
+        cache: inferredTargetShapeCache,
+      });
+      console.log(
+        `[goal-host-vessel] ${opts.surface}: goal-target inference ` +
+          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: inferred }),
+      );
+      if (inferred.length > 0) seededOutputShapes = inferred;
+    }
     try {
       const walk = await runGoalAsPoolWalk(goal, {
         variables: opts.variables,
         tags: opts.tags,
         parentExecutionId: opts.parentExecutionId,
         compositionChain: opts.compositionChain,
-        expectedOutputShapes: opts.expectedOutputShapes,
+        expectedOutputShapes: seededOutputShapes,
         surface: opts.surface,
       });
       if (walk.attempts > 0) return walk;
