@@ -525,9 +525,11 @@ GOAL: ${goal}
 Produced output impulse shapes: ${JSON.stringify(producedShapes)}
 Task summary: ${taskSummary}${contentDigest ? `\n\nProduced output CONTENT (truncated — judge reach from the ACTUAL content, not just shape names):\n${contentDigest}` : ""}
 
-Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. A shape name alone is NOT evidence — when content is shown, require that the content substantively satisfies the goal (e.g. a problem_detection shape with actual problems + line numbers, not an empty list). Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
+Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. A shape name alone is NOT evidence — when content is shown, require that the content substantively satisfies the goal (e.g. a problem_detection shape with actual problems + line numbers, not an empty list).
 
-Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
+Then name the COMPLETION-STATE shape(s) of this goal — the shape(s) that WOULD exist when the goal is genuinely reached (e.g. for "extract a concept describing the file", that is "concept"; for "fix the bug", that is "patch"). ALWAYS name at least one completion_shape, even when reached=false and even when THIS attempt produced none of them: completion_shapes is the goal's target DIRECTION that in-flight recovery steers toward, so it must never be empty. "missing" = the completion_shapes the produced outputs do not yet substantively satisfy.
+
+Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>", "...non-empty"], "missing": ["<completion shape not yet satisfied>"]}`;
   try {
     const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -1624,15 +1626,42 @@ async function runGoalWithRecovery(
   // context_thompson_scores) rather than state-blind. Seeded with the goal's
   // expected outputs (the only shape context known before the first attempt).
   const seekPool = new Set<string>(opts.expectedOutputShapes ?? []);
+  // Residual-steered recovery (2026-06-26). A hollow attempt is not wasted: its
+  // produced shapes are PARTIAL PROGRESS, and the reach gate names `completion_shapes`
+  // (the goal direction). We accumulate produced shapes across attempts, compute the
+  // residual (completion_targets − produced), feed the failure diagnosis + residual
+  // forward into the next attempt's goal so an LLM-tier resolver corrects course, and
+  // a PROGRESS GUARD stops early when the residual stops shrinking — distinguishing
+  // "one more steered try will reach" from "no existing approach converges" (the
+  // latter is the authoring-escalation signal, not blind exhaustion).
+  const producedSoFar = new Set<string>();      // every shape ANY attempt produced (hollow included)
+  const completionTargets = new Set<string>();  // union of judge-named completion_shapes
+  const retriedSame = new Set<string>();         // approaches already given a steered retry
+  let reachFeedback: string | undefined;         // steering text appended to the next attempt's goal
+  let reachFeedbackImpulse: Impulse | undefined;  // the verdict AS A FIRST-CLASS SHAPED IMPULSE (`reachFeedback`)
+  let bestProgress = -Infinity;                  // higher = closer (−|missing| when target known, else |produced|)
+  let noProgressStreak = 0;
+  const NO_PROGRESS_LIMIT = 2;
   while (attempt < maxAttempts) {
     attempt++;
-    result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
-      variables: opts.variables,
+    // Residual-steered retry: after a hollow, append the reach feedback to the goal
+    // so the executor's LLM resolvers correct course (the goal impulse is universally
+    // in-context; {{goal}}-referencing tasks see it). Also pass it as a variable for
+    // templates that bind {{reach_feedback}} explicitly.
+    const attemptGoal = reachFeedback && goal ? `${goal}\n\n${reachFeedback}` : (goal ?? `execute template ${nextTarget}`);
+    let attemptProducedShapes: string[] = [];
+    result = await host.runGoal(attemptGoal, {
+      variables: reachFeedback ? { ...((opts.variables as Record<string, unknown>) ?? {}), reach_feedback: reachFeedback } : opts.variables,
       targetTemplateId: nextTarget,
       tags: opts.tags,
       parentExecutionId: opts.parentExecutionId,
       compositionChain: opts.compositionChain,
       expectedOutputShapes: opts.expectedOutputShapes,
+      // Seed the prior hollow verdict as a first-class `reachFeedback` impulse: it
+      // enters the execution pool (resolvers SEE it) AND its shape joins the
+      // impulse_state_space signature (selection is CONDITIONED on the failure
+      // being present, and discover-by-shapes can route to consumers of it).
+      ...(reachFeedbackImpulse ? { seedImpulses: [reachFeedbackImpulse] } : {}),
     });
     status = result.trace.status === "failed" ? "failed" : "completed";
     const selId = result.selectedTemplateId;
@@ -1644,6 +1673,7 @@ async function runGoalWithRecovery(
     if (goal && status === "completed" && selId) {
       try {
         const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+        attemptProducedShapes = producedShapes;
         const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
         // Content digest: judge reach from ACTUAL produced content, not just shape
         // names. The trace's output impulses survive in the shared ImpulseStore
@@ -1693,18 +1723,76 @@ async function runGoalWithRecovery(
     const tr = result.trace as { durationMs?: number; costUsd?: number };
     if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
-    if (selId) excluded.push(selId);
-    // C6: fold this attempt's produced shapes into the seek pool so the next
-    // approach is selected under the updated state-space signature.
-    for (const t of (((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks) ?? [])) {
-      for (const s of (t.outputShapes ?? [])) seekPool.add(s);
+    // Failures have shapes too: a hollow attempt's outputs are PARTIAL PROGRESS.
+    // Accumulate them + the judge's named completion targets; fold shape names into
+    // the C6 seek pool; compute the residual = targets − produced.
+    for (const s of attemptProducedShapes) { seekPool.add(s); producedSoFar.add(s); }
+    if (completionShapes) for (const s of completionShapes) completionTargets.add(s);
+    const missing = [...completionTargets].filter((s) => !producedSoFar.has(s));
+    const onTrack = (completionShapes ?? []).some((s) => attemptProducedShapes.includes(s));
+    // Progress: higher = closer. −|missing| when the judge has named a target (covering
+    // the residual is progress). When the judge named NO completion_shapes, we cannot
+    // measure the residual — and producing MORE goal-irrelevant shapes is NOT progress —
+    // so score −attempt: every such hollow accrues the no-progress streak so the guard
+    // stops the thrash and flags authoring instead of burning the whole budget.
+    const progress = completionTargets.size > 0 ? -missing.length : -attempt;
+    if (progress > bestProgress) { bestProgress = progress; noProgressStreak = 0; }
+    else { noProgressStreak++; }
+    // Steer the NEXT attempt: why the last fell short, what is already produced
+    // (build on it), and what is still missing (the residual to close).
+    reachFeedback =
+      `[Recovery context: a prior attempt (${selId ?? "?"}) completed but did NOT reach this goal. ` +
+      `Why it fell short: ${goalReachReason ?? "the produced output did not satisfy the goal"}. ` +
+      `Shapes already produced (build on these, do not merely repeat them): ${[...producedSoFar].join(", ") || "none"}. ` +
+      `The goal still needs: ${(missing.length ? missing : (completionShapes ?? [])).join(", ") || "the originally-asked output"}. ` +
+      `Correct the prior shortfall and produce the missing output.]`;
+    // The verdict is data with a shape — emit it as a first-class `reachFeedback`
+    // impulse (not just goal text) so the next attempt's pool contains it, the C6
+    // signature includes it, and it is routable/learnable. The structured body
+    // carries the residual the next attempt should close.
+    reachFeedbackImpulse = {
+      id: `reachFeedback-${goalHashOf(goal)}-a${attempt}`,
+      pointer: { type: "memo" },
+      metadata: { shape: "reachFeedback", produced_at_task_id: "reach-gate" },
+      loaded: true,
+      content: {
+        reason: goalReachReason ?? null,
+        completion_shapes: [...completionTargets],
+        missing,
+        produced_so_far: [...producedSoFar],
+        prior_approach: selId ?? null,
+        attempt,
+        summary: reachFeedback,
+      },
+    };
+    // Selection-side: put the `reachFeedback` shape into the seek pool so the next
+    // recommendExcluding() signature includes it — selection is then conditioned on
+    // "a hollow verdict is present" (and discover-by-shapes can prefer a consumer of
+    // reachFeedback), not just on the produced output shapes.
+    seekPool.add("reachFeedback");
+    console.log(`[goal-host-vessel] ${opts.surface}: seeded reachFeedback impulse → next attempt's pool + signature (missing=[${missing.join(", ")}], reason="${(goalReachReason ?? "").slice(0, 80)}")`);
+    // Progress guard: if the residual hasn't shrunk for NO_PROGRESS_LIMIT attempts,
+    // no existing approach is converging — stop and flag for authoring escalation
+    // rather than thrash the budget.
+    if (noProgressStreak >= NO_PROGRESS_LIMIT) {
+      console.log(`[goal-host-vessel] ${opts.surface}: reach-residual not shrinking for ${noProgressStreak} attempts (missing=[${missing.join(", ")}], produced=[${[...producedSoFar].join(", ")}]) — no existing approach converging; stopping recovery (authoring-escalation candidate). attempts=${attempt}`);
+      break;
     }
-    // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
-      const alt = await recommendExcluding(goal, excluded, [...seekPool]);
-      if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
-      nextTarget = alt;
-      console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
+      // Quality gap (on-track but hollow): give the SAME approach ONE steered retry —
+      // the augmented goal may let it correct content. Otherwise (wrong approach, or
+      // already retried) exclude it and alter to a genuinely different approach.
+      if (onTrack && selId && !retriedSame.has(selId)) {
+        retriedSame.add(selId);
+        console.log(`[goal-host-vessel] ${opts.surface}: attempt ${attempt} on-track (produced a completion shape) but hollow — steered retry of ${selId} (missing=[${missing.join(", ")}])`);
+        // keep nextTarget = selId
+      } else {
+        if (selId) excluded.push(selId);
+        const alt = await recommendExcluding(goal, excluded, [...seekPool]);
+        if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
+        nextTarget = alt;
+        console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length}, missing=[${missing.join(", ")}])`);
+      }
     }
   }
   return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
