@@ -666,7 +666,7 @@ async function repairTemplateBinding(templateId: string, goal: string, reason: s
     const tpl = tj?.body ?? tj?.template ?? tj;
     const tasks = tpl?.tasks;
     if (!Array.isArray(tasks) || tasks.length === 0) { console.warn(`[goal-host-vessel] repair: no tasks on ${templateId} (keys=${Object.keys(tpl ?? {}).slice(0, 8).join(",")})`); return null; }
-    const prompt = `An activity produced the right output shape but DID NOT reach the goal because: ${reason}\n\nGOAL: ${goal}\n\nCurrent tasks (JSON): ${JSON.stringify(tasks).slice(0, 6000)}\n\nRewrite the tasks so each BINDS FROM THE GOAL — replace any hardcoded value the goal should determine (a URL, file path, endpoint, or the subject of analysis) with a binding derived from the goal text (e.g. {{goal}}, or an extraction step over {{goal}}). Keep the same resolvers and output shapes; change only config/bindings. Respond with ONLY the corrected tasks as a JSON array.`;
+    const prompt = `An activity produced the right output shape but DID NOT reach the goal because: ${reason}\n\nGOAL (ONE example — the repaired template must work for ANY goal of this kind, not just this one): ${goal}\n\nCurrent tasks (JSON): ${JSON.stringify(tasks).slice(0, 6000)}\n\nThe defect: a task HARDCODES a value the goal should determine (a URL, file path, endpoint, query, or the subject of analysis). Repair it GENERICALLY — do NOT bake this goal's specific value into the config:\n1. Add (or reuse) an EXTRACTION step as the FIRST task that reads the target value out of the goal at runtime — e.g. {"id":"extract_target","resolver":"llm","prompt":{"template":"Extract ONLY the target <url/path/subject> from this goal and return just that value: {{goal}}"},"outputShapes":["extracted_target"]}.\n2. Change the downstream task's config to BIND to that extracted value (e.g. "url":"{{extract_target}}" or "{{extract_target_text}}"), NOT the literal value from this example goal.\nKeep the same resolvers + output shapes on the producing tasks. The result must reach for a DIFFERENT goal value too. Respond with ONLY the corrected tasks as a JSON array.`;
     const lr = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
@@ -710,6 +710,26 @@ async function repairTemplateBinding(templateId: string, goal: string, reason: s
     if (!vid) console.warn(`[goal-host-vessel] repair: create_variant returned no variant id (resp=${JSON.stringify(cj?.body ?? cj).slice(0, 200)})`);
     return vid ? String(vid) : null;
   } catch (e) { console.warn(`[goal-host-vessel] repair: exception ${(e as Error).message}`); return null; }
+}
+// Propagate a VERIFIED repair lesson to concept-db (the substrate's semantic memory) so
+// prime-context-for-task surfaces it when authoring/executing future goals of this kind —
+// the lesson generalizes beyond the one repaired template. Only called AFTER the repaired
+// variant actually REACHED, so the concept is grounded in a real success. Fire-and-forget.
+async function recordRepairConcept(fromTemplate: string, variantId: string, reason: string): Promise<void> {
+  try {
+    const content = `Goal-binding repair (verified by reaching the goal): activity "${fromTemplate}" hardcoded a value the goal should determine, causing hollow completion — "${reason}". The fix that REACHED: add an extraction step that reads the target value (url / file path / subject) from the goal at runtime and bind the downstream task config to it, instead of hardcoding. Pattern: extract_target({{goal}}) → bind {{extract_target}}. Repaired variant: ${variantId}.`;
+    await fetch(`http://127.0.0.1:8260/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "concept_write", pointer: {
+        type: "concept_write", source_type: "impulse_activity_pattern", content,
+        summary: `bind from goal, don't hardcode — ${fromTemplate} repair`,
+        metadata: { kind: "goal_binding_repair", repaired_from: fromTemplate, repaired_variant: variantId },
+      } } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    console.log(`[goal-host-vessel] repair: recorded goal-binding-repair concept (from ${fromTemplate}, variant ${variantId})`);
+  } catch { /* non-fatal */ }
 }
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
@@ -1709,6 +1729,7 @@ async function runGoalWithRecovery(
   }
   let maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   let authoringTried = false;  // one-shot recovery→authoring escalation per run (no loops)
+  let lastRepair: { variantId: string; from: string; reason: string } | undefined;  // a content-gap repair awaiting its reach verdict
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget;
   if (!nextTarget && goal) {
@@ -1816,6 +1837,12 @@ async function runGoalWithRecovery(
         } else if (verdict && verdict.reached === true) {
           console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
+          // A content-gap REPAIR that reached → propagate the verified lesson to concept-db
+          // (grounded: only recorded because the repair actually reached).
+          const nrm = (s: string) => s.replace(/^activity:/, "").replace(/[⟨⟩]/g, "").trim();
+          if (lastRepair && selId && nrm(selId) === nrm(lastRepair.variantId)) {
+            void recordRepairConcept(lastRepair.from, lastRepair.variantId, lastRepair.reason);
+          }
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     }
@@ -1921,9 +1948,11 @@ async function runGoalWithRecovery(
           // CONTENT-CORRECTNESS gap: the completion shape WAS produced (missing=[]) but the
           // content didn't satisfy the goal (hardcoded value, wrong flavor). author_producer
           // can't help — repair the OFFENDING template's goal-binding and retry the variant.
-          const repairedId = await repairTemplateBinding(selId, goal, goalReachReason ?? "the produced content did not satisfy the goal");
+          const repairReason = goalReachReason ?? "the produced content did not satisfy the goal";
+          const repairedId = await repairTemplateBinding(selId, goal, repairReason);
           if (repairedId) {
             console.log(`[goal-host-vessel] ${opts.surface}: REPAIRED goal-binding of ${selId} → ${repairedId} — retrying (content-gap repair → reach). attempts=${attempt}`);
+            lastRepair = { variantId: repairedId, from: selId, reason: repairReason };  // record the lesson IF it reaches
             nextTarget = repairedId; excluded.length = 0;
             if (attempt >= maxAttempts) maxAttempts = attempt + 1;
             continue;
