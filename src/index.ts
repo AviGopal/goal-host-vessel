@@ -866,8 +866,19 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
     if (!r.ok) return null;
     const j: any = await r.json();
     const paths = j?.recommended_paths ?? j?.body?.recommended_paths ?? [];
-    // prefer a path that has genuinely reached this goal (success_rate>0) and is single-activity
-    const best = paths.find((p: any) => (p.success_rate ?? p.goal_achieved) && Array.isArray(p.path_activities) && p.path_activities.length >= 1);
+    // Reuse a prior path ONLY if it reaches RELIABLY, not merely "reached once, ever".
+    // A capability that reached once (e.g. via a one-off repaired variant) then goes
+    // HOLLOW repeatedly keeps a cumulative success_rate>0, so the old "any >0" test
+    // re-selected it every time → the broken-reuse trap (loop never re-authors a
+    // working replacement, frontier never crossed). Require majority reach so a
+    // chronically-hollow path drops out of reuse after it fails more than it reaches,
+    // forcing the (now aggregate-preferring) decomposition planner to author a fresh
+    // one. Env-gated GOALPATH_REUSE_MIN_SUCCESS (default 0.5; set 0 to restore prior
+    // behavior). goal_achieved (boolean, no rate) still qualifies. (2026-06-28)
+    const REUSE_MIN_SUCCESS = Number(process.env["GOALPATH_REUSE_MIN_SUCCESS"] ?? 0.5);
+    const reachesReliably = (p: any) =>
+      typeof p.success_rate === "number" ? p.success_rate >= REUSE_MIN_SUCCESS : !!p.goal_achieved;
+    const best = paths.find((p: any) => reachesReliably(p) && Array.isArray(p.path_activities) && p.path_activities.length >= 1);
     return best?.path_activities?.[0] ?? null;
   } catch { return null; }
 }
