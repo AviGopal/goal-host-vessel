@@ -766,6 +766,15 @@ async function recordRepairConcept(fromTemplate: string, variantId: string, reas
 // Env-gated DEPRECATE_HOLLOW_COMPOSITES (default 1), DEPRECATE_HOLLOW_THRESHOLD
 // (default 2). (2026-06-28)
 const hollowCounts = new Map<string, number>();
+// Runtime quarantine of chronically-hollow authored composites. DB-deprecation of
+// these is operator-blocked (they are global-scope and goal-host's key is non-admin
+// → "insufficient_evidence" / admin required), so this in-process set is the
+// no-admin-needed self-correction: a quarantined composite is filtered out of
+// reuse/selection here so the planner re-authors a fresh one, WITHOUT a DB write.
+// (Resets on goal-host restart; the β-penalty + the operator granting admin scope
+// for true deprecation are the durable paths.) (2026-06-28)
+const quarantined = new Set<string>();
+const quarKey = (id: string) => id.replace(/^activity:/, "").replace(/[⟨⟩`]/g, "").trim();
 function isAuthoredComposite(id: string): boolean {
   const n = id.replace(/^activity:/, "").replace(/[⟨⟩]/g, "");
   return /(^|[:-])(composed-cap|learned-compose|repaired-composed)/.test(n);
@@ -800,7 +809,9 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
     const n = (hollowCounts.get(activityId) ?? 0) + 1;
     hollowCounts.set(activityId, n);
     if (n >= threshold) {
-      await deprecateBrokenComposite(activityId, reason);
+      quarantined.add(quarKey(activityId));  // no-admin self-correction: drop it from reuse/selection
+      console.log(`[goal-host-vessel] self-correction: QUARANTINED chronically-hollow composite ${activityId} (filtered from reuse → forces re-author)`);
+      await deprecateBrokenComposite(activityId, reason);  // durable path (works only with admin/Thompson-evidence)
       hollowCounts.delete(activityId);
     }
   } catch { /* non-fatal */ }
@@ -919,7 +930,9 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
     const REUSE_MIN_SUCCESS = Number(process.env["GOALPATH_REUSE_MIN_SUCCESS"] ?? 0.5);
     const reachesReliably = (p: any) =>
       typeof p.success_rate === "number" ? p.success_rate >= REUSE_MIN_SUCCESS : !!p.goal_achieved;
-    const best = paths.find((p: any) => reachesReliably(p) && Array.isArray(p.path_activities) && p.path_activities.length >= 1);
+    const best = paths.find((p: any) =>
+      reachesReliably(p) && Array.isArray(p.path_activities) && p.path_activities.length >= 1 &&
+      !p.path_activities.some((a: string) => quarantined.has(quarKey(a))));  // skip quarantined broken composites
     return best?.path_activities?.[0] ?? null;
   } catch { return null; }
 }
