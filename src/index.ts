@@ -877,7 +877,7 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
 // fresh candidate remains (exhausted = honest failure). Paired with the reach
 // gate this turns goal-seeking into try → check → alter → retry, so the trace of
 // the attempt that finally REACHES is what the ribosome mints into a new activity.
-async function recommendExcluding(goalText: string, exclude: string[], availableShapes?: string[]): Promise<string | null> {
+async function recommendExcluding(goalText: string, exclude: string[], availableShapes?: string[], completionShapes?: string[]): Promise<string | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
@@ -890,9 +890,13 @@ async function recommendExcluding(goalText: string, exclude: string[], available
       // is what the read-side signature is keyed on, so this must be impulse_shapes,
       // not expected_output_shapes. Falls back to the global per-template α/β when no
       // signature-keyed row exists, and (when omitted) to the prior state-blind body.
+      // Mechanism #7: completion_shapes = the goal direction R, so activity-api can
+      // compute the successor-features look-ahead ⟨ψ(s,a),R⟩ and (when SF_BLEND is on)
+      // steer the recovery pick toward cells whose discounted occupancy heads to R.
       body: JSON.stringify({
         task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0,
         ...(availableShapes?.length ? { impulse_shapes: availableShapes } : {}),
+        ...(completionShapes?.length ? { completion_shapes: completionShapes } : {}),
       }),
       signal: AbortSignal.timeout(20_000),
     });
@@ -1210,7 +1214,11 @@ async function runGoalAsPoolWalk(
         const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0 }),
+          // completion_shapes = the walk's target shapes (the goal direction R) so
+          // activity-api can compute the successor-features look-ahead ⟨ψ(s,a),R⟩ and
+          // (SF_BLEND on) ψ-steer this recommend fallback. impulse_shapes drives the
+          // state-space signature s the ψ cells are keyed on.
+          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], completion_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0 }),
           signal: AbortSignal.timeout(20_000),
         });
         if (r.ok) {
@@ -2068,7 +2076,7 @@ async function runGoalWithRecovery(
       retriedSame.add(selId); retrySame = true; nextApproach = selId;
     } else {
       if (selId) excluded.push(selId);
-      nextApproach = (await recommendExcluding(goal, excluded, [...seekPool])) ?? undefined;
+      nextApproach = (await recommendExcluding(goal, excluded, [...seekPool], [...completionTargets])) ?? undefined;
     }
     // STUCK with existing activities — the reach-residual stalled (NO_PROGRESS_LIMIT)
     // OR no fresh approach remains. Either way "no existing approach converges" →
