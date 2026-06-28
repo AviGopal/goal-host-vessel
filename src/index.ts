@@ -525,11 +525,9 @@ GOAL: ${goal}
 Produced output impulse shapes: ${JSON.stringify(producedShapes)}
 Task summary: ${taskSummary}${contentDigest ? `\n\nProduced output CONTENT (truncated — judge reach from the ACTUAL content, not just shape names):\n${contentDigest}` : ""}
 
-Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. A shape name alone is NOT evidence — when content is shown, require that the content substantively satisfies the goal (e.g. a problem_detection shape with actual problems + line numbers, not an empty list).
+Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. A shape name alone is NOT evidence — when content is shown, require that the content substantively satisfies the goal (e.g. a problem_detection shape with actual problems + line numbers, not an empty list). Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
 
-Then name the COMPLETION-STATE shape(s) of this goal — the shape(s) that WOULD exist when the goal is genuinely reached (e.g. for "extract a concept describing the file", that is "concept"; for "fix the bug", that is "patch"). ALWAYS name at least one completion_shape, even when reached=false and even when THIS attempt produced none of them: completion_shapes is the goal's target DIRECTION that in-flight recovery steers toward, so it must never be empty. "missing" = the completion_shapes the produced outputs do not yet substantively satisfy.
-
-Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>", "...non-empty"], "missing": ["<completion shape not yet satisfied>"]}`;
+Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
   try {
     const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -612,186 +610,6 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     return r.ok ? id : null;
   } catch { return null; }
 }
-// Author a VALIDATED producer of `shape` by wrapping its live resolver (the
-// author_producer author→validate-against-resolver→refine loop on dev-vessel).
-// Returns the minted activity id (immediately Thompson-selectable) or null. This is
-// the recovery-path twin of the walk's mint-as-you-go (≈index 1262): when the reach
-// residual won't close with existing activities but a LIVE resolver produces the
-// missing shape, author the wrapper NOW and retry targeting it — "write
-// authored-durable, then reach".
-async function authorProducer(shape: string, goal: string, availableShapes: string[]): Promise<string | null> {
-  try {
-    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape, goal, available_shapes: availableShapes, max_attempts: 3 } } }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    const b = j?.body ?? j;
-    return (b?.minted_activity_id && b?.validated) ? String(b.minted_activity_id) : null;
-  } catch { return null; }
-}
-// DECOMPOSITION-BASED AUTHORING (2026-06-27, the capability-BREADTH lever). The
-// fall-through twin of authorProducer: when author_producer (wrap a single LIVE
-// resolver) cannot produce the goal's NOVEL completion shape — because NOTHING
-// produces it to wrap — ask dev-vessel's author_composed_capability resolver to
-// LLM-PLAN a short chain of EXISTING resolvers (query data → format report) and
-// MINT it as a composite activity. Returns the minted (immediately selectable)
-// composite id, or null on any failure (→ caller falls back to the existing
-// escalate/stop, never worse than today). Strictly additive: only fires AFTER
-// authorProducer wrap-single fails. Bounded by the caller's one-shot authoringTried.
-async function authorComposedCapability(goal: string, targetShapes: string[], availableShapes: string[]): Promise<string | null> {
-  try {
-    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "author_composed_capability", pointer: { type: "author_composed_capability", goal, target_shapes: targetShapes, available_shapes: availableShapes, max_attempts: 2 } } }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    const b = j?.body ?? j;
-    return (b?.minted_activity_id && b?.validated) ? String(b.minted_activity_id) : null;
-  } catch { return null; }
-}
-// Module-level live-resolver-shape probe (discovery /registry/shapes), cached. A
-// shape present here is RESOLVABLE, so a wrapper activity invoking its resolver
-// genuinely produces it (author_producer's case) vs a true code gap (fileCapabilityGap).
-let _liveShapesCache: Set<string> | null = null;
-async function getLiveShapes(): Promise<Set<string>> {
-  if (_liveShapesCache) return _liveShapesCache;
-  try {
-    const r = await fetch("http://127.0.0.1:8100/registry/shapes", { signal: AbortSignal.timeout(10_000) });
-    _liveShapesCache = r.ok ? new Set<string>((((await r.json()) as { shapes?: unknown[] })?.shapes ?? []).map((s) => String(s)).filter(Boolean)) : new Set<string>();
-  } catch { _liveShapesCache = new Set<string>(); }
-  return _liveShapesCache;
-}
-// CONTENT-GAP repair (mechanism c, content branch). The activity produced the right
-// completion shape but the reach gate rejected the CONTENT — e.g. an http template that
-// hardcodes its URL and ignores the goal's, or analyze-source producing a problem-concept
-// not a file-purpose one. author_producer (shape-existence) can't fix this. Instead:
-// fetch the offending template, LLM-rewrite its tasks to BIND FROM THE GOAL (consume the
-// goal's specifics instead of hardcoding), and register a VARIANT with parentTemplateId set
-// — the sanctioned variant-first repair, exempt from reuse-before-mint. Returns the new
-// selectable variant id or null. No pre-mint validation here; the reach gate on the retry
-// is the backstop, and authoringTried bounds it to one shot.
-async function repairTemplateBinding(templateId: string, goal: string, reason: string): Promise<string | null> {
-  if (!LLM_VESSEL_ENDPOINT) return null;
-  try {
-    const tr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/templates/${encodeURIComponent(templateId)}`, {
-      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!tr.ok) { console.warn(`[goal-host-vessel] repair: template fetch failed (${tr.status}) for ${templateId}`); return null; }
-    const tj: any = await tr.json();
-    const tpl = tj?.body ?? tj?.template ?? tj;
-    const tasks = tpl?.tasks;
-    if (!Array.isArray(tasks) || tasks.length === 0) { console.warn(`[goal-host-vessel] repair: no tasks on ${templateId} (keys=${Object.keys(tpl ?? {}).slice(0, 8).join(",")})`); return null; }
-    const prompt = `An activity produced the right output shape but DID NOT reach the goal because: ${reason}\n\nGOAL (ONE example — the repaired template must work for ANY goal of this kind, not just this one): ${goal}\n\nCurrent tasks (JSON): ${JSON.stringify(tasks).slice(0, 6000)}\n\nThe defect: a task HARDCODES a value the goal should determine (a URL, file path, endpoint, query, or the subject of analysis). Repair it GENERICALLY — do NOT bake this goal's specific value into the config:\n1. Add (or reuse) an EXTRACTION step as the FIRST task that reads the target value out of the goal at runtime — e.g. {"id":"extract_target","resolver":"llm","prompt":{"template":"Extract ONLY the target <url/path/subject> from this goal and return just that value: {{goal}}"},"outputShapes":["extracted_target"]}.\n2. Change the downstream task's config to BIND to that extracted value (e.g. "url":"{{extract_target}}" or "{{extract_target_text}}"), NOT the literal value from this example goal.\nKeep the same resolvers + output shapes on the producing tasks. The result must reach for a DIFFERENT goal value too. Respond with ONLY the corrected tasks as a JSON array.`;
-    const lr = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!lr.ok) { console.warn(`[goal-host-vessel] repair: llm rewrite call failed (${lr.status})`); return null; }
-    const lj: any = await lr.json();
-    const text = String(lj?.body?.content ?? lj?.content ?? lj?.body?.text ?? "");
-    const m = text.match(/\[[\s\S]*\]/);
-    if (!m) { console.warn(`[goal-host-vessel] repair: llm rewrite returned no JSON array (text head="${text.slice(0, 120)}")`); return null; }
-    let correctedTasks: unknown;
-    try { correctedTasks = JSON.parse(m[0]); } catch (e) { console.warn(`[goal-host-vessel] repair: corrected-tasks JSON parse failed: ${(e as Error).message}`); return null; }
-    if (!Array.isArray(correctedTasks) || correctedTasks.length === 0) { console.warn(`[goal-host-vessel] repair: corrected tasks not a non-empty array`); return null; }
-    // Strip classifying prefixes so the repaired variant is NOT re-classified as
-    // `proposed`/`gap-closing` (invariant I6 demands authored_from_pattern metadata for
-    // proposed ids). A `repaired-` prefix is a clean, non-special namespace.
-    const base = String(tpl?.id ?? templateId).replace(/^activity:/, "").replace(/[⟨⟩]/g, "").replace(/-\d{10,}$/, "")
-      .replace(/^proposed_pattern_authored_/, "").replace(/^gap-closing:/, "").replace(/^learned-/, "").trim();
-    // Build a CLEAN ActivityTemplate — only schema-valid fields. Spreading the DB-enriched
-    // row leaks `category:"substrate"` (not in activity-api's enum), `account_id_version`,
-    // `metrics`, etc. → 400. Omit category (the resolver defaults it); non-empty tags pass
-    // the "at least one of tags/category" rule; metadata records the repair provenance.
-    const corrected = {
-      id: `repaired-${base}-${goalHashOf(goal)}`,
-      name: typeof tpl?.name === "string" ? tpl.name : base,
-      description: typeof tpl?.description === "string" ? tpl.description : `Goal-binding repair of ${base}`,
-      tasks: correctedTasks,
-      input_shapes: Array.isArray(tpl?.input_shapes) ? tpl.input_shapes : (Array.isArray(tpl?.inputShapes) ? tpl.inputShapes : []),
-      output_shapes: Array.isArray(tpl?.output_shapes) ? tpl.output_shapes : (Array.isArray(tpl?.outputShapes) ? tpl.outputShapes : []),
-      tags: Array.isArray(tpl?.tags) && tpl.tags.length > 0 ? tpl.tags : ["substrate.repaired", "goal-binding-fix"],
-      metadata: { authored_from_pattern: "goal-binding-repair", repaired_from: templateId },
-    };
-    const cv = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-      method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "activity_create_variant", pointer: { type: "activity_create_variant", template: corrected, parentTemplateId: templateId } } }),
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!cv.ok) { console.warn(`[goal-host-vessel] repair: activity_create_variant call failed (${cv.status})`); return null; }
-    const cj: any = await cv.json();
-    const vid = cj?.body?.variantId ?? cj?.variantId ?? cj?.body?.minted_activity_id ?? null;
-    if (!vid) console.warn(`[goal-host-vessel] repair: create_variant returned no variant id (resp=${JSON.stringify(cj?.body ?? cj).slice(0, 200)})`);
-    return vid ? String(vid) : null;
-  } catch (e) { console.warn(`[goal-host-vessel] repair: exception ${(e as Error).message}`); return null; }
-}
-// Propagate a VERIFIED repair lesson to concept-db (the substrate's semantic memory) so
-// prime-context-for-task surfaces it when authoring/executing future goals of this kind —
-// the lesson generalizes beyond the one repaired template. Only called AFTER the repaired
-// variant actually REACHED, so the concept is grounded in a real success. Fire-and-forget.
-async function recordRepairConcept(fromTemplate: string, variantId: string, reason: string): Promise<void> {
-  try {
-    const content = `Goal-binding repair (verified by reaching the goal): activity "${fromTemplate}" hardcoded a value the goal should determine, causing hollow completion — "${reason}". The fix that REACHED: add an extraction step that reads the target value (url / file path / subject) from the goal at runtime and bind the downstream task config to it, instead of hardcoding. Pattern: extract_target({{goal}}) → bind {{extract_target}}. Repaired variant: ${variantId}.`;
-    await fetch(`http://127.0.0.1:8260/v2/impulses/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "concept_write", pointer: {
-        type: "concept_write", source_type: "impulse_activity_pattern", content,
-        summary: `bind from goal, don't hardcode — ${fromTemplate} repair`,
-        metadata: { kind: "goal_binding_repair", repaired_from: fromTemplate, repaired_variant: variantId },
-      } } }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    console.log(`[goal-host-vessel] repair: recorded goal-binding-repair concept (from ${fromTemplate}, variant ${variantId})`);
-  } catch { /* non-fatal */ }
-}
-// Self-correction immune system for AUTHORED capabilities: a β-penalty erodes a
-// broken composite's posterior too slowly, so it lingers in Thompson selection and
-// keeps getting re-picked → hollow → re-picked (the broken-reuse trap that blocks
-// reliable autonomous frontier-crossing). When a SUBSTRATE-AUTHORED composite
-// (composed-cap / learned-compose / repaired-composed) goes hollow chronically
-// (≥ threshold within this process), DEPRECATE it so it leaves the selectable set
-// entirely, forcing the (aggregate-preferring) decomposition planner to author a
-// fresh working replacement. The substrate authored these under its own org, so it
-// can deprecate them with its own key (org-scoped PERMISSIONS — no admin needed).
-// Env-gated DEPRECATE_HOLLOW_COMPOSITES (default 1), DEPRECATE_HOLLOW_THRESHOLD
-// (default 2). (2026-06-28)
-const hollowCounts = new Map<string, number>();
-// Runtime quarantine of chronically-hollow authored composites. DB-deprecation of
-// these is operator-blocked (they are global-scope and goal-host's key is non-admin
-// → "insufficient_evidence" / admin required), so this in-process set is the
-// no-admin-needed self-correction: a quarantined composite is filtered out of
-// reuse/selection here so the planner re-authors a fresh one, WITHOUT a DB write.
-// (Resets on goal-host restart; the β-penalty + the operator granting admin scope
-// for true deprecation are the durable paths.) (2026-06-28)
-const quarantined = new Set<string>();
-const quarKey = (id: string) => id.replace(/^activity:/, "").replace(/[⟨⟩`]/g, "").trim();
-function isAuthoredComposite(id: string): boolean {
-  const n = id.replace(/^activity:/, "").replace(/[⟨⟩]/g, "");
-  return /(^|[:-])(composed-cap|learned-compose|repaired-composed)/.test(n);
-}
-async function deprecateBrokenComposite(activityId: string, reason: string): Promise<void> {
-  try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      // The resolver expects `templateId` (not `activity_id`); pass both the wrapped
-      // and unwrapped id forms so it matches however the composite is stored.
-      body: JSON.stringify({ impulse: { type: "activityTemplate_deprecate", pointer: { type: "activityTemplate_deprecate", templateId: activityId.replace(/^activity:/, "").replace(/[⟨⟩]/g, ""), activity_id: activityId, reason: `chronically hollow authored composite — self-pruned to force re-author: ${reason}`.slice(0, 200) } } }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    console.log(`[goal-host-vessel] self-correction: DEPRECATED chronically-hollow composite ${activityId} (forces re-author next dispatch)`);
-  } catch { /* non-fatal */ }
-}
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -800,20 +618,6 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
       body: JSON.stringify({ activity_id: activityId, direction: "negative", intensity: 2, reason: `hollow completion (goal not reached): ${reason}`.slice(0, 200) }),
       signal: AbortSignal.timeout(15_000),
     });
-  } catch { /* non-fatal */ }
-  // Auto-deprecate chronically-hollow authored composites (the broken-reuse trap).
-  try {
-    if ((process.env["DEPRECATE_HOLLOW_COMPOSITES"] ?? "1") === "0") return;
-    if (!isAuthoredComposite(activityId)) return;
-    const threshold = Number(process.env["DEPRECATE_HOLLOW_THRESHOLD"] ?? 2);
-    const n = (hollowCounts.get(activityId) ?? 0) + 1;
-    hollowCounts.set(activityId, n);
-    if (n >= threshold) {
-      quarantined.add(quarKey(activityId));  // no-admin self-correction: drop it from reuse/selection
-      console.log(`[goal-host-vessel] self-correction: QUARANTINED chronically-hollow composite ${activityId} (filtered from reuse → forces re-author)`);
-      await deprecateBrokenComposite(activityId, reason);  // durable path (works only with admin/Thompson-evidence)
-      hollowCounts.delete(activityId);
-    }
   } catch { /* non-fatal */ }
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
@@ -825,82 +629,21 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
 // genuine goal achievement, not hollow completion.
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
-  // OBSERVABLE + ROBUST (2026-06-26). Previously this was a bare fire-and-forget
-  // with a silent `catch{}`: under DB contention (goal-paths inserts are 500-prone)
-  // the POST could be dropped with no trace. Crucially, REACH writes (success=true)
-  // being lost while failure writes land means `recommendReachingPath` finds no
-  // reaching path to reuse — the reuse loop never closes. So: log the outcome, and
-  // RETRY ONCE on a non-2xx/transport error (reach writes are the load-bearing ones).
-  const body = JSON.stringify({
-    goal_text: goalText,
-    goal_category: "meta",
-    path_activities: pathActivities,
-    success: reached,
-    duration_ms: Math.round(durationMs) || 0,
-    cost_usd: costUsd || 0,
-  });
-  const post = async (): Promise<{ ok: boolean; status: number; err?: string }> => {
-    try {
-      const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        body,
-        signal: AbortSignal.timeout(15_000),
-      });
-      return { ok: r.ok, status: r.status };
-    } catch (e) {
-      return { ok: false, status: 0, err: (e as Error).message };
-    }
-  };
-  let res = await post();
-  if (!res.ok) res = await post(); // one retry — reach-path success must land
-  if (res.ok) {
-    console.log(`[goal-host-vessel] recordGoalPath: ${reached ? "REACH" : "miss"} recorded for path=${JSON.stringify(pathActivities)} (goal_hash=${goalHashOf(goalText)})`);
-  } else {
-    console.warn(`[goal-host-vessel] recordGoalPath: FAILED to record ${reached ? "REACH" : "miss"} (status=${res.status}${res.err ? `, ${res.err}` : ""}) for path=${JSON.stringify(pathActivities)} — per-goal learning/reuse will miss this`);
-  }
-}
-// Persist the reach-gate verdict back onto the already-stored trace row (keyed by
-// execution_id) so reach is observable per-trace and joinable to `signature` — the
-// C6 selection-quality metric (per-signature reach-rate). The engine INSERTs the
-// trace BEFORE the gate runs (the gate is post-execution), so this is an UPDATE via
-// activity-api's /v2/execution-traces/reach. Closes the "status=completed ≠ goal
-// reached" hole at the trace level: status is exit-cleanliness, reached is goal
-// achievement. Non-fatal — a failed patch never blocks completion. (2026-06-26)
-async function persistReachOnTrace(executionId: string | undefined, reached: boolean, completionShapes: string[] | null): Promise<void> {
-  if (!executionId) return;
   try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ execution_id: executionId, reached, completion_shapes: completionShapes ?? [] }),
-      signal: AbortSignal.timeout(10_000),
+      body: JSON.stringify({
+        goal_text: goalText,
+        goal_category: "meta",
+        path_activities: pathActivities,
+        success: reached,
+        duration_ms: Math.round(durationMs) || 0,
+        cost_usd: costUsd || 0,
+      }),
+      signal: AbortSignal.timeout(15_000),
     });
   } catch { /* non-fatal */ }
-}
-// Append goal-host WALK deliberation steps onto the run's durable trace (keyed by
-// execution_id) so the substrate's REASONING — not just its outcomes — becomes
-// traced + queryable. Reuses activity-api's FLEXIBLE impulse_resolutions[] storage
-// via POST /v2/activities/execution-traces/deliberation (no new schema). Strictly
-// additive + non-fatal: fire-and-forget, errors swallowed, NEVER blocks the walk.
-// The walk accumulates steps in-memory and flushes once at the end keyed to the
-// representative trace id (lastTrace.id) — the same row /reach lands on — because
-// each step's own execution id isn't the row callers read. (2026-06-27)
-type DeliberationStep = {
-  shape: "walkStep" | "shape_gap_resolution" | "candidateConsideration";
-  input_impulse_ids: string[];
-  [k: string]: unknown;
-};
-async function recordDeliberation(executionId: string | undefined, steps: DeliberationStep[]): Promise<void> {
-  if (!executionId || steps.length === 0) return;
-  try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/deliberation`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ execution_id: executionId, steps }),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch { /* non-fatal — deliberation tracing must never break the walk */ }
 }
 // Consult per-goal learning before selection: if a prior attempt at THIS goal
 // reached it via a known path, prefer that path (improvement over subsequent
@@ -918,21 +661,8 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
     if (!r.ok) return null;
     const j: any = await r.json();
     const paths = j?.recommended_paths ?? j?.body?.recommended_paths ?? [];
-    // Reuse a prior path ONLY if it reaches RELIABLY, not merely "reached once, ever".
-    // A capability that reached once (e.g. via a one-off repaired variant) then goes
-    // HOLLOW repeatedly keeps a cumulative success_rate>0, so the old "any >0" test
-    // re-selected it every time → the broken-reuse trap (loop never re-authors a
-    // working replacement, frontier never crossed). Require majority reach so a
-    // chronically-hollow path drops out of reuse after it fails more than it reaches,
-    // forcing the (now aggregate-preferring) decomposition planner to author a fresh
-    // one. Env-gated GOALPATH_REUSE_MIN_SUCCESS (default 0.5; set 0 to restore prior
-    // behavior). goal_achieved (boolean, no rate) still qualifies. (2026-06-28)
-    const REUSE_MIN_SUCCESS = Number(process.env["GOALPATH_REUSE_MIN_SUCCESS"] ?? 0.5);
-    const reachesReliably = (p: any) =>
-      typeof p.success_rate === "number" ? p.success_rate >= REUSE_MIN_SUCCESS : !!p.goal_achieved;
-    const best = paths.find((p: any) =>
-      reachesReliably(p) && Array.isArray(p.path_activities) && p.path_activities.length >= 1 &&
-      !p.path_activities.some((a: string) => quarantined.has(quarKey(a))));  // skip quarantined broken composites
+    // prefer a path that has genuinely reached this goal (success_rate>0) and is single-activity
+    const best = paths.find((p: any) => (p.success_rate ?? p.goal_achieved) && Array.isArray(p.path_activities) && p.path_activities.length >= 1);
     return best?.path_activities?.[0] ?? null;
   } catch { return null; }
 }
@@ -942,27 +672,13 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
 // fresh candidate remains (exhausted = honest failure). Paired with the reach
 // gate this turns goal-seeking into try → check → alter → retry, so the trace of
 // the attempt that finally REACHES is what the ribosome mints into a new activity.
-async function recommendExcluding(goalText: string, exclude: string[], availableShapes?: string[], completionShapes?: string[]): Promise<string | null> {
+async function recommendExcluding(goalText: string, exclude: string[]): Promise<string | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      // C6: pass the available input-shape pool so activity-api derives the
-      // state-space signature for this context and reads back signature-conditioned
-      // posteriors (context_thompson_scores) when picking the next recovery approach —
-      // instead of selecting state-blind. effectiveShapes (= impulse_shapes ∪ implied)
-      // is what the read-side signature is keyed on, so this must be impulse_shapes,
-      // not expected_output_shapes. Falls back to the global per-template α/β when no
-      // signature-keyed row exists, and (when omitted) to the prior state-blind body.
-      // Mechanism #7: completion_shapes = the goal direction R, so activity-api can
-      // compute the successor-features look-ahead ⟨ψ(s,a),R⟩ and (when SF_BLEND is on)
-      // steer the recovery pick toward cells whose discounted occupancy heads to R.
-      body: JSON.stringify({
-        task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0,
-        ...(availableShapes?.length ? { impulse_shapes: availableShapes } : {}),
-        ...(completionShapes?.length ? { completion_shapes: completionShapes } : {}),
-      }),
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0 }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) return null;
@@ -1162,7 +878,6 @@ async function runGoalAsPoolWalk(
     return liveResolverShapes;
   };
   const minted = new Set<string>(); // shapes we've already minted a producer for this walk
-  let walkComposeTried = false;     // one-shot decomposition-authoring per walk (capability breadth)
 
   // ── 1. Seed the POOL ───────────────────────────────────────────────────────
   // producedShapes is the set of shapes currently available to consume; poolImpulses
@@ -1181,24 +896,6 @@ async function runGoalAsPoolWalk(
     if (!shape || producedShapes.has(shape)) return;
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary));
-  };
-  // ── Deliberation tracing ─────────────────────────────────────────────────────
-  // Accumulate the walk's REASONING (not just outcomes) as first-class impulses and
-  // flush them once at the end onto the run's durable trace. Each step carries
-  // input_impulse_ids = the pool impulse ids the decision SAW, so co-occurrence /
-  // Thompson can later condition on the reasoning. Bounded (≤60 steps flushed,
-  // candidate lists capped ≤10 client-side). Strictly additive — emit() only pushes
-  // to an array; the single network call is the end flush via recordDeliberation.
-  const deliberation: DeliberationStep[] = [];
-  const DELIB_CAP = 80;
-  // Snapshot the pool impulse ids the current decision can see (capped).
-  const poolIds = (): string[] => poolImpulses.map((i) => i.id).slice(-20);
-  const cap10 = (xs: unknown[]): string[] => xs.slice(0, 10).map((x) => normActivityId(String((x as { id?: string })?.id ?? x)));
-  const emitDeliberation = (shape: DeliberationStep["shape"], fields: Record<string, unknown>): void => {
-    try {
-      if (deliberation.length >= DELIB_CAP) return; // bounded — never flood
-      deliberation.push({ shape, input_impulse_ids: poolIds(), chain_index: chain.length, ...fields });
-    } catch { /* non-fatal */ }
   };
   // DATA-FLOW BINDING: expose each pool impulse's CONTENT as a variable keyed by
   // its shape, so a downstream task's `{{shape}}` placeholder interpolates from
@@ -1279,11 +976,7 @@ async function runGoalAsPoolWalk(
         const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          // completion_shapes = the walk's target shapes (the goal direction R) so
-          // activity-api can compute the successor-features look-ahead ⟨ψ(s,a),R⟩ and
-          // (SF_BLEND on) ψ-steer this recommend fallback. impulse_shapes drives the
-          // state-space signature s the ψ cells are keyed on.
-          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], completion_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0 }),
+          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0 }),
           signal: AbortSignal.timeout(20_000),
         });
         if (r.ok) {
@@ -1431,15 +1124,6 @@ async function runGoalAsPoolWalk(
           if (bestPickId) lastPick = bestPickId;
         }
         console.log(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL bundle for "${T}" — ran ${K} producers in parallel, ${producedCount} produced new shapes (OR-edge discovery)`);
-        emitDeliberation("walkStep", {
-          step: chain.length,
-          horizontal_bundle: true,
-          target_shape: T,
-          producers_run: K,
-          produced_new: producedCount,
-          pick_id: bestPickId ? normActivityId(bestPickId) : null,
-          pool_size: producedShapes.size,
-        });
         const progressed = producedShapes.size > beforeBundle;
         if (!progressed) {
           consecutiveNoProgress++;
@@ -1473,12 +1157,6 @@ async function runGoalAsPoolWalk(
           for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
           if (added) {
             console.log(`[goal-host-vessel] walk(${opts.surface}): recurse — ${normActivityId(needsInputs.id)} needs [${needsInputs.inputShapes.join(",")}]; producing inputs first`);
-            emitDeliberation("shape_gap_resolution", {
-              resolution: "backward_chain",
-              producer: normActivityId(needsInputs.id),
-              needs_inputs: needsInputs.inputShapes.slice(0, 10),
-              reason: "target producer has unsatisfied inputs — producing them first (forward-pool recurse)",
-            });
             continue; // loop to produce the sub-target inputs, then re-pick this producer
           }
         }
@@ -1523,14 +1201,6 @@ async function runGoalAsPoolWalk(
                 for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
                 if (added) {
                   console.log(`[goal-host-vessel] walk(${opts.surface}): backward-chain — ${normActivityId(needsInputs.id)} needs [${needsInputs.inputShapes.join(",")}]; producing inputs first`);
-                  emitDeliberation("shape_gap_resolution", {
-                    resolution: "backward_chain",
-                    missing_shape: missingTargets[0],
-                    producer: normActivityId(needsInputs.id),
-                    needs_inputs: needsInputs.inputShapes.slice(0, 10),
-                    candidates_considered: cap10(producers),
-                    reason: "discover-by-shapes producer of missing target has unsatisfied inputs — producing them first",
-                  });
                   continue;
                 }
               }
@@ -1572,13 +1242,6 @@ async function runGoalAsPoolWalk(
         } catch { /* author failed → falls through to escalate/stop */ }
         if (authored) {
           console.log(`[goal-host-vessel] walk(${opts.surface}): BRIDGE-AUTHORED validated producer for "${X}" → ${authored.id} (inputs=[${authored.inputShapes.join(",")}])`);
-          emitDeliberation("shape_gap_resolution", {
-            resolution: "bridge_authored",
-            missing_shape: X,
-            producer_authored: normActivityId(authored.id),
-            needs_inputs: authored.inputShapes.slice(0, 10),
-            reason: "no producer for missing target but a live resolver exists — minted a validated wrapper producer",
-          });
           // Recurse: add the producer's missing inputs as sub-targets so the walk
           // produces them FIRST — mint-as-you-go builds the chain backward from
           // the goal toward what the pool already has.
@@ -1598,67 +1261,15 @@ async function runGoalAsPoolWalk(
       // substrateGap so the gap_to_feature → feature_compose → mitosis pipeline
       // authors the missing producer; a re-dispatch then reaches the goal.
       const missingNow = [...target].filter((s) => !producedShapes.has(s));
-      // DECOMPOSITION-BASED AUTHORING (2026-06-27, capability-BREADTH lever):
-      // before filing a code gap + stopping, try to author a COMPOSITE of
-      // EXISTING resolvers that produces the missing shape (query data → format).
-      // mint-as-you-go (c.2) already wrapped any single LIVE resolver above; this
-      // covers the NOVEL shape that no single resolver produces but a chain of
-      // existing ones does. One-shot per walk (walkComposeTried), bounded; on
-      // success the composite becomes this iteration's pick and the walk
-      // continues, on failure it falls through to the original file-gap/stop.
-      if (missingNow.length > 0 && !walkComposeTried && goal) {
-        walkComposeTried = true;
-        const composedId = await authorComposedCapability(goal, missingNow, [...producedShapes]);
-        if (composedId) {
-          let composite: ActivityTemplate | null = null;
-          try { composite = await host.activityApi.getTemplate(composedId); } catch { /* unfetchable → stop path */ }
-          if (composite) {
-            const outShapes = [...new Set((composite.tasks ?? []).flatMap((t: any) => t.outputShapes ?? t.output_shapes ?? []))] as string[];
-            pick = { id: composedId, inputShapes: [], outputShapes: outShapes.length ? outShapes : missingNow };
-            console.log(`[goal-host-vessel] walk(${opts.surface}): DECOMPOSITION-AUTHORED composite ${composedId} from existing resolvers for missing=[${missingNow.join(",")}] — executing it (capability breadth).`);
-            emitDeliberation("shape_gap_resolution", {
-              resolution: "decomposition_authored",
-              missing_shape: missingNow[0],
-              missing_shapes: missingNow.slice(0, 10),
-              producer_authored: normActivityId(composedId),
-              produced_shapes: (outShapes.length ? outShapes : missingNow).slice(0, 10),
-              reason: "no single resolver produces the missing shape — authored a composite of existing resolvers",
-            });
-          }
-        }
+      let filedGap: string | null = null;
+      if (missingNow.length > 0) {
+        const liveNow = await liveShapes();
+        const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
+        if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
       }
-      if (!pick) {
-        let filedGap: string | null = null;
-        if (missingNow.length > 0) {
-          const liveNow = await liveShapes();
-          const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
-          if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
-        }
-        console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
-        emitDeliberation("shape_gap_resolution", {
-          resolution: "escalate_stop",
-          missing_shape: missingNow[0],
-          missing_shapes: missingNow.slice(0, 10),
-          filed_gap: filedGap,
-          pool_size: producedShapes.size,
-          reason: "no shape-feasible step and no bridgeable/composable producer — escalating (stop)",
-        });
-        break;
-      }
+      console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
+      break;
     }
-
-    // Record the SELECTION decision: which candidates were considered, which was
-    // picked, and which were rejected. The considered-but-rejected set is the key
-    // learning signal that was previously lost — it lets later learning condition on
-    // the alternatives the walk passed over, not just the one it ran.
-    const pickedId = normActivityId(pick.id);
-    emitDeliberation("candidateConsideration", {
-      target_shapes: [...target].slice(0, 10),
-      candidates_considered: cap10(candidates),
-      candidate_count: candidates.length,
-      picked: pickedId,
-      excluded: cap10(candidates.filter((c) => normActivityId(c.id) !== pickedId)),
-    });
 
     // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
     //     with the accumulated pool impulses + thread parent/composition ids so the
@@ -1737,15 +1348,6 @@ async function runGoalAsPoolWalk(
     exclude.add(normActivityId(pick.id));
     const progressed = producedShapes.size > beforeSize;
     console.log(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
-    emitDeliberation("walkStep", {
-      step: chain.length,
-      pick_id: normActivityId(pick.id),
-      status: trace.status,
-      new_shapes: producedShapes.size - beforeSize,
-      pool_size: producedShapes.size,
-      candidate_count: candidates.length,
-      step_execution_id: trace.id,
-    });
     if (!progressed) {
       consecutiveNoProgress++;
       if (consecutiveNoProgress >= 2) {
@@ -1840,8 +1442,6 @@ async function runGoalAsPoolWalk(
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict?.reached !== false;
-      // Land the reach verdict on the trace (joinable to `signature`).
-      void persistReachOnTrace((lastTrace as { id?: string } | undefined)?.id, reached, completionShapes);
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
@@ -1875,11 +1475,6 @@ async function runGoalAsPoolWalk(
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
     void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd);
   }
-
-  // Flush the walk's DELIBERATION onto the run's durable trace (the row /reach lands
-  // on), so the substrate's reasoning is traced + queryable, not journald-only.
-  // Fire-and-forget, non-fatal, bounded. (2026-06-27)
-  void recordDeliberation((lastTrace as { id?: string } | undefined)?.id, deliberation);
 
   // Adapt the last ExecutionTrace into the GoalRunResult shape the callers read.
   const result = lastTrace
@@ -1962,9 +1557,7 @@ async function runGoalWithRecovery(
       console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`);
     }
   }
-  let maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
-  let authoringTried = false;  // one-shot recovery→authoring escalation per run (no loops)
-  let lastRepair: { variantId: string; from: string; reason: string } | undefined;  // a content-gap repair awaiting its reach verdict
+  const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget;
   if (!nextTarget && goal) {
@@ -1977,47 +1570,15 @@ async function runGoalWithRecovery(
   let goalReachReason: string | undefined;
   let reached = false;
   let attempt = 0;
-  // C6: accumulate the input-shape pool observed across attempts so the next
-  // recovery approach is selected under a state-space signature (read back from
-  // context_thompson_scores) rather than state-blind. Seeded with the goal's
-  // expected outputs (the only shape context known before the first attempt).
-  const seekPool = new Set<string>(opts.expectedOutputShapes ?? []);
-  // Residual-steered recovery (2026-06-26). A hollow attempt is not wasted: its
-  // produced shapes are PARTIAL PROGRESS, and the reach gate names `completion_shapes`
-  // (the goal direction). We accumulate produced shapes across attempts, compute the
-  // residual (completion_targets − produced), feed the failure diagnosis + residual
-  // forward into the next attempt's goal so an LLM-tier resolver corrects course, and
-  // a PROGRESS GUARD stops early when the residual stops shrinking — distinguishing
-  // "one more steered try will reach" from "no existing approach converges" (the
-  // latter is the authoring-escalation signal, not blind exhaustion).
-  const producedSoFar = new Set<string>();      // every shape ANY attempt produced (hollow included)
-  const completionTargets = new Set<string>();  // union of judge-named completion_shapes
-  const retriedSame = new Set<string>();         // approaches already given a steered retry
-  let reachFeedback: string | undefined;         // steering text appended to the next attempt's goal
-  let reachFeedbackImpulse: Impulse | undefined;  // the verdict AS A FIRST-CLASS SHAPED IMPULSE (`reachFeedback`)
-  let bestProgress = -Infinity;                  // higher = closer (−|missing| when target known, else |produced|)
-  let noProgressStreak = 0;
-  const NO_PROGRESS_LIMIT = 2;
   while (attempt < maxAttempts) {
     attempt++;
-    // Residual-steered retry: after a hollow, append the reach feedback to the goal
-    // so the executor's LLM resolvers correct course (the goal impulse is universally
-    // in-context; {{goal}}-referencing tasks see it). Also pass it as a variable for
-    // templates that bind {{reach_feedback}} explicitly.
-    const attemptGoal = reachFeedback && goal ? `${goal}\n\n${reachFeedback}` : (goal ?? `execute template ${nextTarget}`);
-    let attemptProducedShapes: string[] = [];
-    result = await host.runGoal(attemptGoal, {
-      variables: reachFeedback ? { ...((opts.variables as Record<string, unknown>) ?? {}), reach_feedback: reachFeedback } : opts.variables,
+    result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
+      variables: opts.variables,
       targetTemplateId: nextTarget,
       tags: opts.tags,
       parentExecutionId: opts.parentExecutionId,
       compositionChain: opts.compositionChain,
       expectedOutputShapes: opts.expectedOutputShapes,
-      // Seed the prior hollow verdict as a first-class `reachFeedback` impulse: it
-      // enters the execution pool (resolvers SEE it) AND its shape joins the
-      // impulse_state_space signature (selection is CONDITIONED on the failure
-      // being present, and discover-by-shapes can route to consumers of it).
-      ...(reachFeedbackImpulse ? { seedImpulses: [reachFeedbackImpulse] } : {}),
     });
     status = result.trace.status === "failed" ? "failed" : "completed";
     const selId = result.selectedTemplateId;
@@ -2029,7 +1590,6 @@ async function runGoalWithRecovery(
     if (goal && status === "completed" && selId) {
       try {
         const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
-        attemptProducedShapes = producedShapes;
         const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
         // Content digest: judge reach from ACTUAL produced content, not just shape
         // names. The trace's output impulses survive in the shared ImpulseStore
@@ -2062,8 +1622,6 @@ async function runGoalWithRecovery(
         const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached !== false;
-        // Land the reach verdict on the trace (joinable to `signature`).
-        void persistReachOnTrace(execId, reached, completionShapes);
         if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
@@ -2072,12 +1630,6 @@ async function runGoalWithRecovery(
         } else if (verdict && verdict.reached === true) {
           console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
-          // A content-gap REPAIR that reached → propagate the verified lesson to concept-db
-          // (grounded: only recorded because the repair actually reached).
-          const nrm = (s: string) => s.replace(/^activity:/, "").replace(/[⟨⟩]/g, "").trim();
-          if (lastRepair && selId && nrm(selId) === nrm(lastRepair.variantId)) {
-            void recordRepairConcept(lastRepair.from, lastRepair.variantId, lastRepair.reason);
-          }
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     }
@@ -2085,142 +1637,14 @@ async function runGoalWithRecovery(
     const tr = result.trace as { durationMs?: number; costUsd?: number };
     if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
-    // Failures have shapes too: a hollow attempt's outputs are PARTIAL PROGRESS.
-    // Accumulate them + the judge's named completion targets; fold shape names into
-    // the C6 seek pool; compute the residual = targets − produced.
-    for (const s of attemptProducedShapes) { seekPool.add(s); producedSoFar.add(s); }
-    if (completionShapes) for (const s of completionShapes) completionTargets.add(s);
-    const missing = [...completionTargets].filter((s) => !producedSoFar.has(s));
-    const onTrack = (completionShapes ?? []).some((s) => attemptProducedShapes.includes(s));
-    // Progress: higher = closer. −|missing| when the judge has named a target (covering
-    // the residual is progress). When the judge named NO completion_shapes, we cannot
-    // measure the residual — and producing MORE goal-irrelevant shapes is NOT progress —
-    // so score −attempt: every such hollow accrues the no-progress streak so the guard
-    // stops the thrash and flags authoring instead of burning the whole budget.
-    const progress = completionTargets.size > 0 ? -missing.length : -attempt;
-    if (progress > bestProgress) { bestProgress = progress; noProgressStreak = 0; }
-    else { noProgressStreak++; }
-    // Steer the NEXT attempt: why the last fell short, what is already produced
-    // (build on it), and what is still missing (the residual to close).
-    reachFeedback =
-      `[Recovery context: a prior attempt (${selId ?? "?"}) completed but did NOT reach this goal. ` +
-      `Why it fell short: ${goalReachReason ?? "the produced output did not satisfy the goal"}. ` +
-      `Shapes already produced (build on these, do not merely repeat them): ${[...producedSoFar].join(", ") || "none"}. ` +
-      `The goal still needs: ${(missing.length ? missing : (completionShapes ?? [])).join(", ") || "the originally-asked output"}. ` +
-      `Correct the prior shortfall and produce the missing output.]`;
-    // The verdict is data with a shape — emit it as a first-class `reachFeedback`
-    // impulse (not just goal text) so the next attempt's pool contains it, the C6
-    // signature includes it, and it is routable/learnable. The structured body
-    // carries the residual the next attempt should close.
-    reachFeedbackImpulse = {
-      id: `reachFeedback-${goalHashOf(goal)}-a${attempt}`,
-      pointer: { type: "memo" },
-      metadata: { shape: "reachFeedback", produced_at_task_id: "reach-gate" },
-      loaded: true,
-      content: {
-        reason: goalReachReason ?? null,
-        completion_shapes: [...completionTargets],
-        missing,
-        produced_so_far: [...producedSoFar],
-        prior_approach: selId ?? null,
-        attempt,
-        summary: reachFeedback,
-      },
-    };
-    // Selection-side: put the `reachFeedback` shape into the seek pool so the next
-    // recommendExcluding() signature includes it — selection is then conditioned on
-    // "a hollow verdict is present" (and discover-by-shapes can prefer a consumer of
-    // reachFeedback), not just on the produced output shapes.
-    seekPool.add("reachFeedback");
-    console.log(`[goal-host-vessel] ${opts.surface}: seeded reachFeedback impulse → next attempt's pool + signature (missing=[${missing.join(", ")}], reason="${(goalReachReason ?? "").slice(0, 80)}")`);
-    // Choose the next approach from EXISTING activities first: a steered retry of the
-    // same on-track approach (quality gap), else a genuinely different one.
-    let nextApproach: string | undefined;
-    let retrySame = false;
-    if (onTrack && selId && !retriedSame.has(selId)) {
-      retriedSame.add(selId); retrySame = true; nextApproach = selId;
-    } else {
-      if (selId) excluded.push(selId);
-      nextApproach = (await recommendExcluding(goal, excluded, [...seekPool], [...completionTargets])) ?? undefined;
+    if (selId) excluded.push(selId);
+    // Alter the approach for the next attempt (engine-selected approaches only).
+    if (attempt < maxAttempts) {
+      const alt = await recommendExcluding(goal, excluded);
+      if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
+      nextTarget = alt;
+      console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
     }
-    // STUCK with existing activities — the reach-residual stalled (NO_PROGRESS_LIMIT)
-    // OR no fresh approach remains. Either way "no existing approach converges" →
-    // AUTHORING ESCALATION (mechanism c): author the missing producer rather than
-    // exhaust. Once per run (authoringTried), never from an authoring run (recursion
-    // guard). Mirror the walk:
-    //   • missing shape WITH a live resolver → author_producer mints a validated
-    //     wrapper NOW (immediately selectable); retry THIS run targeting it (author →
-    //     reach in ≤1 more try). The reached trace is what the ribosome mints into
-    //     learned-durable; the auto-bridge is reusable for later goals.
-    //   • missing shape with NO live resolver → fileCapabilityGap (async TS pipeline);
-    //     a later re-dispatch reaches once feature_compose lands the resolver.
-    const stuck = noProgressStreak >= NO_PROGRESS_LIMIT || !nextApproach;
-    if (stuck) {
-      const isAuthoringRun = (opts.tags ?? []).some((t) => t === "authoring-escalation");
-      if (goal && !authoringTried && !isAuthoringRun) {
-        authoringTried = true;
-        if (missing.length > 0) {
-          // SHAPE-EXISTENCE gap: a needed completion shape isn't produced. Live resolver
-          // → author_producer wraps it; no resolver → fileCapabilityGap routes the code
-          // gap to feature_compose.
-          const live = await getLiveShapes();
-          const wrapShape = missing.find((s) => live.has(s));
-          if (wrapShape) {
-            const authoredId = await authorProducer(wrapShape, goal, [...producedSoFar]);
-            if (authoredId) {
-              console.log(`[goal-host-vessel] ${opts.surface}: AUTHORED producer ${authoredId} for missing "${wrapShape}" — retrying goal targeting it (authored-durable → reach). attempts=${attempt}`);
-              nextTarget = authoredId; excluded.length = 0;
-              if (attempt >= maxAttempts) maxAttempts = attempt + 1;
-              continue;
-            }
-            console.log(`[goal-host-vessel] ${opts.surface}: author_producer could not mint a validated producer for "${wrapShape}". attempts=${attempt}`);
-          }
-          // DECOMPOSITION FALL-THROUGH (2026-06-27, capability-BREADTH lever):
-          // author_producer wrap-single either had no shape to wrap (no live
-          // resolver produces the missing completion shape) or failed to mint a
-          // validated wrapper. The goal's deliverable may still be reachable as a
-          // CHAIN of EXISTING resolvers (query data → format report). Ask
-          // author_composed_capability to LLM-plan + mint that composite, then
-          // retry THIS run targeting it. Strictly additive: only after wrap-single
-          // fails, one-shot (authoringTried), non-fatal (null → falls through to
-          // fileCapabilityGap/honest-stop, never worse than before).
-          const composedId = await authorComposedCapability(goal, missing, [...producedSoFar]);
-          if (composedId) {
-            console.log(`[goal-host-vessel] ${opts.surface}: COMPOSED capability ${composedId} authored from existing resolvers for missing=[${missing.join(", ")}] — retrying goal targeting it (decomposition-authored → reach). attempts=${attempt}`);
-            nextTarget = composedId; excluded.length = 0;
-            if (attempt >= maxAttempts) maxAttempts = attempt + 1;
-            continue;
-          }
-          if (!wrapShape) {
-            const codeGap = missing.find((s) => !live.has(s));
-            const gapId = codeGap ? await fileCapabilityGap(codeGap, goal, missing) : null;
-            console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — decomposition authoring found no chain; ${gapId ? `filed capability gap '${gapId}' (async authoring); re-dispatch reaches once authored` : "no live-resolver-bridgeable missing shape"}. attempts=${attempt}`);
-          } else {
-            console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — neither wrap-single nor decomposition authoring produced a working capability. attempts=${attempt}`);
-          }
-        } else if (selId) {
-          // CONTENT-CORRECTNESS gap: the completion shape WAS produced (missing=[]) but the
-          // content didn't satisfy the goal (hardcoded value, wrong flavor). author_producer
-          // can't help — repair the OFFENDING template's goal-binding and retry the variant.
-          const repairReason = goalReachReason ?? "the produced content did not satisfy the goal";
-          const repairedId = await repairTemplateBinding(selId, goal, repairReason);
-          if (repairedId) {
-            console.log(`[goal-host-vessel] ${opts.surface}: REPAIRED goal-binding of ${selId} → ${repairedId} — retrying (content-gap repair → reach). attempts=${attempt}`);
-            lastRepair = { variantId: repairedId, from: selId, reason: repairReason };  // record the lesson IF it reaches
-            nextTarget = repairedId; excluded.length = 0;
-            if (attempt >= maxAttempts) maxAttempts = attempt + 1;
-            continue;
-          }
-          console.log(`[goal-host-vessel] ${opts.surface}: could not repair goal-binding of ${selId}. attempts=${attempt}`);
-        }
-      }
-      console.log(`[goal-host-vessel] ${opts.surface}: recovery stuck after ${attempt} attempts (missing=[${missing.join(", ")}], produced=[${[...producedSoFar].join(", ")}]) — honest stop.`);
-      break;
-    }
-    // Not stuck — proceed with the chosen existing approach next iteration.
-    nextTarget = nextApproach;
-    if (retrySame) console.log(`[goal-host-vessel] ${opts.surface}: attempt ${attempt} on-track but hollow — steered retry of ${selId} (missing=[${missing.join(", ")}])`);
-    else console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${nextApproach} (attempt ${attempt + 1}, excluded ${excluded.length}, missing=[${missing.join(", ")}])`);
   }
   return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
 }
@@ -2753,23 +2177,6 @@ const DISCOVERY_PROXY_SHAPE_FALLBACK: string[] = [
 ];
 let discoveredProxyShapes: string[] = [...DISCOVERY_PROXY_SHAPE_FALLBACK];
 
-// Infer a vessel's resolve route from its endpoint when the registry advertises a
-// null resolve_endpoint (2026-06-27). EVERY vessel currently registers
-// resolve_endpoint=null, so the proxy's old hardcoded "/resolve" default silently
-// 404'd every vessel whose actual route is the impulse-contract "/v2/impulses/resolve"
-// (activity-api :8080, concept-db :8260, dev-vessel :8090) — which is WHY a composed
-// capability's activity-api data task (executionTraceWithSignatures) failed with 0
-// outputs: the proxy POSTed to :8080/resolve → 404 → throw. Vessels whose route IS
-// "/resolve" (analysis :8250, local-tools :8230, llm-resolver :8220, light-dispatch
-// :8280, ribosome :8240, stateful-ui :8270, obsidian) keep that default. The
-// impulse-contract route is keyed by the vessel's port.
-const IMPULSE_ROUTE_PORTS = new Set(["8080", "8090", "8260"]);
-function inferResolvePath(endpoint: string): string {
-  const m = endpoint.match(/:(\d+)(?:\/|$)/);
-  const port = m?.[1] ?? "";
-  return IMPULSE_ROUTE_PORTS.has(port) ? "/v2/impulses/resolve" : "/resolve";
-}
-
 function buildDiscoveryProxyResolver(shape: string) {
   return {
     id: shape,
@@ -2781,20 +2188,7 @@ function buildDiscoveryProxyResolver(shape: string) {
       const random = context.random as { id: (prefix: string) => string };
       const impulseSlots = buildImpulseSlots(context.inputImpulses);
       const config = interpolateProxyValue(configRaw, variables, impulseSlots) as Record<string, unknown>;
-      // Build the resolver pointer from the task CONFIG, NOT by spreading every
-      // run-context variable. The engine puts `executionId`/`execution_id` (the
-      // CURRENT run's id) into `variables`; spreading those into the pointer made a
-      // data resolver like executionTraceWithSignatures filter to THIS execution
-      // (which has no matching traces) → count=0 → composed report hollow. Only the
-      // task's own config (+ explicit {{var}} bindings the LLM wrote into config)
-      // should shape the query. We still forward `goal` as benign context since
-      // some resolvers read it, but DROP the reserved execution-id keys. (2026-06-27)
-      const { executionId: _eId, execution_id: _eid2, ...safeVars } = variables as Record<string, unknown>;
-      void _eId; void _eid2;
-      const pointer: Record<string, unknown> = { type: shape, ...safeVars, ...config };
-      if (process.env.GOAL_HOST_PROXY_DEBUG === "1") {
-        console.log(`[goal-host-vessel] PROXY-DEBUG ${shape}: configKeys=${JSON.stringify(Object.keys(config))} varKeys=${JSON.stringify(Object.keys(safeVars))} pointer=${JSON.stringify(pointer).slice(0, 300)}`);
-      }
+      const pointer: Record<string, unknown> = { type: shape, ...variables, ...config };
 
       // 1. Resolve the producer endpoint via discovery (lazy → survives restarts).
       const discCtrl = new AbortController();
@@ -2818,7 +2212,7 @@ function buildDiscoveryProxyResolver(shape: string) {
           const v = dj?.content?.vessels?.[0];
           if (!v?.endpoint) throw new Error(`discovery: no vessel advertises ${shape}`);
           endpoint = v.endpoint.replace(/\/+$/, "");
-          resolvePath = v.resolve_endpoint || inferResolvePath(endpoint);
+          resolvePath = v.resolve_endpoint || "/resolve";
         } finally {
           clearTimeout(discTimer);
         }
@@ -2855,19 +2249,10 @@ function buildDiscoveryProxyResolver(shape: string) {
         else if ("body" in pObj) impulseContent = pObj["body"];
       }
 
-      // Carry the task's declared output slot onto the impulse as
-      // `outputImpulseKey` so a DOWNSTREAM task's `{{impulse:<slot>}}` binding
-      // actually resolves (buildImpulseSlots keys off metadata.outputImpulseKey).
-      // Without this, a proxy-produced data impulse had no slot key, so a composed
-      // capability's format step saw an unresolved literal placeholder and reported
-      // "empty data" — the last hole that kept decomposition-authored composites
-      // hollow even after their data step succeeded. (2026-06-27)
-      const declaredSlots = Array.isArray(task["outputImpulses"]) ? (task["outputImpulses"] as unknown[]).map(String).filter(Boolean) : [];
-      const outputImpulseKey = declaredSlots[0];
       return [{
         id: random.id(`disc:${shape}`),
         pointer: { type: "memo" },
-        metadata: { shape, source: "discovery", endpoint, ok: resp.ok, ...(outputImpulseKey ? { outputImpulseKey } : {}) },
+        metadata: { shape, source: "discovery", endpoint, ok: resp.ok },
         loaded: true,
         content: impulseContent,
       }];
@@ -2898,8 +2283,15 @@ async function lintAndRepairAuthoredTemplate(
   const apiKey = process.env.METABOB_API_KEY ?? "";
   try {
     const getRes = await fetch(
-      `${ACTIVITY_API_ENDPOINT}/v2/activities/templates?q=${encodeURIComponent(bareId)}&limit=10`,
-      { headers: { Authorization: `ApiKey ${apiKey}` } },
+      `${ACTIVITY_API_ENDPOINT}/v2/activities/select-activity-for-goal`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `ApiKey ${apiKey}`,
+        },
+        body: JSON.stringify({ goal: bareId, apiKey }),
+      },
     );
     if (!getRes.ok) return out;
     const lj = await getRes.json() as { templates?: Array<Record<string, unknown>> };
@@ -2999,7 +2391,7 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     const all = new Set<string>();
     for (const v of vessels) {
       const ep = typeof v.endpoint === "string" ? v.endpoint.replace(/\/+$/, "") : "";
-      const rp = v.resolve_endpoint || inferResolvePath(ep);
+      const rp = v.resolve_endpoint || "/resolve";
       for (const s of (v.shapes ?? [])) {
         if (typeof s === "string" && s) {
           all.add(s);
