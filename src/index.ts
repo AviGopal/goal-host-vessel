@@ -633,6 +633,29 @@ async function authorProducer(shape: string, goal: string, availableShapes: stri
     return (b?.minted_activity_id && b?.validated) ? String(b.minted_activity_id) : null;
   } catch { return null; }
 }
+// DECOMPOSITION-BASED AUTHORING (2026-06-27, the capability-BREADTH lever). The
+// fall-through twin of authorProducer: when author_producer (wrap a single LIVE
+// resolver) cannot produce the goal's NOVEL completion shape — because NOTHING
+// produces it to wrap — ask dev-vessel's author_composed_capability resolver to
+// LLM-PLAN a short chain of EXISTING resolvers (query data → format report) and
+// MINT it as a composite activity. Returns the minted (immediately selectable)
+// composite id, or null on any failure (→ caller falls back to the existing
+// escalate/stop, never worse than today). Strictly additive: only fires AFTER
+// authorProducer wrap-single fails. Bounded by the caller's one-shot authoringTried.
+async function authorComposedCapability(goal: string, targetShapes: string[], availableShapes: string[]): Promise<string | null> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "author_composed_capability", pointer: { type: "author_composed_capability", goal, target_shapes: targetShapes, available_shapes: availableShapes, max_attempts: 2 } } }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const b = j?.body ?? j;
+    return (b?.minted_activity_id && b?.validated) ? String(b.minted_activity_id) : null;
+  } catch { return null; }
+}
 // Module-level live-resolver-shape probe (discovery /registry/shapes), cached. A
 // shape present here is RESOLVABLE, so a wrapper activity invoking its resolver
 // genuinely produces it (author_producer's case) vs a true code gap (fileCapabilityGap).
@@ -1046,6 +1069,7 @@ async function runGoalAsPoolWalk(
     return liveResolverShapes;
   };
   const minted = new Set<string>(); // shapes we've already minted a producer for this walk
+  let walkComposeTried = false;     // one-shot decomposition-authoring per walk (capability breadth)
 
   // ── 1. Seed the POOL ───────────────────────────────────────────────────────
   // producedShapes is the set of shapes currently available to consume; poolImpulses
@@ -1429,14 +1453,37 @@ async function runGoalAsPoolWalk(
       // substrateGap so the gap_to_feature → feature_compose → mitosis pipeline
       // authors the missing producer; a re-dispatch then reaches the goal.
       const missingNow = [...target].filter((s) => !producedShapes.has(s));
-      let filedGap: string | null = null;
-      if (missingNow.length > 0) {
-        const liveNow = await liveShapes();
-        const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
-        if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
+      // DECOMPOSITION-BASED AUTHORING (2026-06-27, capability-BREADTH lever):
+      // before filing a code gap + stopping, try to author a COMPOSITE of
+      // EXISTING resolvers that produces the missing shape (query data → format).
+      // mint-as-you-go (c.2) already wrapped any single LIVE resolver above; this
+      // covers the NOVEL shape that no single resolver produces but a chain of
+      // existing ones does. One-shot per walk (walkComposeTried), bounded; on
+      // success the composite becomes this iteration's pick and the walk
+      // continues, on failure it falls through to the original file-gap/stop.
+      if (missingNow.length > 0 && !walkComposeTried && goal) {
+        walkComposeTried = true;
+        const composedId = await authorComposedCapability(goal, missingNow, [...producedShapes]);
+        if (composedId) {
+          let composite: ActivityTemplate | null = null;
+          try { composite = await host.activityApi.getTemplate(composedId); } catch { /* unfetchable → stop path */ }
+          if (composite) {
+            const outShapes = [...new Set((composite.tasks ?? []).flatMap((t: any) => t.outputShapes ?? t.output_shapes ?? []))] as string[];
+            pick = { id: composedId, inputShapes: [], outputShapes: outShapes.length ? outShapes : missingNow };
+            console.log(`[goal-host-vessel] walk(${opts.surface}): DECOMPOSITION-AUTHORED composite ${composedId} from existing resolvers for missing=[${missingNow.join(",")}] — executing it (capability breadth).`);
+          }
+        }
       }
-      console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
-      break;
+      if (!pick) {
+        let filedGap: string | null = null;
+        if (missingNow.length > 0) {
+          const liveNow = await liveShapes();
+          const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
+          if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
+        }
+        console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
+        break;
+      }
     }
 
     // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
@@ -1939,10 +1986,29 @@ async function runGoalWithRecovery(
               continue;
             }
             console.log(`[goal-host-vessel] ${opts.surface}: author_producer could not mint a validated producer for "${wrapShape}". attempts=${attempt}`);
-          } else {
+          }
+          // DECOMPOSITION FALL-THROUGH (2026-06-27, capability-BREADTH lever):
+          // author_producer wrap-single either had no shape to wrap (no live
+          // resolver produces the missing completion shape) or failed to mint a
+          // validated wrapper. The goal's deliverable may still be reachable as a
+          // CHAIN of EXISTING resolvers (query data → format report). Ask
+          // author_composed_capability to LLM-plan + mint that composite, then
+          // retry THIS run targeting it. Strictly additive: only after wrap-single
+          // fails, one-shot (authoringTried), non-fatal (null → falls through to
+          // fileCapabilityGap/honest-stop, never worse than before).
+          const composedId = await authorComposedCapability(goal, missing, [...producedSoFar]);
+          if (composedId) {
+            console.log(`[goal-host-vessel] ${opts.surface}: COMPOSED capability ${composedId} authored from existing resolvers for missing=[${missing.join(", ")}] — retrying goal targeting it (decomposition-authored → reach). attempts=${attempt}`);
+            nextTarget = composedId; excluded.length = 0;
+            if (attempt >= maxAttempts) maxAttempts = attempt + 1;
+            continue;
+          }
+          if (!wrapShape) {
             const codeGap = missing.find((s) => !live.has(s));
             const gapId = codeGap ? await fileCapabilityGap(codeGap, goal, missing) : null;
-            console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — ${gapId ? `filed capability gap '${gapId}' (async authoring); re-dispatch reaches once authored` : "no live-resolver-bridgeable missing shape"}. attempts=${attempt}`);
+            console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — decomposition authoring found no chain; ${gapId ? `filed capability gap '${gapId}' (async authoring); re-dispatch reaches once authored` : "no live-resolver-bridgeable missing shape"}. attempts=${attempt}`);
+          } else {
+            console.log(`[goal-host-vessel] ${opts.surface}: stuck (missing=[${missing.join(", ")}]) — neither wrap-single nor decomposition authoring produced a working capability. attempts=${attempt}`);
           }
         } else if (selId) {
           // CONTENT-CORRECTNESS gap: the completion shape WAS produced (missing=[]) but the
@@ -2499,6 +2565,23 @@ const DISCOVERY_PROXY_SHAPE_FALLBACK: string[] = [
 ];
 let discoveredProxyShapes: string[] = [...DISCOVERY_PROXY_SHAPE_FALLBACK];
 
+// Infer a vessel's resolve route from its endpoint when the registry advertises a
+// null resolve_endpoint (2026-06-27). EVERY vessel currently registers
+// resolve_endpoint=null, so the proxy's old hardcoded "/resolve" default silently
+// 404'd every vessel whose actual route is the impulse-contract "/v2/impulses/resolve"
+// (activity-api :8080, concept-db :8260, dev-vessel :8090) — which is WHY a composed
+// capability's activity-api data task (executionTraceWithSignatures) failed with 0
+// outputs: the proxy POSTed to :8080/resolve → 404 → throw. Vessels whose route IS
+// "/resolve" (analysis :8250, local-tools :8230, llm-resolver :8220, light-dispatch
+// :8280, ribosome :8240, stateful-ui :8270, obsidian) keep that default. The
+// impulse-contract route is keyed by the vessel's port.
+const IMPULSE_ROUTE_PORTS = new Set(["8080", "8090", "8260"]);
+function inferResolvePath(endpoint: string): string {
+  const m = endpoint.match(/:(\d+)(?:\/|$)/);
+  const port = m?.[1] ?? "";
+  return IMPULSE_ROUTE_PORTS.has(port) ? "/v2/impulses/resolve" : "/resolve";
+}
+
 function buildDiscoveryProxyResolver(shape: string) {
   return {
     id: shape,
@@ -2510,7 +2593,20 @@ function buildDiscoveryProxyResolver(shape: string) {
       const random = context.random as { id: (prefix: string) => string };
       const impulseSlots = buildImpulseSlots(context.inputImpulses);
       const config = interpolateProxyValue(configRaw, variables, impulseSlots) as Record<string, unknown>;
-      const pointer: Record<string, unknown> = { type: shape, ...variables, ...config };
+      // Build the resolver pointer from the task CONFIG, NOT by spreading every
+      // run-context variable. The engine puts `executionId`/`execution_id` (the
+      // CURRENT run's id) into `variables`; spreading those into the pointer made a
+      // data resolver like executionTraceWithSignatures filter to THIS execution
+      // (which has no matching traces) → count=0 → composed report hollow. Only the
+      // task's own config (+ explicit {{var}} bindings the LLM wrote into config)
+      // should shape the query. We still forward `goal` as benign context since
+      // some resolvers read it, but DROP the reserved execution-id keys. (2026-06-27)
+      const { executionId: _eId, execution_id: _eid2, ...safeVars } = variables as Record<string, unknown>;
+      void _eId; void _eid2;
+      const pointer: Record<string, unknown> = { type: shape, ...safeVars, ...config };
+      if (process.env.GOAL_HOST_PROXY_DEBUG === "1") {
+        console.log(`[goal-host-vessel] PROXY-DEBUG ${shape}: configKeys=${JSON.stringify(Object.keys(config))} varKeys=${JSON.stringify(Object.keys(safeVars))} pointer=${JSON.stringify(pointer).slice(0, 300)}`);
+      }
 
       // 1. Resolve the producer endpoint via discovery (lazy → survives restarts).
       const discCtrl = new AbortController();
@@ -2534,7 +2630,7 @@ function buildDiscoveryProxyResolver(shape: string) {
           const v = dj?.content?.vessels?.[0];
           if (!v?.endpoint) throw new Error(`discovery: no vessel advertises ${shape}`);
           endpoint = v.endpoint.replace(/\/+$/, "");
-          resolvePath = v.resolve_endpoint || "/resolve";
+          resolvePath = v.resolve_endpoint || inferResolvePath(endpoint);
         } finally {
           clearTimeout(discTimer);
         }
@@ -2571,10 +2667,19 @@ function buildDiscoveryProxyResolver(shape: string) {
         else if ("body" in pObj) impulseContent = pObj["body"];
       }
 
+      // Carry the task's declared output slot onto the impulse as
+      // `outputImpulseKey` so a DOWNSTREAM task's `{{impulse:<slot>}}` binding
+      // actually resolves (buildImpulseSlots keys off metadata.outputImpulseKey).
+      // Without this, a proxy-produced data impulse had no slot key, so a composed
+      // capability's format step saw an unresolved literal placeholder and reported
+      // "empty data" — the last hole that kept decomposition-authored composites
+      // hollow even after their data step succeeded. (2026-06-27)
+      const declaredSlots = Array.isArray(task["outputImpulses"]) ? (task["outputImpulses"] as unknown[]).map(String).filter(Boolean) : [];
+      const outputImpulseKey = declaredSlots[0];
       return [{
         id: random.id(`disc:${shape}`),
         pointer: { type: "memo" },
-        metadata: { shape, source: "discovery", endpoint, ok: resp.ok },
+        metadata: { shape, source: "discovery", endpoint, ok: resp.ok, ...(outputImpulseKey ? { outputImpulseKey } : {}) },
         loaded: true,
         content: impulseContent,
       }];
@@ -2706,7 +2811,7 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     const all = new Set<string>();
     for (const v of vessels) {
       const ep = typeof v.endpoint === "string" ? v.endpoint.replace(/\/+$/, "") : "";
-      const rp = v.resolve_endpoint || "/resolve";
+      const rp = v.resolve_endpoint || inferResolvePath(ep);
       for (const s of (v.shapes ?? [])) {
         if (typeof s === "string" && s) {
           all.add(s);
