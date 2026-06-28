@@ -775,7 +775,9 @@ async function deprecateBrokenComposite(activityId: string, reason: string): Pro
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "activityTemplate_deprecate", pointer: { type: "activityTemplate_deprecate", activity_id: activityId, reason: `chronically hollow authored composite — self-pruned to force re-author: ${reason}`.slice(0, 200) } } }),
+      // The resolver expects `templateId` (not `activity_id`); pass both the wrapped
+      // and unwrapped id forms so it matches however the composite is stored.
+      body: JSON.stringify({ impulse: { type: "activityTemplate_deprecate", pointer: { type: "activityTemplate_deprecate", templateId: activityId.replace(/^activity:/, "").replace(/[⟨⟩]/g, ""), activity_id: activityId, reason: `chronically hollow authored composite — self-pruned to force re-author: ${reason}`.slice(0, 200) } } }),
       signal: AbortSignal.timeout(15_000),
     });
     console.log(`[goal-host-vessel] self-correction: DEPRECATED chronically-hollow composite ${activityId} (forces re-author next dispatch)`);
