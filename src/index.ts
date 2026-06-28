@@ -754,6 +754,33 @@ async function recordRepairConcept(fromTemplate: string, variantId: string, reas
     console.log(`[goal-host-vessel] repair: recorded goal-binding-repair concept (from ${fromTemplate}, variant ${variantId})`);
   } catch { /* non-fatal */ }
 }
+// Self-correction immune system for AUTHORED capabilities: a β-penalty erodes a
+// broken composite's posterior too slowly, so it lingers in Thompson selection and
+// keeps getting re-picked → hollow → re-picked (the broken-reuse trap that blocks
+// reliable autonomous frontier-crossing). When a SUBSTRATE-AUTHORED composite
+// (composed-cap / learned-compose / repaired-composed) goes hollow chronically
+// (≥ threshold within this process), DEPRECATE it so it leaves the selectable set
+// entirely, forcing the (aggregate-preferring) decomposition planner to author a
+// fresh working replacement. The substrate authored these under its own org, so it
+// can deprecate them with its own key (org-scoped PERMISSIONS — no admin needed).
+// Env-gated DEPRECATE_HOLLOW_COMPOSITES (default 1), DEPRECATE_HOLLOW_THRESHOLD
+// (default 2). (2026-06-28)
+const hollowCounts = new Map<string, number>();
+function isAuthoredComposite(id: string): boolean {
+  const n = id.replace(/^activity:/, "").replace(/[⟨⟩]/g, "");
+  return /(^|[:-])(composed-cap|learned-compose|repaired-composed)/.test(n);
+}
+async function deprecateBrokenComposite(activityId: string, reason: string): Promise<void> {
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "activityTemplate_deprecate", pointer: { type: "activityTemplate_deprecate", activity_id: activityId, reason: `chronically hollow authored composite — self-pruned to force re-author: ${reason}`.slice(0, 200) } } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    console.log(`[goal-host-vessel] self-correction: DEPRECATED chronically-hollow composite ${activityId} (forces re-author next dispatch)`);
+  } catch { /* non-fatal */ }
+}
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -762,6 +789,18 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
       body: JSON.stringify({ activity_id: activityId, direction: "negative", intensity: 2, reason: `hollow completion (goal not reached): ${reason}`.slice(0, 200) }),
       signal: AbortSignal.timeout(15_000),
     });
+  } catch { /* non-fatal */ }
+  // Auto-deprecate chronically-hollow authored composites (the broken-reuse trap).
+  try {
+    if ((process.env["DEPRECATE_HOLLOW_COMPOSITES"] ?? "1") === "0") return;
+    if (!isAuthoredComposite(activityId)) return;
+    const threshold = Number(process.env["DEPRECATE_HOLLOW_THRESHOLD"] ?? 2);
+    const n = (hollowCounts.get(activityId) ?? 0) + 1;
+    hollowCounts.set(activityId, n);
+    if (n >= threshold) {
+      await deprecateBrokenComposite(activityId, reason);
+      hollowCounts.delete(activityId);
+    }
   } catch { /* non-fatal */ }
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
