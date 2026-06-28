@@ -826,6 +826,30 @@ async function persistReachOnTrace(executionId: string | undefined, reached: boo
     });
   } catch { /* non-fatal */ }
 }
+// Append goal-host WALK deliberation steps onto the run's durable trace (keyed by
+// execution_id) so the substrate's REASONING — not just its outcomes — becomes
+// traced + queryable. Reuses activity-api's FLEXIBLE impulse_resolutions[] storage
+// via POST /v2/activities/execution-traces/deliberation (no new schema). Strictly
+// additive + non-fatal: fire-and-forget, errors swallowed, NEVER blocks the walk.
+// The walk accumulates steps in-memory and flushes once at the end keyed to the
+// representative trace id (lastTrace.id) — the same row /reach lands on — because
+// each step's own execution id isn't the row callers read. (2026-06-27)
+type DeliberationStep = {
+  shape: "walkStep" | "shape_gap_resolution" | "candidateConsideration";
+  input_impulse_ids: string[];
+  [k: string]: unknown;
+};
+async function recordDeliberation(executionId: string | undefined, steps: DeliberationStep[]): Promise<void> {
+  if (!executionId || steps.length === 0) return;
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/deliberation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ execution_id: executionId, steps }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch { /* non-fatal — deliberation tracing must never break the walk */ }
+}
 // Consult per-goal learning before selection: if a prior attempt at THIS goal
 // reached it via a known path, prefer that path (improvement over subsequent
 // attempts). Returns a template id to target, or null to fall through to the
@@ -1089,6 +1113,24 @@ async function runGoalAsPoolWalk(
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary));
   };
+  // ── Deliberation tracing ─────────────────────────────────────────────────────
+  // Accumulate the walk's REASONING (not just outcomes) as first-class impulses and
+  // flush them once at the end onto the run's durable trace. Each step carries
+  // input_impulse_ids = the pool impulse ids the decision SAW, so co-occurrence /
+  // Thompson can later condition on the reasoning. Bounded (≤60 steps flushed,
+  // candidate lists capped ≤10 client-side). Strictly additive — emit() only pushes
+  // to an array; the single network call is the end flush via recordDeliberation.
+  const deliberation: DeliberationStep[] = [];
+  const DELIB_CAP = 80;
+  // Snapshot the pool impulse ids the current decision can see (capped).
+  const poolIds = (): string[] => poolImpulses.map((i) => i.id).slice(-20);
+  const cap10 = (xs: unknown[]): string[] => xs.slice(0, 10).map((x) => normActivityId(String((x as { id?: string })?.id ?? x)));
+  const emitDeliberation = (shape: DeliberationStep["shape"], fields: Record<string, unknown>): void => {
+    try {
+      if (deliberation.length >= DELIB_CAP) return; // bounded — never flood
+      deliberation.push({ shape, input_impulse_ids: poolIds(), chain_index: chain.length, ...fields });
+    } catch { /* non-fatal */ }
+  };
   // DATA-FLOW BINDING: expose each pool impulse's CONTENT as a variable keyed by
   // its shape, so a downstream task's `{{shape}}` placeholder interpolates from
   // the UPSTREAM activity's output content. This is what turns activities from
@@ -1316,6 +1358,15 @@ async function runGoalAsPoolWalk(
           if (bestPickId) lastPick = bestPickId;
         }
         console.log(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL bundle for "${T}" — ran ${K} producers in parallel, ${producedCount} produced new shapes (OR-edge discovery)`);
+        emitDeliberation("walkStep", {
+          step: chain.length,
+          horizontal_bundle: true,
+          target_shape: T,
+          producers_run: K,
+          produced_new: producedCount,
+          pick_id: bestPickId ? normActivityId(bestPickId) : null,
+          pool_size: producedShapes.size,
+        });
         const progressed = producedShapes.size > beforeBundle;
         if (!progressed) {
           consecutiveNoProgress++;
@@ -1349,6 +1400,12 @@ async function runGoalAsPoolWalk(
           for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
           if (added) {
             console.log(`[goal-host-vessel] walk(${opts.surface}): recurse — ${normActivityId(needsInputs.id)} needs [${needsInputs.inputShapes.join(",")}]; producing inputs first`);
+            emitDeliberation("shape_gap_resolution", {
+              resolution: "backward_chain",
+              producer: normActivityId(needsInputs.id),
+              needs_inputs: needsInputs.inputShapes.slice(0, 10),
+              reason: "target producer has unsatisfied inputs — producing them first (forward-pool recurse)",
+            });
             continue; // loop to produce the sub-target inputs, then re-pick this producer
           }
         }
@@ -1393,6 +1450,14 @@ async function runGoalAsPoolWalk(
                 for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
                 if (added) {
                   console.log(`[goal-host-vessel] walk(${opts.surface}): backward-chain — ${normActivityId(needsInputs.id)} needs [${needsInputs.inputShapes.join(",")}]; producing inputs first`);
+                  emitDeliberation("shape_gap_resolution", {
+                    resolution: "backward_chain",
+                    missing_shape: missingTargets[0],
+                    producer: normActivityId(needsInputs.id),
+                    needs_inputs: needsInputs.inputShapes.slice(0, 10),
+                    candidates_considered: cap10(producers),
+                    reason: "discover-by-shapes producer of missing target has unsatisfied inputs — producing them first",
+                  });
                   continue;
                 }
               }
@@ -1434,6 +1499,13 @@ async function runGoalAsPoolWalk(
         } catch { /* author failed → falls through to escalate/stop */ }
         if (authored) {
           console.log(`[goal-host-vessel] walk(${opts.surface}): BRIDGE-AUTHORED validated producer for "${X}" → ${authored.id} (inputs=[${authored.inputShapes.join(",")}])`);
+          emitDeliberation("shape_gap_resolution", {
+            resolution: "bridge_authored",
+            missing_shape: X,
+            producer_authored: normActivityId(authored.id),
+            needs_inputs: authored.inputShapes.slice(0, 10),
+            reason: "no producer for missing target but a live resolver exists — minted a validated wrapper producer",
+          });
           // Recurse: add the producer's missing inputs as sub-targets so the walk
           // produces them FIRST — mint-as-you-go builds the chain backward from
           // the goal toward what the pool already has.
@@ -1471,6 +1543,14 @@ async function runGoalAsPoolWalk(
             const outShapes = [...new Set((composite.tasks ?? []).flatMap((t: any) => t.outputShapes ?? t.output_shapes ?? []))] as string[];
             pick = { id: composedId, inputShapes: [], outputShapes: outShapes.length ? outShapes : missingNow };
             console.log(`[goal-host-vessel] walk(${opts.surface}): DECOMPOSITION-AUTHORED composite ${composedId} from existing resolvers for missing=[${missingNow.join(",")}] — executing it (capability breadth).`);
+            emitDeliberation("shape_gap_resolution", {
+              resolution: "decomposition_authored",
+              missing_shape: missingNow[0],
+              missing_shapes: missingNow.slice(0, 10),
+              producer_authored: normActivityId(composedId),
+              produced_shapes: (outShapes.length ? outShapes : missingNow).slice(0, 10),
+              reason: "no single resolver produces the missing shape — authored a composite of existing resolvers",
+            });
           }
         }
       }
@@ -1482,9 +1562,30 @@ async function runGoalAsPoolWalk(
           if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
         }
         console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
+        emitDeliberation("shape_gap_resolution", {
+          resolution: "escalate_stop",
+          missing_shape: missingNow[0],
+          missing_shapes: missingNow.slice(0, 10),
+          filed_gap: filedGap,
+          pool_size: producedShapes.size,
+          reason: "no shape-feasible step and no bridgeable/composable producer — escalating (stop)",
+        });
         break;
       }
     }
+
+    // Record the SELECTION decision: which candidates were considered, which was
+    // picked, and which were rejected. The considered-but-rejected set is the key
+    // learning signal that was previously lost — it lets later learning condition on
+    // the alternatives the walk passed over, not just the one it ran.
+    const pickedId = normActivityId(pick.id);
+    emitDeliberation("candidateConsideration", {
+      target_shapes: [...target].slice(0, 10),
+      candidates_considered: cap10(candidates),
+      candidate_count: candidates.length,
+      picked: pickedId,
+      excluded: cap10(candidates.filter((c) => normActivityId(c.id) !== pickedId)),
+    });
 
     // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
     //     with the accumulated pool impulses + thread parent/composition ids so the
@@ -1563,6 +1664,15 @@ async function runGoalAsPoolWalk(
     exclude.add(normActivityId(pick.id));
     const progressed = producedShapes.size > beforeSize;
     console.log(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
+    emitDeliberation("walkStep", {
+      step: chain.length,
+      pick_id: normActivityId(pick.id),
+      status: trace.status,
+      new_shapes: producedShapes.size - beforeSize,
+      pool_size: producedShapes.size,
+      candidate_count: candidates.length,
+      step_execution_id: trace.id,
+    });
     if (!progressed) {
       consecutiveNoProgress++;
       if (consecutiveNoProgress >= 2) {
@@ -1692,6 +1802,11 @@ async function runGoalAsPoolWalk(
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
     void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd);
   }
+
+  // Flush the walk's DELIBERATION onto the run's durable trace (the row /reach lands
+  // on), so the substrate's reasoning is traced + queryable, not journald-only.
+  // Fire-and-forget, non-fatal, bounded. (2026-06-27)
+  void recordDeliberation((lastTrace as { id?: string } | undefined)?.id, deliberation);
 
   // Adapt the last ExecutionTrace into the GoalRunResult shape the callers read.
   const result = lastTrace
