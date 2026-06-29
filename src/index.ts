@@ -3377,7 +3377,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
               deny_list: ["activityTemplateProposal", "patch_proposal", "read_scenario"],
               bridge_source: "operator_goal_unservable",
             };
-            await fetch(`${process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090"}/v2/impulses/resolve`, {
+            await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}` },
               body: JSON.stringify({ impulse: { pointer: { type: "fs_write", path: `/workspace/patterns/${patternId}.json`, content: JSON.stringify(cluster, null, 2) } } }),
