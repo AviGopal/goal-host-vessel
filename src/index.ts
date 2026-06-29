@@ -499,6 +499,7 @@ const PORT = parseInt(process.env.PORT ?? "8210", 10);
 const VESSEL_ID = process.env.GOAL_HOST_VESSEL_ID ?? process.env.VESSEL_ID ?? "goal-host-vessel";
 const ACTIVITY_API_ENDPOINT = process.env.ACTIVITY_API_ENDPOINT ?? "http://127.0.0.1:8080";
 const DISCOVERY_ENDPOINT = process.env.DISCOVERY_VESSEL_ENDPOINT ?? "http://127.0.0.1:8100";
+const DISCOVERY_SHAPES_ENDPOINT = `${DISCOVERY_ENDPOINT}/registry/shapes`;
 const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_KEY ?? "";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
@@ -864,7 +865,7 @@ async function runGoalAsPoolWalk(
   const liveShapes = async (): Promise<Set<string>> => {
     if (liveResolverShapes) return liveResolverShapes;
     try {
-      const r = await fetch("http://127.0.0.1:8100/registry/shapes", { signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(DISCOVERY_SHAPES_ENDPOINT, { signal: AbortSignal.timeout(10_000) });
       if (r.ok) {
         const j: any = await r.json();
         const shapes = Array.isArray(j?.shapes) ? j.shapes.map((s: unknown) => String(s)).filter(Boolean) : [];
