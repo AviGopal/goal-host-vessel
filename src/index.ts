@@ -914,6 +914,162 @@ async function runGoalAsPoolWalk(
     return v;
   };
 
+  // ── VESSEL-RESOLVE SATISFIER (additive, 2026-06-28) ────────────────────────
+  // When a MISSING target/input shape has a LIVE resolver advertised by a
+  // connected vessel (per discovery / shapeEndpointMap), bring that vessel's
+  // REAL resolve capability into the pool directly — a genuine resolve call —
+  // BEFORE falling back to authoring a hollow `auto-bridge-*` wrapper. This is
+  // the "resolvers live where data lives" principle applied at WALK time: the
+  // obsidian intake loop writes notes by calling obsidian's write_note resolver
+  // directly (port 27182); the goal walk should reach the SAME capability rather
+  // than minting a hollow bridge that produces no shapes.
+  //
+  // STRICTLY ADDITIVE + SCOPED: returns the resolved content on genuine success
+  // (success !== false AND non-empty content) and null on ANY failure, so the
+  // existing bridge-author / escalate path remains the unchanged fallback. We do
+  // NOT register resolvers, mint templates, or touch selection here.
+  //
+  // ARG DERIVATION: a raw resolve needs pointer args the pool may not carry
+  // (e.g. obsidian:write_note needs {path, content}). We seed the pointer from
+  // poolVars (so `{{path}}`/`{{content}}` vars + already-produced shape content
+  // flow in) and, when an LLM is available, additionally LLM-extract the pointer
+  // args for THIS shape from the goal text. The vessel itself is the validator:
+  // a wrong/empty pointer → success:false / empty → we return null → fallback.
+  const satisfierTried = new Set<string>();
+  const llmExtractPointerArgs = async (shape: string): Promise<Record<string, unknown> | null> => {
+    if (!LLM_VESSEL_ENDPOINT) return null;
+    const prompt = `A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
+
+GOAL: ${goal}
+
+Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no nesting). If the goal does not specify any args, respond with {}.`;
+    try {
+      const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!r.ok) return null;
+      const j: any = await r.json();
+      const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+      const m = String(text).match(/\{[\s\S]*\}/);
+      if (!m) return null;
+      const parsed = JSON.parse(m[0]);
+      return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed as Record<string, unknown> : null;
+    } catch { return null; }
+  };
+  // Look up a shape's vessel endpoint (registry map first, then discovery).
+  const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string } | null> => {
+    const mapped = shapeEndpointMap.get(shape);
+    if (mapped?.endpoint) return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
+    try {
+      const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+      const v = dj?.content?.vessels?.[0];
+      if (!v?.endpoint) return null;
+      return { endpoint: v.endpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve" };
+    } catch { return null; }
+  };
+  // Raw resolve call to a vessel for one shape; returns non-empty content or null.
+  const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>): Promise<unknown | null> => {
+    const base = poolVars();
+    delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
+    const pointer: Record<string, unknown> = { type: shape, ...base, ...extraArgs };
+    let resp: Response;
+    try {
+      resp = await fetch(`${endpoint}${resolvePath}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ impulse: { pointer } }),
+        signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+      });
+    } catch { return null; }
+    const bodyText = await resp.text();
+    if (!resp.ok) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(bodyText); } catch { parsed = bodyText; }
+    let content: unknown = parsed;
+    const pObj = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : null;
+    if (pObj) {
+      if (pObj["success"] === false) return null;
+      if ("content" in pObj) content = pObj["content"];
+      else if ("body" in pObj) content = pObj["body"];
+    }
+    if (content == null) return null;
+    if (typeof content === "string" && content.trim().length === 0) return null;
+    if (Array.isArray(content) && content.length === 0) return null;
+    return content;
+  };
+  // LLM-pick the ACTION shape (+args) that PRODUCES the missing target, among the
+  // target vessel's other live shapes. This is what turns a read-only target
+  // (obsidian:note) into a genuine write (obsidian:write_note) when the goal asks
+  // for one — without hardcoding any vessel: the vessel's own advertised surface
+  // is the action menu, the LLM maps goal→action, the vessel validates the args.
+  const llmPickProducingAction = async (target: string, siblings: string[]): Promise<{ shape: string; args: Record<string, unknown> } | null> => {
+    if (!LLM_VESSEL_ENDPOINT || siblings.length === 0) return null;
+    const prompt = `The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.
+
+GOAL: ${goal}
+
+If one of those sibling shapes is the action that would create what the goal asks for (e.g. a write/create action), respond with ONLY JSON {"shape": "<sibling shape>", "args": { ...flat pointer arg fields extracted from the goal, e.g. path/content }}. If none of them is an appropriate creating action for this goal, respond with {"shape": null}.`;
+    try {
+      const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!r.ok) return null;
+      const j: any = await r.json();
+      const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+      const m = String(text).match(/\{[\s\S]*\}/);
+      if (!m) return null;
+      const parsed = JSON.parse(m[0]) as { shape?: unknown; args?: unknown };
+      if (typeof parsed?.shape !== "string" || !siblings.includes(parsed.shape)) return null;
+      const args = (parsed.args && typeof parsed.args === "object" && !Array.isArray(parsed.args)) ? parsed.args as Record<string, unknown> : {};
+      return { shape: parsed.shape, args };
+    } catch { return null; }
+  };
+  const vesselResolveShape = async (shape: string): Promise<{ content: unknown } | null> => {
+    if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
+    satisfierTried.add(shape);
+    const ep = await endpointForShape(shape);
+    if (!ep) return null;
+    // (a) Try resolving the target shape directly with goal-extracted args.
+    const directArgs = (await llmExtractPointerArgs(shape)) ?? {};
+    const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+    if (direct != null) return { content: direct };
+    // (b) ACTION-THEN-READ: the target didn't resolve (e.g. a read-only shape for a
+    //     not-yet-existing artifact). Find a sibling live shape on the SAME vessel
+    //     that PRODUCES it (LLM-mapped from the goal), invoke that action, then
+    //     re-read the target. This reaches genuine write capability (obsidian
+    //     write_note) without minting a hollow bridge.
+    const live = await liveShapes();
+    const siblings = [...live].filter((s) => s !== shape && (shapeEndpointMap.get(s)?.endpoint === ep.endpoint));
+    if (siblings.length === 0) return null;
+    const action = await llmPickProducingAction(shape, siblings);
+    if (!action) return null;
+    const actionEp = await endpointForShape(action.shape);
+    if (!actionEp) return null;
+    const actionResult = await rawResolve(action.shape, actionEp.endpoint, actionEp.resolvePath, action.args);
+    if (actionResult == null) return null; // action vessel rejected/empty → fall through
+    console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier action "${action.shape}" produced — re-reading target "${shape}"`);
+    // Re-read the target now that the action ran; pass the action's args (e.g. path)
+    // so the read targets the just-created artifact. Add the produced action shape
+    // to the pool too (it's genuine output).
+    addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`);
+    const reread = await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs });
+    if (reread != null) return { content: reread };
+    // Action succeeded but re-read empty — still genuine progress (the artifact was
+    // created). Surface the action result as the target's content rather than null,
+    // so the walk advances and the reach-gate can judge the real artifact.
+    return { content: actionResult };
+  };
+
   // Goal impulse (shape "goal").
   addToPool("goal", { goal }, goal.slice(0, 200));
   // Seed any variable that looks like an impulse / carries a shape.
@@ -950,9 +1106,72 @@ async function runGoalAsPoolWalk(
   let totalCostUsd = 0;
   let consecutiveNoProgress = 0;
   let earlyReachVerdict: GoalReachVerdict | null = null;
+  let satisfierSeq = 0; // synthetic-trace id counter for vessel-resolve satisfier steps
 
   // ── 2-3. Walk the shape graph ──────────────────────────────────────────────
   while (chain.length < MAX_STEPS && !targetMet()) {
+    // (0) VESSEL-RESOLVE SATISFIER — resolve-FIRST, before ANY candidate /
+    //     horizontal-bundle / bridge-author step. When a missing target shape
+    //     has a LIVE resolver advertised by a connected vessel, satisfy it by a
+    //     REAL resolve call to that vessel and addToPool the genuine result, so
+    //     the walk reaches the vessel's actual capability (e.g. obsidian
+    //     write_note → a note really written) instead of selecting/authoring a
+    //     hollow wrapper that "produces the shape" without doing the work.
+    //     Strictly additive: a failed/empty resolve returns null and the walk
+    //     proceeds to the unchanged candidate/bridge/escalate path below.
+    if (target.size > 0) {
+      const missingForSatisfier = [...target].filter((s) => !producedShapes.has(s));
+      const liveForSatisfier = await liveShapes();
+      const satisfiableNow = missingForSatisfier.find((s) => liveForSatisfier.has(s) && !satisfierTried.has(s) && !minted.has(s));
+      if (satisfiableNow) {
+        const resolved = await vesselResolveShape(satisfiableNow);
+        if (resolved) {
+          addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`);
+          // Record the satisfier as a GENUINE step: synthesize a minimal
+          // ExecutionTrace so the walk's downstream accounting (chain.length > 0 →
+          // reach-gate runs; attempts > 0 → caller does NOT fall to the recovery
+          // loop) treats a real vessel-resolve exactly like a template execution.
+          // The trace's task outputs the produced shape so the trace-sink and
+          // reach-gate see what was actually produced; the reach-gate's content
+          // digest already folds the full pool (incl. this shape's content).
+          const satId = `satisfier:${satisfiableNow}`;
+          const synthTrace: ExecutionTrace = {
+            id: `walk-satisfier-${++satisfierSeq}-${Date.now()}`,
+            templateId: satId,
+            templateName: `vessel-resolve satisfier (${satisfiableNow})`,
+            status: "completed",
+            parentExecutionId: lastExecId,
+            compositionChain: [...chainExecIds],
+            inputImpulseIds: [],
+            outputImpulseIds: [],
+            tasks: [{
+              taskId: "satisfier-resolve",
+              description: `resolve ${satisfiableNow} via connected vessel`,
+              resolverId: satisfiableNow,
+              resolverTier: "pattern",
+              inputImpulseIds: [],
+              outputImpulseIds: [],
+              outputShapes: [satisfiableNow],
+              success: true,
+            }],
+            costUsd: 0,
+            durationMs: 0,
+            tags: opts.tags,
+            metadata: { satisfier: true, shape: satisfiableNow },
+          };
+          chain.push(satId);
+          exclude.add(normActivityId(satId));
+          chainExecIds.push(synthTrace.id);
+          lastTrace = synthTrace;
+          lastExecId = synthTrace.id;
+          lastPick = satId;
+          console.log(`[goal-host-vessel] walk(${opts.surface}): VESSEL-RESOLVE SATISFIER produced "${satisfiableNow}" directly (connected vessel resolve) — no bridge needed`);
+          consecutiveNoProgress = 0;
+          continue; // shape is now in the pool; re-evaluate target/candidates
+        }
+        console.log(`[goal-host-vessel] walk(${opts.surface}): vessel-resolve satisfier for "${satisfiableNow}" returned no content — proceeding to candidate/bridge path`);
+      }
+    }
     // (a) CANDIDATE GENERATION — shape-driven: consumers of the current pool.
     let candidates: WalkCandidate[] = [];
     try {
@@ -1467,7 +1686,12 @@ async function runGoalAsPoolWalk(
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
         console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-        void mintReachedTrace(lastTrace as any);
+        // Don't ribosome-mint a SATISFIER-only trace: it's a synthetic single-task
+        // record of a direct vessel resolve, not an extractable recipe — minting it
+        // would write a hollow `satisfier:<shape>` template. The reached PATH is
+        // still captured via recordGoalPath below (the useful learning signal).
+        const satisfierOnly = (lastTrace.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
+        if (!satisfierOnly) void mintReachedTrace(lastTrace as any);
       }
     } catch (e) {
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
@@ -2902,7 +3126,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           },
         },
       });
-      await fetch("http://127.0.0.1:8090/v2/impulses/resolve", {
+      await fetch(`${process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090"}/v2/impulses/resolve`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
