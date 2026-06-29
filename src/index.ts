@@ -3012,7 +3012,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
               const ctrl = new AbortController();
               const timer = setTimeout(() => ctrl.abort(), 15000);
               try {
-                const llmRes = await fetch("http://127.0.0.1:8220/resolve", {
+                const llmRes = await fetch(`${process.env.LLM_VESSEL_ENDPOINT ?? "http://127.0.0.1:8220"}/resolve`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json", Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}` },
                   body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001", max_tokens: 10 }),
