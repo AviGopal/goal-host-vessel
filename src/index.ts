@@ -19,6 +19,7 @@
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, goalHashOf } from "./goal-target-inference";
+import { orderRing } from "./mem-ring";
 import {
   GoalHost,
   DiscoveryRegistrationLoop,
@@ -148,9 +149,7 @@ function recordMemSample(source: string, msgSize?: number, msgType?: string): vo
 async function flushMemDump(reason: string): Promise<void> {
   try {
     // Order ring oldest-first when wrapped.
-    const ordered = memRing.length < MEM_RING_SIZE
-      ? memRing.slice()
-      : memRing.slice(memRingHead).concat(memRing.slice(0, memRingHead));
+    const ordered = orderRing(memRing, memRingHead, MEM_RING_SIZE);
     const payload = {
       generated_at: new Date().toISOString(),
       reason,
