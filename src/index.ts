@@ -3343,7 +3343,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
               priority_hint: "high",
             },
           };
-          await fetch("http://127.0.0.1:8090/v2/impulses/resolve", {
+          await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}` },
             body: JSON.stringify({ impulse: { pointer: { type: "substrateGap_write", gap } } }),
