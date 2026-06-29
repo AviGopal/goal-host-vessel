@@ -79,6 +79,11 @@ const BUS_BACKPRESSURE_MAX_WAIT_MS = parseInt(
 const DISPATCH_DROP_LOG_PATH =
   process.env.IAS_BUS_DROP_LOG_PATH ?? "/workspace/dispatch-dropped.jsonl";
 
+// Env-defaulted endpoint for goal-host-vessel's own /run-goal route.
+// Override with GOAL_HOST_VESSEL_ENDPOINT to avoid hardcoded host:port drift.
+const GOAL_HOST_ENDPOINT =
+  process.env.GOAL_HOST_VESSEL_ENDPOINT ?? "http://127.0.0.1:8210";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // L2 instrumentation — process.memoryUsage() trajectory probe
 //
@@ -3384,7 +3389,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
               signal: AbortSignal.timeout(8000),
             });
             // Dispatch the real-chain author (async; do not await its completion here).
-            void fetch("http://127.0.0.1:8210/run-goal", {
+            void fetch(`${GOAL_HOST_ENDPOINT}/run-goal`, {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}` },
               body: JSON.stringify({
