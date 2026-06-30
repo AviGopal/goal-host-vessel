@@ -1040,11 +1040,18 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
   // (obsidian:note) into a genuine write (obsidian:write_note) when the goal asks
   // for one — without hardcoding any vessel: the vessel's own advertised surface
   // is the action menu, the LLM maps goal→action, the vessel validates the args.
-  const llmPickProducingAction = async (target: string, siblings: string[]): Promise<{ shape: string; args: Record<string, unknown> } | null> => {
+  const llmPickProducingAction = async (target: string, siblings: string[], correction?: string): Promise<{ shape: string; args: Record<string, unknown> } | null> => {
     if (!LLM_VESSEL_ENDPOINT || siblings.length === 0) return null;
+    // When the vessel REFUSED a prior attempt, feed its own rejection reason back to
+    // the LLM so it corrects the args (e.g. obsidian's "path must end in .md and
+    // start with Substrate/"). The vessel's validation message is the constraint —
+    // no per-vessel rule is hardcoded here; the vessel teaches the extractor.
+    const correctionBlock = correction
+      ? `\n\nA PRIOR attempt was REFUSED by the vessel with this reason — fix the args to satisfy it: "${correction}"`
+      : "";
     const prompt = `The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.
 
-GOAL: ${goal}
+GOAL: ${goal}${correctionBlock}
 
 If one of those sibling shapes is the action that would create what the goal asks for (e.g. a write/create action), respond with ONLY JSON {"shape": "<sibling shape>", "args": { ...flat pointer arg fields extracted from the goal, e.g. path/content }}. If none of them is an appropriate creating action for this goal, respond with {"shape": null}.`;
     try {
@@ -1081,12 +1088,55 @@ If one of those sibling shapes is the action that would create what the goal ask
     const live = await liveShapes();
     const siblings = [...live].filter((s) => s !== shape && (shapeEndpointMap.get(s)?.endpoint === ep.endpoint));
     if (siblings.length === 0) return null;
-    const action = await llmPickProducingAction(shape, siblings);
+    // A vessel can ACCEPT the call at the transport level (success:true, non-empty
+    // content) yet REFUSE the args inside the content body — e.g. obsidian returns
+    // {"wrote":false,"refused":true,"reason":"path must end in .md ..."}. rawResolve
+    // sees that as produced content, so the walk would "produce" a refusal and go
+    // HOLLOW. Detect such a soft-refusal and surface its reason so we can re-ask the
+    // LLM with the vessel's own constraint as corrective feedback (general; no
+    // per-vessel path rule baked in).
+    const refusalReason = (result: unknown): string | null => {
+      let obj: unknown = result;
+      if (typeof obj === "string") { try { obj = JSON.parse(obj); } catch { return null; } }
+      if (!obj || typeof obj !== "object") return null;
+      const o = obj as Record<string, unknown>;
+      const refused = o["refused"] === true || o["wrote"] === false || o["written"] === false ||
+        o["success"] === false || (typeof o["error"] === "string" && (o["error"] as string).length > 0);
+      if (!refused) return null;
+      const reason = o["reason"] ?? o["error"] ?? o["message"];
+      return typeof reason === "string" && reason.length > 0 ? reason : "the action was refused by the vessel";
+    };
+    let action = await llmPickProducingAction(shape, siblings);
     if (!action) return null;
-    const actionEp = await endpointForShape(action.shape);
+    let actionEp = await endpointForShape(action.shape);
     if (!actionEp) return null;
-    const actionResult = await rawResolve(action.shape, actionEp.endpoint, actionEp.resolvePath, action.args);
+    let actionResult = await rawResolve(action.shape, actionEp.endpoint, actionEp.resolvePath, action.args);
     if (actionResult == null) return null; // action vessel rejected/empty → fall through
+    // If the vessel soft-refused the args, retry ONCE with its reason as a correction.
+    const refusal = refusalReason(actionResult);
+    if (refusal) {
+      console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier action "${action.shape}" REFUSED (${refusal}) — retrying once with corrective feedback`);
+      const retryAction = await llmPickProducingAction(shape, siblings, refusal);
+      if (retryAction) {
+        const retryEp = await endpointForShape(retryAction.shape);
+        // Merge the first attempt's args UNDER the corrected ones: the retry often
+        // only re-emits the field it was told to fix (e.g. path) and drops others
+        // (e.g. content), which would write an empty artifact. Keep the original
+        // content/body and let the corrected field win.
+        const mergedArgs = retryAction.shape === action.shape ? { ...action.args, ...retryAction.args } : retryAction.args;
+        const retryResult = retryEp ? await rawResolve(retryAction.shape, retryEp.endpoint, retryEp.resolvePath, mergedArgs) : null;
+        if (retryResult != null && !refusalReason(retryResult)) {
+          action = { shape: retryAction.shape, args: mergedArgs }; actionEp = retryEp!; actionResult = retryResult;
+        } else {
+          // Still refused after correction — treat as genuine non-progress so the
+          // walk falls through to the bridge/escalate path rather than producing a
+          // refusal as if it were the asked artifact.
+          return null;
+        }
+      } else {
+        return null;
+      }
+    }
     console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier action "${action.shape}" produced — re-reading target "${shape}"`);
     // Re-read the target now that the action ran; pass the action's args (e.g. path)
     // so the read targets the just-created artifact. Add the produced action shape
