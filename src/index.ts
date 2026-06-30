@@ -1338,10 +1338,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     // (a) CANDIDATE GENERATION — shape-driven: consumers of the current pool.
     let candidates: WalkCandidate[] = [];
     try {
+      const _sig1 = (await getCachedStateSignature())?.signature_hash;
       const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        body: JSON.stringify({ required_shapes: [...producedShapes], mode: "backward", limit: 50 }),
+        body: JSON.stringify({ required_shapes: [...producedShapes], mode: "backward", limit: 50, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
         signal: AbortSignal.timeout(20_000),
       });
       if (r.ok) {
@@ -1358,7 +1359,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0 }),
+          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())!.signature_hash } : {}) }),
           signal: AbortSignal.timeout(20_000),
         });
         if (r.ok) {
@@ -1554,10 +1555,11 @@ If one of those sibling shapes is the action that would create what the goal ask
       const missingTargets = [...target].filter((s) => !producedShapes.has(s));
       if (missingTargets.length > 0) {
         try {
+          const _sig2 = (await getCachedStateSignature())?.signature_hash;
           const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingTargets, mode: "forward" }),
+            body: JSON.stringify({ required_shapes: missingTargets, mode: "forward", ...(_sig2 ? { state_signature: _sig2 } : {}) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
