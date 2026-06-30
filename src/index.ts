@@ -530,7 +530,11 @@ GOAL: ${goal}
 Produced output impulse shapes: ${JSON.stringify(producedShapes)}
 Task summary: ${taskSummary}${contentDigest ? `\n\nProduced output CONTENT (truncated — judge reach from the ACTUAL content, not just shape names):\n${contentDigest}` : ""}
 
-Judge strictly: reached ONLY if the produced outputs genuinely correspond to what the goal asked for. A shape name alone is NOT evidence — when content is shown, require that the content substantively satisfies the goal (e.g. a problem_detection shape with actual problems + line numbers, not an empty list). Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
+Judge by SUBSTANTIVE FULFILLMENT OF INTENT, not by verbatim text. The test is whether the produced output meaningfully accomplishes what the goal asked for. VERBATIM / EXACT-CHARACTER / EXACT-BYTE / EXACT-STRING equality is NOT required and MUST NOT be the basis for rejection: a goal that says 'write a note saying X' is REACHED by a note whose content conveys X, even if the wording, length, byte-count, or formatting differ from any literal text in the goal. Example: goal asks for a note with a 43-character phrase and the output is 40 bytes but conveys the same meaning → REACHED. Differences in length, punctuation, or phrasing are NOT grounds for hollow.
+
+STILL score HOLLOW (reached:false) when the output genuinely fails the intent: nothing was produced; the WRONG shape was produced; the content is empty / 0-byte / a bare placeholder / a refusal or error envelope; or the output is MATERIALLY INCOMPLETE versus an explicitly multi-part goal (e.g. goal says move ALL inbox files but only one was moved; goal asks for problems WITH line numbers but the list is empty). A shape name alone is NOT evidence — when content is shown, judge the actual content, but judge it for MEANING, not literal match.
+
+Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
 
 Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
   try {
@@ -1049,7 +1053,16 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
     const correctionBlock = correction
       ? `\n\nA PRIOR attempt was REFUSED by the vessel with this reason — fix the args to satisfy it: "${correction}"`
       : "";
-    const prompt = `The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.
+    // Known arg constraints surfaced UP FRONT so the first attempt is valid (saves
+    // one LLM round-trip vs the refuse-then-retry path). General hook: if any
+    // sibling is an obsidian write/note action, the vault path constraint is known,
+    // so inject it pre-emptively. No behaviour is hardcoded beyond this hint — the
+    // vessel's own refusal reason still drives correction if the first try is wrong.
+    const obsidianWrite = !correction && siblings.some((s) => /^obsidian:(write_note|write|note)$/.test(s));
+    const constraintBlock = obsidianWrite
+      ? `\n\nKNOWN CONSTRAINT: obsidian note paths must be vault-relative, start with "Substrate/", and end in ".md" (e.g. "Substrate/<descriptive-name>.md"). The write action also requires a non-empty "content" field. Emit a valid path on the FIRST attempt.`
+      : "";
+    const prompt = `The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.${constraintBlock}
 
 GOAL: ${goal}${correctionBlock}
 
