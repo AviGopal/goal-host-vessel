@@ -784,10 +784,20 @@ function buildCompositeTraceFromChain(
       success: true,
     };
   });
-  // Stable composite id: the ordered shape sequence (slugged), no timestamp.
+  // Stable composite SLUG (the ordered shape sequence) drives the deterministic
+  // templateId — that is what the ribosome UPSERTs into one learned-<slug>. But the
+  // execution_id has a UNIQUE index, so the TRACE id must differ per run or a second
+  // composition of the same shape-pair 500s on the index (`already contains`),
+  // leaving the reached trace unpersisted and the mint extracting a stale one.
+  // Derive a run-unique suffix from chainExecIds (already unique per run; no clock
+  // dependence) so the trace id is per-run while the templateId stays stable.
   const slug = chain.map(shapeOf).join("-to-").replace(/[^a-zA-Z0-9]+/g, "-").replace(/(^-+|-+$)/g, "").toLowerCase().slice(0, 64) || "composition";
+  const runSrc = chainExecIds.join("|");
+  let _h = 0;
+  for (let i = 0; i < runSrc.length; i++) _h = ((_h << 5) - _h + runSrc.charCodeAt(i)) | 0;
+  const runSuffix = (_h >>> 0).toString(36).slice(0, 8) || "run";
   return {
-    id: `walk-composite-${slug}`,
+    id: `walk-composite-${slug}-${runSuffix}`,
     templateId: `composition:${slug}`,
     templateName: `walk composition (${chain.map(shapeOf).join(" → ")})`,
     status: "completed",
