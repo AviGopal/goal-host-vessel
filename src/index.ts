@@ -960,7 +960,26 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       const m = String(text).match(/\{[\s\S]*\}/);
       if (!m) return null;
       const parsed = JSON.parse(m[0]);
-      return (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed as Record<string, unknown> : null;
+      const args = (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed as Record<string, unknown> : null;
+      if (!args) return null;
+      // ARG-ALIAS EXPANSION (2026-06-29): the generic LLM extraction can't know a
+      // specific resolver's exact pointer field name (analysis-vessel's
+      // problem_detection reads `file_paths`/`filePaths`, code_quality reads
+      // `file_path`/`filePath`/`path`). When the goal carries a filesystem path,
+      // mirror it across the canonical file-arg aliases so a file-reading resolver
+      // binds it regardless of which name it checks. Keeps the satisfier general
+      // (no per-vessel special-casing) instead of failing "filePaths is required".
+      const looksLikePath = (s: unknown): s is string =>
+        typeof s === "string" && /(^|\/)[\w.-]+\.[A-Za-z0-9]+$/.test(s.trim()) && !/\s/.test(s.trim());
+      const pathVal =
+        Object.values(args).find(looksLikePath) ??
+        // Fall back to a path literal in the goal text itself if the LLM dropped it.
+        (goal.match(/[^\s"']*\/[^\s"']+\.[A-Za-z0-9]+/)?.[0]);
+      if (typeof pathVal === "string" && pathVal.length > 0) {
+        for (const k of ["path", "file_path", "filePath", "logFilePath"]) if (!(k in args)) args[k] = pathVal;
+        for (const k of ["file_paths", "filePaths"]) if (!(k in args)) args[k] = [pathVal];
+      }
+      return args;
     } catch { return null; }
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
@@ -1002,6 +1021,12 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
     const pObj = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : null;
     if (pObj) {
       if (pObj["success"] === false) return null;
+      // A resolver that rejected the pointer returns { error: "..." } (e.g.
+      // analysis-vessel's "filePaths is required") with no content/body. That is a
+      // FAILURE, not produced content — without this the walk would "produce" the
+      // shape with an error object as its content and fool the reach-gate. Return
+      // null so the satisfier falls through to the unchanged bridge/escalate path.
+      if (typeof pObj["error"] === "string" && pObj["error"].length > 0 && !("content" in pObj) && !("body" in pObj)) return null;
       if ("content" in pObj) content = pObj["content"];
       else if ("body" in pObj) content = pObj["body"];
     }
@@ -1742,6 +1767,17 @@ async function runGoalWithRecovery(
     compositionChain?: string[];
     expectedOutputShapes?: string[];
     surface: string;
+    // AUTHOR FALLBACK (2026-06-29): when the walk takes 0 shape-feasible steps,
+    // invoke this to LLM-author a from-scratch template and run THAT instead.
+    // Deferred (not eager) so the shape-graph walk — including the vessel-resolve
+    // satisfier that routes an outward read-capability goal (analysis / concept)
+    // to its producing vessel — gets first crack. Previously /run-goal authored a
+    // template BEFORE the walk and passed it as firstTarget, which suppressed the
+    // walk entirely (a set firstTarget skips the walk block below) — so outward
+    // analysis goals fell into slow from-scratch drafting and never reached
+    // analysis-vessel. Returns the authored template id, or undefined if it didn't
+    // author one (then the existing single-template recovery loop proceeds).
+    authorFallback?: () => Promise<string | undefined>;
   },
 ): Promise<GoalSeekResult> {
   // DEFAULT strategy (2026-06-23): when there's a goal, the caller did NOT pin a
@@ -1750,6 +1786,9 @@ async function runGoalWithRecovery(
   // graceful fallback (NO flag): if the walk couldn't take even one shape-feasible
   // step (chain.length === 0), fall through to the single-template recovery loop
   // below. callerPinned / firstTarget / no-goal paths use the existing loop unchanged.
+  // Holds an id authored by opts.authorFallback when the walk takes 0 steps, so
+  // the single-template recovery loop below runs the freshly-authored template.
+  let authoredFallbackTarget: string | undefined;
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -1782,13 +1821,20 @@ async function runGoalWithRecovery(
       });
       if (walk.attempts > 0) return walk;
       console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
+      // The walk (incl. the vessel-resolve satisfier) couldn't reach the goal via
+      // existing/connected capability. NOW author a from-scratch template — only
+      // here, not before the walk, so outward read-capability goals route to their
+      // vessel first and a draft is the genuine last resort.
+      if (opts.authorFallback) {
+        try { authoredFallbackTarget = await opts.authorFallback(); } catch { /* author failed → recovery loop proceeds without a target */ }
+      }
     } catch (e) {
       console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`);
     }
   }
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
-  let nextTarget: string | undefined = opts.firstTarget;
+  let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
   if (!nextTarget && goal) {
     const reaching = await recommendReachingPath(goal);
     if (reaching) { nextTarget = reaching; console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${reaching}`); }
@@ -3262,30 +3308,40 @@ async function handleRunGoal(req: Request): Promise<Response> {
       const dispatcherTag = ["dispatcher_used:goal-host"];
       const effectiveTags = [...(tags ?? []), ...sigTag, ...mitosisTags, ...dispatcherTag];
 
-      await autoDraft();
-      const effectiveTargetId = targetTemplateId ?? authoredTemplateId;
-      if (authoredTemplateId && !targetTemplateId) {
-        console.log(`[goal-host-vessel] /run-goal: using auto-authored template ${authoredTemplateId} for goal`);
-      }
-      if (!effectiveTargetId && goal) {
-        void emitAuthoringDecision("auto_draft_fallback_recommend",
-          `no targetTemplateId; falling through to /recommend for goal: ${goal.slice(0, 120)}`,
-          {
-            dispatchId,
-            goal: goal.slice(0, 200),
-            authoredTemplateId: null,
-            selectedCandidateIdx: "NONE",
-            stateSignatureHash: stateSignature?.signature_hash ?? null,
-            timestamp: new Date().toISOString(),
-          });
-      }
       // Async /run-goal is the agent (MCP) + boredom dispatch surface. It uses the
       // SHARED runGoalWithRecovery (same loop as /resolve, no duplication) and can
       // recover more deeply (maxAttempts 3) since it is polled, not timeout-bound.
+      //
+      // autoDraft is now DEFERRED into authorFallback (2026-06-29): it runs only if
+      // the shape-graph walk takes 0 feasible steps. Previously it ran eagerly here
+      // and its authored id was passed as firstTarget — which SUPPRESSED the walk
+      // (a set firstTarget skips the walk block), so an outward read-capability goal
+      // (analysis / concept) never reached the vessel-resolve satisfier and fell into
+      // slow from-scratch drafting. We pass only the CALLER's pin as firstTarget so
+      // the walk runs; the walk's satisfier routes outward goals to their vessel.
       const callerPinnedTarget = typeof targetTemplateId === "string" && targetTemplateId.length > 0;
+      const authorFallback = async (): Promise<string | undefined> => {
+        await autoDraft();
+        if (authoredTemplateId) {
+          console.log(`[goal-host-vessel] /run-goal: walk took 0 steps — using auto-authored template ${authoredTemplateId} for goal`);
+        } else if (goal) {
+          void emitAuthoringDecision("auto_draft_fallback_recommend",
+            `no targetTemplateId; falling through to /recommend for goal: ${goal.slice(0, 120)}`,
+            {
+              dispatchId,
+              goal: goal.slice(0, 200),
+              authoredTemplateId: null,
+              selectedCandidateIdx: "NONE",
+              stateSignatureHash: stateSignature?.signature_hash ?? null,
+              timestamp: new Date().toISOString(),
+            });
+        }
+        return authoredTemplateId;
+      };
       const seek = await runGoalWithRecovery(goal, {
-        firstTarget: effectiveTargetId,
+        firstTarget: targetTemplateId,
         callerPinned: callerPinnedTarget,
+        authorFallback,
         maxAttempts: 3,
         variables,
         tags: effectiveTags,
