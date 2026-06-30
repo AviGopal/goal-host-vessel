@@ -18,7 +18,7 @@
 
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { inferGoalTargetShapes, goalHashOf } from "./goal-target-inference";
+import { inferGoalTargetShapes, inferDerivationSplit, goalHashOf } from "./goal-target-inference";
 import { orderRing } from "./mem-ring";
 import {
   GoalHost,
@@ -755,6 +755,54 @@ async function recommendExcluding(goalText: string, exclude: string[]): Promise<
 // instability + a strict gate and has NEVER fired (0 ribosome-extract executions).
 // ribosome-extract dedupes against existing templates, so re-runs of known
 // activities don't mint duplicates — only NOVEL reached trajectories become seeds.
+// Build a COMPOSITE ExecutionTrace from a reached multi-step walk chain so a
+// derive→emit composition (whose individual steps are vessel-resolve satisfiers)
+// is mintable as ONE recipe with taskCount≥2. Each chain entry becomes a task that
+// outputs the shape it produced (parsed from the satisfier id `satisfier:<shape>`),
+// preserving production order so the ribosome extracts a genuine sequence. The id
+// is DETERMINISTIC per chain (no timestamp) so re-running the same composition
+// UPSERTs one learned-* row (the ribosome's own dedup) rather than spawning dups.
+function buildCompositeTraceFromChain(
+  chain: string[],
+  chainExecIds: string[],
+  producedShapes: string[],
+  durationMs: number,
+  costUsd: number,
+  tags?: string[],
+): ExecutionTrace {
+  const shapeOf = (id: string): string => (id.startsWith("satisfier:") ? id.slice("satisfier:".length) : id);
+  const tasks = chain.map((id, i) => {
+    const sh = shapeOf(id);
+    return {
+      taskId: `compose-step-${i + 1}`,
+      description: `produce ${sh} (composition step ${i + 1})`,
+      resolverId: sh,
+      resolverTier: "pattern" as const,
+      inputImpulseIds: [],
+      outputImpulseIds: [],
+      outputShapes: producedShapes.includes(sh) ? [sh] : [],
+      success: true,
+    };
+  });
+  // Stable composite id: the ordered shape sequence (slugged), no timestamp.
+  const slug = chain.map(shapeOf).join("-to-").replace(/[^a-zA-Z0-9]+/g, "-").replace(/(^-+|-+$)/g, "").toLowerCase().slice(0, 64) || "composition";
+  return {
+    id: `walk-composite-${slug}`,
+    templateId: `composition:${slug}`,
+    templateName: `walk composition (${chain.map(shapeOf).join(" → ")})`,
+    status: "completed",
+    parentExecutionId: undefined,
+    compositionChain: [...chainExecIds],
+    inputImpulseIds: [],
+    outputImpulseIds: [],
+    tasks,
+    costUsd,
+    durationMs,
+    tags,
+    metadata: { satisfier: false, composite: true, chain },
+  } as ExecutionTrace;
+}
+
 async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }): Promise<void> {
   const executionId = trace?.id;
   if (!executionId) return;
@@ -924,10 +972,18 @@ async function runGoalAsPoolWalk(
     parentExecutionId?: string;
     compositionChain?: string[];
     expectedOutputShapes?: string[];
+    // DERIVATION-INTENT (composition, 2026-06-30): the subset of expectedOutputShapes
+    // that are TERMINAL emit targets (e.g. obsidian:note). When set, the satisfier
+    // DEFERS satisfying these while any non-terminal (intermediate) target shape is
+    // still unproduced, and BINDS the terminal write's content from the produced
+    // intermediate findings. Empty/undefined ⇒ no deferral (unchanged behaviour).
+    terminalOutputShapes?: string[];
     surface: string;
   },
 ): Promise<GoalSeekResult> {
   const MAX_STEPS = parseInt(process.env.GOAL_HOST_WALK_MAX_STEPS ?? "40", 10);
+  // Terminal emit targets to DEFER until intermediates are produced (composition).
+  const terminalShapes = new Set<string>(opts.terminalOutputShapes ?? []);
 
   // Live resolver shapes advertised by discovery — a shape present here is
   // RESOLVABLE (some vessel resolves it), so a wrapper activity invoking it as a
@@ -1154,13 +1210,51 @@ If one of those sibling shapes is the action that would create what the goal ask
       return { shape: parsed.shape, args };
     } catch { return null; }
   };
+  // CONTENT-BINDING (composition, 2026-06-30): build a human-readable findings
+  // digest from the produced INTERMEDIATE shapes' content, to be bound as the body
+  // of a deferred TERMINAL write. This is what makes the composed note carry REAL
+  // findings (e.g. problem_detection's problems[]) instead of a goal-text placeholder
+  // — the difference between a genuine composition and a hollow one. Returns "" when
+  // no intermediate content is available (caller then falls back to LLM-extracted args).
+  const boundFindingsFromIntermediates = (): string => {
+    if (terminalShapes.size === 0) return "";
+    const parts: string[] = [];
+    for (const imp of poolImpulses) {
+      const sh = (imp.metadata as { shape?: string } | undefined)?.shape;
+      if (!sh || terminalShapes.has(sh) || sh === "goal") continue;
+      let c: string;
+      try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content, null, 2); }
+      catch { c = String(imp.content); }
+      if (!c || c.trim().length === 0 || c.trim() === "{}" || c.trim() === "[]") continue;
+      parts.push(`## ${sh}\n\n\`\`\`json\n${c.slice(0, 8000)}\n\`\`\``);
+    }
+    if (parts.length === 0) return "";
+    return `# Findings\n\n${parts.join("\n\n")}\n`;
+  };
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
     satisfierTried.add(shape);
     const ep = await endpointForShape(shape);
     if (!ep) return null;
+    // For a deferred TERMINAL write, the body must be the produced intermediate
+    // findings (composition), not the LLM's goal-text guess. Computed once here.
+    const boundBody = terminalShapes.has(shape) ? boundFindingsFromIntermediates() : "";
+    // CONTENT-BINDING: for a deferred terminal write, force the body to the produced
+    // intermediate findings (real analysis) over any LLM goal-text guess. The path/
+    // title args are kept; only the content body is bound. Used on BOTH the direct
+    // resolve path (step a — the terminal IS the write action, e.g. obsidian:write_note)
+    // and the action-then-read path (step b — read-only shape produced by a sibling).
+    const bindBody = (args: Record<string, unknown>): Record<string, unknown> => {
+      if (!boundBody) return args;
+      const out = { ...args };
+      for (const k of ["content", "body", "text", "note", "markdown"]) if (k in out) out[k] = boundBody;
+      if (!("content" in out)) out["content"] = boundBody;
+      return out;
+    };
     // (a) Try resolving the target shape directly with goal-extracted args.
-    const directArgs = (await llmExtractPointerArgs(shape)) ?? {};
+    const directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+    const directArgs = bindBody(directArgsRaw);
+    if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content from produced intermediate findings (${boundBody.length} chars) — composition, not placeholder`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
     if (direct != null) return { content: direct };
     // (b) ACTION-THEN-READ: the target didn't resolve (e.g. a read-only shape for a
@@ -1191,6 +1285,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     };
     let action = await llmPickProducingAction(shape, siblings);
     if (!action) return null;
+    // CONTENT-BINDING (action path): force the write body to the produced intermediate
+    // findings (bindBody is defined at the top of this function and used on both paths).
+    action = { shape: action.shape, args: bindBody(action.args) };
     let actionEp = await endpointForShape(action.shape);
     if (!actionEp) return null;
     let actionResult = await rawResolve(action.shape, actionEp.endpoint, actionEp.resolvePath, action.args);
@@ -1206,7 +1303,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // only re-emits the field it was told to fix (e.g. path) and drops others
         // (e.g. content), which would write an empty artifact. Keep the original
         // content/body and let the corrected field win.
-        const mergedArgs = retryAction.shape === action.shape ? { ...action.args, ...retryAction.args } : retryAction.args;
+        const mergedArgs = bindBody(retryAction.shape === action.shape ? { ...action.args, ...retryAction.args } : retryAction.args);
         const retryResult = retryEp ? await rawResolve(retryAction.shape, retryEp.endpoint, retryEp.resolvePath, mergedArgs) : null;
         if (retryResult != null && !refusalReason(retryResult)) {
           action = { shape: retryAction.shape, args: mergedArgs }; actionEp = retryEp!; actionResult = retryResult;
@@ -1284,8 +1381,19 @@ If one of those sibling shapes is the action that would create what the goal ask
     //     proceeds to the unchanged candidate/bridge/escalate path below.
     if (target.size > 0) {
       const missingForSatisfier = [...target].filter((s) => !producedShapes.has(s));
+      // DERIVATION DEFERRAL (composition, 2026-06-30): while ANY intermediate
+      // (non-terminal) target shape is still unproduced, DO NOT satisfy a terminal
+      // emit target yet — the terminal write must consume the intermediate's
+      // produced content (real findings), not be written prematurely from goal text
+      // (which is what made the prior composed note HOLLOW). No-op when terminalShapes
+      // is empty (the common single-shape case): every shape passes the filter.
+      const intermediatesPending = terminalShapes.size > 0 &&
+        missingForSatisfier.some((s) => !terminalShapes.has(s));
+      const eligibleForSatisfier = intermediatesPending
+        ? missingForSatisfier.filter((s) => !terminalShapes.has(s))
+        : missingForSatisfier;
       const liveForSatisfier = await liveShapes();
-      const satisfiableNow = missingForSatisfier.find((s) => liveForSatisfier.has(s) && !satisfierTried.has(s) && !minted.has(s));
+      const satisfiableNow = eligibleForSatisfier.find((s) => liveForSatisfier.has(s) && !satisfierTried.has(s) && !minted.has(s));
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
         if (resolved) {
@@ -1851,12 +1959,29 @@ If one of those sibling shapes is the action that would create what the goal ask
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
         console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-        // Don't ribosome-mint a SATISFIER-only trace: it's a synthetic single-task
+        // Don't ribosome-mint a SINGLE satisfier trace: it's a synthetic one-task
         // record of a direct vessel resolve, not an extractable recipe — minting it
         // would write a hollow `satisfier:<shape>` template. The reached PATH is
         // still captured via recordGoalPath below (the useful learning signal).
         const satisfierOnly = (lastTrace.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
-        if (!satisfierOnly) void mintReachedTrace(lastTrace as any);
+        // GENUINE MULTI-STEP COMPOSITION (2026-06-30): when the reached chain has
+        // ≥2 steps — even if the final step is a satisfier (e.g. derive→emit:
+        // problem_detection → obsidian:note, where BOTH steps are vessel-resolve
+        // satisfiers) — that IS an extractable recipe (the composition flows real
+        // intermediate content into the terminal write). Synthesize a COMPOSITE
+        // trace from the whole chain and mint THAT, so a derive→emit composition
+        // yields a fresh learned-* template (taskCount≥2), not nothing. A single
+        // satisfier step alone is still skipped (no recipe to extract).
+        if (!satisfierOnly) {
+          void mintReachedTrace(lastTrace as any);
+        } else if (chain.length >= 2) {
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags);
+          // Persist the composite so ribosome-extract can read it by id, then mint.
+          void (async () => {
+            try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
+            await mintReachedTrace(composite as any);
+          })();
+        }
       }
       // DURABLE-TRACE persistence for satisfier reaches (2026-06-28). A satisfier
       // trace is synthetic (never ran through the engine), so the engine-internal
@@ -1951,8 +2076,9 @@ async function runGoalWithRecovery(
     // expected_output_shapes always wins (we only infer when it is empty). Fails
     // open to the current opportunistic behavior on inference-empty / LLM-down.
     let seededOutputShapes = opts.expectedOutputShapes;
+    let knownShapes: string[] | null = null;
     if (!seededOutputShapes || seededOutputShapes.length === 0) {
-      const knownShapes = await fetchKnownShapes();
+      knownShapes = await fetchKnownShapes();
       const inferred = await inferGoalTargetShapes(goal, knownShapes, {
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
@@ -1963,6 +2089,33 @@ async function runGoalWithRecovery(
       );
       if (inferred.length > 0) seededOutputShapes = inferred;
     }
+    // COMPOSITION (derivation-intent, 2026-06-30): when the goal is a derive→emit
+    // SEQUENCE ("analyze X then write findings to note Y"), the seeded shapes above
+    // are the TERMINAL emit targets. Infer the INTERMEDIATE shape(s) that must be
+    // produced first (e.g. problem_detection) and PREPEND them so the walk produces
+    // the analysis BEFORE the terminal write — and so the terminal write's content
+    // is bound from the produced findings (deferral + content-binding live in the
+    // walk's satisfier). Tight classifier returns [] for plain single-step goals →
+    // unchanged 1-step behaviour. Only attempted when we have a terminal target set.
+    let terminalOutputShapes: string[] | undefined;
+    if (seededOutputShapes && seededOutputShapes.length >= 2) {
+      // Partition the (multi-shape) target into derive→emit stages. No-op for a
+      // single-shape target (the common case) — needs ≥2 shapes to be a derivation.
+      const split = await inferDerivationSplit(goal, seededOutputShapes, {
+        llmEndpoint: LLM_VESSEL_ENDPOINT,
+        cache: inferredTargetShapeCache,
+      });
+      if (split.intermediate.length > 0 && split.terminal.length > 0) {
+        terminalOutputShapes = split.terminal;
+        // Order intermediates first so the walk produces the analysis before the
+        // deferred terminal write (the satisfier enforces the deferral too).
+        seededOutputShapes = [...split.intermediate, ...split.terminal];
+        console.log(
+          `[goal-host-vessel] ${opts.surface}: derivation-intent intermediates ` +
+            JSON.stringify({ goal_hash: goalHashOf(goal), intermediate_shapes: split.intermediate, terminal_shapes: split.terminal }),
+        );
+      }
+    }
     try {
       const walk = await runGoalAsPoolWalk(goal, {
         variables: opts.variables,
@@ -1970,6 +2123,7 @@ async function runGoalWithRecovery(
         parentExecutionId: opts.parentExecutionId,
         compositionChain: opts.compositionChain,
         expectedOutputShapes: seededOutputShapes,
+        terminalOutputShapes,
         surface: opts.surface,
       });
       if (walk.attempts > 0) return walk;

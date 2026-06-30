@@ -108,3 +108,124 @@ Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
     return [];
   }
 }
+
+// ── INTERMEDIATE-SHAPE INFERENCE (composition, 2026-06-30) ──────────────────
+// A DERIVATION goal ("analyze X THEN write the findings to note Y") is a genuine
+// multi-vessel composition: an intermediate shape (analysis) must be produced
+// FIRST, then its content bound into the terminal write (the note). Without this
+// the walk satisfies the terminal directly from the goal text and writes a HOLLOW
+// note (no real findings). This infers the intermediate shape(s) that must be
+// produced BEFORE the terminal shapes, constrained to known vocabulary and
+// EXCLUDING the terminals themselves.
+//
+// THREE REFINEMENTS over the prior (reverted) skeleton:
+//   1. Bias toward `problem_detection` (real `problems[]` w/ line numbers) over
+//      `code_quality` (shallow metrics the reach-gate judges hollow) for
+//      analyze/review/find-problems goals.
+//   2. TIGHT classifier: emit an intermediate ONLY when the goal has an explicit
+//      downstream emit/write target DISTINCT from the analysis itself. A plain
+//      "analyze X" (no distinct downstream sink) → [] (no composition, 1-step).
+//   3. (provisioning of the real source file is handled by the existing file-path
+//      arg-alias in index.ts; this module only decides the intermediate shapes.)
+//
+// Returns [] (no composition) on: no LLM, empty vocab, no terminals, plain
+// single-step goal, parse-fail, or any error — caller falls back to the unchanged
+// single-shape walk.
+export interface DerivationSplit {
+  /** Shapes to produce FIRST (analysis/derivation), ordered earliest-first. */
+  intermediate: string[];
+  /** Final emit targets to DEFER until intermediates are produced, content-bound. */
+  terminal: string[];
+}
+
+// PARTITION the already-inferred target set into (intermediate-derive, terminal-emit).
+// `inferGoalTargetShapes` already returns the multi-shape target for a derivation goal
+// (e.g. ["problem_detection","fileWriteResult"]); the walk needs to know WHICH of those
+// are the derive step (produced first) and WHICH are the terminal emit (deferred +
+// content-bound from the derive output). This classifier does that split — it does NOT
+// invent new shapes, only labels the ones already chosen. Empty `intermediate` (i.e.
+// not a 2-stage derivation, OR only one shape) ⇒ caller does NOT defer (unchanged
+// single-shape behaviour). Returns {intermediate:[], terminal:inferred} on any failure.
+export async function inferDerivationSplit(
+  goal: string,
+  inferredTargets: string[],
+  opts: InferGoalTargetShapesOpts = {},
+): Promise<DerivationSplit> {
+  const noSplit: DerivationSplit = { intermediate: [], terminal: inferredTargets.slice() };
+  const llmEndpoint = opts.llmEndpoint;
+  // A derivation needs at least 2 distinct target shapes (a derive AND an emit).
+  if (!goal || !llmEndpoint || inferredTargets.length < 2) return noSplit;
+
+  const cache = opts.cache;
+  const cacheKey = `split:${goalHashOf(goal)}:${inferredTargets.slice().sort().join(",")}`;
+  if (cache) {
+    const cached = cache.get(cacheKey);
+    // Cache stores the terminal list; reconstruct the split from it.
+    if (cached) {
+      const term = new Set(cached);
+      return { intermediate: inferredTargets.filter((s) => !term.has(s)), terminal: cached.slice() };
+    }
+  }
+
+  const known = new Set(inferredTargets);
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const model = opts.model ?? "claude-haiku-4-5-20251001";
+  const prompt = `A substrate GOAL has been mapped to these output impulse shapes: ${JSON.stringify(inferredTargets)}.
+
+GOAL: ${goal}
+
+Decide whether this is a DERIVATION/SEQUENCE goal: one that first DERIVES content (analyzes / reviews / inspects / finds problems in a source) and THEN EMITS that derived content to a DISTINCT downstream sink (writes it to a note / file / concept). If so, split the shapes:
+- "intermediate": the derive/analysis shape(s) — produced FIRST (e.g. problem_detection, code_quality).
+- "terminal": the emit/write shape(s) — the final sink (e.g. fileWriteResult, fs_write, concept_write) whose content should be the DERIVED findings.
+
+RULES:
+- ONLY split when the goal genuinely has TWO distinct stages (a derive stage AND a separate emit stage). If it is a PLAIN single-step goal (just analyze, or just write), return an EMPTY "intermediate" array and put ALL shapes in "terminal".
+- Every shape you return MUST be from the given list — do not invent shapes.
+- A shape is "terminal" if it is a write/emit/persist of the result; "intermediate" if it is the analysis/derivation whose output feeds the write.
+
+Respond with ONLY JSON: {"intermediate": ["..."], "terminal": ["..."]}`;
+
+  try {
+    const r = await fetchImpl(`${llmEndpoint.replace(/\/$/, "")}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "llm_completion", prompt, model }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+    });
+    if (!r.ok) return noSplit;
+    const j: any = await r.json();
+    const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    const m = String(text).match(/\{[\s\S]*\}/);
+    if (!m) return noSplit;
+    const parsed: any = JSON.parse(m[0]);
+    const onlyKnown = (arr: unknown): string[] =>
+      Array.isArray(arr) ? Array.from(new Set(arr.map((s) => String(s)).filter((s) => known.has(s)))) : [];
+    let intermediate = onlyKnown(parsed?.intermediate);
+    let terminal = onlyKnown(parsed?.terminal);
+    // A shape can't be both; intermediate wins for production order, terminal for the rest.
+    terminal = terminal.filter((s) => !intermediate.includes(s));
+    // Any inferred shape the LLM didn't classify defaults to terminal (safe: it's a
+    // target that must be produced, just not deferred-as-derived).
+    for (const s of inferredTargets) if (!intermediate.includes(s) && !terminal.includes(s)) terminal.push(s);
+    // A valid derivation needs BOTH a non-empty intermediate AND a non-empty terminal.
+    // Otherwise it's effectively single-stage → no deferral.
+    if (intermediate.length === 0 || terminal.length === 0) return noSplit;
+    // REFINEMENT 1: prefer problem_detection over code_quality as the analysis
+    // intermediate when both are present in the target set (substance > metrics).
+    if (intermediate.includes("code_quality") && known.has("problem_detection") && !intermediate.includes("problem_detection")) {
+      // Only swap if problem_detection is one of the inferred targets too; else keep.
+      intermediate = intermediate.map((s) => (s === "code_quality" && known.has("problem_detection") ? "problem_detection" : s));
+      terminal = terminal.filter((s) => !intermediate.includes(s));
+    }
+    if (cache) {
+      if (cache.size >= INFER_CACHE_MAX) {
+        const first = cache.keys().next().value;
+        if (first !== undefined) cache.delete(first);
+      }
+      cache.set(cacheKey, terminal);
+    }
+    return { intermediate, terminal };
+  } catch {
+    return noSplit;
+  }
+}
