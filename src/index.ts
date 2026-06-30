@@ -769,21 +769,38 @@ function buildCompositeTraceFromChain(
   durationMs: number,
   costUsd: number,
   tags?: string[],
+  poolImpulses?: Array<{ id: string; metadata?: { shape?: string } }>,
 ): ExecutionTrace {
   const shapeOf = (id: string): string => (id.startsWith("satisfier:") ? id.slice("satisfier:".length) : id);
+  // Map each produced shape to its REAL pool-impulse id so the composite trace's
+  // tasks carry concrete output impulse ids instead of empty arrays. The ribosome's
+  // acquire_trace_signature task fetches the trace WITH per-impulse signatures; with
+  // empty impulse arrays it has nothing to extract and synthesize_template produces
+  // nothing (why composite reaches REACHED but never minted a learned-* template).
+  // Each composition step also CONSUMES the prior step's output (the data-flow
+  // binding that makes it a genuine link), so step i's inputs are step i-1's outputs.
+  const shapeToImpulseId = new Map<string, string>();
+  for (const imp of poolImpulses ?? []) {
+    const sh = imp.metadata?.shape;
+    if (sh && !shapeToImpulseId.has(sh)) shapeToImpulseId.set(sh, imp.id);
+  }
   const tasks = chain.map((id, i) => {
     const sh = shapeOf(id);
+    const outId = shapeToImpulseId.get(sh);
+    const prevSh = i > 0 ? shapeOf(chain[i - 1]) : undefined;
+    const prevId = prevSh ? shapeToImpulseId.get(prevSh) : undefined;
     return {
       taskId: `compose-step-${i + 1}`,
       description: `produce ${sh} (composition step ${i + 1})`,
       resolverId: sh,
       resolverTier: "pattern" as const,
-      inputImpulseIds: [],
-      outputImpulseIds: [],
+      inputImpulseIds: prevId ? [prevId] : [],
+      outputImpulseIds: outId ? [outId] : [],
       outputShapes: producedShapes.includes(sh) ? [sh] : [],
       success: true,
     };
   });
+  const allOutputImpulseIds = [...new Set(tasks.flatMap((t) => t.outputImpulseIds))];
   // Stable composite SLUG (the ordered shape sequence) drives the deterministic
   // templateId — that is what the ribosome UPSERTs into one learned-<slug>. But the
   // execution_id has a UNIQUE index, so the TRACE id must differ per run or a second
@@ -804,7 +821,7 @@ function buildCompositeTraceFromChain(
     parentExecutionId: undefined,
     compositionChain: [...chainExecIds],
     inputImpulseIds: [],
-    outputImpulseIds: [],
+    outputImpulseIds: allOutputImpulseIds,
     tasks,
     costUsd,
     durationMs,
@@ -1997,7 +2014,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (!satisfierOnly) {
           void mintReachedTrace(lastTrace as any);
         } else if (chain.length >= 2) {
-          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags);
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags, poolImpulses);
           // Persist the composite so ribosome-extract can read it by id, then mint.
           void (async () => {
             try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
