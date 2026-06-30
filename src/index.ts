@@ -1051,7 +1051,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
     } catch { return null; }
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
-  const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string } | null> => {
+  const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
     const mapped = shapeEndpointMap.get(shape);
     if (mapped?.endpoint) return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
     try {
@@ -1061,9 +1061,15 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
         signal: AbortSignal.timeout(5_000),
       });
-      const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string }> } };
       const v = dj?.content?.vessels?.[0];
       if (!v?.endpoint) return null;
+      // Cross-substrate: when discovery returns a peer-advertised vessel, prefer
+      // routing the resolve through the peer's gateway endpoint and tag the
+      // peer vessel id as resolved_by_vessel_id for execution-trace provenance.
+      if (v.discoveredVia === "peer" && v.peerEndpoint) {
+        return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
+      }
       return { endpoint: v.endpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve" };
     } catch { return null; }
   };
