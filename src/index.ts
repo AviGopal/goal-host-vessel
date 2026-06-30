@@ -2118,13 +2118,41 @@ async function runGoalWithRecovery(
         cache: inferredTargetShapeCache,
       });
       if (split.intermediate.length > 0 && split.terminal.length > 0) {
-        terminalOutputShapes = split.terminal;
+        // TERMINAL-WRITE RESOLVABILITY (composition capstone, 2026-06-30): the
+        // inference vocabulary contains output-NAME shapes (e.g. fileWriteResult,
+        // fileEditResult) that local-tools-vessel ADVERTISES but does NOT resolve —
+        // its registry only knows the ACTION verbs (fs_write, fs_edit). A pointer
+        // {type:"fileWriteResult"} therefore returns "no resolver for ...", the
+        // terminal write silently drops, and the reach-gate judges the composed note
+        // HOLLOW ("no evidence of the markdown note being written"). The goal here
+        // asks to write a VAULT note (a "Substrate/…md" path / "note"), whose genuine,
+        // resolvable, reach-verifiable write shape is obsidian:write_note. Remap any
+        // unresolvable filesystem-write terminal to obsidian:write_note when (a) the
+        // goal's write target is a vault note path and (b) obsidian:write_note is
+        // actually resolvable in this substrate. Purely additive: a goal already
+        // targeting obsidian:write_note never enters this branch with a dead fs shape,
+        // and a non-note write target (real fs path) is left untouched.
+        const UNRESOLVABLE_FS_WRITE = new Set(["fileWriteResult", "fileEditResult", "fs_write", "fs_edit"]);
+        const wantsVaultNote = /substrate\/[^\s"']*\.md\b/i.test(goal) || /\bnotes?\b/i.test(goal);
+        const obsidianWriteResolvable =
+          shapeEndpointMap.has("obsidian:write_note") || discoveredProxyShapes.includes("obsidian:write_note");
+        const remappedTerminal = split.terminal.map((s) =>
+          UNRESOLVABLE_FS_WRITE.has(s) && wantsVaultNote && obsidianWriteResolvable ? "obsidian:write_note" : s,
+        );
+        // De-dup in case the goal already carried obsidian:write_note alongside the fs shape.
+        terminalOutputShapes = [...new Set(remappedTerminal)];
+        if (terminalOutputShapes.join() !== split.terminal.join()) {
+          console.log(
+            `[goal-host-vessel] ${opts.surface}: terminal-write remapped to resolvable vault writer ` +
+              JSON.stringify({ goal_hash: goalHashOf(goal), from: split.terminal, to: terminalOutputShapes }),
+          );
+        }
         // Order intermediates first so the walk produces the analysis before the
         // deferred terminal write (the satisfier enforces the deferral too).
-        seededOutputShapes = [...split.intermediate, ...split.terminal];
+        seededOutputShapes = [...split.intermediate, ...terminalOutputShapes];
         console.log(
           `[goal-host-vessel] ${opts.surface}: derivation-intent intermediates ` +
-            JSON.stringify({ goal_hash: goalHashOf(goal), intermediate_shapes: split.intermediate, terminal_shapes: split.terminal }),
+            JSON.stringify({ goal_hash: goalHashOf(goal), intermediate_shapes: split.intermediate, terminal_shapes: terminalOutputShapes }),
         );
       }
     }
