@@ -82,7 +82,29 @@ const DISPATCH_DROP_LOG_PATH =
 // Env-defaulted endpoint for goal-host-vessel's own /run-goal route.
 // Override with GOAL_HOST_VESSEL_ENDPOINT to avoid hardcoded host:port drift.
 const GOAL_HOST_ENDPOINT =
-  process.env.GOAL_HOST_VESSEL_ENDPOINT ?? "http://127.0.0.1:8210";
+  process.env.GOAL_HOST_VESSEL_ENDPOINT ?? "http://127.0.0.1:8210"
+
+/**
+ * Resolve the HTTP endpoint to use for a discovered vessel record.
+ * When discoveredVia === 'peer', the vessel lives on a remote substrate;
+ * route through peerEndpoint (the peer discovery URL) so the request
+ * reaches the correct substrate boundary. Also returns resolved_by_vessel_id
+ * for provenance capture on execution traces.
+ */
+function endpointForShape(
+  v: Record<string, unknown>,
+): { endpoint: string; resolvedByVesselId?: string } {
+  if (v.discoveredVia === "peer" && typeof v.peerEndpoint === "string" && v.peerEndpoint) {
+    return {
+      endpoint: v.peerEndpoint,
+      resolvedByVesselId: typeof v.vesselId === "string" ? v.vesselId : undefined,
+    }
+  }
+  return {
+    endpoint: typeof v.endpoint === "string" ? v.endpoint : "",
+    resolvedByVesselId: undefined,
+  }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // L2 instrumentation — process.memoryUsage() trajectory probe
@@ -1029,7 +1051,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
     } catch { return null; }
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
-  const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
+  const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string } | null> => {
     const mapped = shapeEndpointMap.get(shape);
     if (mapped?.endpoint) return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
     try {
@@ -1039,16 +1061,10 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
         signal: AbortSignal.timeout(5_000),
       });
-      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string }> } };
+      const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
       const v = dj?.content?.vessels?.[0];
       if (!v?.endpoint) return null;
-      // Cross-substrate: when discovery tagged this vessel as peer-advertised,
-      // route the resolution through the peer substrate's endpoint so the peer
-      // can perform auth-signed dispatch on its own side.
-      if (v.discoveredVia === "peer" && typeof v.peerEndpoint === "string" && v.peerEndpoint.length > 0) {
-        return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
-      }
-      return { endpoint: v.endpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
+      return { endpoint: v.endpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve" };
     } catch { return null; }
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
