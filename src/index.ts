@@ -730,7 +730,7 @@ async function recommendExcluding(goalText: string, exclude: string[]): Promise<
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0 }),
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) return null;
@@ -1095,10 +1095,22 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       // (no per-vessel special-casing) instead of failing "filePaths is required".
       const looksLikePath = (s: unknown): s is string =>
         typeof s === "string" && /(^|\/)[\w.-]+\.[A-Za-z0-9]+$/.test(s.trim()) && !/\s/.test(s.trim());
-      const pathVal =
+      const rawPathVal =
         Object.values(args).find(looksLikePath) ??
         // Fall back to a path literal in the goal text itself if the LLM dropped it.
         (goal.match(/[^\s"']*\/[^\s"']+\.[A-Za-z0-9]+/)?.[0]);
+      // PATH-MOUNT NORMALISATION (2026-06-30): a goal carries a repo-relative path
+      // (e.g. "repos/<vessel>/src/index.ts"), but a file-reading vessel resolves it
+      // against ITS OWN cwd (analysis-vessel's is /vessels/analysis-vessel), yielding
+      // ENOENT — the walk then binds that read_error as the composed note body and
+      // the reach-gate correctly judges it HOLLOW. Every vessel shares the same
+      // /workspace repo mirror, so rooting a relative "repos/…" path at
+      // /workspace/repos/… makes it resolvable regardless of the resolving vessel's
+      // cwd. Absolute paths and non-repo-relative paths pass through unchanged.
+      const pathVal =
+        (typeof rawPathVal === "string" && /^repos\//.test(rawPathVal.trim()))
+          ? `/workspace/${rawPathVal.trim()}`
+          : rawPathVal;
       if (typeof pathVal === "string" && pathVal.length > 0) {
         for (const k of ["path", "file_path", "filePath", "logFilePath"]) if (!(k in args)) args[k] = pathVal;
         for (const k of ["file_paths", "filePaths"]) if (!(k in args)) args[k] = [pathVal];
