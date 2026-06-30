@@ -25,7 +25,7 @@ import {
   DiscoveryRegistrationLoop,
   createLLMPort,
 } from "@avigopal/ias-executor-ts";
-import { BusForwardingEventSink } from "@avigopal/ias-executor-ts/adapters";
+import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-executor-ts/adapters";
 import type {
   EventSink,
   Impulse,
@@ -653,6 +653,27 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
       signal: AbortSignal.timeout(15_000),
     });
   } catch { /* non-fatal */ }
+}
+// Durable-trace persistence for SATISFIER reaches (2026-06-28). The shape-graph
+// walk's vessel-resolve satisfier produces a SYNTHETIC ExecutionTrace in-memory
+// (the real engine traces flow to activity-api via the engine-internal
+// TranslatingTraceSink, but a satisfier resolve never runs through the engine, so
+// its trace was never persisted). That left outward satisfier reaches (obsidian
+// write_note, analysis problem_detection, …) with NO durable execution trace —
+// goal_execution_paths got the path (recordGoalPath), but activity_execution_traces
+// stayed empty, so the reaches produced no trace-level learning signal and the
+// same goal re-walked from scratch each time. We reuse the engine's own
+// TranslatingTraceSink (identical schema mapping + defaulting; itself best-effort,
+// swallows + logs all errors) so a satisfier trace lands EXACTLY like a template
+// trace — same body contract, same status/failure mapping. Best-effort: a record()
+// failure never throws into / slows the walk.
+const satisfierTraceSink = new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? "");
+async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
+  try {
+    await satisfierTraceSink.record(trace);
+  } catch (e) {
+    console.warn(`[goal-host] satisfier-reach persistence failed (non-fatal): ${(e as Error).message}`);
+  }
 }
 // Consult per-goal learning before selection: if a prior attempt at THIS goal
 // reached it via a known path, prefer that path (improvement over subsequent
@@ -1785,6 +1806,24 @@ If one of those sibling shapes is the action that would create what the goal ask
         // still captured via recordGoalPath below (the useful learning signal).
         const satisfierOnly = (lastTrace.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
         if (!satisfierOnly) void mintReachedTrace(lastTrace as any);
+      }
+      // DURABLE-TRACE persistence for satisfier reaches (2026-06-28). A satisfier
+      // trace is synthetic (never ran through the engine), so the engine-internal
+      // TranslatingTraceSink never persisted it and activity_execution_traces stayed
+      // empty for outward reaches. Persist it HERE via the same sink, mirroring the
+      // engine's template path: status reflects the REACH verdict (reached → the
+      // trace's "completed" maps to success; not-reached → "failed" maps to a
+      // "failure" trace so β accumulates honestly, exactly like template failures).
+      // Best-effort + only for satisfier-only traces (engine already persisted real
+      // template executions — guard against double-persist). (2026-06-28)
+      const satisfierOnlyTrace = (lastTrace.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
+      if (satisfierOnlyTrace) {
+        const durableTrace: ExecutionTrace = {
+          ...lastTrace,
+          status: reached ? "completed" : "failed",
+          reason: reached ? lastTrace.reason : (goalReachReason ?? lastTrace.reason),
+        };
+        void persistSatisfierTrace(durableTrace);
       }
     } catch (e) {
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
