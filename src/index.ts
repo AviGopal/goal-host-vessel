@@ -83,6 +83,7 @@ const DISPATCH_DROP_LOG_PATH =
 // Override with GOAL_HOST_VESSEL_ENDPOINT to avoid hardcoded host:port drift.
 const GOAL_HOST_ENDPOINT =
   process.env.GOAL_HOST_VESSEL_ENDPOINT ?? "http://127.0.0.1:8210"
+const FED_TRANSPORT_EGRESS = process.env.FED_TRANSPORT_EGRESS ?? "http://127.0.0.1:8401";
 
 /**
  * Resolve the HTTP endpoint to use for a discovered vessel record.
@@ -1156,9 +1157,14 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
         signal: AbortSignal.timeout(5_000),
       });
-      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string }> } };
+      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
       const v = dj?.content?.vessels?.[0];
       if (!v?.endpoint) return null;
+      if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
+        // libp2p-reachable peer: route the resolve through the local federation-transport
+        // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
+        return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`, resolvedByVesselId: v.id };
+      }
       // Cross-substrate: when discovery returns a peer-advertised vessel, prefer
       // routing the resolve through the peer's gateway endpoint and tag the
       // peer vessel id as resolved_by_vessel_id for execution-trace provenance.
