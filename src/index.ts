@@ -762,10 +762,31 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
       depth: Array.isArray(trace.compositionChain) ? trace.compositionChain.length : 0,
       impulseCount: trace.outputImpulseIds?.length ?? 0,
       hasGoalContext: true,
+      // ribosome-extract's acquire_trace_signature task short-circuits the whole
+      // chain unless lifecycle.qualityEligible === 'true' (normally stamped by the
+      // lifecycle dispatcher). On the reach→mint path there is no dispatcher, so we
+      // stamp it here — a genuine REACH already passed the goal-reach gate, which is
+      // exactly the eligibility signal the chain wants. Without this the extract
+      // skips silently and nothing is ever synthesized.
+      qualityEligible: true,
     };
     await host.runGoal(`extract reusable template from execution ${executionId}`, {
-      targetTemplateId: "activity:⟨ribosome-extract⟩",
-      variables: { executionId, lifecycle },
+      // Use the UNWRAPPED catalogue id. The shared in-memory catalogue
+      // (SHARED_TEMPLATES / TEMPLATES_BY_ID) is keyed by the bare id
+      // "ribosome-extract" with the full 7-task chain. Passing the wrapped form
+      // "activity:⟨ribosome-extract⟩" MISSES the local catalogue (exact-key Map)
+      // and falls back to the STALE activity-api DB copy, which executes as a
+      // 0-task no-op (status=success, 0 LLM calls, nothing synthesized/written)
+      // — the real reason reach→mint persisted nothing despite firing.
+      targetTemplateId: "ribosome-extract",
+      // applyExtraction:true flips the chain out of proposal-only mode so the
+      // synthesized template is actually PERSISTED via activityTemplate_write. The
+      // template's own dedup makes this safe against sprawl: synthesize_template
+      // mints a DETERMINISTIC id `learned-<parent-slug>` (no timestamp/hash) so
+      // re-running the same reach UPSERTs and refines ONE row instead of spawning
+      // near-duplicates, the quality gate (≥qualityThreshold) rejects weak traces,
+      // and the recursion-safety skip-list excludes ribosome-family parents.
+      variables: { executionId, lifecycle, applyExtraction: true },
     });
     console.log(`[goal-host-vessel] reach→mint: ran ribosome-extract for ${executionId} (taskCount=${lifecycle.taskCount}, shapes=${JSON.stringify(outputShapes)})`);
   } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${trace?.id}: ${(e as Error).message}`); }
