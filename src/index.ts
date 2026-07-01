@@ -24,6 +24,7 @@ import {
   GoalHost,
   DiscoveryRegistrationLoop,
   createLLMPort,
+  ActivityApiAdapter,
 } from "@avigopal/ias-executor-ts";
 import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-executor-ts/adapters";
 import type {
@@ -525,6 +526,13 @@ class BoundedBusSink implements EventSink {
 const PORT = parseInt(process.env.PORT ?? "8210", 10);
 const VESSEL_ID = process.env.GOAL_HOST_VESSEL_ID ?? process.env.VESSEL_ID ?? "goal-host-vessel";
 const ACTIVITY_API_ENDPOINT = process.env.ACTIVITY_API_ENDPOINT ?? "http://127.0.0.1:8080";
+// Producer discovery (the shape-walk's discover-by-shapes producer/candidate lookups)
+// must query where the rich producer corpus LIVES — the LOCAL activity-api — not the
+// federation hub (ACTIVITY_API_ENDPOINT), whose `activity` corpus declares almost no
+// output_shapes → forward producer-discovery returns 0 → the walk takes 0 shape-feasible
+// steps and hollow-completes. Trace-writes / feedback / recommend / Thompson stay on the
+// hub (federation-wide credit). See 2026-07-01 producer-discovery split.
+const PRODUCER_DISCOVERY_ENDPOINT = process.env.PRODUCER_DISCOVERY_ENDPOINT ?? "http://127.0.0.1:8080";
 const DISCOVERY_ENDPOINT = process.env.DISCOVERY_VESSEL_ENDPOINT ?? "http://127.0.0.1:8100";
 const DISCOVERY_SHAPES_ENDPOINT = `${DISCOVERY_ENDPOINT}/registry/shapes`;
 const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_KEY ?? "";
@@ -705,10 +713,11 @@ async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
 async function recommendReachingPath(goalText: string): Promise<string | null> {
   if (!goalText) return null;
   try {
+    const _sig = (await getCachedStateSignature())?.signature_hash;
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ goal_text: goalText, goal_category: "meta" }),
+      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_sig ? { state_signature: _sig } : {}) }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) return null;
@@ -1496,7 +1505,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     let candidates: WalkCandidate[] = [];
     try {
       const _sig1 = (await getCachedStateSignature())?.signature_hash;
-      const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
+      const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
         body: JSON.stringify({ required_shapes: [...producedShapes], mode: "backward", limit: 50, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
@@ -1544,11 +1553,22 @@ If one of those sibling shapes is the action that would create what the goal ask
       !(c.outputShapes.length === 1 && c.outputShapes[0] === "activityExecutionSummary");
 
     // Hollow-scaffold id families (compose wrappers, proposed-pattern autodrafts,
-    // learned-tick clones) shape-match a target but do no genuine work and get
-    // reach-gate-β-penalised. A target with a LIVE resolver can be bridge-authored
-    // fresh (genuine work), so we must NOT settle for a hollow scaffold of it.
-    const isHollowScaffold = (id: string): boolean =>
-      /^(compose-|proposed_pattern_authored_|learned-)/.test(normActivityId(id));
+    // learned-tick clones, repaired autodrafts, and chained X-to-Y bridges) shape-
+    // match a target but do no genuine work and get reach-gate-β-penalised. A target
+    // with a LIVE resolver can be bridge-authored fresh (genuine work), so we must
+    // NOT settle for a hollow scaffold of it. Note: a bare live-resolver wrapper like
+    // `auto-bridge-code_quality` (no `-to-` chaining) IS a genuine producer and is
+    // deliberately NOT matched here.
+    const isHollowScaffold = (id: string): boolean => {
+      const n = normActivityId(id);
+      return /^(compose-|learned-compose|proposed_pattern_authored_|repaired-)/.test(n)
+        || /-to-/.test(n); // chained composite bridge = hollow scaffold
+    };
+    // Genuine-first ranking key: genuine producers rank 0, hollow scaffolds rank 1.
+    // Stable-sorting candidates by this key floats real producers ahead of the
+    // ~581 compose-*/learned-*/proposed_*/repaired-*/X-to-Y scaffolds that shape-
+    // match a target but produce 0 new shapes when run.
+    const scaffoldRank = (c: WalkCandidate): number => (isHollowScaffold(c.id) ? 1 : 0);
     const liveSetB = target.size > 0 ? await liveShapes() : new Set<string>();
     const bridgeableTarget = (c: WalkCandidate): boolean =>
       c.outputShapes.some((s) => missingTargetsB.includes(s) && liveSetB.has(s));
@@ -1576,10 +1596,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (T) {
         let forward: WalkCandidate[] = [];
         try {
-          const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
+          const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: [T], mode: "forward", limit: 12 }),
+            body: JSON.stringify({ required_shapes: [T], mode: "forward", limit: 50 }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
@@ -1594,9 +1614,18 @@ If one of those sibling shapes is the action that would create what the goal ask
           if (seen.has(id) || exclude.has(id) || chain.includes(c.id)) return false;
           seen.add(id);
           return notScaffold(c) && c.outputShapes.includes(T) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
-        });
+        })
+        // GENUINE-FIRST: float real producers ahead of hollow scaffolds so the
+        // K-wide bundle spends its fan-out on producers that actually produce T
+        // (discovery returns scaffolds first; without this the bundle is all
+        // scaffolds → 0 new shapes → 2 no-progress steps → stop, never reaching).
+        .sort((a, b) => scaffoldRank(a) - scaffoldRank(b));
       }
-      if (orEdge.length >= 2) {
+      // Fire the horizontal bundle only when >=2 GENUINE producers exist; a bundle
+      // of pure scaffolds does no real work — fall through to the single-pick path
+      // (which bridge-authors / backward-chains a genuine producer instead).
+      const genuineOrEdge = orEdge.filter((c) => !isHollowScaffold(c.id));
+      if (genuineOrEdge.length >= 2) {
         const K = Math.min(orEdge.length, parseInt(process.env.GOAL_HOST_HORIZONTAL_K ?? "4", 10));
         const bundle = orEdge.slice(0, K);
         const bundleParentExecId = lastExecId;
@@ -1605,7 +1634,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const branchResults = await Promise.all(
           bundle.map(async (c): Promise<ExecutionTrace | null> => {
             try {
-              const tmpl = await host.activityApi.getTemplate(c.id);
+              const tmpl = await getTemplateLocalFirst(c.id);
               if (!tmpl) return null;
               const bvars = poolVars();
               return await host.runTemplate(tmpl, bvars, {
@@ -1713,10 +1742,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (missingTargets.length > 0) {
         try {
           const _sig2 = (await getCachedStateSignature())?.signature_hash;
-          const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/discover-by-shapes`, {
+          const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingTargets, mode: "forward", ...(_sig2 ? { state_signature: _sig2 } : {}) }),
+            body: JSON.stringify({ required_shapes: missingTargets, mode: "forward", limit: 50, ...(_sig2 ? { state_signature: _sig2 } : {}) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
@@ -1817,7 +1846,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     //     steps form a recorded chain.
     let template: ActivityTemplate | null = null;
     try {
-      template = await host.activityApi.getTemplate(pick.id);
+      template = await getTemplateLocalFirst(pick.id);
     } catch (e) {
       console.warn(`[goal-host-vessel] walk(${opts.surface}): getTemplate(${pick.id}) failed: ${(e as Error).message}`);
     }
@@ -2457,6 +2486,63 @@ const host = new GoalHost({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// getTemplate: LOCAL-first, HUB-fallback (2026-07-01 template-fetch split)
+//
+// host.activityApi is bound to ACTIVITY_API_ENDPOINT (the federation hub) for
+// trace/feedback/recommend. But the shape-walk SELECTS genuine producers found
+// via PRODUCER_DISCOVERY_ENDPOINT (the LOCAL activity-api) — templates like
+// `understand-source-file-demo` / `auto-bridge-*` that live ONLY locally and
+// 404 on the hub. Fetching them by id through host.activityApi (hub) returns
+// null → "template unfetchable" → the correctly-selected genuine producer can't
+// run → the goal hollow-completes.
+//
+// Fix: template-fetch-by-id resolves the template from WHERE IT LIVES — try the
+// local activity-api first, fall back to the hub. This keeps hub-only templates
+// (SHARED_TEMPLATES the autonomous loop relies on, e.g. ribosome-extract)
+// fetchable, and makes local genuine producers runnable.
+//
+// getTemplate is fetched from TWO paths, both of which must become local-first:
+//   1. the vessel's shape-walk (host.activityApi.getTemplate at the two sites
+//      below); and
+//   2. the LIBRARY's host.runGoal(targetTemplateId) recovery/target path, which
+//      internally does runtime.templateProvider.getTemplate → CatalogueWithFallback
+//      whose REMOTE fallback IS host.activityApi. A local-only targetTemplateId
+//      (e.g. development-vessel:scaffold-and-publish-vessel) 404s on the hub and
+//      the library HARD-THROWS "template not found".
+// Both share host.activityApi as the fetch surface, so we wrap that single
+// method local-first. recommend / recordTrace / asTraceSink are untouched — they
+// stay on ACTIVITY_API_ENDPOINT (federation-wide credit / learning), so no
+// write/trace/recommend path changes.
+const localTemplateApi =
+  PRODUCER_DISCOVERY_ENDPOINT === ACTIVITY_API_ENDPOINT
+    ? null
+    : new ActivityApiAdapter(PRODUCER_DISCOVERY_ENDPOINT, API_KEY ?? "");
+
+// Capture the hub-bound getTemplate BEFORE wrapping, to avoid recursion.
+const hubGetTemplate = host.activityApi.getTemplate.bind(host.activityApi);
+
+async function getTemplateLocalFirst(id: string): Promise<ActivityTemplate | null> {
+  if (localTemplateApi) {
+    try {
+      const local = await localTemplateApi.getTemplate(id);
+      if (local) return local;
+    } catch (e) {
+      console.warn(`[goal-host-vessel] getTemplateLocalFirst(${id}): local fetch threw, falling back to hub: ${(e as Error).message}`);
+    }
+  }
+  // Fall back to the hub (original host.activityApi.getTemplate).
+  return hubGetTemplate(id);
+}
+
+// Wrap host.activityApi.getTemplate in place so the library's CatalogueWithFallback
+// (host.runGoal target/recovery path) also resolves local-first. Only when a
+// distinct local endpoint exists — otherwise it's a no-op passthrough.
+if (localTemplateApi) {
+  (host.activityApi as { getTemplate: (id: string) => Promise<ActivityTemplate | null> }).getTemplate =
+    (id: string) => getTemplateLocalFirst(id);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Built-in resolvers referenced by SHARED_TEMPLATES but not in GoalHost core
 //
 // SHARED_TEMPLATES (ias-executor-ts) ship escalation templates (e.g.
@@ -2581,6 +2667,84 @@ function registerBuiltinResolvers(): void {
     },
   });
   console.log("[goal-host-vessel] registered built-in resolver: noop");
+
+  // llm (OVERRIDE) — richer prompt interpolation than the GoalHost built-in.
+  //
+  // The GoalHost core `llm` resolver (ias-executor-ts hosts/goal-host.ts) only
+  // interpolates `{{word}}` from context.variables. But config.prompt templates
+  // routinely use the proxy-slot syntax `{{impulse:<slot>}}` (a producing task's
+  // output, referenced by that task's id) and dotted paths `{{a.b.c}}` — neither
+  // of which the built-in binds, so the prompt reaches the LLM with a LITERAL
+  // `{{impulse:read_source}}` / `{{goal.id}}` and no upstream content. The
+  // reach-gate then correctly judges the output HOLLOW ("the template variable
+  // was not filled in and no actual source code was provided"). This is the last
+  // binding layer: discover→select→fetch→run all work, but a chained producer's
+  // prompt placeholders don't get substituted.
+  //
+  // This override is a STRICT SUPERSET of the built-in:
+  //   • `{{word}}`        → variables[word]              (built-in behaviour, preserved)
+  //   • `{{a.b.c}}`       → variables.a.b.c              (dotted-path, via interpolateProxyValue)
+  //   • `{{impulse:S}}`   → the slot S, resolved from (a) input impulses stamped
+  //                         with outputImpulseKey=S, then (b) variables[S] — which
+  //                         the engine populates as `{{<taskId>}}` = that task's
+  //                         first output content (engine.ts accumulatedVariables).
+  //   • `{{shapeName}}`   → an input impulse whose metadata.shape === shapeName.
+  // Unresolved placeholders remain LITERAL (matches interpolateProxyValue and the
+  // built-in). No engine/dist edit; last-registration-wins overrides the built-in.
+  host.runtime.resolvers.register({
+    id: "llm",
+    tier: "llm" as const,
+    async resolve(context: any): Promise<any> {
+      const task = context.task as { config?: Record<string, unknown> };
+      const config = (task.config ?? {}) as Record<string, unknown>;
+      const rawPrompt = config.prompt;
+      if (typeof rawPrompt !== "string") {
+        throw new Error(`llm resolver requires task.config.prompt (got ${JSON.stringify(rawPrompt)})`);
+      }
+      const systemPrompt = typeof config.systemPrompt === "string" ? config.systemPrompt : undefined;
+      const variables = (context.variables ?? {}) as Record<string, unknown>;
+      const inputImpulses = context.inputImpulses;
+
+      // Slot map: outputImpulseKey-stamped inputs first (Idiom-6 named slots),
+      // then a fallback so `{{impulse:<taskId>}}` binds from the engine's
+      // task-id-keyed accumulatedVariables when no named slot was declared.
+      const impulseSlots = buildImpulseSlots(inputImpulses);
+      if (Array.isArray(inputImpulses)) {
+        for (const imp of inputImpulses) {
+          const shape = (imp as { metadata?: Record<string, unknown> })?.metadata?.["shape"];
+          const content = (imp as { content?: unknown }).content;
+          if (typeof shape === "string" && shape && content != null && !impulseSlots.has(shape)) {
+            impulseSlots.set(shape, content);
+          }
+        }
+      }
+      // Fill any `{{impulse:<slot>}}` slot the prompt references but the input
+      // impulses didn't provide, from a matching variable (engine sets
+      // variables[<taskId>] = that task's first output content).
+      for (const m of rawPrompt.matchAll(/\{\{\s*impulse:([\w.-]+)\s*\}\}/g)) {
+        const slot = m[1];
+        if (slot && !impulseSlots.has(slot) && variables[slot] != null) {
+          impulseSlots.set(slot, variables[slot]);
+        }
+      }
+      // Expose input impulses by shape as plain `{{shapeName}}` variables too,
+      // without shadowing an explicit variable of the same name.
+      const varsWithShapes: Record<string, unknown> = { ...variables };
+      for (const [k, v] of impulseSlots) if (!(k in varsWithShapes)) varsWithShapes[k] = v;
+
+      const prompt = interpolateProxyValue(rawPrompt, varsWithShapes, impulseSlots) as string;
+      const text = await llm.generate({ prompt, systemPrompt });
+      const random = context.random as { id: (p: string) => string };
+      return [{
+        id: random.id("llm"),
+        pointer: { type: "memo" },
+        metadata: { shape: "llmText", summary: String(text).slice(0, 120) },
+        loaded: true,
+        content: text,
+      }];
+    },
+  });
+  console.log("[goal-host-vessel] registered built-in resolver: llm (override — impulse:/dotted/shape interpolation)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4158,6 +4322,7 @@ const server = Bun.serve({
 console.log(
   `[goal-host-vessel] started on port ${PORT}` +
   ` | activity-api: ${ACTIVITY_API_ENDPOINT}` +
+  ` | producer-discovery: ${PRODUCER_DISCOVERY_ENDPOINT}` +
   ` | discovery: ${DISCOVERY_ENDPOINT}` +
   ` | llm: ${LLM_VESSEL_ENDPOINT ? `vessel(${LLM_VESSEL_ENDPOINT})` : "in-process"}`,
 );
