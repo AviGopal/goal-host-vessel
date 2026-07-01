@@ -1149,7 +1149,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
   // Look up a shape's vessel endpoint (registry map first, then discovery).
   const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
     const mapped = shapeEndpointMap.get(shape);
-    if (mapped?.endpoint) return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
+    if (mapped?.endpoint && !(opts.variables as Record<string, unknown> | undefined)?.target_vessel_id) return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
     try {
       const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
         method: "POST",
@@ -1157,8 +1157,12 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
         signal: AbortSignal.timeout(5_000),
       });
-      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
-      const v = dj?.content?.vessels?.[0];
+      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
+      const vessels = dj?.content?.vessels ?? [];
+      const targetVid = (opts.variables as Record<string, unknown> | undefined)?.target_vessel_id;
+      const v = (typeof targetVid === "string" && targetVid
+        ? vessels.find((x) => x.vesselId === targetVid || x.id === targetVid)
+        : undefined) ?? vessels[0];
       if (!v?.endpoint) return null;
       if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
         // libp2p-reachable peer: route the resolve through the local federation-transport
