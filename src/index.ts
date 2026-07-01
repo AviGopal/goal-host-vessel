@@ -16,6 +16,7 @@
  *   - Otherwise: InProcessLLMPort wrapping the Anthropic SDK (requires ANTHROPIC_API_KEY).
  */
 
+import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferDerivationSplit, goalHashOf } from "./goal-target-inference";
@@ -734,13 +735,13 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
 // fresh candidate remains (exhausted = honest failure). Paired with the reach
 // gate this turns goal-seeking into try → check → alter → retry, so the trace of
 // the attempt that finally REACHES is what the ribosome mints into a new activity.
-async function recommendExcluding(goalText: string, exclude: string[]): Promise<string | null> {
+async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null): Promise<string | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) return null;
@@ -2328,7 +2329,8 @@ async function runGoalWithRecovery(
     if (selId) excluded.push(selId);
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
-      const alt = await recommendExcluding(goal, excluded);
+      const repairKey = repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
+        const alt = await recommendExcluding(goal, excluded, repairKey);
       if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
       nextTarget = alt;
       console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
