@@ -1245,22 +1245,44 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
       const vessels = dj?.content?.vessels ?? [];
       const targetVid = (opts.variables as Record<string, unknown> | undefined)?.target_vessel_id;
-      const v = (typeof targetVid === "string" && targetVid
+      // Transport failover (2026-07-02): iterate discovery candidates instead of
+      // blindly taking vessels[0] — a vessel that died inside discovery's 5-min
+      // TTL window would otherwise be returned and the resolve would fail with no
+      // other producer of the shape ever tried. Order: target_vessel_id match
+      // first (when given), then discovery order. Peer/libp2p candidates are
+      // accepted without probing (reachability is mediated by relay/gateway);
+      // plain candidates are probed via /health (1.5s). If nothing passes the
+      // probe, fall back to the first candidate — never regress below status quo.
+      const target = typeof targetVid === "string" && targetVid
         ? vessels.find((x) => x.vesselId === targetVid || x.id === targetVid)
-        : undefined) ?? vessels[0];
-      if (!v?.endpoint) return null;
-      if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
-        // libp2p-reachable peer: route the resolve through the local federation-transport
-        // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
-        return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`, resolvedByVesselId: v.id };
+        : undefined;
+      const ordered = target ? [target, ...vessels.filter((x) => x !== target)] : vessels;
+      const routeFor = (v: { id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }) => {
+        if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
+          // libp2p-reachable peer: route the resolve through the local federation-transport
+          // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
+          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`, resolvedByVesselId: v.id };
+        }
+        // Cross-substrate: when discovery returns a peer-advertised vessel, prefer
+        // routing the resolve through the peer's gateway endpoint and tag the
+        // peer vessel id as resolved_by_vessel_id for execution-trace provenance.
+        if (v.discoveredVia === "peer" && v.peerEndpoint) {
+          return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
+        }
+        return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve" };
+      };
+      let first: { endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null = null;
+      for (const cand of ordered) {
+        if (!cand?.endpoint) continue;
+        const route = routeFor(cand);
+        if (first === null) first = route;
+        if (cand.discoveredVia === "peer") return route;
+        try {
+          const probe = await fetch(`${cand.endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
+          if (probe.ok) return route;
+        } catch { /* dead candidate — try the next producer of this shape */ }
       }
-      // Cross-substrate: when discovery returns a peer-advertised vessel, prefer
-      // routing the resolve through the peer's gateway endpoint and tag the
-      // peer vessel id as resolved_by_vessel_id for execution-trace provenance.
-      if (v.discoveredVia === "peer" && v.peerEndpoint) {
-        return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
-      }
-      return { endpoint: v.endpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve" };
+      return first;
     } catch { return null; }
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
