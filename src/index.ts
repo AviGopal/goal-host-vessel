@@ -2379,6 +2379,93 @@ async function runGoalWithRecovery(
         stepSink: opts.stepSink,
       });
       if (walk.attempts > 0) return walk;
+      // EDIT-INTENT ROUTING (2026-07-02): a 0-step walk that NAMES a concrete source
+      // file is a plain code-change goal the shape-walk cannot serve. Its only
+      // fileEditResult producer is local-tools-vessel (a raw path+content writer,
+      // unsatisfiable from prose), so the walk takes 0 steps, falls to recommend, and
+      // picks an unrelated MAINTENANCE tick (reached:false). The real authoring
+      // capability — feature_compose (a dev-vessel resolver: draft→typecheck→cutover)
+      // — is only ever reached by explicit dispatch, never by the walk from intent.
+      // Route edit-intent goals THERE before the recommend loop. Strictly additive +
+      // guarded: fires ONLY on 0-step walks that name a repos/<vessel>/.../<file>.<ext>,
+      // a case that ALWAYS fails into a tick today — no regression surface. Flag-off or
+      // any throw falls through to the existing authorFallback/recommend path unchanged.
+      if (process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0") {
+        const fileMatch = goal.match(/repos\/([\w.-]+)\/[\w./-]+\.\w+/);
+        if (fileMatch) {
+          const editFile = fileMatch[0];
+          const editVessel = fileMatch[1]!;
+          try {
+            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT DETECTED (0-step walk names ${editFile}) — routing to feature_compose`);
+            const spec = [
+              "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
+              `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${editFile}`,
+              "The change MUST typecheck.",
+              "",
+              `GOAL: ${goal}`,
+            ].join("\n");
+            const gapId = `route-edit-${goalHashOf(goal)}`;
+            const resp = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({
+                impulse: {
+                  pointer: {
+                    type: "feature_compose",
+                    spec,
+                    verify_vessels: [`repos/${editVessel}`],
+                    land: true,
+                    gap: {
+                      id: gapId,
+                      summary: goal,
+                      category: "edit_intent_route",
+                      classification_metadata: { edit_site: editFile },
+                    },
+                  },
+                },
+              }),
+              signal: AbortSignal.timeout(240_000),
+            });
+            const j: any = await resp.json().catch(() => ({}));
+            const body = (j?.body ?? j ?? {}) as Record<string, any>;
+            const verdict = String(body.verdict ?? "");
+            const cutovers = Array.isArray(body.cutovers) ? body.cutovers : [];
+            let landedSha: string | null = null;
+            for (const c of cutovers) {
+              const rr = ((c ?? {}).result ?? {}) as Record<string, unknown>;
+              if (rr.push_status === "pushed" && typeof rr.new_git_sha === "string" && rr.new_git_sha.trim()) {
+                landedSha = rr.new_git_sha.trim();
+                break;
+              }
+            }
+            if (verdict === "FAVORABLE") {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=FAVORABLE${landedSha ? ` landed=${landedSha}` : " (staged)"}`);
+              return {
+                result: null,
+                status: "completed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["fileEditResult"],
+                attempts: 1,
+                goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE"}`,
+                reached: true,
+              };
+            }
+            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=${verdict || "(none)"}`);
+            return {
+              result: null,
+              status: "failed",
+              selectedTemplateId: "feature_compose",
+              completionShapes: null,
+              attempts: 1,
+              goalReachReason: `routed edit-intent to feature_compose; verdict=${verdict || "unknown"}${body.error ? ` (${String(body.error)})` : ""}`,
+              reached: false,
+            };
+          } catch (e) {
+            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
+            // fall through to the existing behaviour unchanged
+          }
+        }
+      }
       console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
       // The walk (incl. the vessel-resolve satisfier) couldn't reach the goal via
       // existing/connected capability. NOW author a from-scratch template — only
