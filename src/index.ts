@@ -594,7 +594,7 @@ const inferredTargetShapeCache = new Map<string, string[]>();
 // has a live resolver, so the walk can reach it via backward-chain or mint-as-you-go).
 // Cached briefly so we don't GET /registry/shapes on every fresh goal.
 let knownShapesCache: { shapes: string[]; fetchedAt: number } | null = null;
-const KNOWN_SHAPES_TTL_MS = 60_000;
+const KNOWN_SHAPES_TTL_MS_UNUSED = 60_000;
 async function fetchKnownShapes(): Promise<string[]> {
   const now = Date.now();
   if (knownShapesCache && now - knownShapesCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
@@ -633,18 +633,93 @@ async function fetchKnownShapes(): Promise<string[]> {
 // fencing authoring off the goal surface. The gap id is STABLE per missing shape
 // so re-emissions upsert one row (dedup), never flood. feature_compose stays
 // @shape-dispatch:private — the ONLY goal-reachable authoring path is this gap.
+// Module-level cache for known shapes (5-minute TTL)
+let _knownShapesCache: string[] | null = null;
+let _knownShapesCacheTime = 0;
+const KNOWN_SHAPES_TTL_MS = 5 * 60 * 1000;
+
+async function getCachedKnownShapes(): Promise<string[]> {
+  const now = Date.now();
+  if (_knownShapesCache !== null && now - _knownShapesCacheTime < KNOWN_SHAPES_TTL_MS) {
+    return _knownShapesCache;
+  }
+  const shapes = await fetchKnownShapes();
+  _knownShapesCache = shapes;
+  _knownShapesCacheTime = now;
+  return shapes;
+}
+
+function canonicalizeShapeName(raw: string, known: string[]): string | null {
+  function normalize(s: string): string {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+  }
+
+  const normalizedRaw = normalize(raw);
+
+  // (a) Exact match after normalization
+  for (const k of known) {
+    if (normalize(k) === normalizedRaw) {
+      console.log(`[capability-gap] canonicalized ${raw} -> ${k}`);
+      return k;
+    }
+  }
+
+  // (b) Token-subset match: all tokens of known shape appear in raw tokens
+  const rawTokens = normalizedRaw.split('_').filter(t => t.length > 0);
+  let shortestMatch: string | null = null;
+  for (const k of known) {
+    const knownTokens = normalize(k).split('_').filter(t => t.length > 0);
+    if (knownTokens.length === 0) continue;
+    const allFound = knownTokens.every(kt => rawTokens.includes(kt));
+    if (allFound) {
+      if (shortestMatch === null || k.length < shortestMatch.length) {
+        shortestMatch = k;
+      }
+    }
+  }
+  if (shortestMatch !== null) {
+    console.log(`[capability-gap] canonicalized ${raw} -> ${shortestMatch} (token-subset)`);
+    return shortestMatch;
+  }
+
+  // (c) Bespoke phrase check: contains space, or >4 underscore-separated tokens, or length >40
+  const hasSpace = raw.includes(' ');
+  const tokenCount = normalizedRaw.split('_').filter(t => t.length > 0).length;
+  const tooLong = raw.length > 40;
+  if (hasSpace || tokenCount > 4 || tooLong) {
+    console.log(`[capability-gap] REFUSED bespoke shape name ${raw} (no canonical match)`);
+    return null;
+  }
+
+  // (d) Compact genuinely-novel name passes through
+  return raw;
+}
+
 async function fileCapabilityGap(missingShape: string, goal: string, goalTargets: string[]): Promise<string | null> {
-  const slug = missingShape.replace(/[^a-zA-Z0-9]+/g, "-").replace(/(^-+|-+$)/g, "").toLowerCase().slice(0, 48) || "shape";
-  const id = `capability-gap-${slug}`;
-  const summary = `Capability gap: the goal-walk needs a producer for shape "${missingShape}" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape "${missingShape}" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck.`;
+  const knownShapes = await fetchKnownShapes();
+  const canonicalShape: string | null = canonicalizeShapeName(missingShape, knownShapes);
+  if (canonicalShape === null) {
+    return null;
+  }
+  const slug = canonicalShape
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  const id = `gap-${slug}`;
+  const summary = `Capability gap: the goal-walk needs a producer for shape "${canonicalShape}" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape "${canonicalShape}" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck.`;
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
-        id, category: "other", source: "substrate_detected", status: "open", summary,
+        id, category: "missing_capability", source: "substrate_detected", status: "open", summary,
         detected_at: new Date().toISOString(),
-        classification_metadata: { kind: "capability_gap", missing_shape: missingShape, allowed_output_shapes: [missingShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true },
+        classification_metadata: { kind: "capability_gap", missing_shape: canonicalShape, allowed_output_shapes: [canonicalShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true },
       } } } }),
       signal: AbortSignal.timeout(15_000),
     });
