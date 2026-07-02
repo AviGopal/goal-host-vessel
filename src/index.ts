@@ -1125,8 +1125,13 @@ async function runGoalAsPoolWalk(
     // intermediate findings. Empty/undefined ⇒ no deferral (unchanged behaviour).
     terminalOutputShapes?: string[];
     surface: string;
+    /** Reason plane: caller-owned sink; walk decision lines are pushed here (additive to console.log). */
+    stepSink?: string[];
   },
 ): Promise<GoalSeekResult> {
+  // Reason-plane tap: mirror a decision line to both stdout and the caller's
+  // stepSink (if provided). Additive — never alters control flow.
+  const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
   const MAX_STEPS = parseInt(process.env.GOAL_HOST_WALK_MAX_STEPS ?? "40", 10);
   // Terminal emit targets to DEFER until intermediates are produced (composition).
   const terminalShapes = new Set<string>(opts.terminalOutputShapes ?? []);
@@ -1630,7 +1635,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           lastTrace = synthTrace;
           lastExecId = synthTrace.id;
           lastPick = satId;
-          console.log(`[goal-host-vessel] walk(${opts.surface}): VESSEL-RESOLVE SATISFIER produced "${satisfiableNow}" directly (connected vessel resolve) — no bridge needed`);
+          tap(`[goal-host-vessel] walk(${opts.surface}): VESSEL-RESOLVE SATISFIER produced "${satisfiableNow}" directly (connected vessel resolve) — no bridge needed`);
           consecutiveNoProgress = 0;
           continue; // shape is now in the pool; re-evaluate target/candidates
         }
@@ -1947,7 +1952,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch { /* author failed → falls through to escalate/stop */ }
         if (authored) {
-          console.log(`[goal-host-vessel] walk(${opts.surface}): BRIDGE-AUTHORED validated producer for "${X}" → ${authored.id} (inputs=[${authored.inputShapes.join(",")}])`);
+          tap(`[goal-host-vessel] walk(${opts.surface}): BRIDGE-AUTHORED validated producer for "${X}" → ${authored.id} (inputs=[${authored.inputShapes.join(",")}])`);
           // Recurse: add the producer's missing inputs as sub-targets so the walk
           // produces them FIRST — mint-as-you-go builds the chain backward from
           // the goal toward what the pool already has.
@@ -2053,7 +2058,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     chain.push(pick.id);
     exclude.add(normActivityId(pick.id));
     const progressed = producedShapes.size > beforeSize;
-    console.log(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
+    tap(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
     if (!progressed) {
       consecutiveNoProgress++;
       if (consecutiveNoProgress >= 2) {
@@ -2152,7 +2157,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         status = "failed";
         goalReachReason = verdict.reason;
         await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached");
-        console.log(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
         // shape has NO live resolver (a true CAPABILITY gap — not a selection
@@ -2172,7 +2177,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
-        console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // Don't ribosome-mint a SINGLE satisfier trace: it's a synthetic one-task
         // record of a direct vessel resolve, not an extractable recipe — minting it
         // would write a hollow `satisfier:<shape>` template. The reached PATH is
@@ -2270,8 +2275,12 @@ async function runGoalWithRecovery(
     // analysis-vessel. Returns the authored template id, or undefined if it didn't
     // author one (then the existing single-template recovery loop proceeds).
     authorFallback?: () => Promise<string | undefined>;
+    /** Reason plane: caller-owned sink; goal-decomposition + walk decision lines pushed here. */
+    stepSink?: string[];
   },
 ): Promise<GoalSeekResult> {
+  // Reason-plane tap (outer): mirror goal-decomposition lines to the caller's sink.
+  const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
   // DEFAULT strategy (2026-06-23): when there's a goal, the caller did NOT pin a
   // target, and no firstTarget is supplied, WALK THE SHAPE GRAPH across multiple
   // activities instead of picking one whole template by goal-text. Automatic
@@ -2297,7 +2306,7 @@ async function runGoalWithRecovery(
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
       });
-      console.log(
+      tap(
         `[goal-host-vessel] ${opts.surface}: goal-target inference ` +
           JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: inferred }),
       );
@@ -2352,7 +2361,7 @@ async function runGoalWithRecovery(
         // Order intermediates first so the walk produces the analysis before the
         // deferred terminal write (the satisfier enforces the deferral too).
         seededOutputShapes = [...split.intermediate, ...terminalOutputShapes];
-        console.log(
+        tap(
           `[goal-host-vessel] ${opts.surface}: derivation-intent intermediates ` +
             JSON.stringify({ goal_hash: goalHashOf(goal), intermediate_shapes: split.intermediate, terminal_shapes: terminalOutputShapes }),
         );
@@ -2367,6 +2376,7 @@ async function runGoalWithRecovery(
         expectedOutputShapes: seededOutputShapes,
         terminalOutputShapes,
         surface: opts.surface,
+        stepSink: opts.stepSink,
       });
       if (walk.attempts > 0) return walk;
       console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
@@ -3972,6 +3982,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
   let authoredTemplateId: string | undefined;
 
   (async () => {
+    // Reason plane: caller-owned walk decision-log sink, attached to the record
+    // in both the success and failure paths so GET /executions/:id can surface it.
+    const walkStepSink: string[] = [];
     try {
       // Compute state-space signature BEFORE dispatch so the trace records
       // the environment in which template selection happened. The hash is
@@ -4048,8 +4061,10 @@ async function handleRunGoal(req: Request): Promise<Response> {
         compositionChain,
         expectedOutputShapes,
         surface: "/run-goal",
+        stepSink: walkStepSink,
       });
       record.status = seek.status;
+      record.walkLog = walkStepSink;
       record.executionId = seek.result?.trace?.id;
       record.selectedTemplateId = seek.selectedTemplateId;
       (record as { attempts?: number }).attempts = seek.attempts;
@@ -4058,6 +4073,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
     } catch (err) {
       record.status = "failed";
       record.error = (err as Error).message;
+      if (walkStepSink.length) record.walkLog = walkStepSink;
       console.error("[goal-host-vessel] async /run-goal error:", err);
       // Detection (operator-goal observability). When an OPERATOR-originated
       // dispatch fails because nothing in the catalogue could serve it (recommend
@@ -4271,6 +4287,15 @@ interface DispatchRecord {
   error?: string;
   /** State-space signature computed at dispatch time; threaded onto trace tags. */
   stateSignature?: StateSignatureBody;
+  /**
+   * Structured walk decision-log (reason plane, 2026-07-02): each entry is one
+   * captured walk decision line (goal-target inference, derivation intent,
+   * satisfier/bridge/step/reach). Populated from a caller-owned stepSink array
+   * threaded into the goal-seek opts. Surfaced by GET /executions/:id and
+   * rendered by the metabob-mcp goal_reasoning tool. Optional/additive — absent
+   * on legacy records and on the synchronous /resolve path.
+   */
+  walkLog?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4455,6 +4480,7 @@ const server = Bun.serve({
         executionId: record.executionId,
         selectedTemplateId: record.selectedTemplateId,
         error: record.error,
+        walkLog: record.walkLog,
       });
     }
 
