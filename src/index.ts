@@ -4367,7 +4367,28 @@ async function handleRunGoal(req: Request): Promise<Response> {
             body: JSON.stringify({ impulse: { pointer: { type: "substrateGap_write", gap } } }),
             signal: AbortSignal.timeout(8000),
           });
-          console.log(`[goal-host-vessel] operator_goal_unservable gap emitted: ${gapId}`);
+          console.log("[goal-host-vessel] operator_goal_unservable gap emitted: " + gapId);
+        try {
+          const dr = await fetch(DISCOVERY_ENDPOINT + "/resolve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) },
+            body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "obsidian:write_note" } }),
+            signal: AbortSignal.timeout(5000),
+          });
+          const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+          const wv = dj?.content?.vessels?.[0];
+          if (wv?.endpoint) {
+            const notePath = "Substrate/Unservable/" + gapId.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 80) + ".md";
+            const noteBody = "# I could not serve this goal\n\n**Goal:** " + goal.slice(0, 300) + "\n\n**Why:** the substrate found no activity that serves this goal class (recommend refused and auto-draft did not converge). A capability gap has been filed (" + gapId + ") and the substrate will attempt to author an activity for it.\n";
+            await fetch(wv.endpoint.replace(/\/+$/, "") + (wv.resolve_endpoint || "/resolve"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) },
+              body: JSON.stringify({ impulse: { pointer: { type: "obsidian:write_note", path: notePath, content: noteBody, dispatch_id: dispatchId, goal: goal.slice(0, 200), reached: false } } }),
+              signal: AbortSignal.timeout(8000),
+            });
+            console.log("[goal-host-vessel] operator_goal_unservable vault note written: " + notePath);
+          }
+        } catch { /* vault surface unreachable — the substrateGap above is the durable record */ }
           // Remediation routing (convergence). A runtime-capability gap needs a
           // RUNTIME ACTIVITY (read→reason→write composing the vessel's own
           // resolvers, output = expectedOutputShapes), NOT a code-fix patch_proposal.
