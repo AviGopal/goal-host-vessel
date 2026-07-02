@@ -2530,6 +2530,88 @@ async function runGoalWithRecovery(
           }
         }
       }
+      // ACTIVITY-REPAIR interception (2026-07-02): the activity analogue of the
+      // edit-intent block above, one artifact level up. Vessels are maintained by
+      // editing bytes (feature_compose); ACTIVITIES are maintained by minting
+      // VARIANTS (template_repair → activity_create_variant; promotion stays with
+      // the Thompson evidence gate). Without this, a 0-step walk on "fix the flaky
+      // <id> activity" falls to recommend and grabs a keyword-similar maintenance
+      // tick (proven mis-route). Same guarantees: flag-gated, additive, try-caught;
+      // an id that turns out not to be a real template falls THROUGH unchanged, so
+      // a false-positive match is harmless.
+      if (process.env.ROUTE_ACTIVITY_REPAIR !== "0" && !/repos\/[\w.-]+\//.test(goal)) {
+        const actId =
+          goal.match(/activity:⟨([^⟩]+)⟩/)?.[1] ??
+          goal.match(/\b(?:activity|template)\s+[`"'‘’]?([a-z0-9][\w-]*(?::[\w-]+)+|[a-z0-9][\w-]*-[\w-]{2,})/i)?.[1] ??
+          goal.match(/[`"'‘’]?([a-z0-9][\w-]*(?::[\w-]+)+|[a-z0-9][\w-]*-[\w-]{2,})[`"'‘’]?\s+(?:activity|template)\b/i)?.[1];
+        if (actId) {
+          try {
+            tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR DETECTED (0-step walk names activity "${actId}") — routing to template_repair`);
+            // Discovery-first producer resolution, same idiom as feature_compose above.
+            let repairUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
+            try {
+              const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+                body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "template_repair" } }),
+                signal: AbortSignal.timeout(5_000),
+              });
+              const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+              const v = dj?.content?.vessels?.[0];
+              if (v?.endpoint) {
+                repairUrl = `${v.endpoint.replace(/\/+$/, "")}${v.resolve_endpoint || "/resolve"}`;
+                tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR template_repair producer resolved via discovery → ${repairUrl}`);
+              }
+            } catch { /* discovery unreachable/empty → env fallback carries */ }
+            const resp = await fetch(repairUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({ impulse: { pointer: { type: "template_repair", activity_id: actId, failure_window: 5 } } }),
+              signal: AbortSignal.timeout(120_000),
+            });
+            const j: any = await resp.json().catch(() => ({}));
+            const body = (j?.body ?? j ?? {}) as Record<string, any>;
+            const verdict = String(body.verdict ?? "");
+            const errStr = typeof body.error === "string" ? body.error : "";
+            if (verdict === "FAVORABLE") {
+              const variantId = typeof body.variant_id === "string" && body.variant_id.trim() ? body.variant_id.trim() : null;
+              const nFail = Array.isArray(body.based_on_failures) ? body.based_on_failures.length : 0;
+              const summary = typeof body.summary === "string" && body.summary.trim() ? ` — ${body.summary.trim().slice(0, 160)}` : "";
+              tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR ROUTED to template_repair for "${actId}" → verdict=FAVORABLE${variantId ? ` variant=${variantId}` : ""} (grounded on ${nFail} failure trace(s))${summary}`);
+              return {
+                result: null,
+                status: "completed",
+                selectedTemplateId: "template_repair",
+                completionShapes: ["activityVariant_write"],
+                attempts: 1,
+                goalReachReason: `routed activity-repair to template_repair; ${variantId ? `minted variant ${variantId}` : "grounded repair spec"} from ${nFail} failure trace(s)${summary}`,
+                reached: true,
+                executionId: variantId ? `template_repair:${variantId}` : undefined,
+              };
+            }
+            // A non-template id (false-positive extraction) must not convert a goal
+            // that today reaches recommend into a hard failure — fall through.
+            if (/template not found/i.test(errStr)) {
+              tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR "${actId}" is not a fetchable template (${errStr.slice(0, 120)}) — falling through to authorFallback/recommend`);
+            } else {
+              const failWhy = (errStr || (typeof body.summary === "string" ? body.summary : "") || "no failure detail in repair report").slice(0, 200);
+              tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR ROUTED to template_repair for "${actId}" → verdict=${verdict || "(none)"} (${failWhy})`);
+              return {
+                result: null,
+                status: "failed",
+                selectedTemplateId: "template_repair",
+                completionShapes: null,
+                attempts: 1,
+                goalReachReason: `routed activity-repair to template_repair; verdict=${verdict || "unknown"} (${failWhy})`,
+                reached: false,
+              };
+            }
+          } catch (e) {
+            tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR template_repair call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
+            // fall through to the existing behaviour unchanged
+          }
+        }
+      }
       console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
       // The walk (incl. the vessel-resolve satisfier) couldn't reach the goal via
       // existing/connected capability. NOW author a from-scratch template — only
