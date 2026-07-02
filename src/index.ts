@@ -3168,11 +3168,25 @@ function buildDiscoveryProxyResolver(shape: string) {
             body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
             signal: discCtrl.signal,
           });
-          const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+          const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
           const v = dj?.content?.vessels?.[0];
           if (!v?.endpoint) throw new Error(`discovery: no vessel advertises ${shape}`);
-          endpoint = v.endpoint.replace(/\/+$/, "");
-          resolvePath = v.resolve_endpoint || "/resolve";
+          if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
+            // libp2p-reachable peer (e.g. the operator-host obsidian sidecar): its
+            // advertised endpoint is a NATed loopback, so route the resolve through the
+            // local federation-transport egress (goal-host carries no libp2p deps),
+            // passing the peer multiaddr as ?target=. Mirrors endpointForShape so a
+            // remote-vessel shape used as a TASK RESOLVER routes the same way the walk
+            // satisfier already does — fixes resolver_not_registered for obsidian:* etc.
+            endpoint = FED_TRANSPORT_EGRESS.replace(/\/+$/, "");
+            resolvePath = `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`;
+          } else if (v.discoveredVia === "peer" && v.peerEndpoint) {
+            endpoint = v.peerEndpoint.replace(/\/+$/, "");
+            resolvePath = v.resolve_endpoint || "/resolve";
+          } else {
+            endpoint = v.endpoint.replace(/\/+$/, "");
+            resolvePath = v.resolve_endpoint || "/resolve";
+          }
         } finally {
           clearTimeout(discTimer);
         }
