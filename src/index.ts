@@ -2413,7 +2413,28 @@ async function runGoalWithRecovery(
               `GOAL: ${goal}`,
             ].join("\n");
             const gapId = `route-edit-${goalHashOf(goal)}`;
-            const resp = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+            // Resolve the feature_compose producer via DISCOVERY first (impulse-contract
+            // compliance: no hardcoded vessel endpoint). Same inline vesselCapability
+            // idiom as endpointForShape / the proxy resolver above. dev-vessel does not
+            // yet advertise feature_compose, so today this yields nothing and the env
+            // fallback (DEV_VESSEL_ENDPOINT → 127.0.0.1:8090) carries. One lookup per
+            // interception call; any discovery failure falls through silently.
+            let composeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
+            try {
+              const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+                body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "feature_compose" } }),
+                signal: AbortSignal.timeout(5_000),
+              });
+              const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+              const v = dj?.content?.vessels?.[0];
+              if (v?.endpoint) {
+                composeUrl = `${v.endpoint.replace(/\/+$/, "")}${v.resolve_endpoint || "/resolve"}`;
+                tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
+              }
+            } catch { /* discovery unreachable/empty → env fallback carries */ }
+            const resp = await fetch(composeUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
               body: JSON.stringify({
@@ -2447,26 +2468,53 @@ async function runGoalWithRecovery(
               }
             }
             if (verdict === "FAVORABLE") {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=FAVORABLE${landedSha ? ` landed=${landedSha}` : " (staged)"}`);
+              // Reason-plane: a reached routed dispatch should say WHAT was done, not
+              // just that it landed — append the compose report's own summary.
+              const summary = typeof body.summary === "string" && body.summary.trim()
+                ? ` — ${body.summary.trim().slice(0, 160)}` : "";
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=FAVORABLE${landedSha ? ` landed=${landedSha}` : " (staged)"}${summary}`);
               return {
                 result: null,
                 status: "completed",
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE"}`,
+                goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE"}${summary}`,
                 reached: true,
                 executionId: landedSha ? `feature_compose:${landedSha}` : undefined,
               };
             }
-            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=${verdict || "(none)"}`);
+            // Reason-plane (GAP B): surface the WHY from the compose report instead of
+            // dropping it. Preference order: first failed applied[] op's parsed detail
+            // → semantic_gate.reason → body.error → explicit "no detail" marker.
+            let failDetail = "";
+            const applied = Array.isArray(body.applied) ? body.applied : [];
+            const failedOp = applied.find((a: any) => a && a.ok === false);
+            if (failedOp) {
+              const rawDetail = typeof failedOp.detail === "string" ? failedOp.detail : JSON.stringify(failedOp.detail ?? "");
+              let parsedErr = "";
+              try { parsedErr = String(JSON.parse(rawDetail)?.error ?? ""); } catch { /* not JSON */ }
+              failDetail = (parsedErr || rawDetail || "op failed with no detail").slice(0, 160);
+            } else if (body.semantic_gate && typeof body.semantic_gate === "object" && typeof (body.semantic_gate as any).reason === "string" && (body.semantic_gate as any).reason.trim()) {
+              failDetail = `semantic_gate: ${String((body.semantic_gate as any).reason).trim().slice(0, 200)}`;
+            } else if (body.error) {
+              failDetail = String(body.error).slice(0, 200);
+            } else {
+              failDetail = "no failure detail in compose report";
+            }
+            const flags = [
+              body.apply_failed ? "apply_failed" : "",
+              body.rolled_back ? "rolled_back" : "",
+            ].filter(Boolean).join(", ");
+            const failWhy = `op_count=${body.op_count ?? "?"}${flags ? `, ${flags}` : ""}: ${failDetail}`;
+            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=${verdict || "(none)"} (${failWhy})`);
             return {
               result: null,
               status: "failed",
               selectedTemplateId: "feature_compose",
               completionShapes: null,
               attempts: 1,
-              goalReachReason: `routed edit-intent to feature_compose; verdict=${verdict || "unknown"}${body.error ? ` (${String(body.error)})` : ""}`,
+              goalReachReason: `routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy})`,
               reached: false,
             };
           } catch (e) {
@@ -4170,7 +4218,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       record.selectedTemplateId = seek.selectedTemplateId;
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
-      if (seek.goalReachReason) (record as { goalReachReason?: string }).goalReachReason = seek.goalReachReason;
+      if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
     } catch (err) {
       record.status = "failed";
       // A thrown dispatch never produced a reach verdict — the goal was not reached.
@@ -4361,6 +4409,7 @@ async function handleResolve(req: Request): Promise<Response> {
       selectedTemplateId: seek.selectedTemplateId,
       completionShapes: seek.completionShapes,
       attempts: seek.attempts,
+      goalReachReason: seek.goalReachReason ?? null,
     });
   } catch (err) {
     console.error("[goal-host-vessel] /resolve error:", err);
@@ -4411,6 +4460,12 @@ interface DispatchRecord {
    * not `status`, to decide whether to retry/escalate.
    */
   reached?: boolean | null;
+  /**
+   * The human-readable WHY behind the reach verdict (reason plane) — e.g. the
+   * goal-reach judge's reason, or the feature_compose failure detail on routed
+   * edit-intent dispatches. Optional/additive; absent on legacy records.
+   */
+  goalReachReason?: string;
   /**
    * The dispatch operator identity (attribution, #4) — echoed from the request
    * body and stamped into trace tags as `operator:<id>`. Absent when the caller
@@ -4599,6 +4654,7 @@ const server = Bun.serve({
         dispatchId: record.dispatchId,
         status: record.status,
         reached: record.reached ?? null,
+        goalReachReason: record.goalReachReason ?? null,
         operator: record.operator ?? null,
         goal: record.goal,
         executionId: record.executionId,
