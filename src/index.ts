@@ -3614,6 +3614,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   }
 
   const goal = typeof body.goal === "string" ? body.goal : undefined;
+  const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
   const targetTemplateId = typeof body.targetTemplateId === "string" ? body.targetTemplateId : undefined;
   const variables = typeof body.variables === "object" && body.variables !== null
     ? (body.variables as Record<string, unknown>)
@@ -3672,7 +3673,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // GET /executions/:dispatchId for the outcome.
   const dispatchId = crypto.randomUUID();
   pruneStore();
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined };
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator };
   executionStore.set(dispatchId, record);
 
   // Auto-draft fallback: when caller provides a free-form goal but no
@@ -4018,7 +4019,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // sets the equivalent tag on its own traces. boredom-vessel uses these
       // tags downstream to build per-dispatcher Thompson posteriors.
       const dispatcherTag = ["dispatcher_used:goal-host"];
-      const effectiveTags = [...(tags ?? []), ...sigTag, ...mitosisTags, ...dispatcherTag];
+      const operatorTag = operator ? [`operator:${operator}`] : [];
+      const effectiveTags = [...(tags ?? []), ...sigTag, ...mitosisTags, ...dispatcherTag, ...operatorTag];
 
       // Async /run-goal is the agent (MCP) + boredom dispatch surface. It uses the
       // SHARED runGoalWithRecovery (same loop as /resolve, no duplication) and can
@@ -4064,6 +4066,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
         stepSink: walkStepSink,
       });
       record.status = seek.status;
+      // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
+      // through GoalSeekResult.reached — distinct from status (template exit).
+      record.reached = seek.reached;
       record.walkLog = walkStepSink;
       record.executionId = seek.result?.trace?.id;
       record.selectedTemplateId = seek.selectedTemplateId;
@@ -4072,6 +4077,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
       if (seek.goalReachReason) (record as { goalReachReason?: string }).goalReachReason = seek.goalReachReason;
     } catch (err) {
       record.status = "failed";
+      // A thrown dispatch never produced a reach verdict — the goal was not reached.
+      record.reached = false;
       record.error = (err as Error).message;
       if (walkStepSink.length) record.walkLog = walkStepSink;
       console.error("[goal-host-vessel] async /run-goal error:", err);
@@ -4298,6 +4305,20 @@ interface DispatchRecord {
    * on legacy records and on the synchronous /resolve path.
    */
   walkLog?: string[];
+  /**
+   * The honest goal-reach verdict (true=REACHED, false=HOLLOW/not-reached,
+   * null=running/unknown) — distinct from `status`, which is only the template
+   * exit status. A goal that REACHED via a direct vessel-resolve satisfier can
+   * report `status:"failed"` yet `reached:true`; callers must trust `reached`,
+   * not `status`, to decide whether to retry/escalate.
+   */
+  reached?: boolean | null;
+  /**
+   * The dispatch operator identity (attribution, #4) — echoed from the request
+   * body and stamped into trace tags as `operator:<id>`. Absent when the caller
+   * did not identify itself.
+   */
+  operator?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4479,9 +4500,12 @@ const server = Bun.serve({
       return Response.json({
         dispatchId: record.dispatchId,
         status: record.status,
+        reached: record.reached ?? null,
+        operator: record.operator ?? null,
         goal: record.goal,
         executionId: record.executionId,
         selectedTemplateId: record.selectedTemplateId,
+        completionShapes: (record as { completionShapes?: string[] | null }).completionShapes ?? null,
         error: record.error,
         walkLog: record.walkLog,
       });
