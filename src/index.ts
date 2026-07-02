@@ -1016,6 +1016,14 @@ interface GoalSeekResult {
   attempts: number;
   goalReachReason?: string;
   reached: boolean;
+  /**
+   * Explicit executionId for GoalSeekResult paths that don't carry a full
+   * result.trace — notably the edit-intent → feature_compose routing branch,
+   * whose durable artifact is the cutover git sha, not a runGoal trace. The
+   * async dispatch handler prefers this over result?.trace?.id so routed
+   * dispatches populate record.executionId (which provide_feedback needs).
+   */
+  executionId?: string;
 }
 
 // Normalise an activity id by stripping the `activity:⟨…⟩` wrapper the recommend +
@@ -2448,6 +2456,7 @@ async function runGoalWithRecovery(
                 attempts: 1,
                 goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE"}`,
                 reached: true,
+                executionId: landedSha ? `feature_compose:${landedSha}` : undefined,
               };
             }
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=${verdict || "(none)"}`);
@@ -4157,7 +4166,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
       record.walkLog = walkStepSink;
-      record.executionId = seek.result?.trace?.id;
+      record.executionId = seek.executionId ?? seek.result?.trace?.id;
       record.selectedTemplateId = seek.selectedTemplateId;
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
