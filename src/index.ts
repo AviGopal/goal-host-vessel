@@ -3909,6 +3909,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   pruneStore();
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator };
   executionStore.set(dispatchId, record);
+      if (!("dispatch_id" in variables)) variables.dispatch_id = dispatchId;
 
   // Auto-draft fallback: when caller provides a free-form goal but no
   // targetTemplateId, pre-check activity-api /recommend. If top candidate
