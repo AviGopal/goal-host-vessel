@@ -3672,7 +3672,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // GET /executions/:dispatchId for the outcome.
   const dispatchId = crypto.randomUUID();
   pruneStore();
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running" };
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined };
   executionStore.set(dispatchId, record);
 
   // Auto-draft fallback: when caller provides a free-form goal but no
@@ -4282,6 +4282,8 @@ interface DispatchRecord {
   dispatchId: string;
   startedAt: number;
   status: "running" | "completed" | "failed";
+  /** The dispatched goal text — surfaced so the operator feedback plane (provide_feedback) can auto-derive it. */
+  goal?: string;
   executionId?: string;
   selectedTemplateId?: string;
   error?: string;
@@ -4477,6 +4479,7 @@ const server = Bun.serve({
       return Response.json({
         dispatchId: record.dispatchId,
         status: record.status,
+        goal: record.goal,
         executionId: record.executionId,
         selectedTemplateId: record.selectedTemplateId,
         error: record.error,
