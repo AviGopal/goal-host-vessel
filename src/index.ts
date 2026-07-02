@@ -4354,7 +4354,9 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: type === "goal_execution" ? "goalExecution" : "activityExecution",
-      executionId: seek.result?.trace?.id,
+      // Prefer the explicit routed executionId (feature_compose cutover sha) so a
+      // routed edit via the sync /resolve path carries it too. Follow-up #1.
+      executionId: seek.executionId ?? seek.result?.trace?.id,
       status: seek.status,
       selectedTemplateId: seek.selectedTemplateId,
       completionShapes: seek.completionShapes,
