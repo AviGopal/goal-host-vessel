@@ -2403,6 +2403,13 @@ async function runGoalWithRecovery(
         if (fileMatch) {
           const editFile = fileMatch[0];
           const editVessel = fileMatch[1]!;
+          // Carry a line reference from the goal TEXT into edit_site (2026-07-02):
+          // dev-vessel's near-edit-site grounding parses ':<n>' / 'line <n>' from
+          // edit_site; without it the excerpt defaults to top-of-file. Accept either
+          // '<file>:<n>' immediately after the matched path or a 'line <n>' mention.
+          const afterFile = goal.slice(goal.indexOf(editFile) + editFile.length);
+          const editLine = afterFile.match(/^:(\d+)/)?.[1] ?? goal.match(/\bline\s+~?(\d+)/i)?.[1];
+          const editSite = editLine ? `${editFile}:${editLine}` : editFile;
           try {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT DETECTED (0-step walk names ${editFile}) — routing to feature_compose`);
             const spec = [
@@ -2448,7 +2455,7 @@ async function runGoalWithRecovery(
                       id: gapId,
                       summary: goal,
                       category: "edit_intent_route",
-                      classification_metadata: { edit_site: editFile },
+                      classification_metadata: { edit_site: editSite },
                     },
                   },
                 },
