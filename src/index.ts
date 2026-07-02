@@ -595,6 +595,38 @@ const inferredTargetShapeCache = new Map<string, string[]>();
 // Cached briefly so we don't GET /registry/shapes on every fresh goal.
 let knownShapesCache: { shapes: string[]; fetchedAt: number } | null = null;
 const KNOWN_SHAPES_TTL_MS_UNUSED = 60_000;
+// PEER SHAPE VOCABULARY (SC-P4 cross-location reach, 2026-07-02). Peer-federated
+// capabilities (e.g. the operator-host obsidian vessel registered at the hub)
+// are RESOLVABLE via discovery peer fan-out, but /registry/shapes is local-only —
+// so goal-target inference could never pick a peer shape, and the walk's
+// vessel-resolve satisfier judged peer targets "not live" and escalated to
+// authoring instead of resolving (observed: gap-obsidian-status filed while the
+// manual peer resolve over the libp2p egress worked). Union each
+// PEER_DISCOVERY_ENDPOINTS registry's shapes into the known/live vocabularies;
+// fail-open per peer, 60s cache.
+let peerShapesCache: { shapes: string[]; fetchedAt: number } | null = null;
+async function fetchPeerRegistryShapes(): Promise<string[]> {
+  const peers = String(process.env.PEER_DISCOVERY_ENDPOINTS ?? "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  if (peers.length === 0) return [];
+  const now = Date.now();
+  if (peerShapesCache && now - peerShapesCache.fetchedAt < 60_000) return peerShapesCache.shapes;
+  const out = new Set<string>();
+  for (const peer of peers) {
+    try {
+      const r = await fetch(`${peer.replace(/\/+$/, "")}/registry/shapes`, {
+        method: "GET",
+        headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!r.ok) continue;
+      const j: any = await r.json();
+      for (const s of (Array.isArray(j?.shapes) ? j.shapes : [])) { const v = String(s); if (v) out.add(v); }
+    } catch { /* peer down — fail open */ }
+  }
+  peerShapesCache = { shapes: [...out], fetchedAt: now };
+  return peerShapesCache.shapes;
+}
 async function fetchKnownShapes(): Promise<string[]> {
   const now = Date.now();
   if (knownShapesCache && now - knownShapesCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
@@ -608,9 +640,10 @@ async function fetchKnownShapes(): Promise<string[]> {
     });
     if (!r.ok) return knownShapesCache?.shapes ?? [];
     const j: any = await r.json();
-    const shapes = (Array.isArray(j?.shapes) ? j.shapes : [])
+    const local = (Array.isArray(j?.shapes) ? j.shapes : [])
       .map((s: unknown) => String(s))
       .filter(Boolean);
+    const shapes = [...new Set([...local, ...(await fetchPeerRegistryShapes())])];
     if (shapes.length > 0) knownShapesCache = { shapes, fetchedAt: now };
     return shapes;
   } catch {
@@ -1117,6 +1150,11 @@ async function runGoalAsPoolWalk(
     } catch {
       liveResolverShapes = new Set<string>();
     }
+    // Peer-federated capabilities are LIVE too: resolvable via discovery peer
+    // fan-out + the libp2p egress (endpointForShape already routes them). This
+    // union is what lets the satisfier reach a peer vessel instead of filing an
+    // authoring gap for a capability that already exists (SC-P4, 2026-07-02).
+    for (const s of await fetchPeerRegistryShapes()) liveResolverShapes.add(s);
     return liveResolverShapes;
   };
   const minted = new Set<string>(); // shapes we've already minted a producer for this walk
