@@ -2386,7 +2386,8 @@ async function runGoalWithRecovery(
         surface: opts.surface,
         stepSink: opts.stepSink,
       });
-      if (walk.attempts > 0) return walk;
+      const editIntentGoal = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
+      if (walk.attempts > 0 && (walk.reached || !editIntentGoal)) return walk;
       // EDIT-INTENT ROUTING (2026-07-02): a 0-step walk that NAMES a concrete source
       // file is a plain code-change goal the shape-walk cannot serve. Its only
       // fileEditResult producer is local-tools-vessel (a raw path+content writer,
