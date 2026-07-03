@@ -759,6 +759,25 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     return r.ok ? id : null;
   } catch { return null; }
 }
+async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
+  const slug = shape.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const id = `reach-gap-${slug}`;
+  const summary = `Reachability gap: shape "${shape}" is advertised by a producer, but the walk could not reach it from cold — the producer's required input_shapes are not producible from the goal pool. If the producer's resolver self-grounds (does not consume that input), declare the gating input as optional_input_shapes (non-gating) so it becomes cold-feasible; otherwise author a producer for the missing input. Do NOT expand scope.`;
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
+        id, category: "unreachable_producer", source: "substrate_detected", status: "open", summary,
+        detected_at: new Date().toISOString(),
+        classification_metadata: { kind: "reachability_gap", unreachable_shape: shape, goal, goal_target_shapes: goalTargets, scope_narrowed: true },
+      } } } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    return r.ok ? id : null;
+  } catch { return null; }
+}
+
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -1992,6 +2011,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         const liveNow = await liveShapes();
         const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
         if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
+      }
+      // REACHABILITY SELF-REPORT (priority #2, 2026-07-03): a 0-step walk whose missing
+      // targets are all advertised (no capability gap filed) means a producer EXISTS but
+      // is not cold-reachable. Emit an observable substrateGap instead of stopping
+      // silently — the mismatched producer self-reports (canonical fix: optional_input_shapes).
+      if (chain.length === 0 && !filedGap && missingNow.length > 0) {
+        filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
       }
       console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
       break;
