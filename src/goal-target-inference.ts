@@ -42,6 +42,13 @@ export interface InferGoalTargetShapesOpts {
   cache?: Map<string, string[]>;
   model?: string;
   timeoutMs?: number;
+  /**
+   * Optional routed-completion hook. When provided, the LLM call is delegated to
+   * this (the goal-host LLM router picks the vessel/model per task type and learns
+   * from the outcome) instead of the built-in fetch. Returns the completion text,
+   * or null on failure. Keeps this module testable and endpoint-agnostic.
+   */
+  complete?: (prompt: string) => Promise<string | null>;
 }
 
 /**
@@ -55,7 +62,8 @@ export async function inferGoalTargetShapes(
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<string[]> {
   const llmEndpoint = opts.llmEndpoint;
-  if (!goal || !llmEndpoint || knownShapes.length === 0) return [];
+  if (!goal || knownShapes.length === 0) return [];
+  if (!opts.complete && !llmEndpoint) return [];
 
   const cache = opts.cache;
   const cacheKey = goalHashOf(goal);
@@ -79,15 +87,22 @@ Return the 1-3 shapes from the KNOWN list whose production best satisfies the go
 Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
 
   try {
-    const r = await fetchImpl(`${llmEndpoint.replace(/\/$/, "")}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "llm_completion", prompt, model }),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
-    });
-    if (!r.ok) return [];
-    const j: any = await r.json();
-    const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    let text: string;
+    if (opts.complete) {
+      const t = await opts.complete(prompt);
+      if (t == null) return [];
+      text = t;
+    } else {
+      const r = await fetchImpl(`${llmEndpoint!.replace(/\/$/, "")}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "llm_completion", prompt, model }),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+      });
+      if (!r.ok) return [];
+      const j: any = await r.json();
+      text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    }
     const m = String(text).match(/\{[\s\S]*\}/);
     if (!m) return [];
     const parsed: any = JSON.parse(m[0]);
@@ -163,7 +178,8 @@ export async function inferDerivationSplit(
   const noSplit: DerivationSplit = { intermediate: [], terminal: inferredTargets.slice() };
   const llmEndpoint = opts.llmEndpoint;
   // A derivation needs at least 2 distinct target shapes (a derive AND an emit).
-  if (!goal || !llmEndpoint || inferredTargets.length < 2) return noSplit;
+  if (!goal || inferredTargets.length < 2) return noSplit;
+  if (!opts.complete && !llmEndpoint) return noSplit;
   // SELF-CONTAINED terminal (2026-07-03): activityVariant_write is produced by the
   // template_repair resolver, which grounds its own analysis from the target's
   // failure traces INSIDE the resolver — it is NOT the emit-sink of a derive→emit
@@ -202,15 +218,22 @@ RULES:
 Respond with ONLY JSON: {"intermediate": ["..."], "terminal": ["..."]}`;
 
   try {
-    const r = await fetchImpl(`${llmEndpoint.replace(/\/$/, "")}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "llm_completion", prompt, model }),
-      signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
-    });
-    if (!r.ok) return noSplit;
-    const j: any = await r.json();
-    const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    let text: string;
+    if (opts.complete) {
+      const t = await opts.complete(prompt);
+      if (t == null) return noSplit;
+      text = t;
+    } else {
+      const r = await fetchImpl(`${llmEndpoint!.replace(/\/$/, "")}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "llm_completion", prompt, model }),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+      });
+      if (!r.ok) return noSplit;
+      const j: any = await r.json();
+      text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    }
     const m = String(text).match(/\{[\s\S]*\}/);
     if (!m) return noSplit;
     const parsed: any = JSON.parse(m[0]);
