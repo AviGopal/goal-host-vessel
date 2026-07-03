@@ -1266,13 +1266,13 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
-  const llmExtractPointerArgs = async (shape: string): Promise<Record<string, unknown> | null> => {
+  const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
     if (!LLM_VESSEL_ENDPOINT) return null;
     const prompt = `A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
 
 GOAL: ${goal}
 
-Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no nesting). If the goal does not specify any args, respond with {}.`;
+Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no nesting). If the goal does not specify any args, respond with {}.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`;
     try {
       const rr = await routedComplete(goalHashOf(goal), "pointer_arg_extraction", {
         prompt, model: "claude-haiku-4-5-20251001",
@@ -1377,7 +1377,9 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
     } catch { return null; }
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
+  let lastRawResolveReason: string | null = null;
   const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>): Promise<unknown | null> => {
+    lastRawResolveReason = null;
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     const pointer: Record<string, unknown> = { type: shape, ...base, ...extraArgs };
@@ -1391,13 +1393,13 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       });
     } catch { return null; }
     const bodyText = await resp.text();
-    if (!resp.ok) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
+    if (!resp.ok) { lastRawResolveReason = bodyText.slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
     let parsed: unknown;
     try { parsed = JSON.parse(bodyText); } catch { parsed = bodyText; }
     let content: unknown = parsed;
     const pObj = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : null;
     if (pObj) {
-      if (pObj["success"] === false) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: success=false ${String(pObj["error"] ?? "").slice(0, 140)}`); return null; }
+      if (pObj["success"] === false) { lastRawResolveReason = String(pObj["error"] ?? "").slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: success=false ${String(pObj["error"] ?? "").slice(0, 140)}`); return null; }
       // A resolver that rejected the pointer returns { error: "..." } (e.g.
       // analysis-vessel's "filePaths is required") with no content/body. That is a
       // FAILURE, not produced content — without this the walk would "produce" the
@@ -1502,6 +1504,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content from produced intermediate findings (${boundBody.length} chars) — composition, not placeholder`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
     if (direct != null) return { content: direct };
+    if (lastRawResolveReason) {
+      const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
+      if (correctedRaw) {
+        const corrected = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, ...correctedRaw }));
+        if (corrected != null) { console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
+      }
+    }
     // (b) ACTION-THEN-READ: the target didn't resolve (e.g. a read-only shape for a
     //     not-yet-existing artifact). Find a sibling live shape on the SAME vessel
     //     that PRODUCES it (LLM-mapped from the goal), invoke that action, then
