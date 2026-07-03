@@ -164,6 +164,13 @@ export async function inferDerivationSplit(
   const llmEndpoint = opts.llmEndpoint;
   // A derivation needs at least 2 distinct target shapes (a derive AND an emit).
   if (!goal || !llmEndpoint || inferredTargets.length < 2) return noSplit;
+  // SELF-CONTAINED terminal (2026-07-03): activityVariant_write is produced by the
+  // template_repair resolver, which grounds its own analysis from the target's
+  // failure traces INSIDE the resolver — it is NOT the emit-sink of a derive→emit
+  // sequence. Deferring it behind LLM-guessed audit/test "intermediate" shapes it
+  // never consumes lets a hollow intermediate satisfier short-circuit the reach
+  // verdict before the real variant is minted. A repair goal is single-stage.
+  if (inferredTargets.includes("activityVariant_write")) return noSplit;
 
   const cache = opts.cache;
   const cacheKey = `split:${goalHashOf(goal)}:${inferredTargets.slice().sort().join(",")}`;
