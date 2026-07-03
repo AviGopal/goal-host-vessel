@@ -2441,8 +2441,9 @@ async function runGoalWithRecovery(
       // the goal names a repos source file with edit language AND the walk produced only
       // read/analysis shapes, fall through to edit-intent routing instead of returning.
       const goalIsEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
-      const walkOnlyReadShapes = (walk.completionShapes ?? []).length > 0 && (walk.completionShapes ?? []).every((s) => ["sourcecode", "llmcompletionresult", "errorlog", "problemdetection", "codequality", "codeannotation", "cpgqueryresult"].includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
-      if (walk.attempts > 0 && !(goalIsEditIntent && walkOnlyReadShapes)) return walk;
+      const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
+      const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+      if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
       // EDIT-INTENT ROUTING (2026-07-02): a 0-step walk that NAMES a concrete source
       // file is a plain code-change goal the shape-walk cannot serve. Its only
       // fileEditResult producer is local-tools-vessel (a raw path+content writer,
