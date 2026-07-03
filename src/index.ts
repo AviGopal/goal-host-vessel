@@ -4370,6 +4370,19 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
+      // WHY affordance: operator dispatches render their walk reasoning into the vault.
+      if (operator && walkStepSink.length > 0) {
+        try {
+          const dr2 = await fetch(DISCOVERY_ENDPOINT + "/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "obsidian:write_note" } }), signal: AbortSignal.timeout(5000) });
+          const dj2 = await dr2.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+          const wv2 = dj2?.content?.vessels?.[0];
+          if (wv2?.endpoint) {
+            const whyPath = "Substrate/Dispatches/" + dispatchId.slice(0, 8) + ".md";
+            const whyBody = "# Why: " + String(goal ?? "").slice(0, 120) + "\n\n**reached:** " + (record.reached ? "yes" : "no") + (record.goalReachReason ? " - " + String(record.goalReachReason).slice(0, 300) : "") + "\n\n## Walk\n" + walkStepSink.map((l) => "- " + l).join("\n").slice(0, 6000) + "\n";
+            await fetch(wv2.endpoint.replace(/\/+$/, "") + (wv2.resolve_endpoint || "/resolve"), { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "obsidian:write_note", path: whyPath, content: whyBody, dispatch_id: dispatchId, goal: String(goal ?? "").slice(0, 200), reached: record.reached === true } } }), signal: AbortSignal.timeout(8000) });
+          }
+        } catch { /* vault surface unreachable - reasoning still lives in the dispatch record */ }
+      }
     } catch (err) {
       record.status = "failed";
       // A thrown dispatch never produced a reach verdict — the goal was not reached.
