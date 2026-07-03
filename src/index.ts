@@ -2011,6 +2011,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         const liveNow = await liveShapes();
         const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
         if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
+        // REACHABILITY SELF-REPORT (priority #2): no codeGap means every missing target is advertised but not cold-reachable — self-report instead of stopping silently.
+        else filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
       }
       // REACHABILITY SELF-REPORT (priority #2, 2026-07-03): a 0-step walk whose missing
       // targets are all advertised (no capability gap filed) means a producer EXISTS but
