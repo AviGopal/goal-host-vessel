@@ -985,6 +985,16 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
     // synthesis produces garbage / fails.
     const tasks = Array.isArray(trace.tasks) ? trace.tasks : [];
     const outputShapes = [...new Set(tasks.flatMap((t) => t.outputShapes ?? []))];
+    // REUSE-BEFORE-MINT (2026-07-03): a single-task, non-composed reach is ALREADY one
+    // reusable template — extracting it just clones the source template with a
+    // runtime-derived (over-declared) input contract. The ribosome's value is
+    // compressing MULTI-step/composed chains; skip trivial reaches so we don't mint
+    // near-duplicate learned-<parent> variants that reintroduce input-overload.
+    const composedDepth = Array.isArray(trace.compositionChain) ? trace.compositionChain.length : 0;
+    if (tasks.length <= 1 && composedDepth === 0) {
+      console.log(`[goal-host-vessel] reach->mint: SKIP trivial single-template reach for ${executionId} (taskCount=${tasks.length}) — source template is already reusable`);
+      return;
+    }
     const lifecycle = {
       executionId,
       status: trace.status === "failed" ? "failed" : "success",
