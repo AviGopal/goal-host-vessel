@@ -1048,7 +1048,9 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   // discover-by-shapes returns shapes under input_schema.required_shapes /
   // output_schema.produces_shapes; recommend returns input_shapes/output_shapes.
   // Read both so the walk sees a candidate's real input/output contract.
-  const inputShapes = norm(x.input_shapes ?? x.inputShapes ?? x.input_schema?.required_shapes);
+  const optionalInputShapes = norm(x.optional_input_shapes ?? x.optionalInputShapes ?? x.input_schema?.optional_shapes);
+  const declaredInputs = norm(x.input_shapes ?? x.inputShapes ?? x.input_schema?.required_shapes);
+  const inputShapes = declaredInputs.filter((s) => !optionalInputShapes.includes(s));
   const outputShapes = norm(x.output_shapes ?? x.outputShapes ?? x.output_schema?.produces_shapes);
   return { id, inputShapes, outputShapes };
 }
