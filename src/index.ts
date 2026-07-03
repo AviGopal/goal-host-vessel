@@ -20,6 +20,7 @@ import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferDerivationSplit, goalHashOf } from "./goal-target-inference";
+import { routedComplete, routedText, flushRouterFeedback } from "./llm-router";
 import { orderRing } from "./mem-ring";
 import {
   GoalHost,
@@ -570,13 +571,13 @@ Then identify the shape(s) characterising the COMPLETION STATE of this goal-dire
 
 Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
   try {
-    const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
-      signal: AbortSignal.timeout(60_000),
+    // Routed per task type (reach_verification) across the llm-resolver fleet;
+    // buffered under the goal hash and rewarded by this dispatch's final verdict.
+    const rr = await routedComplete(goalHashOf(goal), "reach_verification", {
+      prompt, model: "claude-haiku-4-5-20251001",
     });
-    if (!r.ok) return null;
-    const j: any = await r.json();
+    if (!rr.ok) return null;
+    const j: any = rr.json;
     const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
     const m = String(text).match(/\{[\s\S]*\}/);
     return m ? (JSON.parse(m[0]) as GoalReachVerdict) : null;
@@ -1271,13 +1272,11 @@ GOAL: ${goal}
 
 Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no nesting). If the goal does not specify any args, respond with {}.`;
     try {
-      const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
-        signal: AbortSignal.timeout(60_000),
+      const rr = await routedComplete(goalHashOf(goal), "pointer_arg_extraction", {
+        prompt, model: "claude-haiku-4-5-20251001",
       });
-      if (!r.ok) return null;
-      const j: any = await r.json();
+      if (!rr.ok) return null;
+      const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
       const m = String(text).match(/\{[\s\S]*\}/);
       if (!m) return null;
@@ -1440,13 +1439,11 @@ GOAL: ${goal}${correctionBlock}
 
 If one of those sibling shapes is the action that would create what the goal asks for (e.g. a write/create action), respond with ONLY JSON {"shape": "<sibling shape>", "args": { ...flat pointer arg fields extracted from the goal, e.g. path/content }}. If none of them is an appropriate creating action for this goal, respond with {"shape": null}.`;
     try {
-      const r = await fetch(`${LLM_VESSEL_ENDPOINT.replace(/\/$/, "")}/resolve`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001" }),
-        signal: AbortSignal.timeout(60_000),
+      const rr = await routedComplete(goalHashOf(goal), "action_shape_selection", {
+        prompt, model: "claude-haiku-4-5-20251001",
       });
-      if (!r.ok) return null;
-      const j: any = await r.json();
+      if (!rr.ok) return null;
+      const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
       const m = String(text).match(/\{[\s\S]*\}/);
       if (!m) return null;
@@ -2361,6 +2358,10 @@ async function runGoalWithRecovery(
       const inferred = await inferGoalTargetShapes(goal, knownShapes, {
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
+        complete: (prompt) =>
+          routedText(goalHashOf(goal), "goal_target_inference", prompt, {
+            model: "claude-haiku-4-5-20251001",
+          }),
       });
       tap(
         `[goal-host-vessel] ${opts.surface}: goal-target inference ` +
@@ -2383,6 +2384,10 @@ async function runGoalWithRecovery(
       const split = await inferDerivationSplit(goal, seededOutputShapes, {
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
+        complete: (prompt) =>
+          routedText(goalHashOf(goal), "derivation_split_classification", prompt, {
+            model: "claude-haiku-4-5-20251001",
+          }),
       });
       if (split.intermediate.length > 0 && split.terminal.length > 0) {
         // TERMINAL-WRITE RESOLVABILITY (composition capstone, 2026-06-30): the
@@ -2559,6 +2564,13 @@ async function runGoalWithRecovery(
               let parsedErr = "";
               try { parsedErr = String(JSON.parse(rawDetail)?.error ?? ""); } catch { /* not JSON */ }
               failDetail = (parsedErr || rawDetail || "op failed with no detail").slice(0, 160);
+            } else if (Array.isArray(body.verify) && (body.verify as any[]).some((v: any) => v && v.ok === false)) {
+              // Verify (typecheck/shape-dispatch) failure: quote the error lines so the
+              // walk log carries the WHY without host journal access.
+              const fv = (body.verify as any[]).find((v: any) => v && v.ok === false);
+              const out = typeof fv.output === "string" ? fv.output : "";
+              const errLines = out.split("\n").filter((l: string) => /error|EXIT=[1-9]/.test(l)).slice(0, 3).join(" | ");
+              failDetail = `verify failed (${fv.vessel ?? "?"}): ${(errLines || out.slice(-200)).slice(0, 240)}`;
             } else if (body.semantic_gate && typeof body.semantic_gate === "object" && typeof (body.semantic_gate as any).reason === "string" && (body.semantic_gate as any).reason.trim()) {
               failDetail = `semantic_gate: ${String((body.semantic_gate as any).reason).trim().slice(0, 200)}`;
             } else if (body.error) {
@@ -4066,19 +4078,13 @@ async function handleRunGoal(req: Request): Promise<Response> {
             if (topN.length > 0) {
               const listing = topN.map((t, i) => `${i + 1}. name: ${(t.name ?? "(unnamed)").slice(0, 120)}; description: ${(t.description ?? "(none)").slice(0, 240)}`).join("\n");
               const prompt = `Decide: REUSE existing template or AUTHOR new for this goal.\n\nGoal: ${goal}\n\nCandidates:\n${listing}\n\nPick the NUMBER of a candidate whose name/description is a near-paraphrase of the goal (same subject AND same artifact, just reworded).\nYES: goal "audit anomalous-duration dispatches" + candidate "Audit dispatches with anomalous duration" → match. Goal "show alpha by template" + candidate "Report alpha distribution per template" → match.\nNO: goal "Thompson alpha distribution" + candidate "Audit anomalous-duration dispatches" → NONE (different subject). Goal "stale promoted templates" + candidate "Audit anomalous-duration dispatches" → NONE.\nIf no candidate shares the goal's core subject, answer NONE.\n\nReply ONLY a digit (1-${topN.length}) or NONE.`;
-              const ctrl = new AbortController();
-              const timer = setTimeout(() => ctrl.abort(), 15000);
               try {
-                const llmRes = await fetch(`${LLM_VESSEL_ENDPOINT}/resolve`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}` },
-                  body: JSON.stringify({ type: "llm_completion", prompt, model: "claude-haiku-4-5-20251001", max_tokens: 10 }),
-                  signal: ctrl.signal,
+                const rr = await routedComplete(goalHashOf(goal as string), "template_candidate_ranking", {
+                  prompt, model: "claude-haiku-4-5-20251001", maxTokens: 10,
                 });
-                clearTimeout(timer);
-                if (llmRes.ok) {
-                  const lr = await llmRes.json() as { resolved?: boolean; content?: string };
-                  const ans = (lr.content ?? "").trim().match(/^\d+/)?.[0];
+                if (rr.ok) {
+                  const lr = (rr.json ?? {}) as { resolved?: boolean; content?: string; body?: { content?: string } };
+                  const ans = ((lr.content ?? lr.body?.content) ?? "").trim().match(/^\d+/)?.[0];
                   const idx = ans ? parseInt(ans, 10) : NaN;
                   if (Number.isFinite(idx) && idx >= 1 && idx <= topN.length) {
                     const picked = topN[idx - 1];
@@ -4106,7 +4112,6 @@ async function handleRunGoal(req: Request): Promise<Response> {
                   try { (globalThis as unknown as { Bun?: { gc?: ((b: boolean) => number) | undefined; } | undefined; }).Bun?.gc?.(true); } catch {}
                 }
               } catch (llmErr) {
-                clearTimeout(timer);
                 console.warn(`[goal-host-vessel] auto-draft reuse LLM call failed; falling through to author:`, llmErr instanceof Error ? llmErr.message : llmErr);
               }
             }
@@ -4365,6 +4370,10 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
+      // Reward the LLM router: attribute every routed selection this dispatch made
+      // (buffered under the goal hash) to the final reach verdict — α on reach, β on
+      // hollow. Fire-and-forget; never blocks the dispatch.
+      void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
       record.walkLog = walkStepSink;
       record.executionId = seek.executionId ?? seek.result?.trace?.id;
       record.selectedTemplateId = seek.selectedTemplateId;
@@ -4584,6 +4593,8 @@ async function handleResolve(req: Request): Promise<Response> {
       compositionChain,
       surface: "/resolve",
     });
+    // Reward the LLM router for every routed selection this dispatch made.
+    void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
 
     return Response.json({
       resolved: true,
