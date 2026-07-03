@@ -866,13 +866,13 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
 // fresh candidate remains (exhausted = honest failure). Paired with the reach
 // gate this turns goal-seeking into try → check → alter → retry, so the trace of
 // the attempt that finally REACHES is what the ribosome mints into a new activity.
-async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null): Promise<string | null> {
+async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null): Promise<string | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) return null;
@@ -884,6 +884,8 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
     const excludedNorm = new Set(exclude.map(norm));
     for (const x of (Array.isArray(recs) ? recs : [])) {
       const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
+      const recShapes = (Array.isArray(x?.output_shapes) ? x.output_shapes : Array.isArray(x?.outputShapes) ? x.outputShapes : []) as string[];
+      if (targetShapes && targetShapes.length && recShapes.length && !recShapes.some((s) => targetShapes.includes(String(s)))) continue;
       if (id && !excludedNorm.has(norm(id))) return id;
     }
     return null;
@@ -2343,6 +2345,7 @@ async function runGoalWithRecovery(
   // Holds an id authored by opts.authorFallback when the walk takes 0 steps, so
   // the single-template recovery loop below runs the freshly-authored template.
   let authoredFallbackTarget: string | undefined;
+  let seededOutputShapes = opts.expectedOutputShapes;
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -2351,7 +2354,6 @@ async function runGoalWithRecovery(
     // walk backward-chains toward a capability-matched producer. Explicit caller
     // expected_output_shapes always wins (we only infer when it is empty). Fails
     // open to the current opportunistic behavior on inference-empty / LLM-down.
-    let seededOutputShapes = opts.expectedOutputShapes;
     let knownShapes: string[] | null = null;
     if (!seededOutputShapes || seededOutputShapes.length === 0) {
       knownShapes = await fetchKnownShapes();
@@ -2708,6 +2710,13 @@ async function runGoalWithRecovery(
     const reaching = await recommendReachingPath(goal);
     if (reaching) { nextTarget = reaching; console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${reaching}`); }
   }
+  if (!nextTarget && goal && seededOutputShapes && seededOutputShapes.length > 0) {
+    nextTarget = (await recommendExcluding(goal, [], null, seededOutputShapes)) ?? undefined;
+    if (!nextTarget) {
+      console.log(`[goal-host-vessel] ${opts.surface}: no candidate produces target shapes [${seededOutputShapes.join(",")}] — honest no-producer failure`);
+      return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `no template produces the inferred target shapes [${seededOutputShapes.join(", ")}]; capability gap filed by the walk`, reached: false };
+    }
+  }
   let result: Awaited<ReturnType<typeof host.runGoal>> | null = null;
   let status: "failed" | "completed" = "failed";
   let completionShapes: string[] | null = null;
@@ -2722,7 +2731,7 @@ async function runGoalWithRecovery(
       tags: opts.tags,
       parentExecutionId: opts.parentExecutionId,
       compositionChain: opts.compositionChain,
-      expectedOutputShapes: opts.expectedOutputShapes,
+      expectedOutputShapes: seededOutputShapes ?? opts.expectedOutputShapes,
     });
     status = result.trace.status === "failed" ? "failed" : "completed";
     const selId = result.selectedTemplateId;
@@ -2785,7 +2794,7 @@ async function runGoalWithRecovery(
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
       const repairKey = repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
-        const alt = await recommendExcluding(goal, excluded, repairKey);
+        const alt = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
       if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
       nextTarget = alt;
       console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
