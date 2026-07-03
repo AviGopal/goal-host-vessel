@@ -2547,7 +2547,12 @@ async function runGoalWithRecovery(
       // tick (proven mis-route). Same guarantees: flag-gated, additive, try-caught;
       // an id that turns out not to be a real template falls THROUGH unchanged, so
       // a false-positive match is harmless.
-      if (process.env.ROUTE_ACTIVITY_REPAIR !== "0" && !/repos\/[\w.-]+\//.test(goal)) {
+      // DEMOTED to break-glass (2026-07-03): the walk-native seed template
+      // development-vessel:repair-activity-from-failures now reaches repair goals
+      // in a 1-step chain (via the optional_input_shapes primitive), so this
+      // hardcoded interception is redundant and defaults OFF. Set the env flag
+      // ROUTE_ACTIVITY_REPAIR=1 to re-enable it as a fallback.
+      if (process.env.ROUTE_ACTIVITY_REPAIR === "1" && !/repos\/[\w.-]+\//.test(goal)) {
         const actId =
           goal.match(/activity:⟨([^⟩]+)⟩/)?.[1] ??
           goal.match(/\b(?:activity|template)\s+[`"'‘’]?([a-z0-9][\w-]*(?::[\w-]+)+|[a-z0-9][\w-]*-[\w-]{2,})/i)?.[1] ??
