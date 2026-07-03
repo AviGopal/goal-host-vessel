@@ -1315,7 +1315,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         for (const k of ["file_paths", "filePaths"]) if (!(k in args)) args[k] = [pathVal];
       }
       return args;
-    } catch { return null; }
+    } catch (e) { lastRawResolveReason = String((e as Error)?.message ?? "fetch failed").slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: fetch threw ${String((e as Error)?.message ?? "").slice(0, 140)}`); return null; }
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
   const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
@@ -1409,9 +1409,11 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       if ("content" in pObj) content = pObj["content"];
       else if ("body" in pObj) content = pObj["body"];
     }
-    if (content == null) return null;
-    if (typeof content === "string" && content.trim().length === 0) return null;
-    if (Array.isArray(content) && content.length === 0) return null;
+    if (content == null || (typeof content === "string" && content.trim().length === 0) || (Array.isArray(content) && content.length === 0)) {
+      lastRawResolveReason = "resolver returned empty content";
+      console.log(`[goal-host-vessel] walk rawResolve ${shape}: empty content (HTTP ${resp.status})`);
+      return null;
+    }
     return content;
   };
   // LLM-pick the ACTION shape (+args) that PRODUCES the missing target, among the
