@@ -1391,13 +1391,13 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       });
     } catch { return null; }
     const bodyText = await resp.text();
-    if (!resp.ok) return null;
+    if (!resp.ok) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
     let parsed: unknown;
     try { parsed = JSON.parse(bodyText); } catch { parsed = bodyText; }
     let content: unknown = parsed;
     const pObj = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : null;
     if (pObj) {
-      if (pObj["success"] === false) return null;
+      if (pObj["success"] === false) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: success=false ${String(pObj["error"] ?? "").slice(0, 140)}`); return null; }
       // A resolver that rejected the pointer returns { error: "..." } (e.g.
       // analysis-vessel's "filePaths is required") with no content/body. That is a
       // FAILURE, not produced content — without this the walk would "produce" the
