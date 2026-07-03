@@ -4785,6 +4785,17 @@ async function emitAuthoringDecision(
 
 // Cap store at 100 records to prevent unbounded growth across long uptime.
 const executionStore = new Map<string, DispatchRecord>();
+const DISPATCH_STORE_PATH = "/workspace/goal-host-dispatches.json";
+try {
+  const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
+  for (const r of saved) {
+    if (!r || !r.dispatchId) continue;
+    if (r.status === "running") { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; }
+    executionStore.set(r.dispatchId, r);
+  }
+  console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
+} catch { /* first boot or unreadable - start empty */ }
+setInterval(() => { Bun.write(DISPATCH_STORE_PATH, JSON.stringify([...executionStore.values()])).catch(() => {}); }, 5000);
 function pruneStore(): void {
   if (executionStore.size > 100) {
     const oldest = [...executionStore.entries()].sort((a, b) => a[1].startedAt - b[1].startedAt);
