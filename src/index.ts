@@ -760,6 +760,7 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
   } catch { return null; }
 }
 async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
+  if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
   const slug = shape.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   const id = `reach-gap-${slug}`;
   const summary = `Reachability gap: shape "${shape}" is advertised by a producer, but the walk could not reach it from cold — the producer's required input_shapes are not producible from the goal pool. If the producer's resolver self-grounds (does not consume that input), declare the gating input as optional_input_shapes (non-gating) so it becomes cold-feasible; otherwise author a producer for the missing input. Do NOT expand scope.`;
