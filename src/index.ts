@@ -1285,7 +1285,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
   // Look up a shape's vessel endpoint (registry map first, then discovery).
   const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
     const mapped = shapeEndpointMap.get(shape);
-    if (mapped?.endpoint && !(opts.variables as Record<string, unknown> | undefined)?.target_vessel_id) return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
+    if (mapped?.endpoint && !(opts.variables as Record<string, unknown> | undefined)?.target_vessel_id && process.env.PREFER_LIBP2P_ROUTE !== "1") return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
     try {
       const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
         method: "POST",
