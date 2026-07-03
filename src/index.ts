@@ -761,7 +761,8 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
 }
 async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
   if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
-  try { const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ required_shapes: [shape], mode: "forward" }), signal: AbortSignal.timeout(8_000) }); if (pr.ok) { const pj = await pr.json() as { activities?: unknown[] }; if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null; } } catch { /* fail-open */ }
+  let producerId = ""; let producerInputs: string[] = [];
+  try { const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ required_shapes: [shape], mode: "forward" }), signal: AbortSignal.timeout(8_000) }); if (pr.ok) { const pj = await pr.json() as { activities?: any[] }; if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null; const a0 = pj.activities[0] || {}; producerId = String(a0.variant_id || a0.id || ""); producerInputs = Array.isArray(a0.input_schema?.required_shapes) ? a0.input_schema.required_shapes.map(String) : []; } } catch { /* fail-open */ }
   const slug = shape.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   const id = `reach-gap-${slug}`;
   const summary = `Reachability gap: shape "${shape}" is advertised by a producer, but the walk could not reach it from cold — the producer's required input_shapes are not producible from the goal pool. If the producer's resolver self-grounds (does not consume that input), declare the gating input as optional_input_shapes (non-gating) so it becomes cold-feasible; otherwise author a producer for the missing input. Do NOT expand scope.`;
@@ -772,7 +773,7 @@ async function fileReachabilityGap(shape: string, goal: string, goalTargets: str
       body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
         id, category: "unreachable_producer", source: "substrate_detected", status: "open", summary,
         detected_at: new Date().toISOString(),
-        classification_metadata: { kind: "reachability_gap", unreachable_shape: shape, goal, goal_target_shapes: goalTargets, scope_narrowed: true },
+        classification_metadata: { kind: "reachability_gap", unreachable_shape: shape, unreachable_producer_id: producerId, producer_required_inputs: producerInputs, goal, goal_target_shapes: goalTargets, scope_narrowed: true },
       } } } }),
       signal: AbortSignal.timeout(15_000),
     });
