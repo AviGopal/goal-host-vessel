@@ -94,7 +94,16 @@ Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
     const raw = Array.isArray(parsed?.target_shapes) ? parsed.target_shapes : [];
     // CONSTRAIN to the known vocabulary — drop any hallucinated shape.
     const filtered = Array.from(
-      new Set(raw.map((s: unknown) => String(s)).filter((s: string) => known.has(s))),
+      new Set(
+        raw
+          .map((s: unknown) => String(s))
+          .filter((s: string) => known.has(s))
+          .map((s: string) =>
+            (s === "activity_create_variant" || s === "variant_promote") && known.has("activityVariant_write")
+              ? "activityVariant_write"
+              : s,
+          ),
+      ),
     ).slice(0, 3) as string[];
     if (cache) {
       if (cache.size >= INFER_CACHE_MAX) {
