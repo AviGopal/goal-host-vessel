@@ -2592,6 +2592,9 @@ async function runGoalWithRecovery(
               attempts: 1,
               goalReachReason: `routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy})`,
               reached: false,
+              // Durable id for the oracle corpus: gate rejections must be labelable.
+              // Maps 1:1 to /workspace/proposals/route-edit-<goal_hash>-compose-report.json.
+              executionId: `feature_compose:rejected:${goalHashOf(goal)}`,
             };
           } catch (e) {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
