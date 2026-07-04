@@ -5034,9 +5034,6 @@ async function closeAuthoringDecisions(goalText: string): Promise<void> {
   // Mirror emitAuthoringDecision's id scheme exactly: every emit call site passes
   // goal.slice(0, 200) into classification_metadata, so the open row's id hashes
   // the SLICED goal — hashing the full text here would miss every goal >200 chars.
-  // Mirror emitAuthoringDecision's id scheme exactly: every emit call site passes
-  // goal.slice(0, 200) into classification_metadata, so the open row's id hashes
-  // the SLICED goal — hashing the full text here would miss every goal >200 chars.
   const hash = Bun.hash(goalText.slice(0, 200)).toString(36);
   for (const category of ["auto_draft_triggered", "auto_draft_reused", "auto_draft_authored", "auto_draft_fallback_recommend"]) {
     const ctrl = new AbortController();
