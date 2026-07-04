@@ -593,6 +593,19 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     if (/^\W*\{\{[^}]*\}\}\W*$/.test(digestBody)) {
       return { reached: false, reason: "deterministic:placeholder — output is an unfilled {{placeholder}}", completion_shapes: [] };
     }
+    // Deterministic POSITIVE reach for the code-change family (no LLM): a FAVORABLE
+    // featureComposeReport is ground truth — feature_compose only reaches FAVORABLE
+    // after a typecheck-clean verify AND its semantic cutover gate (verifyPatchAddressesGap)
+    // confirmed the drafted-from-goal diff addresses the intent, then applied/landed it.
+    // Mirror of the negative checks above and of the edit-intent route which already
+    // trusts FAVORABLE. Structure-anchored: report shape AND FAVORABLE verdict on the
+    // SAME digest line (truncation of the verdict only degrades to the LLM, never a false positive).
+    const favorableCompose = dig.split("\n").some((l) =>
+      /featureComposeReport/.test(l) && /"verdict"\s*:\s*"?FAVORABLE/i.test(l)
+    );
+    if (favorableCompose) {
+      return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified and applied by feature_compose", completion_shapes: ["featureComposeReport"] };
+    }
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
 
