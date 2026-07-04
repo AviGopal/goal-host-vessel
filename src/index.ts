@@ -2773,7 +2773,7 @@ async function runGoalWithRecovery(
               reached: false,
               // Durable id for the oracle corpus: gate rejections must be labelable.
               // Maps 1:1 to /workspace/proposals/route-edit-<goal_hash>-compose-report.json.
-              executionId: `feature_compose:rejected:${goalHashOf(goal)}`,
+              executionId: `feature_compose:rejected:${goalHashOf(goal as string)}`,
             };
           } catch (e) {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
@@ -4567,12 +4567,18 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // hollow. Fire-and-forget; never blocks the dispatch.
       void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
       record.walkLog = walkStepSink;
-      record.executionId = seek.executionId ?? seek.result?.trace?.id;
+      record.executionId = seek.executionId ?? seek.result?.trace?.id ?? `goal-seek:no-trace:${goalHashOf(String(goal ?? ""))}`;
       record.selectedTemplateId = seek.selectedTemplateId;
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
       persistDispatchStore();
+      // Decision-log hygiene: a finished dispatch closes its own auto_draft_decision
+      // rows (opened by emitAuthoringDecision, keyed on Bun.hash(goal)) so the gap
+      // store stops accumulating one open decision-log row per distinct goal.
+      // Fire-and-forget; close writes with no matching open row are skipped by the
+      // dev-vessel write resolver (close_without_open_row).
+      void closeAuthoringDecisions(typeof goal === "string" ? goal : "");
       // WHY affordance: operator dispatches render their walk reasoning into the vault.
       if (operator && walkStepSink.length > 0) {
         try {
@@ -5003,6 +5009,30 @@ async function emitAuthoringDecision(
     console.warn(`[goal-host-vessel] emitAuthoringDecision(${category}) failed: ${(err as Error).message}`);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+// closeAuthoringDecisions — on dispatch completion, close the auto_draft_decision
+// gap rows this goal opened via emitAuthoringDecision (same Bun.hash(goal) id
+// scheme). The write resolver skips closes whose class has no open row, so firing
+// all four categories unconditionally is safe and idempotent.
+async function closeAuthoringDecisions(goalText: string): Promise<void> {
+  if (goalText.length === 0) return;
+  const hash = Bun.hash(goalText).toString(36);
+  for (const category of ["auto_draft_triggered", "auto_draft_reused", "auto_draft_authored", "auto_draft_fallback_recommend"]) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    try {
+      const res = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ impulse: { pointer: { type: "substrateGap_write", gap: { id: `auto_draft_decision:${hash}:${category}`, category, source: "goal_host_auto_draft", summary: `[closed by dispatch completion] ${goalText.slice(0, 120)}`, detected_at: new Date().toISOString(), status: "closed" } } } }),
+        signal: ctrl.signal,
+      });
+      try { await res.body?.cancel(); } catch { /* swallow */ }
+    } catch { /* fire-and-forget */ } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
