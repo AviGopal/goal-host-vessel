@@ -1459,7 +1459,11 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
       // FAILURE, not produced content — without this the walk would "produce" the
       // shape with an error object as its content and fool the reach-gate. Return
       // null so the satisfier falls through to the unchanged bridge/escalate path.
-      if (typeof pObj["error"] === "string" && pObj["error"].length > 0 && !("content" in pObj) && !("body" in pObj)) return null;
+      if (typeof pObj["error"] === "string" && pObj["error"].length > 0 && !("content" in pObj) && !("body" in pObj)) {
+        lastRawResolveReason = pObj["error"].slice(0, 200);
+        console.log(`[goal-host-vessel] walk rawResolve ${shape}: resolver rejected — ${pObj["error"].slice(0, 140)}`);
+        return null;
+      }
       if ("content" in pObj) content = pObj["content"];
       else if ("body" in pObj) content = pObj["body"];
     }
