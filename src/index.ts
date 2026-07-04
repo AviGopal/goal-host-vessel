@@ -570,14 +570,19 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     // failure-mode report) contains these tokens and must fall through to the LLM.
     // Strip the "- <shape>: " digest-line prefix before matching.
     const lines = dig.split("\n").map((l) => l.replace(/^-\s+\S+:\s+/, "").trim()).filter((l) => l.length > 0);
-    const allLinesAreError =
-      lines.length > 0 &&
-      lines.every((l) =>
-        /^error:/i.test(l) ||
-        /"?status"?\s*:\s*"?failed/i.test(l) ||
-        l.includes("structuredError") ||
-        l.includes("failed_task_id")
-      );
+    // A line is an error ONLY if it is a bare "error:" line, OR a JSON object/array
+    // whose STRUCTURE is an error envelope (marker as a key) — never prose that merely
+    // MENTIONS a failure token (e.g. "the execution failed_task_id t3 ..."), and never a
+    // real count report like {"total":10,"failed":2}.
+    const isErrorLine = (l: string) =>
+      /^error:/i.test(l) ||
+      (/^[\{\[]/.test(l) && (
+        /"status"\s*:\s*"?failed/i.test(l) ||
+        /"structuredError"/.test(l) ||
+        /"failed_task_id"/.test(l) ||
+        /^\{\s*"error"\s*:/.test(l)
+      ));
+    const allLinesAreError = lines.length > 0 && lines.every(isErrorLine);
 
     if (allLinesAreError) {
       return { reached: false, reason: "deterministic:error-envelope — output is an error/failure envelope", completion_shapes: [] };
