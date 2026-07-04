@@ -4807,8 +4807,10 @@ async function emitAuthoringDecision(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10_000);
   try {
+    // Key the decision-log id on the GOAL, not the per-dispatch UUID: repeat dispatches of the same goal upsert one row in the gap store instead of accumulating duplicates (observed 177 open rows for 24 distinct goals).
+    const goalText = typeof classification_metadata.goal === "string" ? classification_metadata.goal : "";
     const gap = {
-      id: `auto_draft_decision:${(classification_metadata.dispatchId as string | undefined) ?? crypto.randomUUID()}:${category}`,
+      id: `auto_draft_decision:${goalText.length > 0 ? Bun.hash(goalText).toString(36) : ((classification_metadata.dispatchId as string | undefined) ?? crypto.randomUUID())}:${category}`,
       category,
       source: "goal_host_auto_draft",
       summary,
