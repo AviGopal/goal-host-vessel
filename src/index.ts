@@ -4458,6 +4458,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
+      persistDispatchStore();
       // WHY affordance: operator dispatches render their walk reasoning into the vault.
       if (operator && walkStepSink.length > 0) {
         try {
@@ -4477,6 +4478,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       record.reached = false;
       record.error = (err as Error).message;
       if (walkStepSink.length) record.walkLog = walkStepSink;
+      persistDispatchStore();
       console.error("[goal-host-vessel] async /run-goal error:", err);
       // Detection (operator-goal observability). When an OPERATOR-originated
       // dispatch fails because nothing in the catalogue could serve it (recommend
