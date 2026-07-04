@@ -564,18 +564,12 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }
 
   if (dig !== "") {
-    // Error envelope check
-    const isErrorEnvelope =
-      /"?status"?\s*:\s*"?failed/i.test(dig) ||
-      dig.includes("structuredError") ||
-      dig.includes("failed_task_id") ||
-      /^[\s\S]*^error:/im.test(dig) && !dig.split("\n").some((line) => {
-        const t = line.trim();
-        return t.length > 0 && !/^error:/i.test(t) && !/^\{/.test(t) && !/^-\s/.test(t);
-      });
-
-    // More precise error envelope: starts with "Error:" or "error:" or is error JSON with no other content
-    const lines = dig.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+    // Error envelope check: reject ONLY when EVERY non-empty content line is an
+    // error/failure line (the whole digest is an error), never on mere substring
+    // containment — a legitimate reached output whose SUBJECT is failures (e.g. a
+    // failure-mode report) contains these tokens and must fall through to the LLM.
+    // Strip the "- <shape>: " digest-line prefix before matching.
+    const lines = dig.split("\n").map((l) => l.replace(/^-\s+\S+:\s+/, "").trim()).filter((l) => l.length > 0);
     const allLinesAreError =
       lines.length > 0 &&
       lines.every((l) =>
@@ -585,12 +579,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
         l.includes("failed_task_id")
       );
 
-    const startsWithErrorNoSubstance =
-      lines.length > 0 &&
-      /^error:/i.test(lines[0] ?? "") &&
-      lines.length === 1;
-
-    if (isErrorEnvelope || allLinesAreError || startsWithErrorNoSubstance) {
+    if (allLinesAreError) {
       return { reached: false, reason: "deterministic:error-envelope — output is an error/failure envelope", completion_shapes: [] };
     }
 
