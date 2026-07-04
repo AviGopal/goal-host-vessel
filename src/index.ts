@@ -2219,7 +2219,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         );
         if (interim && interim.reached === true) {
           earlyReachVerdict = interim;
-          console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED early at step ${chain.length} — stopping before pollution. completion_shapes=${JSON.stringify(interim.completion_shapes)}`);
+          console.log(`[goal-host-vessel] walk(${opts.surface}): REACHED early at step ${chain.length} — ${interim.reason ?? "no reason given"}; stopping before pollution. completion_shapes=${JSON.stringify(interim.completion_shapes)}`);
           break;
         }
       } catch (e) {
