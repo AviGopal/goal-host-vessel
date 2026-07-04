@@ -4059,6 +4059,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   pruneStore();
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator };
   executionStore.set(dispatchId, record);
+  persistDispatchStore();
       if (!("dispatch_id" in variables)) variables.dispatch_id = dispatchId;
 
   // Auto-draft fallback: when caller provides a free-form goal but no
@@ -4901,7 +4902,13 @@ try {
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
 } catch { /* first boot or unreadable - start empty */ }
-setInterval(() => { Bun.write(DISPATCH_STORE_PATH, JSON.stringify([...executionStore.values()])).catch(() => {}); }, 5000);
+function persistDispatchStore(): void {
+  const snapshot = JSON.stringify([...executionStore.values()]);
+  Bun.write(DISPATCH_STORE_PATH, snapshot).catch((err) => {
+    console.warn("[goal-host-vessel] dispatch store persist failed: " + (err as Error).message);
+  });
+}
+setInterval(persistDispatchStore, 5000);
 function pruneStore(): void {
   if (executionStore.size > 100) {
     const oldest = [...executionStore.entries()].sort((a, b) => a[1].startedAt - b[1].startedAt);
