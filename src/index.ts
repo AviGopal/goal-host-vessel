@@ -890,6 +890,37 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
       signal: AbortSignal.timeout(15_000),
     });
   } catch { /* non-fatal */ }
+  // REACH-GATE FAILURE-CLASS CONCEPT (2026-07-04): mirror each hollow verdict to
+  // concept-db at CLASS grain — stable content only (no goal text, execution ids,
+  // or timestamps) so exact-content dedup holds: one concept per hollow class.
+  // Fire-and-forget; concept-db down never blocks the penalty path.
+  try {
+    const m = /^deterministic:([a-z-]+)/.exec(reason ?? "");
+    const cls = m ? `deterministic_${m[1]!.replace(/-/g, "_")}` : "llm_judged_hollow";
+    const desc: Record<string, string> = {
+      deterministic_no_output: "execution completed but produced no content-bearing output; prefer producers whose tasks emit real content",
+      deterministic_error_envelope: "execution output was an error or failure envelope presented as a result; treat error envelopes as failures, not products",
+      deterministic_placeholder: "execution output was an unfilled placeholder passed through as content; bind slots before emitting",
+      llm_judged_hollow: "the reach judge found the produced output does not substantively fulfill the goal intent; hollow wrappers that only emit shape names get beta-penalised",
+    };
+    void fetch(`${CONCEPT_DB_ENDPOINT}/concepts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({
+        source_type: "reach_gate_lesson",
+        shape: "reach_gate_lesson",
+        content: `reach-gate hollow class ${cls}: ${desc[cls] ?? "hollow completion of this class; prefer content-bearing goal-shaped producers"}`,
+        summary: `reach-gate lesson: ${cls}`,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    }).then((r) => {
+      console.log(`[reach-gate-lesson] class=${cls} mirrored to concept-db (http ${r.status})`);
+    }).catch((err) => {
+      console.warn(`[reach-gate-lesson] concept mirror failed: ${(err as Error).message}`);
+    });
+  } catch (e) {
+    console.warn(`[reach-gate-lesson] classify failed (non-fatal): ${(e as Error).message}`);
+  }
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
 // goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
