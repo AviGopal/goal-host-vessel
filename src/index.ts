@@ -837,6 +837,50 @@ async function fileReachabilityGap(shape: string, goal: string, goalTargets: str
   } catch { return null; }
 }
 
+// MINT GOVERNOR (2026-07-04): throttle bridge-minting when the composition graph
+// has no digestion headroom. Headroom is dev-vessel's learning_transfer_report
+// genuine_edge_density.inequality_ok (the live lambda1 >= rho_grow signal),
+// cached 5 minutes. Under NEGATIVE headroom a new auto-bridge may be minted ONLY
+// when discovery confirms no live producer of the shape exists fleet-wide; when
+// a producer exists the mint is refused with a cited reason and the walk's
+// satisfier/candidate path handles the shape. Fail-open on any transport error.
+let mintHeadroomCache: { ok: boolean; at: number } | null = null;
+async function mintGovernorAllows(shape: string): Promise<boolean> {
+  try {
+    if (!mintHeadroomCache || Date.now() - mintHeadroomCache.at > 300_000) {
+      const hr = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ impulse: { type: "learning_transfer_report" } }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!hr.ok) return true;
+      const hj = await hr.json() as { body?: { genuine_edge_density?: { inequality_ok?: boolean } } };
+      const ok = hj?.body?.genuine_edge_density?.inequality_ok;
+      if (typeof ok !== "boolean") return true;
+      mintHeadroomCache = { ok, at: Date.now() };
+    }
+    if (mintHeadroomCache.ok) return true;
+    const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!dr.ok) return true;
+    const dj = await dr.json() as { content?: { vessels?: unknown[] } };
+    const vessels = Array.isArray(dj?.content?.vessels) ? dj.content.vessels : [];
+    if (vessels.length > 0) {
+      console.log(`[mint-governor] refused: producer exists + headroom negative — shape="${shape}" served by ${vessels.length} vessel(s); routing stays on the existing producer`);
+      return false;
+    }
+    console.log(`[mint-governor] allowed under negative headroom: no live producer of "${shape}" fleet-wide (true capability gap)`);
+    return true;
+  } catch (e) {
+    console.warn(`[mint-governor] check failed (fail-open): ${(e as Error).message}`);
+    return true;
+  }
+}
 async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -2049,7 +2093,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (!pick && target.size > 0) {
       const missingTargets = [...target].filter((s) => !producedShapes.has(s));
       const live = await liveShapes();
-      const X = missingTargets.find((s) => live.has(s) && !minted.has(s));
+      let X = missingTargets.find((s) => live.has(s) && !minted.has(s));
+      if (X && !(await mintGovernorAllows(X))) {
+        minted.add(X);
+        X = undefined;
+      }
       if (X) {
         minted.add(X);
         // BRIDGE-AUTHOR: author a GENUINELY-PRODUCING invocation of X's resolver
