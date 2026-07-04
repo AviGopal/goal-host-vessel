@@ -555,6 +555,53 @@ const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://1
 // the selected template so Thompson stops reinforcing hollow completions.
 interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; }
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string): Promise<GoalReachVerdict | null> {
+  // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
+  const dig = (contentDigest ?? "").trim();
+  const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
+
+  if (dig === "" && meaningfulShapes.length === 0) {
+    return { reached: false, reason: "deterministic:no-output — execution produced no content", completion_shapes: [] };
+  }
+
+  if (dig !== "") {
+    // Error envelope check
+    const isErrorEnvelope =
+      /"?status"?\s*:\s*"?failed/i.test(dig) ||
+      dig.includes("structuredError") ||
+      dig.includes("failed_task_id") ||
+      /^[\s\S]*^error:/im.test(dig) && !dig.split("\n").some((line) => {
+        const t = line.trim();
+        return t.length > 0 && !/^error:/i.test(t) && !/^\{/.test(t) && !/^-\s/.test(t);
+      });
+
+    // More precise error envelope: starts with "Error:" or "error:" or is error JSON with no other content
+    const lines = dig.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+    const allLinesAreError =
+      lines.length > 0 &&
+      lines.every((l) =>
+        /^error:/i.test(l) ||
+        /"?status"?\s*:\s*"?failed/i.test(l) ||
+        l.includes("structuredError") ||
+        l.includes("failed_task_id")
+      );
+
+    const startsWithErrorNoSubstance =
+      lines.length > 0 &&
+      /^error:/i.test(lines[0] ?? "") &&
+      lines.length === 1;
+
+    if (isErrorEnvelope || allLinesAreError || startsWithErrorNoSubstance) {
+      return { reached: false, reason: "deterministic:error-envelope — output is an error/failure envelope", completion_shapes: [] };
+    }
+
+    // Placeholder check: strip leading "- <shape>: " digest prefix then check
+    const digestBody = dig.replace(/^-\s+\S+:\s+/, "");
+    if (/^\W*\{\{[^}]*\}\}\W*$/.test(digestBody)) {
+      return { reached: false, reason: "deterministic:placeholder — output is an unfilled {{placeholder}}", completion_shapes: [] };
+    }
+  }
+  // ── End deterministic pre-check — fall through to LLM ───────────────────
+
   if (!LLM_VESSEL_ENDPOINT) return null;
   const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
 
