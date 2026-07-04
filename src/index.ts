@@ -5013,7 +5013,9 @@ try {
   const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
   for (const r of saved) {
     if (!r || !r.dispatchId) continue;
-    if (r.status === "running") { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
+    const wasRunning = r.status === "running";
+    if (wasRunning) { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
+    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !/edit repos\//i.test(r.goal)) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId] }) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
     executionStore.set(r.dispatchId, r);
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
