@@ -1474,7 +1474,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         : undefined;
       const ordered = target ? [target, ...vessels.filter((x) => x !== target)] : vessels;
       const routeFor = (v: { id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }) => {
-        if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
+        if (v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
           // libp2p-reachable peer: route the resolve through the local federation-transport
           // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
           return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`, resolvedByVesselId: v.id };
@@ -3677,13 +3677,15 @@ function buildDiscoveryProxyResolver(shape: string) {
           const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
           const v = dj?.content?.vessels?.[0];
           if (!v?.endpoint) throw new Error(`discovery: no vessel advertises ${shape}`);
-          if (v.discoveredVia === "peer" && v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
+          if (v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
             // libp2p-reachable peer (e.g. the operator-host obsidian sidecar): its
             // advertised endpoint is a NATed loopback, so route the resolve through the
             // local federation-transport egress (goal-host carries no libp2p deps),
             // passing the peer multiaddr as ?target=. Mirrors endpointForShape so a
             // remote-vessel shape used as a TASK RESOLVER routes the same way the walk
             // satisfier already does — fixes resolver_not_registered for obsidian:* etc.
+            // discoveredVia=peer check removed: locally-registered ingress-sidecar vessels
+            // also use libp2p transport and must route via the egress regardless of discovery origin.
             endpoint = FED_TRANSPORT_EGRESS.replace(/\/+$/, "");
             resolvePath = `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`;
           } else if (v.discoveredVia === "peer" && v.peerEndpoint) {
