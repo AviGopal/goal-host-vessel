@@ -5011,7 +5011,7 @@ try {
   const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
   for (const r of saved) {
     if (!r || !r.dispatchId) continue;
-    if (r.status === "running") { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; }
+    if (r.status === "running") { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
     executionStore.set(r.dispatchId, r);
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
