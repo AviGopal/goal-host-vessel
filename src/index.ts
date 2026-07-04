@@ -2682,7 +2682,7 @@ async function runGoalWithRecovery(
                 tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
               }
             } catch { /* discovery unreachable/empty → env fallback carries */ }
-            const resp = await fetch(composeUrl, {
+            const composeInit = () => ({
               method: "POST",
               headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
               body: JSON.stringify({
@@ -2703,6 +2703,19 @@ async function runGoalWithRecovery(
               }),
               signal: AbortSignal.timeout(240_000),
             });
+            // Transient-failure retry (capability-gap-edit-intent-compose-transient-failure-retry):
+            // a single socket closure / timeout / BUSY must not dump an edit goal onto the
+            // recommend path, where non-editing tick templates get selected and β-penalised.
+            let resp: Response;
+            try {
+              resp = await fetch(composeUrl, composeInit());
+            } catch (err1) {
+              const m = String((err1 as Error)?.message ?? "");
+              if (!/timeout|timed out|fetch failed|ECONNREFUSED|ECONNRESET|socket|BUSY/i.test(m)) throw err1;
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT transient compose failure (${m}) — retrying once in 5s`);
+              await new Promise((r) => setTimeout(r, 5000));
+              resp = await fetch(composeUrl, composeInit());
+            }
             const j: any = await resp.json().catch(() => ({}));
             const body = (j?.body ?? j ?? {}) as Record<string, any>;
             const verdict = String(body.verdict ?? "");
@@ -5018,7 +5031,10 @@ async function emitAuthoringDecision(
 // all four categories unconditionally is safe and idempotent.
 async function closeAuthoringDecisions(goalText: string): Promise<void> {
   if (goalText.length === 0) return;
-  const hash = Bun.hash(goalText).toString(36);
+  // Mirror emitAuthoringDecision's id scheme exactly: every emit call site passes
+  // goal.slice(0, 200) into classification_metadata, so the open row's id hashes
+  // the SLICED goal — hashing the full text here would miss every goal >200 chars.
+  const hash = Bun.hash(goalText.slice(0, 200)).toString(36);
   for (const category of ["auto_draft_triggered", "auto_draft_reused", "auto_draft_authored", "auto_draft_fallback_recommend"]) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10_000);
