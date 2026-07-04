@@ -544,6 +544,7 @@ const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 const SHAPES = ["goal_execution", "activity_execution"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
+const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
 
 // Goal-reaching verification (2026-06-22). status=completed only means the
 // selected template EXECUTED, not that the GOAL was reached — many completions
@@ -2430,11 +2431,35 @@ async function runGoalWithRecovery(
     let knownShapes: string[] | null = null;
     if (!seededOutputShapes || seededOutputShapes.length === 0) {
       knownShapes = await fetchKnownShapes();
+      // WALK-TIME CONCEPT CONSULT (2026-07-04): knowledge before plan. Recall up
+      // to 5 related concepts from concept-db and prepend them to the inference
+      // prompt so target selection is informed by accumulated shape-sequences and
+      // lessons. FAIL-OPEN: concept-db down or slow (4s cap) must not delay the walk.
+      let walkConceptContext = "";
+      try {
+        const cq = encodeURIComponent(goal.slice(0, 300));
+        const cr = await fetch(`${CONCEPT_DB_ENDPOINT}/concepts/search?query=${cq}&limit=5`, {
+          headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
+          signal: AbortSignal.timeout(4_000),
+        });
+        if (cr.ok) {
+          const cj = await cr.json() as { concepts?: Array<{ summary?: string; content?: string }> };
+          const recalled = (cj.concepts ?? [])
+            .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
+            .filter((s) => s.length > 8);
+          if (recalled.length > 0) {
+            walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
+            tap(`[walk-concepts] consulted concept-db: ${recalled.length} concepts recalled for goal_hash=${goalHashOf(goal)}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[walk-concepts] consult failed (fail-open): ${(e as Error).message}`);
+      }
       const inferred = await inferGoalTargetShapes(goal, knownShapes, {
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
         complete: (prompt) =>
-          routedText(goalHashOf(goal), "goal_target_inference", prompt, {
+          routedText(goalHashOf(goal), "goal_target_inference", walkConceptContext + prompt, {
             model: "claude-haiku-4-5-20251001",
           }),
       });
