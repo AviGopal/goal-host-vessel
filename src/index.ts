@@ -2297,7 +2297,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
-        tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // Don't ribosome-mint a SINGLE satisfier trace: it's a synthetic one-task
         // record of a direct vessel resolve, not an extractable recipe — minting it
         // would write a hollow `satisfier:<shape>` template. The reached PATH is
@@ -2846,7 +2846,7 @@ async function runGoalWithRecovery(
           await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached");
           console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         } else if (verdict && verdict.reached === true) {
-          console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+          console.log(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
