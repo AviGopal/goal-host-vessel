@@ -2440,7 +2440,7 @@ async function runGoalWithRecovery(
         const cq = encodeURIComponent(goal.slice(0, 300));
         const cr = await fetch(`${CONCEPT_DB_ENDPOINT}/concepts/search?query=${cq}&limit=5`, {
           headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
-          signal: AbortSignal.timeout(4_000),
+          signal: AbortSignal.timeout(10_000),
         });
         if (cr.ok) {
           const cj = await cr.json() as { concepts?: Array<{ summary?: string; content?: string }> };
