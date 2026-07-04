@@ -5042,6 +5042,7 @@ const server = Bun.serve({
     if (req.method === "GET" && url.pathname === "/health") {
       return Response.json({
         status: "healthy",
+        in_flight: [...executionStore.values()].filter((r) => r.status === "running").length,
         vesselId: VESSEL_ID,
         vesselName: "Goal Host Vessel",
         shapes: SHAPES,
