@@ -607,20 +607,6 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
       return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified and applied by feature_compose", completion_shapes: ["featureComposeReport"] };
     }
   }
-  // ── Deterministic POSITIVE reach (code-change / feature_compose family) ──
-  // A feature_compose that typecheck-verified (verdict FAVORABLE — set only when
-  // typecheck passes AND the semantic/dead-code gate passed) and was NOT rolled
-  // back is ground-truth that a valid, wired change landed. Trust it over the LLM
-  // judge, which false-rejects landed diffs it cannot see clearly (the measured
-  // progress-stall class). Scoped to the code-change family by the shape itself.
-  // Caveat: FAVORABLE is not proof of behavioral intent — accepted tradeoff.
-  if (dig && (producedShapes.includes("featureComposeReport") || dig.includes("featureComposeReport"))) {
-    const favorable = /"verdict"\s*:\s*"FAVORABLE"/.test(dig);
-    const rolledBack = /"rolled_back"\s*:\s*true/.test(dig);
-    if (favorable && !rolledBack) {
-      return { reached: true, reason: "deterministic:compose-favorable — feature_compose typecheck-clean (FAVORABLE) change landed, not rolled back", completion_shapes: ["featureComposeReport"] };
-    }
-  }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
 
   if (!LLM_VESSEL_ENDPOINT) return null;
