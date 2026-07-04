@@ -1445,7 +1445,11 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         body: JSON.stringify({ impulse: { pointer } }),
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
       });
-    } catch { return null; }
+    } catch (e) {
+      lastRawResolveReason = `transport: ${String((e as Error).message ?? e).slice(0, 180)}`;
+      console.log(`[goal-host-vessel] walk rawResolve ${shape}: transport error — ${String((e as Error).message ?? e).slice(0, 140)}`);
+      return null;
+    }
     const bodyText = await resp.text();
     if (!resp.ok) { lastRawResolveReason = bodyText.slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
     let parsed: unknown;
