@@ -1501,7 +1501,7 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         // routing the resolve through the peer's gateway endpoint and tag the
         // peer vessel id as resolved_by_vessel_id for execution-trace provenance.
         if (v.discoveredVia === "peer" && v.peerEndpoint) {
-          return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
+          return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: asResolvePath(v.resolve_endpoint), resolvedByVesselId: v.id };
         }
         const resolvePath = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
         return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
@@ -2710,7 +2710,7 @@ async function runGoalWithRecovery(
               const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
               const v = dj?.content?.vessels?.[0];
               if (v?.endpoint) {
-                composeUrl = `${v.endpoint.replace(/\/+$/, "")}${v.resolve_endpoint || "/resolve"}`;
+                composeUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
                 tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
               }
             } catch { /* discovery unreachable/empty → env fallback carries */ }
@@ -2868,7 +2868,7 @@ async function runGoalWithRecovery(
               const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
               const v = dj?.content?.vessels?.[0];
               if (v?.endpoint) {
-                repairUrl = `${v.endpoint.replace(/\/+$/, "")}${v.resolve_endpoint || "/resolve"}`;
+                repairUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
                 tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR template_repair producer resolved via discovery → ${repairUrl}`);
               }
             } catch { /* discovery unreachable/empty → env fallback carries */ }
@@ -3743,10 +3743,10 @@ function buildDiscoveryProxyResolver(shape: string) {
             resolvePath = `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`;
           } else if (v.discoveredVia === "peer" && v.peerEndpoint) {
             endpoint = v.peerEndpoint.replace(/\/+$/, "");
-            resolvePath = v.resolve_endpoint || "/resolve";
+            resolvePath = asResolvePath(v.resolve_endpoint);
           } else {
             endpoint = v.endpoint.replace(/\/+$/, "");
-            resolvePath = v.resolve_endpoint || "/resolve";
+            resolvePath = asResolvePath(v.resolve_endpoint);
           }
         } finally {
           clearTimeout(discTimer);
@@ -4641,7 +4641,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           if (wv2?.endpoint) {
             const whyPath = "Substrate/Dispatches/" + dispatchId.slice(0, 8) + ".md";
             const whyBody = "# Why: " + String(goal ?? "").slice(0, 120) + "\n\n**reached:** " + (record.reached ? "yes" : "no") + (record.goalReachReason ? " - " + String(record.goalReachReason).slice(0, 300) : "") + "\n\n## Walk\n" + walkStepSink.map((l) => "- " + l).join("\n").slice(0, 6000) + "\n";
-            await fetch(wv2.endpoint.replace(/\/+$/, "") + (wv2.resolve_endpoint || "/resolve"), { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "obsidian:write_note", path: whyPath, content: whyBody, dispatch_id: dispatchId, goal: String(goal ?? "").slice(0, 200), reached: record.reached === true } } }), signal: AbortSignal.timeout(8000) });
+            await fetch(wv2.endpoint.replace(/\/+$/, "") + (asResolvePath(wv2.resolve_endpoint)), { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "obsidian:write_note", path: whyPath, content: whyBody, dispatch_id: dispatchId, goal: String(goal ?? "").slice(0, 200), reached: record.reached === true } } }), signal: AbortSignal.timeout(8000) });
           }
         } catch { /* vault surface unreachable - reasoning still lives in the dispatch record */ }
       }
@@ -4716,7 +4716,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           if (wv?.endpoint) {
             const notePath = "Substrate/Unservable/" + gapId.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 80) + ".md";
             const noteBody = "# I could not serve this goal\n\n**Goal:** " + goal.slice(0, 300) + "\n\n**Why:** the substrate found no activity that serves this goal class (recommend refused and auto-draft did not converge). A capability gap has been filed (" + gapId + ") and the substrate will attempt to author an activity for it.\n";
-            await fetch(wv.endpoint.replace(/\/+$/, "") + (wv.resolve_endpoint || "/resolve"), {
+            await fetch(wv.endpoint.replace(/\/+$/, "") + (asResolvePath(wv.resolve_endpoint)), {
               method: "POST",
               headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) },
               body: JSON.stringify({ impulse: { pointer: { type: "obsidian:write_note", path: notePath, content: noteBody, dispatch_id: dispatchId, goal: goal.slice(0, 200), reached: false } } }),
