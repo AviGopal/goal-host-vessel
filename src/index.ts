@@ -1769,6 +1769,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   const exclude = new Set<string>();   // normalised activity ids already used / rejected
   let lastTrace: ExecutionTrace | null = null;
   let lastExecId: string | undefined = opts.parentExecutionId;
+  const satisfierTraces: ExecutionTrace[] = [];
   let lastPick = "";
   let totalDurationMs = 0;
   let totalCostUsd = 0;
@@ -1838,6 +1839,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             tags: opts.tags,
             metadata: { satisfier: true, shape: satisfiableNow },
           };
+          satisfierTraces.push(synthTrace);
           chain.push(satId);
           exclude.add(normActivityId(satId));
           chainExecIds.push(synthTrace.id);
@@ -2434,6 +2436,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       // Best-effort + only for satisfier-only traces (engine already persisted real
       // template executions — guard against double-persist). (2026-06-28)
       const satisfierOnlyTrace = (lastTrace.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
+      for (const st of satisfierTraces) {
+        if (st === lastTrace) continue;
+        void persistSatisfierTrace(st);
+      }
       if (satisfierOnlyTrace) {
         const durableTrace: ExecutionTrace = {
           ...lastTrace,
