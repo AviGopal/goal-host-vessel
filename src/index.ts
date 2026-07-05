@@ -2499,6 +2499,7 @@ async function runGoalWithRecovery(
   // the single-template recovery loop below runs the freshly-authored template.
   let authoredFallbackTarget: string | undefined;
   let seededOutputShapes = opts.expectedOutputShapes;
+  let terminalOutputShapes: string[] | undefined;
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -2507,6 +2508,15 @@ async function runGoalWithRecovery(
     // walk backward-chains toward a capability-matched producer. Explicit caller
     // expected_output_shapes always wins (we only infer when it is empty). Fails
     // open to the current opportunistic behavior on inference-empty / LLM-down.
+    //
+    // GUARD (defect-goal-text-template-literal-injection, 2026-07-05): the
+    // inference + derivation-split calls below can throw on unusual goal text
+    // (e.g. a goal that quotes a code snippet containing a backtick or a
+    // dollar-brace fragment). seededOutputShapes/terminalOutputShapes are
+    // hoisted above this block so an exception here still leaves the walk
+    // below able to run in opportunistic mode instead of the whole dispatch
+    // crashing before runGoalAsPoolWalk or edit-intent routing ever run.
+    try {
     let knownShapes: string[] | null = null;
     if (!seededOutputShapes || seededOutputShapes.length === 0) {
       knownShapes = await fetchKnownShapes();
@@ -2556,7 +2566,6 @@ async function runGoalWithRecovery(
     // is bound from the produced findings (deferral + content-binding live in the
     // walk's satisfier). Tight classifier returns [] for plain single-step goals →
     // unchanged 1-step behaviour. Only attempted when we have a terminal target set.
-    let terminalOutputShapes: string[] | undefined;
     if (seededOutputShapes && seededOutputShapes.length >= 2) {
       // Partition the (multi-shape) target into derive→emit stages. No-op for a
       // single-shape target (the common case) — needs ≥2 shapes to be a derivation.
@@ -2606,6 +2615,15 @@ async function runGoalWithRecovery(
             JSON.stringify({ goal_hash: goalHashOf(goal), intermediate_shapes: split.intermediate, terminal_shapes: terminalOutputShapes }),
         );
       }
+    }
+    } catch (err) {
+      tap(
+        `[goal-host-vessel] ${opts.surface}: goal-target inference / derivation-split threw ` +
+          JSON.stringify({ goal_hash: goalHashOf(goal), error: (err as Error).message ?? String(err) }) +
+          ` — falling back to opportunistic mode`,
+      );
+      seededOutputShapes = opts.expectedOutputShapes;
+      terminalOutputShapes = undefined;
     }
     try {
       const walk = await runGoalAsPoolWalk(goal, {
