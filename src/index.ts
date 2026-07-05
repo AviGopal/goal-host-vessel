@@ -95,6 +95,19 @@ const FED_TRANSPORT_EGRESS = process.env.FED_TRANSPORT_EGRESS ?? "http://127.0.0
  * reaches the correct substrate boundary. Also returns resolved_by_vessel_id
  * for provenance capture on execution traces.
  */
+const asResolvePath = (rp: string | undefined): string => {
+  if (!rp) return "/resolve";
+  if (rp.startsWith("http://") || rp.startsWith("https://")) {
+    try {
+      const u = new URL(rp);
+      return u.pathname + u.search;
+    } catch {
+      return "/resolve";
+    }
+  }
+  return rp;
+};
+
 function endpointForShape(
   v: Record<string, unknown>,
 ): { endpoint: string; resolvedByVesselId?: string } {
@@ -1490,7 +1503,8 @@ Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no ne
         if (v.discoveredVia === "peer" && v.peerEndpoint) {
           return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve", resolvedByVesselId: v.id };
         }
-        return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath: v.resolve_endpoint || "/resolve" };
+        const resolvePath = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
+        return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
       };
       let first: { endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null = null;
       for (const cand of ordered) {
@@ -3912,7 +3926,7 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     const all = new Set<string>();
     for (const v of vessels) {
       const ep = typeof v.endpoint === "string" ? v.endpoint.replace(/\/+$/, "") : "";
-      const rp = v.resolve_endpoint || "/resolve";
+      const rp = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
       for (const s of (v.shapes ?? [])) {
         if (typeof s === "string" && s) {
           all.add(s);
