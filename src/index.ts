@@ -3031,9 +3031,9 @@ async function runGoalWithRecovery(
     if (attempt < maxAttempts) {
       const repairKey = repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
         const alt = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
-      if (!alt) { console.log(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
+      if (!alt) { tap(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
       nextTarget = alt;
-      console.log(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
+      tap(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
     }
   }
   return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
