@@ -2716,9 +2716,17 @@ async function runGoalWithRecovery(
               await new Promise((r) => setTimeout(r, 5000));
               resp = await fetch(composeUrl, composeInit());
             }
-            const j: any = await resp.json().catch(() => ({}));
-            const body = (j?.body ?? j ?? {}) as Record<string, any>;
-            const verdict = String(body.verdict ?? "");
+            let j: any = await resp.json().catch(() => ({}));
+            let body = (j?.body ?? j ?? {}) as Record<string, any>;
+            let verdict = String(body.verdict ?? "");
+            if (verdict === "BUSY") {
+              console.log("[edit-intent] EDIT-INTENT compose BUSY — waiting 45 s before retry");
+              await new Promise<void>((r) => setTimeout(r, 45_000));
+              const busyRetryRes = await fetch(composeUrl, composeInit());
+              j = await busyRetryRes.json().catch(() => ({}));
+              body = (j?.body ?? j ?? {}) as Record<string, any>;
+              verdict = String(body.verdict ?? "");
+            }
             const cutovers = Array.isArray(body.cutovers) ? body.cutovers : [];
             let landedSha: string | null = null;
             for (const c of cutovers) {
