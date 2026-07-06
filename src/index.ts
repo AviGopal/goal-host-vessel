@@ -540,7 +540,42 @@ class BoundedBusSink implements EventSink {
 
 const PORT = parseInt(process.env.PORT ?? "8210", 10);
 const VESSEL_ID = process.env.GOAL_HOST_VESSEL_ID ?? process.env.VESSEL_ID ?? "goal-host-vessel";
-const ACTIVITY_API_ENDPOINT = process.env.ACTIVITY_API_ENDPOINT ?? "http://127.0.0.1:8080";
+// Location-independent trace store (2026-07-05, gap trace-persistence-loss-2026-07-05):
+// the store may live on this substrate or on a federation hub. Resolution order:
+// explicit env override (ACTIVITY_API_ENDPOINT) → discovery lookup (who serves the
+// trace shapes) → localhost default. Pattern follows super-repo 246e6491
+// (discovery-routed store location for composition-edge-reconcile): fail-soft
+// when discovery is dark, env always wins.
+async function resolveTraceStoreEndpointViaDiscovery(): Promise<string | null> {
+  const disc = process.env.DISCOVERY_VESSEL_ENDPOINT ?? "http://127.0.0.1:8100";
+  const key = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_KEY ?? "";
+  for (const shape of ["activityExecutionTrace_write", "executionTraceList", "activityExecutionTrace"]) {
+    try {
+      const r = await fetch(`${disc}/resolve`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(key ? { Authorization: `ApiKey ${key}` } : {}),
+        },
+        body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!r.ok) continue;
+      const j = await r.json() as { content?: { vessels?: Array<{ endpoint?: string }> } };
+      const ep = j?.content?.vessels?.[0]?.endpoint;
+      if (typeof ep === "string" && ep.length > 0) {
+        const base = ep.replace(/\/v2\/impulses\/resolve\/?$/, "").replace(/\/$/, "");
+        console.log(`[goal-host-vessel] trace store resolved via discovery (${shape}): ${base}`);
+        return base;
+      }
+    } catch { /* try next shape — fail-soft */ }
+  }
+  console.log("[goal-host-vessel] trace store discovery dark — falling back to env/localhost default");
+  return null;
+}
+const ACTIVITY_API_ENDPOINT = process.env.ACTIVITY_API_ENDPOINT
+  ?? (await resolveTraceStoreEndpointViaDiscovery())
+  ?? "http://127.0.0.1:8080";
 // Producer discovery (the shape-walk's discover-by-shapes producer/candidate lookups)
 // must query where the rich producer corpus LIVES — the LOCAL activity-api — not the
 // federation hub (ACTIVITY_API_ENDPOINT), whose `activity` corpus declares almost no
@@ -3078,9 +3113,17 @@ const llm = createLLMPort(anthropicClient);
 // progression. Subscribers receive events with type mapped to the bus form
 // (replace `:` with `.`, camelCase → snake_case).
 const noopInnerSink = { emit: () => {} };
+// Bus events go to the LOCAL activity-api regardless of where the trace store
+// (ACTIVITY_API_ENDPOINT) lives: the WS subscribers (concept-db, ribosome,
+// workbench) attach to the local broadcaster, and forwarding the lifecycle
+// firehose over a WAN hub link is what congested the uplink on 2026-07-05 —
+// stalled trace POSTs were cut mid-body ("Unterminated string") and burst
+// POSTs lost their sockets. Override with EVENT_BUS_ENDPOINT when a
+// deployment wants the bus elsewhere.
+const EVENT_BUS_ENDPOINT = process.env.EVENT_BUS_ENDPOINT ?? PRODUCER_DISCOVERY_ENDPOINT;
 const busSink = new BusForwardingEventSink({
   inner: noopInnerSink,
-  activityApiEndpoint: ACTIVITY_API_ENDPOINT,
+  activityApiEndpoint: EVENT_BUS_ENDPOINT,
   apiKey: API_KEY,
   sourceVesselId: "goal-host-vessel",
 });
