@@ -17,6 +17,7 @@
  */
 
 import { repairSignatureOf, classifyFailure } from './repair-signature';
+import { Config } from './config';
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferDerivationSplit, goalHashOf } from "./goal-target-inference";
@@ -60,33 +61,19 @@ import type {
 // (backpressure working).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BUS_MAX_INFLIGHT = parseInt(
-  process.env.IAS_BUS_MAX_INFLIGHT ?? process.env.BUS_MAX_INFLIGHT ?? "256",
-  10,
-);
-const BUS_MAX_INFLIGHT_BYTES = parseInt(
-  process.env.BUS_MAX_INFLIGHT_BYTES ?? String(50 * 1024 * 1024),
-  10,
-);
-const BUS_QUEUE_MAX = parseInt(
-  process.env.IAS_BUS_QUEUE_SIZE ?? process.env.BUS_QUEUE_MAX ?? "1024",
-  10,
-);
-const BUS_STATS_INTERVAL_MS = 30_000;
+const BUS_MAX_INFLIGHT = Config.busMaxInflight;
+const BUS_MAX_INFLIGHT_BYTES = Config.busMaxInflightBytes;
+const BUS_QUEUE_MAX = Config.busQueueMax;
+const BUS_STATS_INTERVAL_MS = Config.busStatsIntervalMs;
 // When backpressure exceeds this window, fall through to drop+signal. Bounded
 // to keep callers from hanging indefinitely if activity-api is wedged.
-const BUS_BACKPRESSURE_MAX_WAIT_MS = parseInt(
-  process.env.IAS_BUS_BACKPRESSURE_MAX_WAIT_MS ?? "30000",
-  10,
-);
-const DISPATCH_DROP_LOG_PATH =
-  process.env.IAS_BUS_DROP_LOG_PATH ?? "/workspace/dispatch-dropped.jsonl";
+const BUS_BACKPRESSURE_MAX_WAIT_MS = Config.busBackpressureMaxWaitMs;
+const DISPATCH_DROP_LOG_PATH = Config.dispatchDropLogPath;
 
 // Env-defaulted endpoint for goal-host-vessel's own /run-goal route.
 // Override with GOAL_HOST_VESSEL_ENDPOINT to avoid hardcoded host:port drift.
-const GOAL_HOST_ENDPOINT =
-  process.env.GOAL_HOST_VESSEL_ENDPOINT ?? "http://127.0.0.1:8210"
-const FED_TRANSPORT_EGRESS = process.env.FED_TRANSPORT_EGRESS ?? "http://127.0.0.1:8401";
+const GOAL_HOST_ENDPOINT = Config.goalHostEndpoint;
+const FED_TRANSPORT_EGRESS = Config.fedTransportEgress;
 
 /**
  * Resolve the HTTP endpoint to use for a discovered vessel record.
