@@ -576,7 +576,7 @@ const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
@@ -1811,7 +1811,23 @@ If one of those sibling shapes is the action that would create what the goal ask
     rec.poolShapes = [...producedShapes];
     rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
   };
+  // Drain human-injected impulses (poolImpulse_write) into the pool. Pushes
+  // directly (not via addToPool) so an injected impulse is added even when its
+  // shape is already present in the pool.
+  const drainInjectedImpulses = (): void => {
+    const wid = opts.variables.dispatch_id;
+    if (typeof wid !== "string") return;
+    const queued = injectedPoolImpulses.get(wid);
+    if (!queued || queued.length === 0) return;
+    injectedPoolImpulses.delete(wid);
+    for (const inj of queued) {
+      producedShapes.add(inj.shape);
+      poolImpulses.push(mkImpulse(inj.shape, inj.content, inj.summary ?? `human-contributed impulse (${inj.shape})`));
+      tap(`[goal-host-vessel] walk(${opts.surface}): human-injected impulse added to pool shape=${inj.shape}`);
+    }
+  };
   while (chain.length < MAX_STEPS && !targetMet()) {
+    drainInjectedImpulses();
     mirrorWalkState();
     // (0) VESSEL-RESOLVE SATISFIER — resolve-FIRST, before ANY candidate /
     //     horizontal-bundle / bridge-author step. When a missing target shape
@@ -4909,9 +4925,26 @@ async function handleResolve(req: Request): Promise<Response> {
       },
     });
   }
+  if (type === "poolImpulse_write") {
+    const wid = (typeof body.dispatchId === "string" ? body.dispatchId : undefined)
+      ?? (typeof pointer.dispatchId === "string" ? pointer.dispatchId : undefined);
+    const shape = (typeof body.shape === "string" ? body.shape : undefined)
+      ?? (typeof pointer.shape === "string" ? pointer.shape : undefined);
+    const content = "content" in body ? body.content : (pointer as Record<string, unknown>)["content"];
+    const summary = (typeof body.summary === "string" ? body.summary : undefined)
+      ?? (typeof pointer.summary === "string" ? pointer.summary : undefined);
+    if (!wid || !shape) return Response.json({ resolved: false, shape: "poolImpulse_write", error: "dispatchId and shape are required" }, { status: 400 });
+    const rec = executionStore.get(wid);
+    if (!rec) return Response.json({ resolved: false, shape: "poolImpulse_write", error: "dispatch not found" }, { status: 404 });
+    if (rec.status !== "running") return Response.json({ resolved: false, shape: "poolImpulse_write", error: `dispatch is ${rec.status}, not running` }, { status: 409 });
+    const q = injectedPoolImpulses.get(wid) ?? [];
+    q.push({ shape, content: content ?? null, summary });
+    injectedPoolImpulses.set(wid, q);
+    return Response.json({ resolved: true, shape: "poolImpulse_write", body: { queued: q.length, dispatchId: wid } });
+  }
   if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
-      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState` },
+      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write` },
       { status: 404 },
     );
   }
@@ -5202,6 +5235,10 @@ async function closeAuthoringDecisions(goalText: string): Promise<void> {
 
 // Cap store at 100 records to prevent unbounded growth across long uptime.
 const executionStore = new Map<string, DispatchRecord>();
+// Pool insertion (poolImpulse_write): human-contributed impulses queued per
+// dispatchId; the running walk drains this queue at the top of each iteration.
+// Strictly additive — injected shapes unlock candidates on the next rescan.
+const injectedPoolImpulses = new Map<string, Array<{ shape: string; content: unknown; summary?: string }>>();
 const DISPATCH_STORE_PATH = "/workspace/goal-host-dispatches.json";
 try {
   const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
