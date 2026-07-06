@@ -1392,7 +1392,7 @@ async function runGoalAsPoolWalk(
     if (typeof widEv === "string") {
       const recEv = executionStore.get(widEv);
       if (recEv) {
-        recEv.poolEvents = [...(recEv.poolEvents ?? []), { shape, source: summary ?? "pool impulse (" + shape + ")", at: Date.now() }].slice(-64);
+        recEv.poolEvents = [...(recEv.poolEvents ?? []), { shape, source: summary ?? `pool impulse (${shape})`, at: Date.now() }].slice(-64);
       }
     }
     if (!shape || producedShapes.has(shape)) return;
