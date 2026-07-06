@@ -576,7 +576,7 @@ const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
@@ -3031,6 +3031,7 @@ async function runGoalWithRecovery(
   let goalReachReason: string | undefined;
   let reached = false;
   let attempt = 0;
+  let humanSolicited = false;
   while (attempt < maxAttempts) {
     attempt++;
     result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
@@ -3103,12 +3104,100 @@ async function runGoalWithRecovery(
     if (attempt < maxAttempts) {
       const repairKey = repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
         const alt = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
-      if (!alt) { tap(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`); break; }
+      if (!alt) {
+        // WS5 solicitation-on-recovery: before declaring honest failure, ask a
+        // present human (a vault advertising human_input). An answered
+        // solicitation injects the human's context and grants ONE retry of the
+        // most recently excluded approach; declined / insufficient_context /
+        // timeout / no-producer all proceed to the unchanged honest-failure path.
+        if (goal && !humanSolicited) {
+          humanSolicited = true;
+          const evidence = excluded.length > 0
+            ? ["| # | approach tried | outcome |", "|---|---|---|", ...excluded.map((id, i) => `| ${i + 1} | ${id.split(":").pop() ?? id} | ${i === excluded.length - 1 ? String(goalReachReason ?? "not reached").slice(0, 120) : "not reached"} |`)].join("\n")
+            : "_No approach was even selectable for this goal._";
+          const sol = await solicitHumanInput(goal, evidence, typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
+          if (sol?.outcome === "answered" && excluded.length > 0) {
+            opts.variables.human_input = sol.answer;
+            const lastTried = excluded.pop()!;
+            nextTarget = lastTried;
+            tap(`[goal-host-vessel] ${opts.surface}: human answered solicitation — retrying ${lastTried} with human_input context`);
+            continue;
+          }
+          if (sol) tap(`[goal-host-vessel] ${opts.surface}: human solicitation outcome=${sol.outcome} — proceeding to honest failure`);
+        }
+        tap(`[goal-host-vessel] ${opts.surface}: no fresh approach after ${attempt} attempts — honest failure`);
+        break;
+      }
       nextTarget = alt;
       tap(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
     }
   }
   return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
+}
+
+// WS5: solicit a present human (a vault advertising human_input via discovery)
+// when recovery is about to exhaust approaches. Returns the finished
+// solicitation ("answered" carries the human's markdown answer) or null when
+// no producer exists / the POST fails (caller proceeds to the unchanged
+// honest-failure path). The wait honours the producer's ADVERTISED
+// resolve_timeout_ms and is EXTENDED while composition heartbeats arrive —
+// never abandon a human mid-answer (hard cap SOLICITATION_MAX_WAIT_MS).
+async function solicitHumanInput(goal: string, evidenceMarkdown: string, dispatchId?: string): Promise<PendingSolicitation | null> {
+  let producer: { endpoint?: string; resolve_endpoint?: string; resolve_timeout_ms?: number } | null = null;
+  try {
+    const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "human_input" } }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (dr.ok) {
+      const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string; resolve_timeout_ms?: number }> } };
+      producer = dj?.content?.vessels?.[0] ?? null;
+    }
+  } catch { /* no discovery, no solicitation */ }
+  if (!producer || typeof producer.endpoint !== "string" || !producer.endpoint) return null;
+  const sid = crypto.randomUUID();
+  const advertised = typeof producer.resolve_timeout_ms === "number" && producer.resolve_timeout_ms > 0 ? producer.resolve_timeout_ms : 120_000;
+  const now = Date.now();
+  const sol: PendingSolicitation = { solicitationId: sid, dispatchId, goal, createdAt: now, deadlineAt: now + advertised, maxDeadlineAt: now + SOLICITATION_MAX_WAIT_MS, outcome: "pending", composing: false };
+  pendingSolicitations.set(sid, sol);
+  const questionMarkdown = [
+    "## The substrate needs your input",
+    "",
+    "The goal below has exhausted its automated approaches. A decision or missing context from you lets one more recovery attempt run.",
+    "",
+    "**Goal**",
+    "",
+    "> " + goal.slice(0, 400).replace(/\n/g, "\n> "),
+    "",
+    "**What was tried**",
+    "",
+    evidenceMarkdown,
+    "",
+    "Answer in the card, or decline (\"not now\"), or mark it as lacking the context you would need.",
+  ].join("\n");
+  try {
+    const r = await fetch(`${producer.endpoint.replace(/\/+$/, "")}${asResolvePath(producer.resolve_endpoint)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ type: "human_input", pointer: { type: "human_input", solicitation_id: sid, dispatch_id: dispatchId ?? null, question_markdown: questionMarkdown, timeout_ms: advertised, respond_via: { shape: "solicitationResponse_write", heartbeat_shape: "solicitationHeartbeat_write" } } }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!r.ok) { pendingSolicitations.delete(sid); return null; }
+    try { await r.body?.cancel(); } catch { /* ignore */ }
+  } catch {
+    pendingSolicitations.delete(sid);
+    return null;
+  }
+  console.log(`[goal-host-vessel] solicitation ${sid} posted to human_input producer (advertised timeout ${advertised}ms, cap ${SOLICITATION_MAX_WAIT_MS}ms)`);
+  while (Date.now() < sol.deadlineAt && sol.outcome === "pending") {
+    await new Promise((res) => setTimeout(res, 2_000));
+  }
+  if (sol.outcome === "pending") sol.outcome = "timeout";
+  pendingSolicitations.delete(sid);
+  console.log(`[goal-host-vessel] solicitation ${sid} outcome=${sol.outcome}${sol.composing ? " (composition heartbeats were received)" : ""}`);
+  return sol;
 }
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
@@ -4942,9 +5031,33 @@ async function handleResolve(req: Request): Promise<Response> {
     injectedPoolImpulses.set(wid, q);
     return Response.json({ resolved: true, shape: "poolImpulse_write", body: { queued: q.length, dispatchId: wid } });
   }
+  if (type === "solicitationHeartbeat_write") {
+    const sid = (typeof body.solicitationId === "string" ? body.solicitationId : undefined)
+      ?? (typeof pointer.solicitationId === "string" ? pointer.solicitationId : undefined);
+    if (!sid) return Response.json({ resolved: false, shape: "solicitationHeartbeat_write", error: "solicitationId is required" }, { status: 400 });
+    const sol = pendingSolicitations.get(sid);
+    if (!sol || sol.outcome !== "pending") return Response.json({ resolved: false, shape: "solicitationHeartbeat_write", error: "no pending solicitation with that id" }, { status: 404 });
+    sol.composing = true;
+    sol.deadlineAt = Math.min(Date.now() + SOLICITATION_HEARTBEAT_EXTENSION_MS, sol.maxDeadlineAt);
+    return Response.json({ resolved: true, shape: "solicitationHeartbeat_write", body: { solicitationId: sid, deadlineAt: sol.deadlineAt, maxDeadlineAt: sol.maxDeadlineAt } });
+  }
+  if (type === "solicitationResponse_write") {
+    const sid = (typeof body.solicitationId === "string" ? body.solicitationId : undefined)
+      ?? (typeof pointer.solicitationId === "string" ? pointer.solicitationId : undefined);
+    const outcome = (typeof body.outcome === "string" ? body.outcome : undefined)
+      ?? (typeof pointer.outcome === "string" ? pointer.outcome : undefined);
+    if (!sid || !outcome || !["answered", "declined", "insufficient_context"].includes(outcome)) {
+      return Response.json({ resolved: false, shape: "solicitationResponse_write", error: "solicitationId and outcome (answered|declined|insufficient_context) are required" }, { status: 400 });
+    }
+    const sol = pendingSolicitations.get(sid);
+    if (!sol || sol.outcome !== "pending") return Response.json({ resolved: false, shape: "solicitationResponse_write", error: "no pending solicitation with that id" }, { status: 404 });
+    sol.outcome = outcome as "answered" | "declined" | "insufficient_context";
+    sol.answer = "answer" in body ? body.answer : (pointer as Record<string, unknown>)["answer"];
+    return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
+  }
   if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
-      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write` },
+      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write, solicitationResponse_write, solicitationHeartbeat_write` },
       { status: 404 },
     );
   }
@@ -5239,6 +5352,26 @@ const executionStore = new Map<string, DispatchRecord>();
 // dispatchId; the running walk drains this queue at the top of each iteration.
 // Strictly additive — injected shapes unlock candidates on the next rescan.
 const injectedPoolImpulses = new Map<string, Array<{ shape: string; content: unknown; summary?: string }>>();
+// Human-solicitation (WS5): pending solicitations awaiting a human answer.
+// Populated by solicitHumanInput (recovery loop); a present human vault answers
+// via solicitationResponse_write; typing in the answer card sends
+// solicitationHeartbeat_write keepalives which EXTEND the deadline — the system
+// NEVER takes fallback action while a response is being composed (hard cap
+// SOLICITATION_MAX_WAIT_MS).
+interface PendingSolicitation {
+  solicitationId: string;
+  dispatchId?: string;
+  goal: string;
+  createdAt: number;
+  deadlineAt: number;
+  maxDeadlineAt: number;
+  outcome: "pending" | "answered" | "declined" | "insufficient_context" | "timeout";
+  answer?: unknown;
+  composing: boolean;
+}
+const pendingSolicitations = new Map<string, PendingSolicitation>();
+const SOLICITATION_HEARTBEAT_EXTENSION_MS = 90_000;
+const SOLICITATION_MAX_WAIT_MS = 30 * 60 * 1000;
 const DISPATCH_STORE_PATH = "/workspace/goal-host-dispatches.json";
 try {
   const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
