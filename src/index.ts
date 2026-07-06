@@ -576,7 +576,7 @@ const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
@@ -1800,7 +1800,19 @@ If one of those sibling shapes is the action that would create what the goal ask
   let satisfierSeq = 0; // synthetic-trace id counter for vessel-resolve satisfier steps
 
   // ── 2-3. Walk the shape graph ──────────────────────────────────────────────
+  // Live walk-state mirror (goalWalkState read shape): snapshot the pool +
+  // pending targets onto the dispatch record each iteration so POST /resolve
+  // can surface a running walk's state. Additive — never alters control flow.
+  const mirrorWalkState = (): void => {
+    const wid = opts.variables.dispatch_id;
+    if (typeof wid !== "string") return;
+    const rec = executionStore.get(wid);
+    if (!rec) return;
+    rec.poolShapes = [...producedShapes];
+    rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
+  };
   while (chain.length < MAX_STEPS && !targetMet()) {
+    mirrorWalkState();
     // (0) VESSEL-RESOLVE SATISFIER — resolve-FIRST, before ANY candidate /
     //     horizontal-bundle / bridge-author step. When a missing target shape
     //     has a LIVE resolver advertised by a connected vessel, satisfy it by a
@@ -4878,9 +4890,28 @@ async function handleResolve(req: Request): Promise<Response> {
       }));
     return Response.json({ resolved: true, shape: "activeDispatches", body: { dispatches } });
   }
+  if (type === "goalWalkState") {
+    const wid = (typeof body.dispatchId === "string" ? body.dispatchId : undefined)
+      ?? (typeof pointer.dispatchId === "string" ? pointer.dispatchId : undefined);
+    if (!wid) return Response.json({ resolved: false, shape: "goalWalkState", error: "dispatchId is required" }, { status: 400 });
+    const rec = executionStore.get(wid);
+    if (!rec) return Response.json({ resolved: false, shape: "goalWalkState", error: "dispatch not found" }, { status: 404 });
+    return Response.json({
+      resolved: true,
+      shape: "goalWalkState",
+      body: {
+        dispatchId: rec.dispatchId,
+        status: rec.status,
+        reached: rec.reached ?? null,
+        poolShapes: rec.poolShapes ?? [],
+        pendingTargets: rec.pendingTargets ?? [],
+        currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
+      },
+    });
+  }
   if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
-      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches` },
+      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState` },
       { status: 404 },
     );
   }
@@ -4996,6 +5027,9 @@ interface DispatchRecord {
    * did not identify itself.
    */
   operator?: string;
+  /** Live walk state (goalWalkState read shape): pool shape snapshot + pending target shapes, updated at each walk iteration. */
+  poolShapes?: string[];
+  pendingTargets?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
