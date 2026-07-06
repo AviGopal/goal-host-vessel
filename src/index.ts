@@ -2802,6 +2802,28 @@ async function runGoalWithRecovery(
               const summary = typeof body.summary === "string" && body.summary.trim()
                 ? ` — ${body.summary.trim().slice(0, 160)}` : "";
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=FAVORABLE${landedSha ? ` landed=${landedSha}` : " (staged)"}${summary}`);
+              try {
+                void persistSatisfierTrace({
+                  id: landedSha ? `feature_compose:${landedSha}` : `feature_compose:staged-${editSite}`,
+                  templateId: "feature_compose",
+                  templateName: "feature_compose (edit-intent)",
+                  status: "completed",
+                  inputImpulseIds: [],
+                  outputImpulseIds: landedSha ? [`git:${landedSha}`] : [],
+                  tags: [...(opts.tags ?? []), "reached:true", "completion_shapes:fileEditResult", "edit_intent:true"],
+                  metadata: { satisfier: false, edit_intent: true, landed_sha: landedSha, edit_file: editFile, edit_site: editSite, summary: body.summary, op_count: body.op_count, applied: body.applied },
+                  tasks: (Array.isArray(body.applied) ? body.applied : [null]).map((op: any, i: number) => ({
+                    taskId: `compose-op-${i + 1}`,
+                    description: `feature_compose op ${i + 1}`,
+                    resolverId: "feature_compose",
+                    resolverTier: "pattern" as const,
+                    inputImpulseIds: [],
+                    outputImpulseIds: [],
+                    outputShapes: ["fileEditResult"],
+                    success: op ? !!op.ok : true,
+                  })),
+                });
+              } catch { /* durable edit-intent trace is best-effort */ }
               return {
                 result: null,
                 status: "completed",
