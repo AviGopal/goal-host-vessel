@@ -1388,6 +1388,13 @@ async function runGoalAsPoolWalk(
     content,
   });
   const addToPool = (shape: string, content: unknown, summary?: string): void => {
+    const widEv = opts.variables.dispatch_id;
+    if (typeof widEv === "string") {
+      const recEv = executionStore.get(widEv);
+      if (recEv) {
+        recEv.poolEvents = [...(recEv.poolEvents ?? []), { shape, source: summary ?? "pool impulse (" + shape + ")", at: Date.now() }].slice(-64);
+      }
+    }
     if (!shape || producedShapes.has(shape)) return;
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary));
@@ -5010,6 +5017,7 @@ async function handleResolve(req: Request): Promise<Response> {
         reached: rec.reached ?? null,
         poolShapes: rec.poolShapes ?? [],
         pendingTargets: rec.pendingTargets ?? [],
+        poolEvents: rec.poolEvents ?? [],
         currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
       },
     });
@@ -5176,6 +5184,7 @@ interface DispatchRecord {
   /** Live walk state (goalWalkState read shape): pool shape snapshot + pending target shapes, updated at each walk iteration. */
   poolShapes?: string[];
   pendingTargets?: string[];
+  poolEvents?: Array<{ shape: string; source: string; at: number }>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
