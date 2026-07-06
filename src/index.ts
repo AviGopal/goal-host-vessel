@@ -576,7 +576,7 @@ const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 
-const SHAPES = ["goal_execution", "activity_execution"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
@@ -4862,9 +4862,25 @@ async function handleResolve(req: Request): Promise<Response> {
 
   const type = (body.type as string | undefined) ?? (pointer.type as string | undefined);
 
+  if (type === "activeDispatches") {
+    const dispatches = [...executionStore.values()]
+      .sort((a, b) => b.startedAt - a.startedAt)
+      .slice(0, 50)
+      .map((r) => ({
+        dispatchId: r.dispatchId,
+        goal: typeof r.goal === "string" ? r.goal.slice(0, 200) : null,
+        status: r.status,
+        reached: r.reached ?? null,
+        operator: r.operator ?? null,
+        startedAt: r.startedAt,
+        selectedTemplateId: r.selectedTemplateId ?? null,
+        executionId: r.executionId ?? null,
+      }));
+    return Response.json({ resolved: true, shape: "activeDispatches", body: { dispatches } });
+  }
   if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
-      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution` },
+      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches` },
       { status: 404 },
     );
   }
