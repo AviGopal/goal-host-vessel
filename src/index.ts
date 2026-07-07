@@ -3009,8 +3009,20 @@ async function runGoalWithRecovery(
         });
         if (!catalogRes.ok) { console.warn(`[walk-catalog] producer resolve failed for ${catalogShape}: HTTP ${catalogRes.status}`); continue; }
         const catalogJson = await catalogRes.json() as { body?: { entries?: Array<{ shape?: string; description?: string; input_pointer_schema?: { properties?: unknown } }> }; content?: { entries?: Array<{ shape?: string; description?: string; input_pointer_schema?: { properties?: unknown } }> } };
-        const entries = catalogJson?.body?.entries ?? catalogJson?.content?.entries;
-        if (!Array.isArray(entries)) continue;
+        const raw = catalogJson?.body ?? catalogJson?.content;
+          let parsedRaw: { entries?: unknown } | undefined;
+          if (typeof raw === 'string') {
+            try {
+              parsedRaw = JSON.parse(raw) as { entries?: unknown };
+            } catch {
+              console.warn(`[walk-catalog] unparseable content for ${catalogShape}`);
+              continue;
+            }
+          } else {
+            parsedRaw = raw as { entries?: unknown } | undefined;
+          }
+          const entries = (parsedRaw as { entries?: unknown } | undefined)?.entries ?? (raw as { entries?: unknown } | undefined)?.entries;
+        if (!Array.isArray(entries)) { console.warn(`[walk-catalog] no entries[] for ${catalogShape}`); continue; }
         const lines: string[] = [];
         for (const entry of entries.slice(0, 8)) {
           const raw = `- ${entry.shape ?? '?'}: ${entry.description ?? ''} | pointer: ${JSON.stringify((entry.input_pointer_schema as { properties?: unknown } | undefined)?.properties ?? {})}`;
