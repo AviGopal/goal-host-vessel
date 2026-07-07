@@ -1788,6 +1788,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   }
 
   const target = new Set<string>(opts.expectedOutputShapes ?? []);
+  const seedShapes = new Set<string>(producedShapes);
   // With an explicit target, "met" = all target shapes produced. With NO target,
   // never short-circuit here — walk opportunistically (progress-driven), stopping
   // on MAX_STEPS or the consecutive-no-progress break below.
