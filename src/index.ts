@@ -1817,6 +1817,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (!rec) return;
     rec.poolShapes = [...producedShapes];
     rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
+        if (opts.stepSink && opts.stepSink.length > 0) rec.walkLog = opts.stepSink.slice(-60);
   };
   // Drain human-injected impulses (poolImpulse_write) into the pool. Pushes
   // directly (not via addToPool) so an injected impulse is added even when its
@@ -5018,7 +5019,8 @@ async function handleResolve(req: Request): Promise<Response> {
         poolShapes: rec.poolShapes ?? [],
         pendingTargets: rec.pendingTargets ?? [],
         poolEvents: rec.poolEvents ?? [],
-        currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
+        walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [],
+              currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
       },
     });
   }
