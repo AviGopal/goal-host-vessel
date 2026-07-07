@@ -1817,7 +1817,12 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (!rec) return;
     rec.poolShapes = [...producedShapes];
     rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
-        if (opts.stepSink && opts.stepSink.length > 0) rec.walkLog = opts.stepSink.slice(-60);
+    // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
+    // the record EACH iteration so goalWalkState surfaces WHY the walk is doing
+    // what it's doing WHILE it runs. Previously rec.walkLog was assigned once, at
+    // terminalization, leaving currentStep null for the entire live duration.
+    // Bounded tail keeps the snapshot small; the full log still lands at the end.
+    if (opts.stepSink && opts.stepSink.length > 0) rec.walkLog = opts.stepSink.slice(-60);
   };
   // Drain human-injected impulses (poolImpulse_write) into the pool. Pushes
   // directly (not via addToPool) so an injected impulse is added even when its
@@ -5020,7 +5025,7 @@ async function handleResolve(req: Request): Promise<Response> {
         pendingTargets: rec.pendingTargets ?? [],
         poolEvents: rec.poolEvents ?? [],
         walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [],
-              currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
+        currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
       },
     });
   }
