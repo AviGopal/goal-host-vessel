@@ -916,7 +916,7 @@ async function mintGovernorAllows(shape: string): Promise<boolean> {
     return true;
   }
 }
-async function penaliseHollowTemplate(activityId: string, reason: string): Promise<void> {
+async function penaliseHollowTemplate(activityId: string, reason: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
@@ -956,6 +956,10 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
   } catch (e) {
     console.warn(`[reach-gate-lesson] classify failed (non-fatal): ${(e as Error).message}`);
   }
+  // The feedback POST above is direction:"negative", intensity:2 — a β penalty on
+  // the hollow template (no α change). Return the delta so terminalization can
+  // surface it in DispatchRecord.learning (decision-transparency, 2026-07-07).
+  return { templateId: activityId, dAlpha: 0, dBeta: 2 };
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
 // goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
@@ -1224,6 +1228,12 @@ interface GoalSeekResult {
    * dispatches populate record.executionId (which provide_feedback needs).
    */
   executionId?: string;
+  /**
+   * Decision-ready markdown answer for an obsidian-surface question/request goal
+   * (answer-delivery reach fix, 2026-07-07) — the human-consumable output the vault
+   * renders. Set only when such a goal genuinely reached; absent otherwise.
+   */
+  answerBody?: string;
 }
 
 // Normalise an activity id by stripping the `activity:⟨…⟩` wrapper the recommend +
@@ -1238,6 +1248,58 @@ interface WalkCandidate {
   id: string;            // raw id (used for fetch / chain record)
   inputShapes: string[]; // declared input_shapes (bare names)
   outputShapes: string[];// declared output_shapes (bare names)
+  // Selection-plane fields (decision-transparency, 2026-07-07): opportunistically
+  // read from the discover/recommend row when present — omitted (not fabricated) when
+  // the row does not carry them, so goalWalkState surfaces only genuine numbers.
+  alpha?: number;
+  beta?: number;
+  sampledScore?: number;
+  sampleCount?: number;
+}
+
+// Per-step decision record surfaced by goalWalkState.steps (decision-transparency,
+// 2026-07-07) — the contract the obsidian dispatch panel renders. Each step is one
+// walk selection: what was picked, from which candidates, what was excluded, what
+// new shapes it produced, and the pool before/after. `shadow:true` marks secondary
+// dispatches (recovery retries, satisfier probes, losing horizontal siblings).
+interface WalkStepCandidate {
+  templateId: string;
+  alpha?: number;
+  beta?: number;
+  sampledScore?: number;
+  rejectedBecause?: string;
+}
+interface WalkStep {
+  index: number;
+  at: number;
+  selected: {
+    templateId: string;
+    source: "thompson" | "satisfier" | "bridge" | "recovery" | "improvise";
+    sampledScore?: number;
+    alpha?: number;
+    beta?: number;
+  };
+  candidates: WalkStepCandidate[];
+  excluded: Array<{ templateId: string; reason: string }>;
+  status: string;
+  newShapes: string[];
+  rationale?: string;
+  poolBefore: string[];
+  poolAfter: string[];
+  shadow?: boolean;
+}
+
+// Learning consequences accumulated at terminalization (decision-transparency,
+// 2026-07-07). Populated ONLY from paths that actually run at terminalization: the
+// hollow β-penalty (penaliseHollowTemplate), capability/reachability gap filing, and
+// the per-goal path record (recordGoalPath). goal-host writes no oracle label at
+// terminalization, so oracleLabelWritten stays false here (that is the operator
+// provide_feedback plane).
+interface LearningConsequences {
+  alphaBetaDelta: Array<{ templateId: string; dAlpha: number; dBeta: number }>;
+  gapsFiled: string[];
+  goalPathRecorded: boolean;
+  oracleLabelWritten: boolean;
 }
 
 function readCandidateShapes(x: any): WalkCandidate | null {
@@ -1252,7 +1314,18 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   const declaredInputs = norm(x.input_shapes ?? x.inputShapes ?? x.input_schema?.required_shapes);
   const inputShapes = declaredInputs.filter((s) => !optionalInputShapes.includes(s));
   const outputShapes = norm(x.output_shapes ?? x.outputShapes ?? x.output_schema?.produces_shapes);
-  return { id, inputShapes, outputShapes };
+  const numOr = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const alpha = numOr(x.alpha ?? x.thompson_alpha ?? x.metrics?.thompson_alpha);
+  const beta = numOr(x.beta ?? x.thompson_beta ?? x.metrics?.thompson_beta);
+  const sampledScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score ?? x.composition_score);
+  const sampleCount = numOr(x.sample_count ?? x.sampleCount ?? x.metrics?.sample_count);
+  return {
+    id, inputShapes, outputShapes,
+    ...(alpha !== undefined ? { alpha } : {}),
+    ...(beta !== undefined ? { beta } : {}),
+    ...(sampledScore !== undefined ? { sampledScore } : {}),
+    ...(sampleCount !== undefined ? { sampleCount } : {}),
+  };
 }
 
 // MINT-AS-YOU-GO (the "Reserve Improvisation" slot at the WALK step level,
@@ -1337,6 +1410,8 @@ async function runGoalAsPoolWalk(
     surface: string;
     /** Reason plane: caller-owned sink; walk decision lines are pushed here (additive to console.log). */
     stepSink?: string[];
+    /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
+    learningSink?: LearningConsequences;
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -1788,7 +1863,17 @@ If one of those sibling shapes is the action that would create what the goal ask
   }
 
   const target = new Set<string>(opts.expectedOutputShapes ?? []);
+  // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): snapshot the
+  // pool shapes present BEFORE any walk step ran. A reach judged solely on these
+  // pre-existing seed shapes (e.g. active_note_path, open_note_paths) delivered no
+  // NEW answer to the human — the reach gate below rejects seed-only completion for
+  // obsidian-surface question/request goals and requires a produced answerBody.
   const seedShapes = new Set<string>(producedShapes);
+  const isObsidianSurface = typeof opts.variables.obsidian_vessel_endpoint === "string"
+    && (opts.variables.obsidian_vessel_endpoint as string).length > 0;
+  const isQuestionGoal = /\?\s*$/.test(goal)
+    || /^\s*(what|who|whom|whose|when|where|why|how|which|is|are|am|do|does|did|can|could|should|would|will|list|show|tell|explain|describe|summar|report|give|find)\b/i.test(goal);
+  const isObsidianQuestion = isObsidianSurface && isQuestionGoal;
   // With an explicit target, "met" = all target shapes produced. With NO target,
   // never short-circuit here — walk opportunistically (progress-driven), stopping
   // on MAX_STEPS or the consecutive-no-progress break below.
@@ -1806,6 +1891,11 @@ If one of those sibling shapes is the action that would create what the goal ask
   let consecutiveNoProgress = 0;
   let earlyReachVerdict: GoalReachVerdict | null = null;
   let satisfierSeq = 0; // synthetic-trace id counter for vessel-resolve satisfier steps
+  // Per-step decision tree (decision-transparency, 2026-07-07): each walk selection
+  // pushes a WalkStep here; mirrorWalkState mirrors it onto rec.steps every iteration
+  // so goalWalkState surfaces the structured tree WHILE the walk runs.
+  const walkSteps: WalkStep[] = [];
+  let walkStepIndex = 0;
 
   // ── 2-3. Walk the shape graph ──────────────────────────────────────────────
   // Live walk-state mirror (goalWalkState read shape): snapshot the pool +
@@ -1824,6 +1914,16 @@ If one of those sibling shapes is the action that would create what the goal ask
     // terminalization, leaving currentStep null for the entire live duration.
     // Bounded tail keeps the snapshot small; the full log still lands at the end.
     if (opts.stepSink && opts.stepSink.length > 0) rec.walkLog = opts.stepSink.slice(-60);
+    // Structured per-step decision tree (decision-transparency, 2026-07-07). Same
+    // array reference throughout, so pushes after the first mirror are reflected live.
+    (rec as { steps?: WalkStep[] }).steps = walkSteps;
+  };
+  const shapeArr = (): string[] => [...producedShapes];
+  const excludedNow = (): Array<{ templateId: string; reason: string }> =>
+    [...exclude].map((id) => ({ templateId: id, reason: "already used or rejected earlier in walk" }));
+  const recordStep = (step: Omit<WalkStep, "index" | "at">): void => {
+    walkSteps.push({ index: walkStepIndex++, at: Date.now(), ...step });
+    mirrorWalkState();
   };
   // Drain human-injected impulses (poolImpulse_write) into the pool. Pushes
   // directly (not via addToPool) so an injected impulse is added even when its
@@ -1843,6 +1943,8 @@ If one of those sibling shapes is the action that would create what the goal ask
   while (chain.length < MAX_STEPS && !targetMet()) {
     drainInjectedImpulses();
     mirrorWalkState();
+    const iterPoolBefore = [...producedShapes];
+    let pickSource: WalkStep["selected"]["source"] = "thompson";
     // (0) VESSEL-RESOLVE SATISFIER — resolve-FIRST, before ANY candidate /
     //     horizontal-bundle / bridge-author step. When a missing target shape
     //     has a LIVE resolver advertised by a connected vessel, satisfy it by a
@@ -1910,6 +2012,16 @@ If one of those sibling shapes is the action that would create what the goal ask
           lastTrace = synthTrace;
           lastExecId = synthTrace.id;
           lastPick = satId;
+          recordStep({
+            selected: { templateId: satId, source: "satisfier" },
+            candidates: [],
+            excluded: excludedNow(),
+            status: "completed",
+            newShapes: [satisfiableNow],
+            rationale: `vessel-resolve satisfier produced "${satisfiableNow}" via a connected vessel (no bridge/template needed)`,
+            poolBefore: iterPoolBefore,
+            poolAfter: shapeArr(),
+          });
           tap(`[goal-host-vessel] walk(${opts.surface}): VESSEL-RESOLVE SATISFIER produced "${satisfiableNow}" directly (connected vessel resolve) — no bridge needed`);
           consecutiveNoProgress = 0;
           continue; // shape is now in the pool; re-evaluate target/candidates
@@ -2108,6 +2220,34 @@ If one of those sibling shapes is the action that would create what the goal ask
           lastExecId = bestExecId;
           if (bestPickId) lastPick = bestPickId;
         }
+        const bundleNew = [...producedShapes].filter((s) => !iterPoolBefore.includes(s));
+        for (let bi = 0; bi < bundle.length; bi++) {
+          const bc = bundle[bi];
+          const bt = branchResults[bi];
+          const isWinner = bestPickId === bc.id;
+          recordStep({
+            selected: {
+              templateId: bc.id, source: "thompson",
+              ...(bc.sampledScore !== undefined ? { sampledScore: bc.sampledScore } : {}),
+              ...(bc.alpha !== undefined ? { alpha: bc.alpha } : {}),
+              ...(bc.beta !== undefined ? { beta: bc.beta } : {}),
+            },
+            candidates: bundle.map((c) => ({
+              templateId: c.id,
+              ...(c.alpha !== undefined ? { alpha: c.alpha } : {}),
+              ...(c.beta !== undefined ? { beta: c.beta } : {}),
+              ...(c.sampledScore !== undefined ? { sampledScore: c.sampledScore } : {}),
+              ...(c.id === bc.id ? {} : { rejectedBecause: "sibling in horizontal OR-edge bundle" }),
+            })),
+            excluded: excludedNow(),
+            status: bt ? bt.status : "failed",
+            newShapes: isWinner ? bundleNew : [],
+            rationale: `horizontal OR-edge bundle for "${T}" (${bundle.length}-wide parallel fan-out); ${isWinner ? "winning branch" : "shadow sibling"}`,
+            poolBefore: iterPoolBefore,
+            poolAfter: shapeArr(),
+            shadow: !isWinner,
+          });
+        }
         console.log(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL bundle for "${T}" — ran ${K} producers in parallel, ${producedCount} produced new shapes (OR-edge discovery)`);
         const progressed = producedShapes.size > beforeBundle;
         if (!progressed) {
@@ -2237,6 +2377,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // the goal toward what the pool already has.
           for (const s of authored.inputShapes) if (!producedShapes.has(s)) target.add(s);
           if (authored.inputShapes.every((s) => producedShapes.has(s))) {
+            pickSource = "bridge";
             pick = { id: authored.id, inputShapes: authored.inputShapes, outputShapes: [X] };
           } else {
             continue; // produce the sub-target inputs first; re-discover this producer when ready
@@ -2266,6 +2407,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (chain.length === 0 && !filedGap && missingNow.length > 0) {
         filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
       }
+      if (filedGap) opts.learningSink?.gapsFiled.push(filedGap);
       console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
       break;
     }
@@ -2345,6 +2487,28 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     chain.push(pick.id);
     exclude.add(normActivityId(pick.id));
+    const _stepNew = [...producedShapes].filter((s) => !iterPoolBefore.includes(s));
+    recordStep({
+      selected: {
+        templateId: pick.id, source: pickSource,
+        ...(pick.sampledScore !== undefined ? { sampledScore: pick.sampledScore } : {}),
+        ...(pick.alpha !== undefined ? { alpha: pick.alpha } : {}),
+        ...(pick.beta !== undefined ? { beta: pick.beta } : {}),
+      },
+      candidates: candidates.map((c) => ({
+        templateId: c.id,
+        ...(c.alpha !== undefined ? { alpha: c.alpha } : {}),
+        ...(c.beta !== undefined ? { beta: c.beta } : {}),
+        ...(c.sampledScore !== undefined ? { sampledScore: c.sampledScore } : {}),
+        ...(c.id === pick.id ? {} : { rejectedBecause: "not selected (lower goal-gap fit or hollow-scaffold rank)" }),
+      })),
+      excluded: excludedNow(),
+      status: trace.status,
+      newShapes: _stepNew,
+      rationale: `single-pick ${pickSource}: ${normActivityId(pick.id)} produced ${_stepNew.length} new shape(s)`,
+      poolBefore: iterPoolBefore,
+      poolAfter: shapeArr(),
+    });
     const progressed = producedShapes.size > beforeSize;
     tap(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
     if (!progressed) {
@@ -2400,6 +2564,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   let status: "failed" | "completed" = lastTrace && lastTrace.status !== "failed" ? "completed" : "failed";
   let completionShapes: string[] | null = null;
   let goalReachReason: string | undefined;
+  let answerBody: string | undefined;
   let reached = false;
 
   if (lastTrace && chain.length > 0) {
@@ -2441,10 +2606,28 @@ If one of those sibling shapes is the action that would create what the goal ask
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict?.reached !== false;
+      // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): an obsidian-
+      // surface question/request that "reached" on ONLY pre-existing seed shapes
+      // produced no new human-consumable answer — force not-reached so the recovery
+      // loop retries an approach that actually produces one (mirrors the live defect
+      // where "What are you working on?" reached on seed active_note_path/open_note_paths).
+      if (isObsidianQuestion && reached === true) {
+        const declaredCompletion = verdict?.completion_shapes ?? [];
+        const producedCompletion = declaredCompletion.filter((sh) => !seedShapes.has(sh));
+        // Flip ONLY when the judge NAMED completion shapes and they are ALL seeds
+        // (the live defect shape). If it named none, leave the verdict to the general
+        // gate — avoids a false-negative from a judge that omitted completion_shapes.
+        if (declaredCompletion.length > 0 && producedCompletion.length === 0) {
+          reached = false;
+          if (verdict) (verdict as GoalReachVerdict).reached = false;
+          goalReachReason = `seed-only completion — the walk reached only on pre-existing seed shapes (${JSON.stringify((verdict?.completion_shapes ?? []).filter((sh) => seedShapes.has(sh)))}); no new human-consumable answer was produced for the obsidian surface`;
+        }
+      }
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
-        await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached");
+        const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached");
+        opts.learningSink?.alphaBetaDelta.push(_abDelta);
         tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
@@ -2460,12 +2643,27 @@ If one of those sibling shapes is the action that would create what the goal ask
             const codeGap = needed.find((s) => !live.has(s));
             if (codeGap) {
               const gapId = await fileCapabilityGap(codeGap, goal, needed);
+              if (gapId) opts.learningSink?.gapsFiled.push(gapId);
               if (gapId) console.log(`[goal-host-vessel] walk(${opts.surface}): filed capability gap '${gapId}' for missing shape "${codeGap}" (no live resolver) — authoring escalation`);
             }
           }
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
         tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        // ANSWER-DELIVERY (decision-transparency, 2026-07-07): a genuinely-reached
+        // obsidian question carries a decision-ready markdown answerBody the vault can
+        // render, and a produced goal_answer pool shape. The reach-judge rationale
+        // prose is an acceptable seed; the produced pool content is the basis.
+        if (isObsidianQuestion && reached === true) {
+          answerBody = [
+            `# ${goal.slice(0, 200)}`,
+            "",
+            verdict.reason ?? "",
+            "",
+            poolDigest ? `## Basis\n\n${poolDigest.slice(0, 3000)}` : "",
+          ].filter(Boolean).join("\n");
+          addToPool("goal_answer", answerBody, "rendered answer for obsidian question goal");
+        }
         // Don't ribosome-mint a SINGLE satisfier trace: it's a synthetic one-task
         // record of a direct vessel resolve, not an extractable recipe — minting it
         // would write a hollow `satisfier:<shape>` template. The reached PATH is
@@ -2517,6 +2715,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
     void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd);
+    if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
 
   // Adapt the last ExecutionTrace into the GoalRunResult shape the callers read.
@@ -2531,6 +2730,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     attempts: chain.length,
     goalReachReason,
     reached,
+    answerBody,
   };
 }
 
@@ -2569,6 +2769,8 @@ async function runGoalWithRecovery(
     authorFallback?: () => Promise<string | undefined>;
     /** Reason plane: caller-owned sink; goal-decomposition + walk decision lines pushed here. */
     stepSink?: string[];
+    /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
+    learningSink?: LearningConsequences;
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap (outer): mirror goal-decomposition lines to the caller's sink.
@@ -2719,6 +2921,7 @@ async function runGoalWithRecovery(
         terminalOutputShapes,
         surface: opts.surface,
         stepSink: opts.stepSink,
+        learningSink: opts.learningSink,
       });
       const editIntentGoal = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
       // A >0-step walk that "reached" via a source_code / analysis READ satisfier does
@@ -4787,6 +4990,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         }
         return authoredTemplateId;
       };
+      const learningSink: LearningConsequences = { alphaBetaDelta: [], gapsFiled: [], goalPathRecorded: false, oracleLabelWritten: false };
       const seek = await runGoalWithRecovery(goal, {
         firstTarget: targetTemplateId,
         callerPinned: callerPinnedTarget,
@@ -4799,6 +5003,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         expectedOutputShapes,
         surface: "/run-goal",
         stepSink: walkStepSink,
+        learningSink,
       });
       record.status = seek.status;
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
@@ -4814,6 +5019,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
+      record.learning = learningSink;
+      if (seek.answerBody) record.answerBody = seek.answerBody;
       persistDispatchStore();
       // Decision-log hygiene: a finished dispatch closes its own auto_draft_decision
       // rows (opened by emitAuthoringDecision, keyed on Bun.hash(goal)) so the gap
@@ -5006,6 +5213,8 @@ async function handleResolve(req: Request): Promise<Response> {
         startedAt: r.startedAt,
         selectedTemplateId: r.selectedTemplateId ?? null,
         executionId: r.executionId ?? null,
+        learning: (r as { learning?: LearningConsequences }).learning ?? null,
+        answerBody: (r as { answerBody?: string }).answerBody ?? null,
       }));
     return Response.json({ resolved: true, shape: "activeDispatches", body: { dispatches } });
   }
@@ -5027,6 +5236,9 @@ async function handleResolve(req: Request): Promise<Response> {
         poolEvents: rec.poolEvents ?? [],
         walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [],
         currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
+        steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [],
+        learning: (rec as { learning?: LearningConsequences }).learning ?? null,
+        answerBody: (rec as { answerBody?: string }).answerBody ?? null,
       },
     });
   }
@@ -5193,6 +5405,12 @@ interface DispatchRecord {
   poolShapes?: string[];
   pendingTargets?: string[];
   poolEvents?: Array<{ shape: string; source: string; at: number }>;
+  /** Structured per-step decision tree (decision-transparency, 2026-07-07); surfaced by goalWalkState. */
+  steps?: WalkStep[];
+  /** Learning consequences accumulated at terminalization (decision-transparency, 2026-07-07). */
+  learning?: LearningConsequences;
+  /** Decision-ready markdown answer for an obsidian question goal (answer-delivery reach fix). */
+  answerBody?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
