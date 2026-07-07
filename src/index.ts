@@ -2981,7 +2981,39 @@ async function runGoalWithRecovery(
       } catch (e) {
         console.warn(`[walk-concepts] consult failed (fail-open): ${(e as Error).message}`);
       }
-      const inferred = await inferGoalTargetShapes(goal, knownShapes, {
+      // --- capability catalog consultation (fail-open) ---
+    try {
+      const catalogShapes = knownShapes.filter((s: string) => /^([a-z0-9_-]+):capability_catalog$/.test(s));
+      for (const catalogShape of catalogShapes) {
+        const nsMatch = /^([a-z0-9_-]+):capability_catalog$/.exec(catalogShape);
+        const ns = nsMatch?.[1];
+        if (!ns) continue;
+        const goalText = typeof goal === 'string' ? goal : JSON.stringify(goal);
+        if (!goalText.toLowerCase().includes(ns.toLowerCase())) continue;
+        const catalogRes = await fetch(`http://localhost:${process.env.PORT ?? 3000}/v2/impulses/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shape: catalogShape, body: {} }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!catalogRes.ok) continue;
+        const catalogJson = await catalogRes.json() as { body?: { entries?: Array<{ shape?: string; description?: string; input_pointer_schema?: { properties?: unknown } }> } };
+        const entries = catalogJson?.body?.entries;
+        if (!Array.isArray(entries)) continue;
+        const lines: string[] = [];
+        for (const entry of entries.slice(0, 8)) {
+          const raw = `- ${entry.shape ?? '?'}: ${entry.description ?? ''} | pointer: ${JSON.stringify((entry.input_pointer_schema as { properties?: unknown } | undefined)?.properties ?? {})}`;
+          lines.push(raw.length > 200 ? raw.slice(0, 200) : raw);
+        }
+        walkConceptContext += `\nCapability catalog for ${ns}:\n${lines.join('\n')}`;
+        tap(`[walk-catalog] consulted ${catalogShape}: ${lines.length} entries`);
+      }
+    } catch (e) {
+      console.warn(`[walk-catalog] consult failed (fail-open): ${(e as Error).message}`);
+    }
+    // --- end capability catalog consultation ---
+
+    const inferred = await inferGoalTargetShapes(goal, knownShapes, {
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
         complete: (prompt) =>
