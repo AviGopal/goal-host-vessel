@@ -1,5 +1,6 @@
 import { vesselAuthoringScenarioQueueConsumer } from "../consumers/vessel-authoring-scenario-queue-consumer";
 import type { GoalTask } from "../types/goal-compose";
+import { Config } from "../config";
 
 export interface VesselScaffoldDispatchResult {
   consumer: string;
@@ -22,6 +23,7 @@ export function buildVesselScaffoldDispatchResult(): VesselScaffoldDispatchResul
 export async function executeVesselAuthoringScenarioConsumer(
   overrideUrl?: string
 ): Promise<VesselScaffoldDispatchResult> {
+  const executeTaskEndpoint = `${Config.goalHostEndpoint}/execute-task`;
   // Step 1: fs_list
   const listTask = vesselAuthoringScenarioQueueConsumer.tasks[0];
   const listParams = listTask?.params as {
@@ -30,7 +32,7 @@ export async function executeVesselAuthoringScenarioConsumer(
     shuffle: boolean;
   };
 
-  const listResponse = await fetch("http://127.0.0.1:8210/execute-task", {
+  const listResponse = await fetch(executeTaskEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -42,7 +44,7 @@ export async function executeVesselAuthoringScenarioConsumer(
   const firstFile = listResult.files[0] ?? "";
 
   // Step 2: json_path_extract
-  const extractResponse = await fetch("http://127.0.0.1:8210/execute-task", {
+  const extractResponse = await fetch(executeTaskEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -54,7 +56,7 @@ export async function executeVesselAuthoringScenarioConsumer(
   const scenarioPath = extractResult.value ?? firstFile;
 
   // Step 3: fs_read
-  const readResponse = await fetch("http://127.0.0.1:8210/execute-task", {
+  const readResponse = await fetch(executeTaskEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -66,7 +68,7 @@ export async function executeVesselAuthoringScenarioConsumer(
   const scenarioContent = readResult.content ?? "{}";
 
   // Step 4: llm_completion_dispatch
-  const llmResponse = await fetch("http://127.0.0.1:8210/execute-task", {
+  const llmResponse = await fetch(executeTaskEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -98,7 +100,7 @@ export async function executeVesselAuthoringScenarioConsumer(
   };
 
   // Step 5: http_fetch POST to /run-goal
-  const goalUrl = overrideUrl ?? "http://127.0.0.1:8210/run-goal";
+  const goalUrl = overrideUrl ?? `${Config.goalHostEndpoint}/run-goal`;
   await fetch(goalUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
