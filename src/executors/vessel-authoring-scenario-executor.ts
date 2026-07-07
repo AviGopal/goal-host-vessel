@@ -23,7 +23,7 @@ export function buildVesselScaffoldDispatchResult(): VesselScaffoldDispatchResul
 export async function executeVesselAuthoringScenarioConsumer(
   overrideUrl?: string
 ): Promise<VesselScaffoldDispatchResult> {
-  const executeTaskEndpoint = `${Config.goalHostEndpoint}/execute-task`;
+  const executeTaskEndpoint = overrideUrl ?? `${Config.goalHostEndpoint}/execute-task`;
   // Step 1: fs_list
   const listTask = vesselAuthoringScenarioQueueConsumer.tasks[0];
   const listParams = listTask?.params as {
