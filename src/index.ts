@@ -2664,6 +2664,157 @@ If one of those sibling shapes is the action that would create what the goal ask
           ].filter(Boolean).join("\n");
           addToPool("goal_answer", answerBody, "rendered answer for obsidian question goal");
         }
+        // ── TERMINAL-OUTPUT MATERIALIZATION AS COMPOSITION (host-vault bridge,
+        // 2026-07-07) ──────────────────────────────────────────────────────────
+        // When a walk terminalizes with durable human-facing knowledge, bridge the
+        // output into durable sinks AS TRACED WALK STEPS (source:"bridge"), NOT
+        // side-channel writes: an obsidian vault note (via the discovery-routed
+        // obsidian:write_note resolver) and, when the finding names a concept, a
+        // concept-db writeback carrying dispatch/execution provenance. Every write is
+        // a recordStep() so it surfaces in goalWalkState.steps[] and persists in the
+        // dispatch record — traced composition. Reuses the in-walk primitives
+        // (endpointForShape + rawResolve + recordStep); mints NO template (REUSE
+        // BEFORE MINT: composes the existing sink resolvers into the trace).
+        //
+        // SELECTIVITY (not spammy): bridge ONLY when the goal came from the human
+        // obsidian surface (isObsidianSurface — seed obsidian_vessel_endpoint) OR the
+        // goal explicitly asks for a durable artifact (a record/save VERB AND a
+        // durable NOUN). Internal ticks (boredom measurement/probe/health goals)
+        // match neither condition, so they never write a vault note.
+        try {
+          const durableVerb = /\b(record|save|persist|document|capture|writ|note down|log|jot|archive)\b/i.test(goal);
+          const durableNoun = /\b(notes?|findings?|vault|obsidian|concepts?|report|document|memo|knowledge|journal)\b/i.test(goal);
+          const durableOutputRequested = durableVerb && durableNoun;
+          const shouldBridge = reached === true && (isObsidianSurface || durableOutputRequested);
+          if (shouldBridge) {
+            const dispatchId = typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : "";
+            const execId = lastExecId ?? dispatchId;
+            const bridgeReason = isObsidianSurface
+              ? "goal originated from the obsidian human surface (seed obsidian_vessel_endpoint)"
+              : "goal explicitly requested a durable artifact";
+            // Human-consumable body: prefer the rendered answer, else the produced pool findings.
+            const bridgeBody = (answerBody && answerBody.trim().length > 0)
+              ? answerBody
+              : [`# ${goal.slice(0, 200)}`, "", (verdict.reason ?? ""), "", poolDigest ? `## Findings\n\n${poolDigest.slice(0, 4000)}` : ""].filter(Boolean).join("\n");
+            const slugify = (s: string): string =>
+              s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "finding";
+            const titleText = goal.replace(/\s+/g, " ").trim().slice(0, 80);
+            const findingSlug = slugify(titleText);
+            const shortDispatch = (dispatchId || execId || String(Date.now())).slice(0, 8);
+            // A vessel can ACCEPT a write at transport level yet REFUSE the args in the
+            // body (obsidian returns {wrote:false,refused:true,...}); rawResolve treats
+            // that non-null content as produced, so detect the soft-refusal explicitly.
+            const noteWroteOk = (res: unknown): boolean => {
+              if (res == null) return false;
+              let o: unknown = res;
+              if (typeof o === "string") { try { o = JSON.parse(o); } catch { return true; } }
+              if (o && typeof o === "object") { const r = o as Record<string, unknown>; if (r.wrote === false || r.refused === true || r.written === false || r.success === false) return false; }
+              return true;
+            };
+
+            // ── bridge step 1: concept writeback (concept-db) with provenance ──────
+            // Materialize a concept from the finding so knowledge accumulates in the
+            // concept graph, carrying dispatch/execution provenance. Only when this
+            // succeeds does the vault note wikilink to it (materialize-or-omit).
+            let conceptId: string | undefined;
+            let conceptTitle: string | undefined;
+            {
+              const before = shapeArr();
+              const conceptData = {
+                source_type: "goal_finding",
+                content: bridgeBody.slice(0, 4000),
+                summary: titleText,
+                metadata: { dispatchId, executionId: execId, goal, reached: true, surface: opts.surface, provenance: "goal-host-bridge" },
+                pointer: { type: "memo", dispatchId, executionId: execId, provenance: "goal-host-bridge" },
+              };
+              let ok = false; let detail = "";
+              try {
+                const ep = await endpointForShape("concept_create_write");
+                if (ep) {
+                  const res = await rawResolve("concept_create_write", ep.endpoint, ep.resolvePath, { conceptData });
+                  if (res != null) {
+                    try { const parsed = typeof res === "string" ? JSON.parse(res) : res; const c = parsed as { id?: string }; if (c && typeof c.id === "string") { conceptId = c.id; conceptTitle = titleText; } } catch { conceptId = undefined; }
+                    ok = true; detail = conceptId ? `concept ${conceptId}` : "concept created (id not parsed)";
+                  } else { detail = lastRawResolveReason ?? "concept write returned empty"; }
+                } else { detail = "no vessel advertises concept_create_write"; }
+              } catch (e) { detail = `concept write error: ${(e as Error).message}`.slice(0, 200); }
+              if (ok) addToPool("concept_create_write_result", { conceptId, summary: titleText }, "bridged concept writeback");
+              recordStep({
+                selected: { templateId: "bridge:concept_create_write", source: "bridge" },
+                candidates: [], excluded: [],
+                status: ok ? "reached" : "failed",
+                newShapes: ok ? ["concept_create_write_result"] : [],
+                rationale: `[bridge] ${bridgeReason} — concept writeback (provenance dispatch=${shortDispatch}): ${detail}`,
+                poolBefore: before, poolAfter: shapeArr(), shadow: false,
+              });
+            }
+
+            // ── bridge step 2: materialize the concept as a vault note (only when a
+            // concept was created) so the finding note's wikilink is NEVER dead ─────
+            let conceptNoteMaterialized = false;
+            if (conceptId) {
+              const before = shapeArr();
+              const conceptNotePath = `Substrate/Concepts/${findingSlug}.md`;
+              const conceptNoteBody = [
+                "---", "cssclasses:", "  - substrate-authored", "---",
+                `# ${conceptTitle}`, "",
+                "Concept materialized by the substrate from a reached goal.", "",
+                `- concept-id: \`${conceptId}\``,
+                "- source: goal_finding", "",
+                `Backlinked from [[Substrate/${findingSlug}-${shortDispatch}]].`,
+              ].join("\n");
+              let ok = false; let detail = "";
+              try {
+                const ep = await endpointForShape("obsidian:write_note");
+                if (ep) {
+                  const res = await rawResolve("obsidian:write_note", ep.endpoint, ep.resolvePath, { path: conceptNotePath, content: conceptNoteBody, dispatch_id: dispatchId, goal, reached: true });
+                  ok = noteWroteOk(res); detail = ok ? `wrote ${conceptNotePath}` : (lastRawResolveReason ?? "write refused");
+                } else { detail = "no vessel advertises obsidian:write_note"; }
+              } catch (e) { detail = `note write error: ${(e as Error).message}`.slice(0, 200); }
+              conceptNoteMaterialized = ok; // omit the wikilink if the target didn't materialize
+              if (ok) addToPool("obsidian:write_note", { path: conceptNotePath }, "bridged concept note");
+              recordStep({
+                selected: { templateId: "bridge:obsidian:write_note:concept", source: "bridge" },
+                candidates: [], excluded: [],
+                status: ok ? "reached" : "failed",
+                newShapes: ok ? ["obsidian:write_note"] : [],
+                rationale: `[bridge] concept note (materialize-or-omit): ${detail}`,
+                poolBefore: before, poolAfter: shapeArr(), shadow: false,
+              });
+            }
+
+            // ── bridge step 3: the finding note (wikilinks the concept IFF its note
+            // materialized — never a dead link, per the rendering contract) ─────────
+            {
+              const before = shapeArr();
+              const notePath = `Substrate/${findingSlug}-${shortDispatch}.md`;
+              const conceptLink = conceptNoteMaterialized
+                ? `\n\n## Concepts\n\n- [[Substrate/Concepts/${findingSlug}|${conceptTitle}]]`
+                : "";
+              const noteBody = bridgeBody + conceptLink;
+              let ok = false; let detail = "";
+              try {
+                const ep = await endpointForShape("obsidian:write_note");
+                if (ep) {
+                  const res = await rawResolve("obsidian:write_note", ep.endpoint, ep.resolvePath, { path: notePath, content: noteBody, dispatch_id: dispatchId, goal, reached: true });
+                  ok = noteWroteOk(res); detail = ok ? `wrote ${notePath}` : (lastRawResolveReason ?? "write refused");
+                } else { detail = "no vessel advertises obsidian:write_note"; }
+              } catch (e) { detail = `note write error: ${(e as Error).message}`.slice(0, 200); }
+              if (ok) addToPool("obsidian:write_note", { path: notePath, conceptId }, "bridged finding note");
+              recordStep({
+                selected: { templateId: "bridge:obsidian:write_note:finding", source: "bridge" },
+                candidates: [], excluded: [],
+                status: ok ? "reached" : "failed",
+                newShapes: ok ? ["obsidian:write_note"] : [],
+                rationale: `[bridge] ${bridgeReason} — finding note (provenance dispatch=${shortDispatch}${conceptId ? `, concept=${conceptId}` : ""}): ${detail}`,
+                poolBefore: before, poolAfter: shapeArr(), shadow: false,
+              });
+              tap(`[goal-host-vessel] walk(${opts.surface}): BRIDGE materialized terminal output → sinks (concept=${conceptId ?? "none"}, note=${ok ? notePath : "failed"})`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[goal-host-vessel] terminal-output bridge error (non-fatal): ${(e as Error).message}`);
+        }
         // Don't ribosome-mint a SINGLE satisfier trace: it's a synthetic one-task
         // record of a direct vessel resolve, not an extractable recipe — minting it
         // would write a hollow `satisfier:<shape>` template. The reached PATH is
