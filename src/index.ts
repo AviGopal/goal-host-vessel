@@ -2990,15 +2990,26 @@ async function runGoalWithRecovery(
         if (!ns) continue;
         const goalText = typeof goal === 'string' ? goal : JSON.stringify(goal);
         if (!goalText.toLowerCase().includes(ns.toLowerCase())) continue;
-        const catalogRes = await fetch(`http://localhost:${process.env.PORT ?? 3000}/v2/impulses/resolve`, {
+        const catalogDiscRes = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shape: catalogShape, body: {} }),
+          headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify({ pointer: { type: 'vesselCapability', shape: catalogShape } }),
           signal: AbortSignal.timeout(10_000),
         });
-        if (!catalogRes.ok) continue;
-        const catalogJson = await catalogRes.json() as { body?: { entries?: Array<{ shape?: string; description?: string; input_pointer_schema?: { properties?: unknown } }> } };
-        const entries = catalogJson?.body?.entries;
+        if (!catalogDiscRes.ok) { console.warn(`[walk-catalog] discovery lookup failed for ${catalogShape}: HTTP ${catalogDiscRes.status}`); continue; }
+        const catalogDiscJson = await catalogDiscRes.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+        const catalogVessel = catalogDiscJson?.content?.vessels?.[0];
+        if (!catalogVessel?.endpoint) continue;
+        const catalogResolvePath = catalogVessel.resolve_endpoint ?? '/resolve';
+        const catalogRes = await fetch(`${catalogVessel.endpoint.replace(/\/+$/, '')}${catalogResolvePath}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify({ impulse: { pointer: { type: catalogShape } } }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!catalogRes.ok) { console.warn(`[walk-catalog] producer resolve failed for ${catalogShape}: HTTP ${catalogRes.status}`); continue; }
+        const catalogJson = await catalogRes.json() as { body?: { entries?: Array<{ shape?: string; description?: string; input_pointer_schema?: { properties?: unknown } }> }; content?: { entries?: Array<{ shape?: string; description?: string; input_pointer_schema?: { properties?: unknown } }> } };
+        const entries = catalogJson?.body?.entries ?? catalogJson?.content?.entries;
         if (!Array.isArray(entries)) continue;
         const lines: string[] = [];
         for (const entry of entries.slice(0, 8)) {
