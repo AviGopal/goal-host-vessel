@@ -5406,6 +5406,27 @@ async function handleResolve(req: Request): Promise<Response> {
 
   const type = (body.type as string | undefined) ?? (pointer.type as string | undefined);
 
+  if (type === "goalDispatchAsync") {
+    // Async dispatch over the federation ingress: enqueue via the SAME async path as
+    // /run-goal and return the dispatchId immediately (fast — fits the ingress forward
+    // cap, unlike synchronous goal_execution which runs the whole goal). Lets a remote
+    // vault dispatch a goal over the relay; results stream back over the WS sync.
+    const g = typeof body.goal === "string" ? body.goal : (typeof pointer.goal === "string" ? pointer.goal : undefined);
+    if (!g) return Response.json({ error: "goal is required for goalDispatchAsync" }, { status: 400 });
+    const synthetic = new Request("http://local/run-goal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        goal: g,
+        variables: (body.variables ?? pointer.variables ?? {}),
+        tags: (body.tags ?? pointer.tags),
+        expected_output_shapes: (body.expected_output_shapes ?? pointer.expected_output_shapes),
+        operator: (body.operator ?? pointer.operator),
+      }),
+    });
+    return handleRunGoal(synthetic);
+  }
+
   if (type === "activeDispatches") {
     const dispatches = [...executionStore.values()]
       .sort((a, b) => b.startedAt - a.startedAt)
