@@ -5406,7 +5406,7 @@ async function handleResolve(req: Request): Promise<Response> {
 
   const type = (body.type as string | undefined) ?? (pointer.type as string | undefined);
 
-  if (type === "goalDispatchAsync") {
+  if (type === "goal_dispatch_async" || type === "goalDispatchAsync") {
     // Async dispatch over the federation ingress: enqueue via the SAME async path as
     // /run-goal and return the dispatchId immediately (fast — fits the ingress forward
     // cap, unlike synchronous goal_execution which runs the whole goal). Lets a remote
