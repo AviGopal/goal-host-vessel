@@ -6140,7 +6140,16 @@ try {
     if (!r || !r.dispatchId) continue;
     const wasRunning = r.status === "running";
     if (wasRunning) { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
-    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !/edit repos\//i.test(r.goal)) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId] }) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
+    // No-resume guard (2026-07-09): edit-intent goals (any goal naming a concrete
+    // repos/<vessel>/<path>.<ext> source file — same predicate as EDIT-INTENT
+    // routing above) must NOT auto-resume on boot. Their compose may have already
+    // landed + cut over — the cutover restart is what interrupted them — so blind
+    // replay re-applies the same edit forever (the route-edit-26279b2b loop).
+    // Resume chains are also depth-capped: a dispatch that is itself a resume
+    // (tags carry resumed_from:) is not resumed again.
+    const isEditIntentGoal = typeof r.goal === "string" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(r.goal);
+    const isResumeChild = Array.isArray((r as { tags?: string[] }).tags) && ((r as { tags?: string[] }).tags ?? []).some((t) => t.startsWith("resumed_from:"));
+    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId] }) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
     executionStore.set(r.dispatchId, r);
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
