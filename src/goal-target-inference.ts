@@ -34,6 +34,12 @@ export function goalHashOf(goal: string): string {
 
 const INFER_CACHE_MAX = 512;
 
+export interface GoalTargetDecision {
+  shapes: string[];
+  confidence: number;
+  alternatives: string[][];
+}
+
 export interface InferGoalTargetShapesOpts {
   llmEndpoint?: string;
   /** Injectable for tests; defaults to global fetch. */
@@ -49,6 +55,7 @@ export interface InferGoalTargetShapesOpts {
    * or null on failure. Keeps this module testable and endpoint-agnostic.
    */
   complete?: (prompt: string) => Promise<string | null>;
+  decisionCache?: Map<string, GoalTargetDecision>;
 }
 
 /**
@@ -130,6 +137,117 @@ Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
     return filtered;
   } catch {
     return [];
+  }
+}
+
+/**
+ * Infer the goal-target shapes AND return a structured decision with confidence
+ * and alternative framings. Shares the same guard clauses and vocabulary
+ * filtering as inferGoalTargetShapes but returns a GoalTargetDecision.
+ * Returns { shapes: [], confidence: 0, alternatives: [] } on any failure.
+ */
+export async function inferGoalTargetDecision(
+  goal: string,
+  knownShapes: string[],
+  opts: InferGoalTargetShapesOpts = {},
+): Promise<GoalTargetDecision> {
+  const empty: GoalTargetDecision = { shapes: [], confidence: 0, alternatives: [] };
+  const llmEndpoint = opts.llmEndpoint;
+  if (!goal || knownShapes.length === 0) return empty;
+  if (!opts.complete && !llmEndpoint) return empty;
+
+  const decisionCache = opts.decisionCache;
+  const cacheKey = goalHashOf(goal);
+  if (decisionCache) {
+    const cached = decisionCache.get(cacheKey);
+    if (cached) return cached;
+  }
+
+  const known = new Set(knownShapes);
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const model = opts.model ?? "claude-haiku-4-5-20251001";
+  const prompt = `You route a substrate GOAL to the output impulse shape(s) whose PRODUCTION would satisfy it.
+
+GOAL: ${goal}
+
+KNOWN producible output shapes (you MUST choose ONLY from this list):
+${JSON.stringify(knownShapes)}
+
+Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-3 shapes from the KNOWN list.
+
+Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternatives": [[...], [...]]}`;
+
+  try {
+    let text: string;
+    if (opts.complete) {
+      const t = await opts.complete(prompt);
+      if (t == null) return empty;
+      text = t;
+    } else {
+      const r = await fetchImpl(`${llmEndpoint!.replace(/\/$/, "")}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "llm_completion", prompt, model }),
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
+      });
+      if (!r.ok) return empty;
+      const j = await r.json() as Record<string, unknown>;
+      const body = j?.body as Record<string, unknown> | undefined;
+      text = (typeof body?.content === "string" ? body.content
+        : typeof body?.text === "string" ? body.text
+        : typeof j?.content === "string" ? j.content
+        : "") as string;
+    }
+    const m = String(text).match(/\{[\s\S]*\}/);
+    if (!m) return empty;
+    const parsed = JSON.parse(m[0]) as Record<string, unknown>;
+    const rawShapes = Array.isArray(parsed?.target_shapes) ? parsed.target_shapes as unknown[] : [];
+    const filterShape = (s: unknown): string | null => {
+      const str = String(s);
+      if ((str === "activity_create_variant" || str === "variant_promote") && known.has("activityVariant_write")) {
+        return "activityVariant_write";
+      }
+      return known.has(str) ? str : null;
+    };
+    const filteredShapes = Array.from(
+      new Set(
+        rawShapes
+          .map(filterShape)
+          .filter((s): s is string => s !== null),
+      ),
+    ).slice(0, 3);
+    const rawConf = parsed?.confidence;
+    const confidence = Math.min(1, Math.max(0,
+      typeof rawConf === "number" && Number.isFinite(rawConf) ? rawConf : 0.5,
+    ));
+    const rawAlts = Array.isArray(parsed?.alternatives) ? parsed.alternatives as unknown[] : [];
+    const primaryKey = filteredShapes.slice().sort().join(",");
+    const alternatives: string[][] = [];
+    for (const alt of rawAlts) {
+      if (!Array.isArray(alt)) continue;
+      const filteredAlt = Array.from(
+        new Set(
+          (alt as unknown[])
+            .map(filterShape)
+            .filter((s): s is string => s !== null),
+        ),
+      ).slice(0, 3);
+      if (filteredAlt.length === 0) continue;
+      if (filteredAlt.slice().sort().join(",") === primaryKey) continue;
+      alternatives.push(filteredAlt);
+      if (alternatives.length >= 2) break;
+    }
+    const decision: GoalTargetDecision = { shapes: filteredShapes, confidence, alternatives };
+    if (decisionCache) {
+      if (decisionCache.size >= INFER_CACHE_MAX) {
+        const first = decisionCache.keys().next().value;
+        if (first !== undefined) decisionCache.delete(first);
+      }
+      decisionCache.set(cacheKey, decision);
+    }
+    return decision;
+  } catch {
+    return empty;
   }
 }
 
