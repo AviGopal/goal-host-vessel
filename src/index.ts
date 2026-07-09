@@ -3512,13 +3512,13 @@ async function runGoalWithRecovery(
     status = result.trace.status === "failed" ? "failed" : "completed";
     const selId = result.selectedTemplateId;
     reached = false;
+    const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
     // Goal-reaching gate: a "completed" execution that didn't reach the goal is a
     // hollow completion — downgrade + β-penalise so Thompson stops reinforcing
     // goal-irrelevant gaming/wrapper templates. completion_shapes surface the
     // (emergent) goal-shaped direction, not a goal-declared target.
     if (goal && status === "completed" && selId) {
       try {
-        const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
         const taskSummary = (((result.trace as { tasks?: Array<{ taskId?: string; resolverId?: string; success?: boolean }> }).tasks) ?? []).map((t) => `${t.taskId}(${t.resolverId},${t.success ? "ok" : "fail"})`).join(", ");
         // Content digest: judge reach from ACTUAL produced content, not just shape
         // names. The trace's output impulses survive in the shared ImpulseStore
@@ -3561,6 +3561,21 @@ async function runGoalWithRecovery(
           void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
+    } else if (!goal && status === "completed" && selId) {
+      try {
+        const pinnedTpl = await getTemplateLocalFirst(nextTarget ?? selId).catch(() => null);
+        const declared = ((pinnedTpl as { output_shapes?: string[]; outputShapes?: string[] } | null)?.output_shapes ?? (pinnedTpl as { outputShapes?: string[] } | null)?.outputShapes ?? []);
+        if (declared.length > 0 && declared.every((s) => producedShapes.includes(s))) {
+          reached = true;
+          completionShapes = declared;
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED (declarative): template output_shapes ⊆ produced`);
+        } else if (declared.length > 0) {
+          goalReachReason = "declarative: missing " + declared.filter((s) => !producedShapes.includes(s)).join(",");
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW (declarative): ${goalReachReason}`);
+        }
+      } catch (e) {
+        console.warn("[goal-host-vessel] declarative reach check failed (non-fatal):", (e as Error).message);
+      }
     }
     // Per-goal learning: record this attempt's goal -> path -> reach outcome.
     const tr = result.trace as { durationMs?: number; costUsd?: number };
