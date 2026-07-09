@@ -983,6 +983,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         success: reached,
         duration_ms: Math.round(durationMs) || 0,
         cost_usd: costUsd || 0,
+        inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -5291,6 +5292,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
+      record.inferenceConfidence = typeof goal === "string" ? (inferredTargetDecisionCache.get(goalHashOf(goal))?.confidence ?? null) : null;
       // Reward the LLM router: attribute every routed selection this dispatch made
       // (buffered under the goal hash) to the final reach verdict — α on reach, β on
       // hollow. Fire-and-forget; never blocks the dispatch.
@@ -5668,6 +5670,7 @@ interface DispatchRecord {
   dispatchId: string;
   startedAt: number;
   status: "running" | "completed" | "failed";
+  inferenceConfidence?: number | null;
   /** The dispatched goal text — surfaced so the operator feedback plane (provide_feedback) can auto-derive it. */
   goal?: string;
   executionId?: string;
