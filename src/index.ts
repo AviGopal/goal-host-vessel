@@ -3697,6 +3697,26 @@ async function runGoalWithRecovery(
         }
       } catch (e) { console.warn("[goal-host-vessel] declarative reach check error (non-fatal):", (e as Error).message); }
     }
+    // Declarative reach for pinned/no-goal dispatches: the LLM gate above only
+    // runs when goal is set, so a template-pinned dispatch with no NL goal was
+    // returning a hardwired reached:false even when the template produced exactly
+    // its declared output_shapes. Judge such dispatches declaratively.
+    if (!reached && !goal && status === "completed" && selId && nextTarget) {
+      try {
+        const producedShapesDecl = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+        const pinnedTpl = await getTemplateLocalFirst(nextTarget).catch(() => null);
+        const declared = ((pinnedTpl as { output_shapes?: string[]; outputShapes?: string[] } | null)?.output_shapes ?? (pinnedTpl as { outputShapes?: string[] } | null)?.outputShapes ?? []);
+        if (declared.length > 0 && declared.every((s) => producedShapesDecl.includes(s))) {
+          reached = true;
+          completionShapes = declared;
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — declarative: template output_shapes subset of produced. completion_shapes=${JSON.stringify(declared)}`);
+        } else if (declared.length > 0) {
+          const missing = declared.filter((s) => !producedShapesDecl.includes(s));
+          goalReachReason = `declarative: missing ${missing.join(",")}`;
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — declarative: missing ${missing.join(",")}. produced=${JSON.stringify(producedShapesDecl)}`);
+        }
+      } catch (e) { console.warn("[goal-host-vessel] declarative reach check error (non-fatal):", (e as Error).message); }
+    }
     // Per-goal learning: record this attempt's goal -> path -> reach outcome.
     const tr = result.trace as { durationMs?: number; costUsd?: number };
     if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
