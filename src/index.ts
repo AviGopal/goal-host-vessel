@@ -5919,7 +5919,27 @@ try {
   for (const r of saved) {
     if (!r || !r.dispatchId) continue;
     const wasRunning = r.status === "running";
-    if (wasRunning) { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
+    if (wasRunning) {
+      let reconciled = false;
+      if (typeof r.goal === "string" && /edit repos\//i.test(r.goal)) {
+        try {
+          const h = goalHashOf(r.goal);
+          const reportFile = Bun.file("/workspace/proposals/route-edit-" + h + "-compose-report.json");
+          if (await reportFile.exists()) {
+            const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
+            if (report.verdict === "FAVORABLE" && reportFile.lastModified > r.startedAt) {
+              const cs = Array.isArray(report.cutovers) ? report.cutovers as Array<Record<string, unknown>> : [];
+              let sha = "reconciled";
+              for (const c of cs) { const res = (c?.result ?? {}) as Record<string, unknown>; if (typeof res.new_git_sha === "string" && res.new_git_sha) { sha = res.new_git_sha; break; } }
+              r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + sha; r.selectedTemplateId = "feature_compose"; r.error = undefined;
+              console.log("[goal-host-vessel] reconciled interrupted edit-intent dispatch " + r.dispatchId + " -> landed " + sha);
+              reconciled = true;
+            }
+          }
+        } catch { /* fall through to interrupted marking */ }
+      }
+      if (!reconciled) { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
+    }
     // No-resume guard (2026-07-09): edit-intent goals (any goal naming a concrete
     // repos/<vessel>/<path>.<ext> source file — same predicate as EDIT-INTENT
     // routing above) must NOT auto-resume on boot. Their compose may have already
