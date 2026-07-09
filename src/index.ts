@@ -1844,6 +1844,50 @@ If one of those sibling shapes is the action that would create what the goal ask
 
   // Goal impulse (shape "goal").
   addToPool("goal", { goal }, goal.slice(0, 200));
+
+    // ── Hydrate walk pool from substrate standing pool (2026-07-03) ──────────
+    // Fetch open poolImpulse records from development-vessel via discovery-based
+    // resolve. Enriches the walk with standing context but is NEVER fatal.
+    try {
+      const _standingResp = await Promise.race([
+        (async () => {
+          // Resolve development-vessel endpoint for poolImpulse shape
+          let devVesselResolveUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
+          try {
+            const _dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "poolImpulse" } }),
+              signal: AbortSignal.timeout(2_000),
+            });
+            const _dj = await _dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+            const _v = _dj?.content?.vessels?.[0];
+            if (_v?.endpoint) {
+              devVesselResolveUrl = `${_v.endpoint.replace(/\/+$/, "")}${asResolvePath(_v.resolve_endpoint)}`;
+            }
+          } catch { /* discovery unreachable → env fallback carries */ }
+          const _r = await fetch(devVesselResolveUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ pointer: { type: "poolImpulse", status: "open", limit: 20 } }),
+            signal: AbortSignal.timeout(2_000),
+          });
+          return _r;
+        })(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("standing-pool timeout")), 3_000)),
+      ]);
+      if (_standingResp.ok) {
+        const _sj = await _standingResp.json() as { impulses?: Array<{ shape: string; body: Record<string, unknown> }> };
+        const _impulses = _sj?.impulses ?? [];
+        for (const impulse of _impulses) {
+          if (impulse.shape && impulse.body) {
+            addToPool(impulse.shape, impulse.body);
+          }
+        }
+      }
+    } catch {
+      tap("[walk-pool] standing pool hydrate skipped");
+    }
   // Seed any variable that looks like an impulse / carries a shape.
   for (const [k, v] of Object.entries(opts.variables ?? {})) {
     if (v && typeof v === "object") {
