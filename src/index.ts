@@ -4897,9 +4897,14 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // Async dispatch: return 202+dispatchId immediately so the caller is not
   // subject to Bun's built-in 300s connection timeout. The caller polls
   // GET /executions/:dispatchId for the outcome.
-  const dispatchId = crypto.randomUUID();
+  const requeueId = typeof variables.requeue_dispatch_id === "string" ? variables.requeue_dispatch_id : "";
+        const dispatchId = requeueId && !executionStore.has(requeueId) ? requeueId : crypto.randomUUID();
   pruneStore();
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator };
+  // Requeued dispatches carry their lineage: requeuedAt arms the one-requeue
+  // cap in drainInterruptedRequeue (a second interruption terminalizes instead
+  // of requeueing again), and requeueOf preserves the ancestor dispatch id so
+  // attempt history stays traceable for composition-graph accounting.
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
   executionStore.set(dispatchId, record);
   persistDispatchStore();
       if (!("dispatch_id" in variables)) variables.dispatch_id = dispatchId;
@@ -5326,7 +5331,6 @@ async function handleRunGoal(req: Request): Promise<Response> {
         } catch { /* vault surface unreachable - reasoning still lives in the dispatch record */ }
       }
     } catch (err) {
-      record.status = "failed";
       // A thrown dispatch never produced a reach verdict — the goal was not reached.
       record.reached = false;
       record.error = (err as Error).message;
@@ -5670,6 +5674,8 @@ interface DispatchRecord {
   dispatchId: string;
   startedAt: number;
   status: "running" | "completed" | "failed";
+  requeuedAt?: number;
+  requeueOf?: string;
   inferenceConfidence?: number | null;
   /** The dispatched goal text — surfaced so the operator feedback plane (provide_feedback) can auto-derive it. */
   goal?: string;
@@ -5914,6 +5920,36 @@ const pendingSolicitations = new Map<string, PendingSolicitation>();
 const SOLICITATION_HEARTBEAT_EXTENSION_MS = 90_000;
 const SOLICITATION_MAX_WAIT_MS = 30 * 60 * 1000;
 const DISPATCH_STORE_PATH = "/workspace/goal-host-dispatches.json";
+const interruptedRequeue: DispatchRecord[] = [];
+async function drainInterruptedRequeue(): Promise<void> {
+  for (const r of interruptedRequeue) {
+    try {
+      if (r.requeuedAt || (typeof r.goal === "string" && /repos\/[^\s"']+\.[a-zA-Z]+/.test(r.goal))) {
+        r.status = "failed";
+        r.reached = false;
+        r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight";
+        if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId;
+        if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none";
+        continue;
+      }
+      executionStore.delete(r.dispatchId);
+      await fetch("http://127.0.0.1:" + PORT + "/run-goal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId } })
+      });
+      console.log("[goal-host-vessel] requeued interrupted dispatch " + r.dispatchId);
+      await new Promise((res) => setTimeout(res, 5000));
+    } catch (err) {
+      console.warn("[goal-host-vessel] requeue failed for " + r.dispatchId + ": " + (err as Error).message);
+    }
+  }
+  interruptedRequeue.length = 0;
+  persistDispatchStore();
+}
+setTimeout(() => {
+  drainInterruptedRequeue().catch((err) => console.warn("[goal-host-vessel] drain error: " + (err as Error).message));
+}, 15000);
 try {
   const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
   for (const r of saved) {
@@ -5938,7 +5974,7 @@ try {
           }
         } catch { /* fall through to interrupted marking */ }
       }
-      if (!reconciled) { r.status = "failed"; r.reached = false; r.error = "interrupted: goal-host restarted (cutover) while this dispatch was in flight"; if (!r.executionId) r.executionId = "interrupted:" + r.dispatchId; if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none"; }
+      if (!reconciled) { interruptedRequeue.push(r); }
     }
     // No-resume guard (2026-07-09): edit-intent goals (any goal naming a concrete
     // repos/<vessel>/<path>.<ext> source file — same predicate as EDIT-INTENT
