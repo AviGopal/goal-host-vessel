@@ -681,6 +681,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 // DISCOVERY_ENDPOINT / API_KEY and so stay here).
 const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
+function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal.slice(0, 400), tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // Known producible-shape vocabulary = discovery's advertised shapes (every shape
 // has a live resolver, so the walk can reach it via backward-chain or mint-as-you-go).
@@ -3504,6 +3505,7 @@ async function runGoalWithRecovery(
     }
     if (!nextTarget) {
       console.log(`[goal-host-vessel] ${opts.surface}: no candidate produces target shapes [${seededOutputShapes.join(",")}] — honest no-producer failure`);
+            escalateNoProducerToInvestigation(goal, goalTargetDecision ? goalTargetDecision.confidence : null);
       return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `no template produces the inferred target shapes [${seededOutputShapes.join(", ")}]; capability gap filed by the walk`, reached: false };
     }
   }
