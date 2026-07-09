@@ -20,7 +20,7 @@ import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { Config } from './config';
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { inferGoalTargetShapes, inferDerivationSplit, goalHashOf } from "./goal-target-inference";
+import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { routedComplete, routedText, flushRouterFeedback } from "./llm-router";
 import { orderRing } from "./mem-ring";
 import {
@@ -680,6 +680,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 // goal_hash cache and the known-shape vocabulary fetch (which use this module's
 // DISCOVERY_ENDPOINT / API_KEY and so stay here).
 const inferredTargetShapeCache = new Map<string, string[]>();
+const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
 
 // Known producible-shape vocabulary = discovery's advertised shapes (every shape
 // has a live resolver, so the walk can reach it via backward-chain or mint-as-you-go).
@@ -2981,6 +2982,7 @@ async function runGoalWithRecovery(
   let authoredFallbackTarget: string | undefined;
   let seededOutputShapes = opts.expectedOutputShapes;
   let terminalOutputShapes: string[] | undefined;
+  let goalTargetDecision: GoalTargetDecision | null = null;
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -3080,7 +3082,8 @@ async function runGoalWithRecovery(
     }
     // --- end capability catalog consultation ---
 
-    const inferred = await inferGoalTargetShapes(goal, knownShapes, {
+    const decision = await inferGoalTargetDecision(goal, knownShapes, {
+        decisionCache: inferredTargetDecisionCache,
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
         complete: (prompt) =>
@@ -3090,9 +3093,10 @@ async function runGoalWithRecovery(
       });
       tap(
         `[goal-host-vessel] ${opts.surface}: goal-target inference ` +
-          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: inferred }),
+          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: decision.shapes, confidence: decision.confidence, alternatives: decision.alternatives }),
       );
-      if (inferred.length > 0) seededOutputShapes = inferred;
+      goalTargetDecision = decision;
+      if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
     }
     // COMPOSITION (derivation-intent, 2026-06-30): when the goal is a derive→emit
     // SEQUENCE ("analyze X then write findings to note Y"), the seeded shapes above
@@ -3487,6 +3491,17 @@ async function runGoalWithRecovery(
   }
   if (!nextTarget && goal && seededOutputShapes && seededOutputShapes.length > 0) {
     nextTarget = (await recommendExcluding(goal, [], null, seededOutputShapes)) ?? undefined;
+    if (!nextTarget && goalTargetDecision) {
+      for (const alt of goalTargetDecision.alternatives) {
+        const altPick = await recommendExcluding(goal, [], null, alt);
+        if (altPick) {
+          console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
+          seededOutputShapes = alt;
+          nextTarget = altPick;
+          break;
+        }
+      }
+    }
     if (!nextTarget) {
       console.log(`[goal-host-vessel] ${opts.surface}: no candidate produces target shapes [${seededOutputShapes.join(",")}] — honest no-producer failure`);
       return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `no template produces the inferred target shapes [${seededOutputShapes.join(", ")}]; capability gap filed by the walk`, reached: false };
