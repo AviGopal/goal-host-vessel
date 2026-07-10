@@ -3387,13 +3387,31 @@ async function runGoalWithRecovery(
           const editSite = editLine ? `${editFile}:${editLine}` : editFile;
           try {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT DETECTED (0-step walk names ${editFile}) — routing to feature_compose`);
-            const spec = [
-              "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
-              `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${editFile}`,
-              "The change MUST typecheck.",
-              "",
-              `GOAL: ${goal}`,
-            ].join("\n");
+            // CREATE-INTENT (2026-07-10): a goal authoring a NET-NEW file (a new
+            // resolver/module/vessel) must be allowed to create_file — otherwise
+            // feature_compose is told "edit in place, do NOT create", tries an `edit`
+            // op on a nonexistent path, fails ENOENT → UNFAVORABLE, and the goal falls
+            // to the author_new_resolver scaffolder which only emits a `// TODO` stub.
+            // For create-intent we permit create_file on the target + the minimal
+            // sibling wiring a new resolver needs (three-place rule), so the drafter
+            // authors a REAL implementation. Verify (tsc + shape-dispatch) still gates.
+            const createIntent = /\b(create|scaffold|net-new)\b/i.test(goal) || /\bnew\s+(resolver|file|vessel|shape|endpoint|module)\b/i.test(goal);
+            const spec = createIntent
+              ? [
+                  "Author the smallest, verifiable code change that satisfies this development goal, drafting a REAL working implementation — never a TODO/stub body.",
+                  `Primary target file: ${editFile}. CREATE it with a \`create_file\` op if it does not yet exist; edit it in place if it does.`,
+                  "You MAY also create a sibling test file and edit the vessel's resolver-registration files (e.g. src/config.ts and src/routes/impulses.ts, per the three-place rule) when wiring a new resolver requires it. Keep total edits minimal and strictly necessary; do not touch package.json.",
+                  "The change MUST typecheck AND pass the vessel's lint/shape-dispatch check.",
+                  "",
+                  `GOAL: ${goal}`,
+                ].join("\n")
+              : [
+                  "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
+                  `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${editFile}`,
+                  "The change MUST typecheck.",
+                  "",
+                  `GOAL: ${goal}`,
+                ].join("\n");
             const gapId = `route-edit-${goalHashOf(goal)}`;
             // Resolve the feature_compose producer via DISCOVERY first (impulse-contract
             // compliance: no hardcoded vessel endpoint). Same inline vesselCapability
