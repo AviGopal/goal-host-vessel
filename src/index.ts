@@ -1517,6 +1517,7 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
+  let walkTerminationReason: string | undefined;
   const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
     if (!LLM_VESSEL_ENDPOINT) return null;
     const prompt = `A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
@@ -2455,8 +2456,16 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (chain.length === 0 && !filedGap && missingNow.length > 0) {
         filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
       }
+      walkTerminationReason = missingNow.length > 0 ? `no producer or constructible payload for missing shapes [${missingNow.join(",")}]` : "opportunistic walk found no applicable pick (empty inferred target)";
       if (filedGap) opts.learningSink?.gapsFiled.push(filedGap);
       console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
+      if (missingNow.length > 0) {
+        tap(`[goal-host-vessel] ${opts.surface}: walk: no pick — missing shapes [${missingNow.join(",")}] have no producer or constructible payload; terminating walk`);
+        walkTerminationReason = "no producer or constructible payload for missing shapes [" + missingNow.join(",") + "]";
+      } else {
+        tap(`[goal-host-vessel] ${opts.surface}: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk`);
+        walkTerminationReason = "opportunistic walk found no applicable pick (empty inferred target)";
+      }
       break;
     }
 
@@ -2563,6 +2572,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       consecutiveNoProgress++;
       if (consecutiveNoProgress >= 2) {
         console.log(`[goal-host-vessel] walk(${opts.surface}): 2 consecutive no-progress steps — stopping`);
+        walkTerminationReason = "no pool progress for 2 consecutive steps";
         break;
       }
     } else {
@@ -2615,6 +2625,11 @@ If one of those sibling shapes is the action that would create what the goal ask
   let answerBody: string | undefined;
   let reached = false;
 
+  if (!lastTrace || chain.length === 0) {
+    reached = false;
+    goalReachReason = walkTerminationReason ?? `walk took 0 shape-feasible steps toward target [${[...target].join(",")}]`;
+    console.log(`[goal-host-vessel] walk(${opts.surface}): 0-step termination — ${goalReachReason}`);
+  }
   if (lastTrace && chain.length > 0) {
     const chainSummary = `walk(${chain.length} steps): ${chain.map(normActivityId).join(" → ")}`;
     // Content digest: let the reach-gate judge from ACTUAL produced content, not
