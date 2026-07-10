@@ -3169,6 +3169,99 @@ async function runGoalWithRecovery(
       terminalOutputShapes = undefined;
     }
     try {
+      // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
+      // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
+      const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
+      const earlyFileMatch = earlyEditIntentEnabled ? goal.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal) : false;
+      if (earlyEditIntentEnabled && earlyFileMatch && earlyEditVerb) {
+        const earlyEditFile = earlyFileMatch[0]!;
+        const earlyEditVessel = earlyFileMatch[1]!;
+        const earlyAfterFile = goal.slice(goal.indexOf(earlyEditFile) + earlyEditFile.length);
+        const earlyEditLine = earlyAfterFile.match(/^:(\d+)/)?.[1] ?? goal.match(/\bline\s+~?(\d+)/i)?.[1];
+        const earlyEditSite = earlyEditLine ? `${earlyEditFile}:${earlyEditLine}` : earlyEditFile;
+        try {
+          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT DETECTED (pre-walk, names ${earlyEditFile}) — routing to feature_compose`);
+          const earlySpec = [
+            "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
+            `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${earlyEditFile}`,
+            "The change MUST typecheck.",
+            "",
+            `GOAL: ${goal}`,
+          ].join("\n");
+          const earlyGapId = `route-edit-${goalHashOf(goal)}`;
+          let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
+          try {
+            const earlyDr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "feature_compose" } }),
+              signal: AbortSignal.timeout(5_000),
+            });
+            const earlyDj = await earlyDr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+            const earlyV = earlyDj?.content?.vessels?.[0];
+            if (earlyV?.endpoint) {
+              earlyComposeUrl = `${earlyV.endpoint.replace(/\/+$/, "")}${asResolvePath(earlyV.resolve_endpoint)}`;
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose producer resolved via discovery → ${earlyComposeUrl}`);
+            }
+          } catch { /* discovery unreachable/empty → env fallback carries */ }
+          const earlyComposeResp = await fetch(earlyComposeUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({
+              impulse: {
+                pointer: {
+                  type: "feature_compose",
+                  spec: earlySpec,
+                  verify_vessels: [`repos/${earlyEditVessel}`],
+                  land: true,
+                  gap: {
+                    id: earlyGapId,
+                    summary: goal,
+                    category: "edit_intent_route",
+                    classification_metadata: { edit_site: earlyEditSite },
+                  },
+                },
+              },
+            }),
+            signal: AbortSignal.timeout(240_000),
+          });
+          if (earlyComposeResp.ok) {
+            const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
+            const earlyBody = (earlyJ?.body ?? earlyJ ?? {}) as Record<string, unknown>;
+            const earlyVerdict = String(earlyBody.verdict ?? "");
+            if (earlyVerdict === "FAVORABLE") {
+              const earlyCutovers = Array.isArray(earlyBody.cutovers) ? earlyBody.cutovers as Array<Record<string, unknown>> : [];
+              let earlyLandedSha: string | null = null;
+              for (const c of earlyCutovers) {
+                const rr = ((c ?? {}).result ?? {}) as Record<string, unknown>;
+                if (rr.push_status === "pushed" && typeof rr.new_git_sha === "string" && rr.new_git_sha.trim()) {
+                  earlyLandedSha = rr.new_git_sha.trim();
+                  break;
+                }
+              }
+              const earlySummary = typeof earlyBody.summary === "string" && earlyBody.summary.trim()
+                ? ` — ${earlyBody.summary.trim().slice(0, 160)}` : "";
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=FAVORABLE${earlyLandedSha ? ` landed=${earlyLandedSha}` : " (staged)"}${earlySummary}`);
+              return {
+                result: null,
+                status: "completed" as const,
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["fileEditResult"],
+                attempts: 1,
+                goalReachReason: `early edit-intent routed to feature_compose; ${earlyLandedSha ? `landed ${earlyLandedSha}` : "staged FAVORABLE"}${earlySummary}`,
+                reached: true,
+                executionId: earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined,
+              };
+            }
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
+          } else {
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — falling through to walk`);
+          }
+        } catch (earlyErr) {
+          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
+        }
+      }
       const walk = await runGoalAsPoolWalk(goal, {
         variables: opts.variables,
         tags: opts.tags,
