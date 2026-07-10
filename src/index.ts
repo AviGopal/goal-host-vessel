@@ -2464,10 +2464,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
       if (missingNow.length > 0) {
         tap(`[goal-host-vessel] ${opts.surface}: walk: no pick — missing shapes [${missingNow.join(",")}] have no producer or constructible payload; terminating walk`);
-        walkTerminationReason = "no producer or constructible payload for missing shapes [" + missingNow.join(",") + "]";
       } else {
         tap(`[goal-host-vessel] ${opts.surface}: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk`);
-        walkTerminationReason = "opportunistic walk found no applicable pick (empty inferred target)";
       }
       break;
     }
