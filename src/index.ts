@@ -1416,6 +1416,8 @@ async function runGoalAsPoolWalk(
     stepSink?: string[];
     /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
     learningSink?: LearningConsequences;
+    /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
+    suppressSatisfierShapes?: string[];
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -1517,6 +1519,7 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
+  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
   let walkTerminationReason: string | undefined;
   const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
     if (!LLM_VESSEL_ENDPOINT) return null;
@@ -3313,7 +3316,7 @@ async function runGoalWithRecovery(
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
         }
       }
-      const walk = await runGoalAsPoolWalk(goal, {
+      let walk = await runGoalAsPoolWalk(goal, {
         variables: opts.variables,
         tags: opts.tags,
         parentExecutionId: opts.parentExecutionId,
@@ -3324,6 +3327,33 @@ async function runGoalWithRecovery(
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
       });
+      // IN-DISPATCH SATISFIER RETRY: a HOLLOW verdict reached via a vessel-resolve
+      // satisfier means the satisfier resolved but produced nothing goal-satisfying —
+      // and by filling the pool it short-circuited the bridge-mint path. Retry ONCE
+      // with that satisfier suppressed so the walk falls through to the candidate /
+      // bridge-mint route instead of the dispatch ending failed after one attempt.
+      if (
+        walk.reached === false &&
+        typeof walk.selectedTemplateId === "string" &&
+        walk.selectedTemplateId.startsWith("satisfier:")
+      ) {
+        const suppressedShape = walk.selectedTemplateId.slice("satisfier:".length);
+        console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
+        const retryWalk = await runGoalAsPoolWalk(goal, {
+          variables: opts.variables,
+          tags: opts.tags,
+          parentExecutionId: opts.parentExecutionId,
+          compositionChain: opts.compositionChain,
+          expectedOutputShapes: seededOutputShapes,
+          terminalOutputShapes,
+          surface: opts.surface,
+          stepSink: opts.stepSink,
+          learningSink: opts.learningSink,
+          suppressSatisfierShapes: [suppressedShape],
+        });
+        if (retryWalk.reached) return retryWalk;
+        walk = retryWalk.attempts > 0 ? retryWalk : walk;
+      }
       const editIntentGoal = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
       // A >0-step walk that "reached" via a source_code / analysis READ satisfier does
       // NOT serve an edit-intent goal (read != edit) — this is how a code-edit goal got
