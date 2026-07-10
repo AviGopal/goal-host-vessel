@@ -3109,7 +3109,7 @@ async function runGoalWithRecovery(
         if (hydGap && hydGap.id) {
           const hydMeta = JSON.stringify(hydGap.classification_metadata ?? {});
           walkConceptContext += `\nGap record ${hydGap.id}: ${String(hydGap.summary ?? "").slice(0, 500)} | metadata: ${hydMeta.slice(0, 400)}`;
-          const hydFile = `${String(hydGap.summary ?? "")} ${hydMeta}`.match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/)?.[0];
+          const hydFile = (hydMeta.match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/) ?? String(hydGap.summary ?? "").match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/))?.[0];
           if (hydFile && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
             goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: ${String(hydGap.summary ?? "").slice(0, 300)})`;
           }
