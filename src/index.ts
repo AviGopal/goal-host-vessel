@@ -3002,6 +3002,9 @@ async function runGoalWithRecovery(
     // hoisted above this block so an exception here still leaves the walk
     // below able to run in opportunistic mode instead of the whole dispatch
     // crashing before runGoalAsPoolWalk or edit-intent routing ever run.
+    // goalForRouting is hoisted here for the same reason: assigned by gap-record
+    // hydration inside the try, read by the EARLY edit-intent check after it.
+    let goalForRouting = goal;
     try {
     let knownShapes: string[] | null = null;
     if (!seededOutputShapes || seededOutputShapes.length === 0) {
@@ -3084,6 +3087,39 @@ async function runGoalWithRecovery(
       console.warn(`[walk-catalog] consult failed (fail-open): ${(e as Error).message}`);
     }
     // --- end capability catalog consultation ---
+
+    // --- gap-record hydration (walk-no-gap-record-hydration-from-goal-text) ---
+    // When the goal references a substrateGap id, resolve the record FIRST and
+    // inject its summary/metadata into the walk context; if the record cites a
+    // repos/<vessel> source file (and the goal itself does not), surface it to the
+    // EARLY edit-intent check via goalForRouting so gap-id goals route to
+    // feature_compose with the gap's own context. Fail-open on any error.
+    try {
+      const gapIdMatch = goal.match(/\b(gap-[a-z0-9][a-z0-9-]{5,})\b/i) ?? goal.match(/\bgap\s+([a-z0-9][a-z0-9-]{8,})\b/i);
+      const hydrateGapId = gapIdMatch?.[1];
+      if (hydrateGapId) {
+        const hydRes = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ impulse: { type: "substrateGap", id: hydrateGapId } }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        const hydJson = (await hydRes.json()) as { body?: { gaps?: Array<{ id?: string; summary?: string; classification_metadata?: Record<string, unknown> }> } };
+        const hydGap = hydJson?.body?.gaps?.[0];
+        if (hydGap && hydGap.id) {
+          const hydMeta = JSON.stringify(hydGap.classification_metadata ?? {});
+          walkConceptContext += `\nGap record ${hydGap.id}: ${String(hydGap.summary ?? "").slice(0, 500)} | metadata: ${hydMeta.slice(0, 400)}`;
+          const hydFile = `${String(hydGap.summary ?? "")} ${hydMeta}`.match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/)?.[0];
+          if (hydFile && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
+            goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: ${String(hydGap.summary ?? "").slice(0, 300)})`;
+          }
+          tap(`[goal-host-vessel] gap-hydration: injected record ${hydGap.id} (cited file: ${hydFile ?? "none"})`);
+        }
+      }
+    } catch (hydErr) {
+      console.warn(`[gap-hydration] failed (fail-open): ${(hydErr as Error).message}`);
+    }
+    // --- end gap-record hydration ---
 
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         decisionCache: inferredTargetDecisionCache,
@@ -3172,13 +3208,13 @@ async function runGoalWithRecovery(
       // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
-      const earlyFileMatch = earlyEditIntentEnabled ? goal.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal) : false;
+      const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goalForRouting) : false;
       if (earlyEditIntentEnabled && earlyFileMatch && earlyEditVerb) {
         const earlyEditFile = earlyFileMatch[0]!;
         const earlyEditVessel = earlyFileMatch[1]!;
-        const earlyAfterFile = goal.slice(goal.indexOf(earlyEditFile) + earlyEditFile.length);
-        const earlyEditLine = earlyAfterFile.match(/^:(\d+)/)?.[1] ?? goal.match(/\bline\s+~?(\d+)/i)?.[1];
+        const earlyAfterFile = goalForRouting.slice(goalForRouting.indexOf(earlyEditFile) + earlyEditFile.length);
+        const earlyEditLine = earlyAfterFile.match(/^:(\d+)/)?.[1] ?? goalForRouting.match(/\bline\s+~?(\d+)/i)?.[1];
         const earlyEditSite = earlyEditLine ? `${earlyEditFile}:${earlyEditLine}` : earlyEditFile;
         try {
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT DETECTED (pre-walk, names ${earlyEditFile}) — routing to feature_compose`);
@@ -3187,7 +3223,7 @@ async function runGoalWithRecovery(
             `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${earlyEditFile}`,
             "The change MUST typecheck.",
             "",
-            `GOAL: ${goal}`,
+            `GOAL: ${goalForRouting}`,
           ].join("\n");
           const earlyGapId = `route-edit-${goalHashOf(goal)}`;
           let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
