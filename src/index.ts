@@ -1612,7 +1612,9 @@ async function runGoalAsPoolWalk(
         if (lines.length) howToGuidance = `PAYLOAD GUIDANCE for shape "${shape}" from the substrate's knowledge store — the correct pointer-arg field structure to emit (follow it EXACTLY, including any nested objects it names):\n${lines.join("\n")}\n\n`;
       }
     } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
-    const prompt = `${schemaContract}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
+    const nowIso = new Date().toISOString();
+    const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
+    const prompt = `${temporalGrounding}${schemaContract}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
 
 GOAL: ${goal}
 
