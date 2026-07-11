@@ -1523,11 +1523,21 @@ async function runGoalAsPoolWalk(
   let walkTerminationReason: string | undefined;
   const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
     if (!LLM_VESSEL_ENDPOINT) return null;
-    const prompt = `A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
+    let howToGuidance = "";
+    try {
+      const hq = encodeURIComponent(`${shape} pointer arguments payload fields how to invoke resolver`);
+      const hr = await fetch(`${CONCEPT_DB_ENDPOINT}/concepts/search?query=${hq}&limit=3`, { headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}, signal: AbortSignal.timeout(4000) });
+      if (hr.ok) {
+        const hj = await hr.json() as { concepts?: Array<{ summary?: string; content?: string }> };
+        const lines = (hj.concepts ?? []).map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 400)}`).filter((s) => s.length > 8);
+        if (lines.length) howToGuidance = `PAYLOAD GUIDANCE for shape "${shape}" from the substrate's knowledge store — the correct pointer-arg field structure to emit (follow it EXACTLY, including any nested objects it names):\n${lines.join("\n")}\n\n`;
+      }
+    } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
+    const prompt = `${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
 
 GOAL: ${goal}
 
-Respond with ONLY a flat JSON object of pointer arg fields (no "type" key, no nesting). If the goal does not specify any args, respond with {}.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`;
+Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If PAYLOAD GUIDANCE is present above, follow its field structure exactly (including any nested objects it specifies); otherwise emit a flat object. Do NOT add a top-level "type" key or wrap the result in a "pointer" key.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`;
     try {
       const rr = await routedComplete(goalHashOf(goal), "pointer_arg_extraction", {
         prompt, model: "claude-haiku-4-5-20251001",
