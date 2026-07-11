@@ -1861,7 +1861,9 @@ Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If
     const constraintBlock = obsidianWrite
       ? `\n\nKNOWN CONSTRAINT: obsidian note paths must be vault-relative, start with "Substrate/", and end in ".md" (e.g. "Substrate/<descriptive-name>.md"). The write action also requires a non-empty "content" field. Emit a valid path on the FIRST attempt.`
       : "";
-    const prompt = `The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.${constraintBlock}
+    const nowIso = new Date().toISOString();
+    const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
+    const prompt = `${temporalGrounding}The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.${constraintBlock}
 
 GOAL: ${goal}${correctionBlock}
 
