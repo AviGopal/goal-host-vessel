@@ -1523,7 +1523,28 @@ async function runGoalAsPoolWalk(
   let walkTerminationReason: string | undefined;
   const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
     if (!LLM_VESSEL_ENDPOINT) return null;
-    let howToGuidance = "";
+    let schemaContract = "";
+   try {
+     const sep = await endpointForShape(shape);
+     if (sep) {
+       const sr = await fetch(`${sep.endpoint}${sep.resolvePath}`, {
+         method: "POST",
+         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+         body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }),
+         signal: AbortSignal.timeout(4000),
+       });
+       if (sr.ok) {
+         const sj = await sr.json() as { content?: any };
+         const cc = sj?.content;
+         if (cc && cc.known === true && Array.isArray(cc.fields)) {
+           const req = cc.fields.filter((f: any) => f.required).map((f: any) => f.name);
+           const opt = cc.fields.filter((f: any) => !f.required).map((f: any) => f.name);
+           schemaContract = `AUTHORITATIVE PAYLOAD CONTRACT for shape "${shape}" (from the owning vessel — this is the exact structure to emit, prefer it over any prose guidance): put the pointer args UNDER the key "${cc.envelope}" as a nested object. REQUIRED fields, all must be present with real values from the goal: ${req.join(", ") || "(none)"}. Optional fields: ${opt.join(", ") || "(none)"}. Your JSON output must have the form { "${cc.envelope}": { ${req.map((r: string) => `"${r}": <value>`).join(", ")} } } (add optional fields when the goal specifies them).\n\n`;
+         }
+       }
+     }
+   } catch { /* fail-open: no vessel schema advertised, fall back to how-to + goal text */ }
+   let howToGuidance = "";
     try {
       const hq = encodeURIComponent(`${shape} pointer arguments payload fields how to invoke resolver`);
       const hr = await fetch(`${CONCEPT_DB_ENDPOINT}/concepts/search?query=${hq}&limit=3`, { headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}, signal: AbortSignal.timeout(4000) });
@@ -1533,7 +1554,7 @@ async function runGoalAsPoolWalk(
         if (lines.length) howToGuidance = `PAYLOAD GUIDANCE for shape "${shape}" from the substrate's knowledge store — the correct pointer-arg field structure to emit (follow it EXACTLY, including any nested objects it names):\n${lines.join("\n")}\n\n`;
       }
     } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
-    const prompt = `${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
+    const prompt = `${schemaContract}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
 
 GOAL: ${goal}
 
