@@ -204,13 +204,36 @@ export async function routedComplete(
       signal: AbortSignal.timeout(60_000),
     });
     const latencyMs = Date.now() - t0;
-    if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs, costUsd: 0 });
-    if (!r.ok) return { ok: false, json: null, vesselId: sel.vesselId };
+    if (!r.ok) {
+      const latencyMs = Date.now() - t0;
+      if (sel.vesselId != null) {
+        fetch(
+          ACTIVITY_API_ENDPOINT + "/v2/llm-router/feedback",
+          {
+            method: "POST",
+            headers: { ...authHeaders(), "Content-Type": "application/json" },
+            body: JSON.stringify({ task_type: taskType, vessel_id: sel.vesselId, reached: false, latency_ms: latencyMs, cost_usd: 0 }),
+            signal: AbortSignal.timeout(5000),
+          }
+        ).catch(() => {});
+      }
+      return { ok: false, json: null, vesselId: sel.vesselId };
+    }
     const j = await r.json();
     return { ok: true, json: j, vesselId: sel.vesselId };
-  } catch {
+  } catch (_e) {
     const latencyMs = Date.now() - t0;
-    if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs, costUsd: 0 });
+    if (sel.vesselId != null) {
+      fetch(
+        ACTIVITY_API_ENDPOINT + "/v2/llm-router/feedback",
+        {
+          method: "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ task_type: taskType, vessel_id: sel.vesselId, reached: false, latency_ms: latencyMs, cost_usd: 0 }),
+          signal: AbortSignal.timeout(5000),
+        }
+      ).catch(() => {});
+    }
     return { ok: false, json: null, vesselId: sel.vesselId };
   }
 }
