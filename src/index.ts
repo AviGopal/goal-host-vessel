@@ -1874,7 +1874,21 @@ If one of those sibling shapes is the action that would create what the goal ask
       } catch { return raw; }
     };
     const processedBody = boundBody ? await processTerminalContent(shape, boundBody) : boundBody;
+    let writeEnvelope: { envelope: string; required: string[] } | null = null;
+    try {
+      const sep0 = await endpointForShape(shape);
+      if (sep0) {
+        const sr0 = await fetch(`${sep0.endpoint}${sep0.resolvePath}`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }), signal: AbortSignal.timeout(4000) });
+        if (sr0.ok) { const sj0 = await sr0.json() as { content?: any }; const cc0 = sj0?.content; if (cc0 && cc0.known === true && typeof cc0.envelope === "string" && cc0.envelope) writeEnvelope = { envelope: cc0.envelope, required: Array.isArray(cc0.required) ? cc0.required : [] }; }
+      }
+    } catch { /* fail-open: no envelope contract advertised */ }
     const bindBody = (args: Record<string, unknown>): Record<string, unknown> => {
+      if (writeEnvelope) {
+        const inner: Record<string, unknown> = { ...args };
+        if (processedBody) inner["content"] = processedBody;
+        if (writeEnvelope.required.includes("source_type") && !("source_type" in inner)) inner["source_type"] = "memo";
+        return { [writeEnvelope.envelope]: inner };
+      }
       if (!processedBody) return args;
       const out = { ...args };
       for (const k of ["content", "body", "text", "note", "markdown"]) if (k in out) out[k] = processedBody;
