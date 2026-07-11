@@ -1834,17 +1834,36 @@ If one of those sibling shapes is the action that would create what the goal ask
     // title args are kept; only the content body is bound. Used on BOTH the direct
     // resolve path (step a — the terminal IS the write action, e.g. obsidian:write_note)
     // and the action-then-read path (step b — read-only shape produced by a sibling).
+    // PROCESS STEP: transform the raw intermediate findings into the FINAL artifact
+    // the goal asks to persist (e.g. a how-to, note, summary), rather than dumping raw
+    // source-code / investigation material. Fail-open: on any error, keep raw.
+    const processTerminalContent = async (targetShape: string, raw: string): Promise<string> => {
+      if (!raw) return raw;
+      if (!LLM_VESSEL_ENDPOINT) return raw;
+      try {
+        const prompt = `You are producing the FINAL artifact to store for a goal, from raw material an earlier step produced. Do NOT dump the raw material; TRANSFORM it into exactly what the goal asks to persist — structured, concise, and usable (e.g. a how-to, a note, a summary, a structured record), in the form the goal specifies. \n\nGOAL: ${goal}\n\nTARGET ARTIFACT SHAPE: ${targetShape}\n\nRAW MATERIAL (from investigation/intermediate steps):\n${raw.slice(0, 8000)}\n\nRespond with ONLY the final artifact content to store (plain text; no preamble, no code fences).`;
+        const rr = await routedComplete(goalHashOf(goal), "terminal_content_process", {
+          prompt, model: "claude-haiku-4-5-20251001",
+        });
+        if (!rr.ok) return raw;
+        const j: any = rr.json;
+        const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+        const s = String(text || "").trim();
+        return s ? s : raw;
+      } catch { return raw; }
+    };
+    const processedBody = boundBody ? await processTerminalContent(shape, boundBody) : boundBody;
     const bindBody = (args: Record<string, unknown>): Record<string, unknown> => {
-      if (!boundBody) return args;
+      if (!processedBody) return args;
       const out = { ...args };
-      for (const k of ["content", "body", "text", "note", "markdown"]) if (k in out) out[k] = boundBody;
-      if (!("content" in out)) out["content"] = boundBody;
+      for (const k of ["content", "body", "text", "note", "markdown"]) if (k in out) out[k] = processedBody;
+      if (!("content" in out)) out["content"] = processedBody;
       return out;
     };
     // (a) Try resolving the target shape directly with goal-extracted args.
     const directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
     const directArgs = bindBody(directArgsRaw);
-    if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content from produced intermediate findings (${boundBody.length} chars) — composition, not placeholder`);
+    if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
     if (direct != null) {
       const v = await verifyWritePersisted(shape, direct);
