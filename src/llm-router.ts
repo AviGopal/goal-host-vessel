@@ -44,7 +44,7 @@ const authHeaders = (): Record<string, string> => ({
   ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}),
 });
 
-interface Producer { vesselId: string; endpoint: string; }
+interface Producer { vesselId: string; endpoint: string; resolveUrl: string; }
 interface Arm { alpha: number; beta: number; }
 
 // ── discovery of llm_completion producers (short TTL cache) ──────────────────
@@ -65,10 +65,18 @@ async function discoverProducers(): Promise<Producer[]> {
     const j: any = await r.json();
     const vessels: any[] = j?.content?.vessels ?? j?.vessels ?? [];
     const producers: Producer[] = vessels
-      .map((v) => ({
-        vesselId: String(v?.vesselId ?? v?.vessel_id ?? v?.id ?? ""),
-        endpoint: String(v?.endpoint ?? ""),
-      }))
+      .map((v) => {
+        const endpoint = String(v?.endpoint ?? "");
+        return {
+          vesselId: String(v?.vesselId ?? v?.vessel_id ?? v?.id ?? ""),
+          endpoint,
+          resolveUrl: typeof v.resolve_endpoint === "string" && v.resolve_endpoint.startsWith("http")
+            ? v.resolve_endpoint
+            : typeof v.resolve_endpoint === "string" && v.resolve_endpoint.length > 0
+              ? endpoint.replace(/\/+$/, "") + "/" + v.resolve_endpoint.replace(/^\//, "")
+              : endpoint + "/resolve",
+        };
+      })
       .filter((p) => p.vesselId.length > 0 && /^https?:\/\//.test(p.endpoint));
     producerCache = { at: now, producers };
     return producers;
@@ -146,7 +154,7 @@ async function selectForTaskType(taskType: string): Promise<Selection | null> {
     if (score > bestScore) { bestScore = score; best = p; }
   }
   if (!best) return fallbackSelection();
-  return { resolveUrl: `${best.endpoint.replace(/\/$/, "")}/resolve`, vesselId: best.vesselId };
+  return { resolveUrl: best.resolveUrl, vesselId: best.vesselId };
 }
 
 // ── per-dispatch reward buffer ───────────────────────────────────────────────
