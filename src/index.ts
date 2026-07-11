@@ -683,6 +683,64 @@ const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
 function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal.slice(0, 400), tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
+// ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
+// When the structured shape-walk produces a HOLLOW result (an always-succeeds /
+// generic producer was mis-picked, or a write's content was hallucinated), do the
+// whole goal directly with a tool-enabled LLM carrying the full resolver toolkit —
+// read tools plus the goal's own target write shapes — then re-verify. Robust reach
+// floor for cold arbitrary goals. Additive, guarded, fail-open.
+const UNIVERSAL_READ_TOOLS = [
+  { name: "source_code", description: "Read a repo file's full source by repo-relative filePath. Read it yourself; never ask for it.", input_schema: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } },
+  { name: "fs_read", description: "Read a file's contents by path.", input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+  { name: "codeSearchResult", description: "Grep a single file for a regex pattern.", input_schema: { type: "object", properties: { path: { type: "string" }, pattern: { type: "string" } }, required: ["path", "pattern"] } },
+  { name: "shellResult", description: "Run a shell command to inspect the repo or system.", input_schema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } },
+];
+async function ufResolveUrl(shape: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+    const j = await r.json() as any; const v = j?.content?.vessels?.[0]; if (!v?.endpoint) return null;
+    const re = String(v.resolve_endpoint ?? "/resolve");
+    return (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(v.endpoint).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
+  } catch { return null; }
+}
+async function ufBuildWriteTool(shape: string): Promise<any | null> {
+  const url = await ufResolveUrl(shape); if (!url) return null;
+  let envelope = ""; let fields: string[] = []; let required: string[] = [];
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }), signal: AbortSignal.timeout(4000) });
+    if (r.ok) { const c = ((await r.json()) as any)?.content; if (c && c.known === true) { envelope = String(c.envelope ?? ""); fields = Array.isArray(c.fields) ? c.fields.map((f: any) => String(f.name)) : []; required = Array.isArray(c.required) ? c.required.map(String) : fields; } }
+  } catch { /* fail-open: generic content field */ }
+  const names = fields.length ? fields : ["content"];
+  const req = required.length ? required : ["content"];
+  const inner = { type: "object", properties: Object.fromEntries(names.map((f) => [f, { type: "string" }])), required: req };
+  return { name: shape, description: `Perform the '${shape}' write/create action. ${envelope ? `Pass a single '${envelope}' object with fields ${names.join(", ")} (required: ${req.join(", ")}).` : `Fields: ${names.join(", ")}.`} Build the payload FAITHFULLY from the goal and what you read; never invent unrelated content.`, input_schema: envelope ? { type: "object", properties: { [envelope]: inner }, required: [envelope] } : inner };
+}
+async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  const url = await ufResolveUrl("llm_completion_dispatch"); if (!url) return null;
+  const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
+  const tools: any[] = [...UNIVERSAL_READ_TOOLS];
+  for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
+  const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END yourself using your tools. Use the READ tools (source_code, fs_read, codeSearchResult, shellResult) to gather exactly what you need — do not ask for anything, read it.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result.`;
+  let text = ""; let toolCalls: any[] = [];
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
+    if (!r.ok) return null;
+    const j = await r.json() as any; text = j?.body?.text ?? j?.text ?? j?.content ?? ""; toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
+  } catch { return null; }
+  if (!text || text.trim().length === 0) return null;
+  const produced = [...new Set(toolCalls.map((c: any) => c?.tool_name).filter((n: any) => typeof n === "string" && writeShapes.includes(n)))];
+  produced.push("universal_fallback_result");
+  const verdict = await verifyGoalReached(goal, produced, `universal tool fallback: ${toolCalls.length} tool call(s)`, text.slice(0, 6000));
+  if (verdict?.reached) {
+    console.log(`[goal-host-vessel] universal tool-enabled fallback REACHED goal after hollow structured walk (${toolCalls.length} tool calls)`);
+    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
+  }
+  return null;
+}
+
 // Known producible-shape vocabulary = discovery's advertised shapes (every shape
 // has a live resolver, so the walk can reach it via backward-chain or mint-as-you-go).
 // Cached briefly so we don't GET /registry/shapes on every fresh goal.
@@ -3523,6 +3581,9 @@ async function runGoalWithRecovery(
       const goalIsEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
       const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
       const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+      if (walk.reached === false && !goalIsEditIntent) {
+        try { const uf = await universalToolFallback(goal, seededOutputShapes ?? []); if (uf?.reached) return uf; } catch { /* fail-open */ }
+      }
       if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
       // EDIT-INTENT ROUTING (2026-07-02): a 0-step walk that NAMES a concrete source
       // file is a plain code-change goal the shape-walk cannot serve. Its only
