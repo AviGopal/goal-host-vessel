@@ -1631,6 +1631,20 @@ Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If
       const parsed = JSON.parse(m[0]);
       const args = (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed as Record<string, unknown> : null;
       if (!args) return null;
+      // DATE-ARG NORMALISATION (2026-07-11): relative temporal references must bind
+      // to the substrate's real clock, never the LLM's guess. When the goal implies
+      // the current day ("today", "tonight", "daily note") and names no explicit
+      // date itself, force any YYYY-MM-DD substring in string args — and any "date"
+      // arg — to the actual current date.
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const goalImpliesToday = /\btoday\b|\btonight\b|\bdaily[- _]?note\b/i.test(goal) && !/\b\d{4}-\d{2}-\d{2}\b/.test(goal);
+      if (goalImpliesToday) {
+        for (const k of Object.keys(args)) {
+          const v = args[k];
+          if (typeof v === "string" && /\d{4}-\d{2}-\d{2}/.test(v)) args[k] = v.replace(/\d{4}-\d{2}-\d{2}/g, todayStr);
+        }
+        if ("date" in args && typeof args["date"] === "string" && !/^\d{4}-\d{2}-\d{2}$/.test(args["date"] as string)) args["date"] = todayStr;
+      }
       // ARG-ALIAS EXPANSION (2026-06-29): the generic LLM extraction can't know a
       // specific resolver's exact pointer field name (analysis-vessel's
       // problem_detection reads `file_paths`/`filePaths`, code_quality reads
