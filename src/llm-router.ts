@@ -219,7 +219,8 @@ export async function routedComplete(
       }
       return { ok: false, json: null, vesselId: sel.vesselId };
     }
-    const j = await r.json();
+    if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs, costUsd: 0 });
+  const j = await r.json();
     return { ok: true, json: j, vesselId: sel.vesselId };
   } catch (_e) {
     const latencyMs = Date.now() - t0;
