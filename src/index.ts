@@ -1644,6 +1644,73 @@ Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
   let lastRawResolveReason: string | null = null;
+  async function verifyWritePersisted(
+    writeShape: string,
+    writeResult: unknown,
+  ): Promise<{ persisted: true; content: unknown } | { persisted: false } | null> {
+    const isPersistingWrite = /_write$/.test(writeShape) || writeShape === "write_note";
+    if (!isPersistingWrite) return null;
+
+    try {
+      // Parse id from writeResult
+      let id: string | undefined;
+      const tryParseId = (v: unknown): string | undefined => {
+        if (typeof v === "object" && v !== null) {
+          const obj = v as Record<string, unknown>;
+          if (typeof obj["id"] === "string") return obj["id"];
+          if (typeof obj["content"] === "string") {
+            try {
+              const inner = JSON.parse(obj["content"]) as Record<string, unknown>;
+              if (typeof inner["id"] === "string") return inner["id"];
+            } catch { /* ignore */ }
+          }
+        }
+        return undefined;
+      };
+      if (typeof writeResult === "string") {
+        try { id = tryParseId(JSON.parse(writeResult)); } catch { /* ignore */ }
+      } else {
+        id = tryParseId(writeResult);
+      }
+      if (!id) return { persisted: false };
+
+      // Derive read shape: strip trailing _write, then leading verb segment
+      let readShape = writeShape.replace(/_write$/, "");
+      // e.g. concept_create -> concept; note_create -> note
+      readShape = readShape.replace(/^[a-z]+_create$/, (m) => m.replace(/_create$/, ""));
+      // fallback: strip any remaining _<verb> suffix
+      readShape = readShape.replace(/_[a-z]+$/, "") || readShape;
+
+      const ep = await endpointForShape(readShape);
+      if (!ep) return { persisted: false };
+      const readResult = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { id });
+      if (readResult != null) {
+        const asObj = typeof readResult === "object" && readResult !== null
+          ? readResult as Record<string, unknown>
+          : null;
+        const hasId =
+          asObj &&
+          (asObj["id"] === id ||
+            (typeof asObj["content"] === "string" && asObj["content"].includes(id)));
+        if (hasId) return { persisted: true, content: readResult };
+
+        // concept-db REST fallback
+        try {
+          const fbResp = await fetch(`${ep.endpoint}/concepts/${id}`, {
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (fbResp.ok) {
+            const fbBody = await fbResp.json() as unknown;
+            return { persisted: true, content: fbBody };
+          }
+        } catch { /* fail-open */ }
+      }
+      return { persisted: false };
+    } catch {
+      // fail-open: infrastructure error must not block the walk
+      return null;
+    }
+  }
   const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>): Promise<unknown | null> => {
     lastRawResolveReason = null;
     const base = poolVars();
@@ -1779,7 +1846,17 @@ If one of those sibling shapes is the action that would create what the goal ask
     const directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content from produced intermediate findings (${boundBody.length} chars) — composition, not placeholder`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
-    if (direct != null) return { content: direct };
+    if (direct != null) {
+      const v = await verifyWritePersisted(shape, direct);
+      if (v !== null && "persisted" in v && v.persisted === true) {
+        return { content: v.content };
+      } else if (v !== null && "persisted" in v && v.persisted === false) {
+        tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
+        // fall through to action-then-read / bridge / escalate
+      } else {
+        return { content: direct };
+      }
+    }
     if (lastRawResolveReason) {
       const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
       if (correctedRaw) {
