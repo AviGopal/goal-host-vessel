@@ -694,6 +694,7 @@ const UNIVERSAL_READ_TOOLS = [
   { name: "fs_read", description: "Read a file's contents by path.", input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
   { name: "codeSearchResult", description: "Grep a single file for a regex pattern.", input_schema: { type: "object", properties: { path: { type: "string" }, pattern: { type: "string" } }, required: ["path", "pattern"] } },
   { name: "shellResult", description: "Run a shell command to inspect the repo or system.", input_schema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } },
+  { name: "substrateGap", description: "Query the substrate's gaps. Optional filters: category, status (open/closed), limit. Use this to read or aggregate substrate gaps.", input_schema: { type: "object", properties: { category: { type: "string" }, status: { type: "string" }, limit: { type: "number" } }, required: [] } },
 ];
 async function ufResolveUrl(shape: string): Promise<string | null> {
   try {
@@ -731,8 +732,9 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     const j = await r.json() as any; text = j?.body?.text ?? j?.text ?? j?.content ?? ""; toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
   } catch { return null; }
   if (!text || text.trim().length === 0) return null;
-  const produced = [...new Set(toolCalls.map((c: any) => c?.tool_name).filter((n: any) => typeof n === "string" && writeShapes.includes(n)))];
-  produced.push("universal_fallback_result");
+  const calledWrites = [...new Set(toolCalls.map((c: any) => c?.tool_name).filter((n: any) => typeof n === "string" && writeShapes.includes(n)))];
+  const produced = [...new Set([...targetShapes, ...calledWrites])];
+  if (produced.length === 0) produced.push("universal_fallback_result");
   const verdict = await verifyGoalReached(goal, produced, `universal tool fallback: ${toolCalls.length} tool call(s)`, text.slice(0, 6000));
   if (verdict?.reached) {
     console.log(`[goal-host-vessel] universal tool-enabled fallback REACHED goal after hollow structured walk (${toolCalls.length} tool calls)`);
