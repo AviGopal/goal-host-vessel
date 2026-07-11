@@ -1918,6 +1918,27 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (corrected != null) { console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
       }
     }
+    // (a.5) INVESTIGATION FALLBACK: deterministic resolver failed because a required
+    //       argument (e.g. filePath) cannot be bound from the goal text — the goal
+    //       names a vessel/contract, not a file. Let a tool-enabled LLM investigate
+    //       and produce the content itself before falling through to a hollow bridge.
+    if (LLM_VESSEL_ENDPOINT && !terminalShapes.has(shape) && !shape.endsWith("_write") && lastRawResolveReason && /required|missing|must (be|provide|include)|is not (a )?(valid|provided)|no .*(path|file|arg)/i.test(lastRawResolveReason)) {
+      try {
+        const invEp = await endpointForShape("llm_completion_dispatch");
+        if (invEp) {
+          const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (source_code, fs_read, codeSearchResult, shellResult) to FIND and READ the relevant source/files yourself — do not ask for them.\n\nGoal:\n${goal}\n\nRespond with ONLY the concrete content (file contents, analysis, or answer) — no preamble, no code fences.`;
+          const ir = await fetch(`${invEp.endpoint}${invEp.resolvePath}`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: invPrompt, max_tokens: 4096 } } }), signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
+          if (ir.ok) {
+            const ij: any = await ir.json();
+            const itext: string = ij?.body?.text ?? ij?.text ?? ij?.content ?? "";
+            if (typeof itext === "string" && itext.length > 0) {
+              tap(`[goal-host-vessel] walk: satisfier produced "${shape}" via tool-enabled LLM investigation (reason: ${lastRawResolveReason})`);
+              return { content: itext };
+            }
+          }
+        }
+      } catch { /* fail-open: fall through to action-then-read / bridge */ }
+    }
     // (b) ACTION-THEN-READ: the target didn't resolve (e.g. a read-only shape for a
     //     not-yet-existing artifact). Find a sibling live shape on the SAME vessel
     //     that PRODUCES it (LLM-mapped from the goal), invoke that action, then
