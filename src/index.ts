@@ -1710,12 +1710,12 @@ Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If
         if (v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
           // libp2p-reachable peer: route the resolve through the local federation-transport
           // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
-          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`, resolvedByVesselId: v.id };
+          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}${v.id ? `&vessel=${encodeURIComponent(v.id)}` : ""}`, resolvedByVesselId: v.id };
         }
         if (process.env.PREFER_LIBP2P_ROUTE === "1" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
           // Operator-flagged location transparency: prefer the libp2p egress route for ANY
           // candidate advertising a multiaddr, regardless of discoveredVia. Flag OFF = no change.
-          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: "/egress/resolve?target=" + encodeURIComponent(v.libp2p_multiaddr[0]), resolvedByVesselId: v.id };
+          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: "/egress/resolve?target=" + encodeURIComponent(v.libp2p_multiaddr[0]) + (v.id ? "&vessel=" + encodeURIComponent(v.id) : ""), resolvedByVesselId: v.id };
         }
         // Cross-substrate: when discovery returns a peer-advertised vessel, prefer
         // routing the resolve through the peer's gateway endpoint and tag the
