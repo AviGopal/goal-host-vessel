@@ -1031,7 +1031,8 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
 // path_activities is the attribution unit (the composition that ran). reached is
 // the goal-reach verdict (NOT execution-status), so the per-goal posterior tracks
 // genuine goal achievement, not hollow completion.
-async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number): Promise<void> {
+type WalkTier = "learned_pathway" | "satisfier" | "universal_tool_fallback" | "fresh_derivation";
+async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation"): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
@@ -1045,6 +1046,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         duration_ms: Math.round(durationMs) || 0,
         cost_usd: costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
+        walk_tier: walkTier,
       }),
       signal: AbortSignal.timeout(15_000),
     });
