@@ -65,30 +65,32 @@ async function discoverProducers(): Promise<Producer[]> {
     const j: any = await r.json();
     const vessels: any[] = j?.content?.vessels ?? j?.vessels ?? [];
     const fedEgress = process.env["FED_TRANSPORT_EGRESS"] ?? "http://127.0.0.1:8401";
+    const preferLibp2p = process.env["PREFER_LIBP2P_ROUTE"] === "1";
     const producers: Producer[] = vessels
       .map((v) => {
         const endpoint = String(v?.endpoint ?? "");
-        const rowVesselId = String(v?.vesselId ?? v?.vessel_id ?? v?.id ?? "");
-        const useLibp2p =
-          (v.protocol === "libp2p" || process.env["PREFER_LIBP2P_ROUTE"] === "1") &&
+        const vid = String(v?.vesselId ?? v?.vessel_id ?? v?.id ?? "");
+        const isLibp2p =
+          (v.protocol === "libp2p" || preferLibp2p) &&
           Array.isArray(v.libp2p_multiaddr) &&
-          v.libp2p_multiaddr[0];
-        if (useLibp2p) {
-          const multiaddr = String(v.libp2p_multiaddr[0]);
+          typeof v.libp2p_multiaddr[0] === "string" &&
+          (v.libp2p_multiaddr[0] as string).length > 0;
+        if (isLibp2p) {
+          const multiaddr = v.libp2p_multiaddr[0] as string;
           return {
-            vesselId: rowVesselId,
+            vesselId: vid,
             endpoint,
             resolveUrl:
               fedEgress +
               "/egress/resolve?target=" +
               encodeURIComponent(multiaddr) +
               "&vessel=" +
-              encodeURIComponent(rowVesselId),
+              encodeURIComponent(vid),
             _libp2p: true as const,
           };
         }
         return {
-          vesselId: rowVesselId,
+          vesselId: vid,
           endpoint,
           resolveUrl:
             typeof v.resolve_endpoint === "string" && v.resolve_endpoint.startsWith("http")
@@ -99,8 +101,13 @@ async function discoverProducers(): Promise<Producer[]> {
           _libp2p: false as const,
         };
       })
-      .filter((p) => p.vesselId.length > 0 && (p._libp2p || /^https?:\/\//.test(p.endpoint)))
-      .map((p) => ({ vesselId: p.vesselId, endpoint: p.endpoint, resolveUrl: p.resolveUrl }));
+      .filter((p) =>
+        p.vesselId.length > 0 &&
+        (p._libp2p
+          ? true
+          : /^https?:\/\//.test(p.endpoint))
+      )
+      .map((p): Producer => ({ vesselId: p.vesselId, endpoint: p.endpoint, resolveUrl: p.resolveUrl }));
     producerCache = { at: now, producers };
     return producers;
   } catch {
