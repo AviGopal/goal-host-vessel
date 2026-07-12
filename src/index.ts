@@ -1579,8 +1579,9 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
-  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
   let walkTerminationReason: string | undefined;
+  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
+
   const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
     if (!LLM_VESSEL_ENDPOINT) return null;
     let schemaContract = "";
