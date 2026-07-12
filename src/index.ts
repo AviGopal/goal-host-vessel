@@ -700,9 +700,21 @@ async function ufResolveUrl(shape: string): Promise<string | null> {
   try {
     const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
     if (!r.ok) return null;
-    const j = await r.json() as any; const v = j?.content?.vessels?.[0]; if (!v?.endpoint) return null;
-    const re = String(v.resolve_endpoint ?? "/resolve");
-    return (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(v.endpoint).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
+    const j = await r.json() as any; const vessels: any[] = Array.isArray(j?.content?.vessels) ? j.content.vessels : [];
+    if (vessels.length === 0) return null;
+    // Mirror endpointForShape routeFor: prefer a plain-HTTP local row (protocol !== "libp2p"),
+    // else fall back to a libp2p row (or PREFER_LIBP2P_ROUTE) via the local federation egress.
+    const localHttp = vessels.find((x) => x && x.protocol !== "libp2p" && x.endpoint);
+    if (localHttp) {
+      const re = String(localHttp.resolve_endpoint ?? "/resolve");
+      return (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(localHttp.endpoint).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
+    }
+    const libp2p = vessels.find((x) => x && (x.protocol === "libp2p" || process.env.PREFER_LIBP2P_ROUTE === "1") && Array.isArray(x.libp2p_multiaddr) && x.libp2p_multiaddr[0]);
+    if (libp2p) {
+      const vid = libp2p.id ?? libp2p.vesselId;
+      return FED_TRANSPORT_EGRESS + "/egress/resolve?target=" + encodeURIComponent(libp2p.libp2p_multiaddr[0]) + (vid ? "&vessel=" + encodeURIComponent(vid) : "");
+    }
+    return null;
   } catch { return null; }
 }
 async function ufBuildWriteTool(shape: string): Promise<any | null> {
