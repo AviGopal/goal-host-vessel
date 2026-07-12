@@ -700,8 +700,15 @@ async function ufResolveUrl(shape: string): Promise<string | null> {
   try {
     const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
     if (!r.ok) return null;
-    const j = await r.json() as any; const vessels: any[] = Array.isArray(j?.content?.vessels) ? j.content.vessels : [];
-    if (vessels.length === 0) return null;
+    const j = await r.json() as any; let vessels: any[] = Array.isArray(j?.content?.vessels) ? j.content.vessels : [];
+    if (vessels.length === 0) {
+      // Fallback: retry via the v2 impulses endpoint which some vessels register under
+      try {
+        const r2 = await fetch(`${DISCOVERY_ENDPOINT}/v2/impulses/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
+        if (r2.ok) { const j2 = await r2.json() as any; vessels = Array.isArray(j2?.content?.vessels) ? j2.content.vessels : []; }
+      } catch { /* fall through to return null */ }
+      if (vessels.length === 0) return null;
+    }
     // Mirror endpointForShape routeFor: prefer a plain-HTTP local row (protocol !== "libp2p"),
     // else fall back to a libp2p row (or PREFER_LIBP2P_ROUTE) via the local federation egress.
     const localHttp = vessels.find((x) => x && x.protocol !== "libp2p" && x.endpoint);
