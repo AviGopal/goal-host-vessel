@@ -5769,6 +5769,17 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
+      const usedKnownPath = typeof seek.selectedTemplateId === "string" && seek.selectedTemplateId.length > 0 && seek.attempts === 1 && seek.reached === true;
+      const satisfierOnly = typeof seek.selectedTemplateId === "string" && seek.selectedTemplateId.startsWith("satisfier:");
+      const execution_path: string = (() => {
+        if (usedKnownPath) return "learned_pathway";
+        if (satisfierOnly) return "satisfier";
+        if (seek.executionId && String(seek.executionId).startsWith("universal-tool-fallback:")) return "universal_tool_fallback";
+        return "fresh_derivation";
+      })();
+      const walk_tier: string = seek.attempts != null ? String(seek.attempts) : "0";
+      effectiveTags.push(`execution_path:${execution_path}`, `walk_tier:${walk_tier}`);
+      record.walkLog = [...(record.walkLog ?? []), `[dispatch] execution_path=${execution_path} walk_tier=${walk_tier}`];
       record.inferenceConfidence = typeof goal === "string" ? (inferredTargetDecisionCache.get(goalHashOf(goal))?.confidence ?? null) : null;
       // Reward the LLM router: attribute every routed selection this dispatch made
       // (buffered under the goal hash) to the final reach verdict — α on reach, β on
