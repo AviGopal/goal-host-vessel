@@ -64,20 +64,43 @@ async function discoverProducers(): Promise<Producer[]> {
     if (!r.ok) return producerCache?.producers ?? [];
     const j: any = await r.json();
     const vessels: any[] = j?.content?.vessels ?? j?.vessels ?? [];
+    const fedEgress = process.env["FED_TRANSPORT_EGRESS"] ?? "http://127.0.0.1:8401";
     const producers: Producer[] = vessels
       .map((v) => {
         const endpoint = String(v?.endpoint ?? "");
+        const rowVesselId = String(v?.vesselId ?? v?.vessel_id ?? v?.id ?? "");
+        const useLibp2p =
+          (v.protocol === "libp2p" || process.env["PREFER_LIBP2P_ROUTE"] === "1") &&
+          Array.isArray(v.libp2p_multiaddr) &&
+          v.libp2p_multiaddr[0];
+        if (useLibp2p) {
+          const multiaddr = String(v.libp2p_multiaddr[0]);
+          return {
+            vesselId: rowVesselId,
+            endpoint,
+            resolveUrl:
+              fedEgress +
+              "/egress/resolve?target=" +
+              encodeURIComponent(multiaddr) +
+              "&vessel=" +
+              encodeURIComponent(rowVesselId),
+            _libp2p: true as const,
+          };
+        }
         return {
-          vesselId: String(v?.vesselId ?? v?.vessel_id ?? v?.id ?? ""),
+          vesselId: rowVesselId,
           endpoint,
-          resolveUrl: typeof v.resolve_endpoint === "string" && v.resolve_endpoint.startsWith("http")
-            ? v.resolve_endpoint
-            : typeof v.resolve_endpoint === "string" && v.resolve_endpoint.length > 0
-              ? endpoint.replace(/\/+$/, "") + "/" + v.resolve_endpoint.replace(/^\//, "")
-              : endpoint + "/resolve",
+          resolveUrl:
+            typeof v.resolve_endpoint === "string" && v.resolve_endpoint.startsWith("http")
+              ? v.resolve_endpoint
+              : typeof v.resolve_endpoint === "string" && v.resolve_endpoint.length > 0
+                ? endpoint.replace(/\/+$/, "") + "/" + v.resolve_endpoint.replace(/^\//, "")
+                : endpoint + "/resolve",
+          _libp2p: false as const,
         };
       })
-      .filter((p) => p.vesselId.length > 0 && /^https?:\/\//.test(p.endpoint));
+      .filter((p) => p.vesselId.length > 0 && (p._libp2p || /^https?:\/\//.test(p.endpoint)))
+      .map((p) => ({ vesselId: p.vesselId, endpoint: p.endpoint, resolveUrl: p.resolveUrl }));
     producerCache = { at: now, producers };
     return producers;
   } catch {
