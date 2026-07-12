@@ -4885,7 +4885,7 @@ function buildDiscoveryProxyResolver(shape: string) {
             // discoveredVia=peer check removed: locally-registered ingress-sidecar vessels
             // also use libp2p transport and must route via the egress regardless of discovery origin.
             endpoint = FED_TRANSPORT_EGRESS.replace(/\/+$/, "");
-            resolvePath = `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}`;
+            resolvePath = `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}${(v as { id?: string }).id ? `&vessel=${encodeURIComponent((v as { id?: string }).id as string)}` : ""}`;
           } else if (v.discoveredVia === "peer" && v.peerEndpoint) {
             endpoint = v.peerEndpoint.replace(/\/+$/, "");
             resolvePath = asResolvePath(v.resolve_endpoint);
