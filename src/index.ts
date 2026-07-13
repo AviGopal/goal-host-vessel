@@ -2931,7 +2931,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       const verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
-      reached = verdict?.reached !== false;
+      reached = verdict == null ? false : verdict.reached !== false;
+        if (verdict == null) {
+          goalReachReason = 'reach verifier unreachable — verdict unknown, failing closed';
+        };
       // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): an obsidian-
       // surface question/request that "reached" on ONLY pre-existing seed shapes
       // produced no new human-consumable answer — force not-reached so the recovery
