@@ -171,22 +171,6 @@ function fallbackSelection(): Selection | null {
   return { resolveUrl: `${LLM_FALLBACK_ENDPOINT.replace(/\/$/, "")}/resolve`, vesselId: null };
 }
 
-async function selectForTaskType(taskType: string): Promise<Selection | null> {
-  if (ROUTER_DISABLED) return fallbackSelection();
-  const producers = await discoverProducers();
-  if (producers.length === 0) return fallbackSelection();
-  const arms = await fetchArms(taskType);
-  let best: Producer | null = null;
-  let bestScore = -1;
-  for (const p of producers) {
-    const arm = arms.get(p.vesselId);
-    const score = sampleBeta(arm?.alpha ?? 1, arm?.beta ?? 1);
-    if (score > bestScore) { bestScore = score; best = p; }
-  }
-  if (!best) return fallbackSelection();
-  return { resolveUrl: best.resolveUrl, vesselId: best.vesselId };
-}
-
 // ── per-dispatch reward buffer ───────────────────────────────────────────────
 interface BufferedSelection { taskType: string; vesselId: string; latencyMs: number; costUsd: number; }
 const buffers = new Map<string, BufferedSelection[]>();
@@ -207,6 +191,65 @@ function buffer(dispatchId: string, sel: BufferedSelection): void {
 // ── the routed call — a drop-in for the old fetch(LLM_VESSEL_ENDPOINT/resolve) ─
 export interface RoutedResult { ok: boolean; json: any; vesselId: string | null; }
 
+async function postFeedback(vesselId: string | null, taskType: string, reached: boolean): Promise<void> {
+  if (vesselId == null) return;
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT.replace(/\/$/, "")}/v2/llm-router/feedback`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ task_type: taskType, vessel_id: vesselId, reached, latency_ms: 0, cost_usd: 0 }),
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch { /* fire-and-forget */ }
+}
+
+async function routeOverRanked(
+  ranked: Array<{ resolveUrl: string; vesselId: string | null }>,
+  dispatchId: string,
+  taskType: string,
+  body: { prompt: string; maxTokens?: number; system?: string; model?: string },
+): Promise<RoutedResult> {
+  const payload: Record<string, unknown> = { type: "llm_completion", prompt: body.prompt };
+  if (body.maxTokens) payload.max_tokens = body.maxTokens;
+  if (body.system) payload.system = body.system;
+  for (const sel of ranked.slice(0, 2)) {
+    if (sel.vesselId === null && body.model) payload.model = body.model;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      let r: Response;
+      try {
+        r = await fetch(sel.resolveUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!r.ok) {
+        await postFeedback(sel.vesselId, taskType, false);
+        continue;
+      }
+      const j = await r.json();
+      const inner = (j && typeof j === "object" && (j as any).content && typeof (j as any).content === "object" && (((j as any).content as any).body !== undefined || ((j as any).content as any).shape !== undefined)) ? (j as any).content : j;
+      const text: unknown = (inner as any)?.body?.content ?? (inner as any)?.content ?? (inner as any)?.body?.text ?? "";
+      if (typeof text !== "string" || text === "") {
+        await postFeedback(sel.vesselId, taskType, false);
+        continue;
+      }
+      await postFeedback(sel.vesselId, taskType, true);
+      if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs: 0, costUsd: 0 });
+      return { ok: true, json: inner, vesselId: sel.vesselId };
+    } catch {
+      await postFeedback(sel.vesselId, taskType, false);
+      continue;
+    }
+  }
+  return { ok: false, json: null, vesselId: null };
+}
+
 /**
  * Route one llm_completion for a task type. `body.model` is applied ONLY on the
  * fallback path (single-endpoint, vessel_id null) to preserve pre-router
@@ -219,54 +262,25 @@ export async function routedComplete(
   taskType: string,
   body: { prompt: string; maxTokens?: number; system?: string; model?: string },
 ): Promise<RoutedResult> {
-  const sel = await selectForTaskType(taskType);
-  if (!sel) return { ok: false, json: null, vesselId: null };
-  const payload: Record<string, unknown> = { type: "llm_completion", prompt: body.prompt };
-  if (body.maxTokens) payload.max_tokens = body.maxTokens;
-  if (body.system) payload.system = body.system;
-  if (sel.vesselId === null && body.model) payload.model = body.model; // fallback only
-  const t0 = Date.now();
-  try {
-    const r = await fetch(sel.resolveUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(60_000),
-    });
-    const latencyMs = Date.now() - t0;
-    if (!r.ok) {
-      const latencyMs = Date.now() - t0;
-      if (sel.vesselId != null) {
-        fetch(
-          ACTIVITY_API_ENDPOINT + "/v2/llm-router/feedback",
-          {
-            method: "POST",
-            headers: { ...authHeaders(), "Content-Type": "application/json" },
-            body: JSON.stringify({ task_type: taskType, vessel_id: sel.vesselId, reached: false, latency_ms: latencyMs, cost_usd: 0 }),
-            signal: AbortSignal.timeout(5000),
-          }
-        ).catch(() => {});
-      }
-      return { ok: false, json: null, vesselId: sel.vesselId };
-    }
-    if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs, costUsd: 0 });
-  const j = await r.json();
-    return { ok: true, json: j, vesselId: sel.vesselId };
-  } catch (_e) {
-    const latencyMs = Date.now() - t0;
-    if (sel.vesselId != null) {
-      fetch(
-        ACTIVITY_API_ENDPOINT + "/v2/llm-router/feedback",
-        {
-          method: "POST",
-          headers: { ...authHeaders(), "Content-Type": "application/json" },
-          body: JSON.stringify({ task_type: taskType, vessel_id: sel.vesselId, reached: false, latency_ms: latencyMs, cost_usd: 0 }),
-          signal: AbortSignal.timeout(5000),
-        }
-      ).catch(() => {});
-    }
-    return { ok: false, json: null, vesselId: sel.vesselId };
+  if (ROUTER_DISABLED) {
+    const fb = fallbackSelection();
+    if (!fb) return { ok: false, json: null, vesselId: null };
+    return routeOverRanked([fb], dispatchId, taskType, body);
   }
+  const producers = await discoverProducers();
+  if (producers.length === 0) {
+    const fb = fallbackSelection();
+    if (!fb) return { ok: false, json: null, vesselId: null };
+    return routeOverRanked([fb], dispatchId, taskType, body);
+  }
+  const arms = await fetchArms(taskType);
+  const scored = producers.map((p) => {
+    const arm = arms.get(p.vesselId);
+    return { sel: { resolveUrl: p.resolveUrl, vesselId: p.vesselId }, score: sampleBeta(arm?.alpha ?? 1, arm?.beta ?? 1) };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const ranked = scored.map((s) => s.sel);
+  return routeOverRanked(ranked, dispatchId, taskType, body);
 }
 
 /** Convenience wrapper returning just the completion text (or null). */
