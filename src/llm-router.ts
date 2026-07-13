@@ -234,14 +234,14 @@ async function routeOverRanked(
       }
       const j = await r.json();
       const inner = (j && typeof j === "object" && (j as any).content && typeof (j as any).content === "object" && (((j as any).content as any).body !== undefined || ((j as any).content as any).shape !== undefined)) ? (j as any).content : j;
-      const text: unknown = (inner as any)?.body?.content ?? (inner as any)?.content ?? (inner as any)?.body?.text ?? "";
+      const text: unknown = (inner as any)?.body?.content ?? (inner as any)?.content ?? (inner as any)?.body?.text ?? (inner as any)?.value ?? "";
       if (typeof text !== "string" || text === "") {
         await postFeedback(sel.vesselId, taskType, false);
         continue;
       }
       await postFeedback(sel.vesselId, taskType, true);
       if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs: 0, costUsd: 0 });
-      return { ok: true, json: inner, vesselId: sel.vesselId };
+      return { ok: true, json: { ...(inner as any), body: { ...(((inner as any)?.body) ?? {}), content: text } }, vesselId: sel.vesselId };
     } catch {
       await postFeedback(sel.vesselId, taskType, false);
       continue;
@@ -293,7 +293,7 @@ export async function routedText(
   const rr = await routedComplete(dispatchId, taskType, { prompt, ...(opts ?? {}) });
   if (!rr.ok) return null;
   const j = rr.json;
-  const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+  const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? j?.value ?? "";
   return typeof text === "string" && text.length > 0 ? text : null;
 }
 
