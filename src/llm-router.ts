@@ -279,6 +279,46 @@ export async function routedComplete(
     return { sel: { resolveUrl: p.resolveUrl, vesselId: p.vesselId }, score: sampleBeta(arm?.alpha ?? 1, arm?.beta ?? 1) };
   });
   scored.sort((a, b) => b.score - a.score);
+
+  // --- Routed path: dispatch to the Thompson-sampled winning vessel ---
+  const winner = scored[0]?.sel ?? null;
+  if (winner) {
+    const selectedEndpoint = winner.resolveUrl;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 60_000);
+      let r: Response;
+      try {
+        r = await fetch(selectedEndpoint, {
+          method: "POST",
+          headers: authHeaders(),
+          // No model override — the vessel's own pinned default applies.
+          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}) }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (r.ok) {
+        const j: any = await r.json();
+        const inner = (j && typeof j === "object" && (j as any).content && typeof (j as any).content === "object" && ((((j as any).content as any).body !== undefined) || (((j as any).content as any).shape !== undefined))) ? (j as any).content : j;
+        const text: unknown = (inner as any)?.body?.content ?? (inner as any)?.content ?? (inner as any)?.body?.text ?? (inner as any)?.value ?? "";
+        if (typeof text === "string" && text.length > 0) {
+          await postFeedback(winner.vesselId, taskType, true);
+          buffer(dispatchId, { taskType, vesselId: winner.vesselId, latencyMs: 0, costUsd: 0 });
+          return { ok: true, json: { ...(inner as any), body: { ...((inner as any)?.body ?? {}), content: text } }, vesselId: winner.vesselId };
+        }
+      }
+      await postFeedback(winner.vesselId, taskType, false);
+    } catch {
+      await postFeedback(winner.vesselId, taskType, false);
+    }
+    // --- Fallback path (routed vessel failed) ---
+    const fb = fallbackSelection();
+    if (!fb) return { ok: false, json: null, vesselId: null };
+    return routeOverRanked([fb], dispatchId, taskType, body);
+  }
+
   const ranked = scored.map((s) => s.sel);
   return routeOverRanked(ranked, dispatchId, taskType, body);
 }
