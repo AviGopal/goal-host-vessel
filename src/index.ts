@@ -18,6 +18,173 @@
 
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { Config } from './config';
+
+// ── fleetActivityFeed ────────────────────────────────────────────────────────
+
+interface FeedMember {
+  substrate: string;
+  reachable: boolean;
+  dispatches: unknown[];
+}
+
+interface FeedGap {
+  substrate: string;
+  id: string;
+  category: string;
+  status: string;
+  summary: string;
+}
+
+interface FleetActivityFeed {
+  generated_at: string;
+  members: FeedMember[];
+  gaps: FeedGap[];
+  boredom: unknown[];
+  rhythms: unknown[];
+}
+
+async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
+  const generated_at = new Date().toISOString();
+  const members: FeedMember[] = [];
+  const gaps: FeedGap[] = [];
+  const boredom: unknown[] = [];
+  const rhythms: unknown[] = [];
+
+  // (1) local activeDispatches
+  let localDispatches: unknown[] = [];
+  try {
+    const r = await fetch(`${Config.activityApiEndpoint}/active-dispatches`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (r.ok) {
+      const j = (await r.json()) as { dispatches?: unknown[] };
+      localDispatches = j?.dispatches ?? [];
+    }
+  } catch { /* fail-open */ }
+  members.push({ substrate: "local", reachable: true, dispatches: localDispatches });
+
+  // (2) federated members via registry mirror rows for goal-host vessels
+  try {
+    const regR = await fetch(
+      `${Config.discoveryEndpoint}/registry/mirrors?kind=goal-host`,
+      { signal: AbortSignal.timeout(5_000) },
+    );
+    if (regR.ok) {
+      const regJ = (await regR.json()) as { mirrors?: Array<{ vesselId: string; substrate: string; endpoint?: string }> };
+      const mirrors = regJ?.mirrors ?? [];
+      for (const mirror of mirrors) {
+        const fedTarget = mirror.vesselId
+          ? `${Config.fedTransportEgress}/v2/impulses/resolve`
+          : null;
+        if (!fedTarget) continue;
+        try {
+          const fedR = await fetch(fedTarget, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              impulse: {
+                pointer: {
+                  type: "activeDispatches",
+                  _fedTargetVessel: mirror.vesselId,
+                },
+              },
+            }),
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (fedR.ok) {
+            const fedJ = (await fedR.json()) as { dispatches?: unknown[] };
+            members.push({
+              substrate: mirror.substrate,
+              reachable: true,
+              dispatches: fedJ?.dispatches ?? [],
+            });
+          } else {
+            members.push({ substrate: mirror.substrate, reachable: false, dispatches: [] });
+          }
+        } catch {
+          members.push({ substrate: mirror.substrate, reachable: false, dispatches: [] });
+        }
+      }
+    }
+  } catch { /* fail-open */ }
+
+  // (3) recent open substrateGap entries from development-vessel (local + mirror)
+  const devEndpoints: Array<{ substrate: string; url: string }> = [
+    { substrate: "local", url: `${Config.activityApiEndpoint}/substrate-gaps?status=open&limit=20` },
+  ];
+  try {
+    const gapMirrorR = await fetch(
+      `${Config.discoveryEndpoint}/registry/mirrors?kind=development-vessel`,
+      { signal: AbortSignal.timeout(5_000) },
+    );
+    if (gapMirrorR.ok) {
+      const gapMirrorJ = (await gapMirrorR.json()) as { mirrors?: Array<{ substrate: string; endpoint?: string }> };
+      for (const m of gapMirrorJ?.mirrors ?? []) {
+        if (m.endpoint) {
+          devEndpoints.push({
+            substrate: m.substrate,
+            url: `${m.endpoint.replace(/\/+$/, "")}/substrate-gaps?status=open&limit=20`,
+          });
+        }
+      }
+    }
+  } catch { /* fail-open */ }
+  for (const dep of devEndpoints) {
+    try {
+      const gr = await fetch(dep.url, { signal: AbortSignal.timeout(5_000) });
+      if (gr.ok) {
+        const gj = (await gr.json()) as { gaps?: Array<{ id: string; category: string; status: string; summary: string }> };
+        for (const g of gj?.gaps ?? []) {
+          gaps.push({ substrate: dep.substrate, id: g.id, category: g.category, status: g.status, summary: g.summary });
+        }
+      }
+    } catch { /* fail-open */ }
+  }
+
+  // (4) boredom-attributed dispatches (operator or origin tag containing "boredom")
+  for (const m of members) {
+    for (const d of m.dispatches) {
+      const rec = d as Record<string, unknown>;
+      const op = String(rec["operator"] ?? "");
+      const origin = String(rec["origin"] ?? "");
+      if (op.includes("boredom") || origin.includes("boredom")) {
+        boredom.push(d);
+      }
+    }
+  }
+
+  // (5) rhythm due-state from rhythm_conductor_tick / rhythm_reality_sync producers
+  const rhythmShapes = ["rhythm_conductor_tick", "rhythm_reality_sync"];
+  for (const shape of rhythmShapes) {
+    try {
+      const rr = await fetch(`${Config.discoveryEndpoint}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (rr.ok) {
+        const rj = (await rr.json()) as { content?: { vessels?: Array<{ endpoint?: string }> } };
+        const producerEndpoint = rj?.content?.vessels?.[0]?.endpoint;
+        if (producerEndpoint) {
+          const pr = await fetch(`${producerEndpoint.replace(/\/+$/, "")}/v2/impulses/resolve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ impulse: { pointer: { type: shape } } }),
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (pr.ok) {
+            const pj = (await pr.json()) as unknown;
+            rhythms.push({ shape, data: pj });
+          }
+        }
+      }
+    } catch { /* fail-open */ }
+  }
+
+  return { generated_at, members, gaps, boredom, rhythms };
+}
+
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
@@ -576,7 +743,7 @@ const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
@@ -6555,6 +6722,23 @@ const server = Bun.serve({
 
     if (req.method === "POST" && url.pathname === "/resolve") {
       return handleResolve(req);
+    }
+
+    if (req.method === "POST" && url.pathname === "/v2/impulses/resolve") {
+      let v2Body: Record<string, unknown>;
+      try {
+        v2Body = await req.json() as Record<string, unknown>;
+      } catch {
+        return Response.json({ error: "invalid JSON" }, { status: 400 });
+      }
+      const v2Pointer = ((v2Body.impulse as Record<string, unknown> | undefined)?.pointer as Record<string, unknown> | undefined) ?? (v2Body as Record<string, unknown>);
+      if (v2Pointer?.type === "fleetActivityFeed") {
+        const feed = await resolveFleetActivityFeed();
+        return new Response(JSON.stringify({ ok: true, body: feed }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return Response.json({ error: "unknown shape" }, { status: 404 });
     }
 
     return new Response("Not Found", { status: 404 });
