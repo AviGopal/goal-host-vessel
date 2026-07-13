@@ -6438,7 +6438,7 @@ async function drainInterruptedRequeue(): Promise<void> {
       await fetch("http://127.0.0.1:" + PORT + "/run-goal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId } })
+        body: JSON.stringify({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId })
       });
       console.log("[goal-host-vessel] requeued interrupted dispatch " + r.dispatchId);
       await new Promise((res) => setTimeout(res, 5000));
