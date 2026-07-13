@@ -43,6 +43,10 @@ interface FleetActivityFeed {
   rhythms: unknown[];
 }
 
+async function buildFleetActivityFeedBody(): Promise<Record<string, unknown>> {
+  return resolveFleetActivityFeed() as unknown as Promise<Record<string, unknown>>;
+}
+
 async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
@@ -3657,8 +3661,13 @@ async function runGoalWithRecovery(
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
       const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goalForRouting) : false;
-      if (earlyEditIntentEnabled && earlyFileMatch && earlyEditVerb) {
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize)\b/i.test(goalForRouting) : false;
+      // Also treat as an edit intent when the goal names exactly one repos source file
+      // (aligns early predicate with the late 0-step detector's file-path-only test).
+      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb
+        ? (goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? []).length === 1
+        : false;
+      if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
         const earlyEditFile = earlyFileMatch[0]!;
         const earlyEditVessel = earlyFileMatch[1]!;
         const earlyAfterFile = goalForRouting.slice(goalForRouting.indexOf(earlyEditFile) + earlyEditFile.length);
@@ -6264,7 +6273,8 @@ async function handleResolve(req: Request): Promise<Response> {
     sol.answer = "answer" in body ? body.answer : (pointer as Record<string, unknown>)["answer"];
     return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
   }
-  if (type !== "goal_execution" && type !== "activity_execution") {
+  if (type === "fleetActivityFeed") { return Response.json({ resolved: true, shape: "fleetActivityFeed", body: await buildFleetActivityFeedBody() }); }
+        if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
       { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write, solicitationResponse_write, solicitationHeartbeat_write` },
       { status: 404 },
