@@ -53,136 +53,122 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const gaps: FeedGap[] = [];
   const boredom: unknown[] = [];
   const rhythms: unknown[] = [];
+  const feedAuthHeaders = { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) };
 
-  // (1) local activeDispatches
-  let localDispatches: unknown[] = [];
-  try {
-    const r = await fetch(`${Config.activityApiEndpoint}/active-dispatches`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (r.ok) {
-      const j = (await r.json()) as { dispatches?: unknown[] };
-      localDispatches = j?.dispatches ?? [];
-    }
-  } catch { /* fail-open */ }
+  // (1) local dispatches — in-process, same source as the activeDispatches branch
+  const localDispatches: unknown[] = [...executionStore.values()]
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, 50)
+    .map((r) => ({
+      dispatchId: r.dispatchId,
+      goal: typeof r.goal === "string" ? r.goal.slice(0, 200) : null,
+      status: r.status,
+      reached: r.reached ?? null,
+      operator: r.operator ?? null,
+      startedAt: r.startedAt,
+      selectedTemplateId: r.selectedTemplateId ?? null,
+      executionId: r.executionId ?? null,
+    }));
   members.push({ substrate: "local", reachable: true, dispatches: localDispatches });
 
-  // (2) federated members via registry mirror rows for goal-host vessels
+  // (2) federated members via authed capability lookup + transport egress
   try {
-    const regR = await fetch(
-      `${Config.discoveryEndpoint}/registry/mirrors?kind=goal-host`,
-      { signal: AbortSignal.timeout(5_000) },
-    );
-    if (regR.ok) {
-      const regJ = (await regR.json()) as { mirrors?: Array<{ vesselId: string; substrate: string; endpoint?: string }> };
-      const mirrors = regJ?.mirrors ?? [];
-      for (const mirror of mirrors) {
-        const fedTarget = mirror.vesselId
-          ? `${Config.fedTransportEgress}/v2/impulses/resolve`
-          : null;
-        if (!fedTarget) continue;
+    const capR = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: feedAuthHeaders,
+      body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "activeDispatches" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (capR.ok) {
+      const capJ = (await capR.json()) as { content?: { vessels?: Array<Record<string, unknown>> } };
+      for (const row of capJ?.content?.vessels ?? []) {
+        const id = String(row["id"] ?? "");
+        const maArr = row["libp2p_multiaddr"];
+        const ma = Array.isArray(maArr) && typeof maArr[0] === "string" ? maArr[0] : null;
+        if (!id.includes("@") || !ma) continue;
+        const targetVessel = id.split("@")[0];
+        const substrate = id.slice(id.indexOf("@") + 1);
         try {
-          const fedR = await fetch(fedTarget, {
+          const fedR = await fetch(`http://127.0.0.1:8401/egress/resolve?target=${encodeURIComponent(ma)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              impulse: {
-                pointer: {
-                  type: "activeDispatches",
-                  _fedTargetVessel: mirror.vesselId,
-                },
-              },
-            }),
+            body: JSON.stringify({ impulse: { pointer: { type: "activeDispatches", _fedTargetVessel: targetVessel } } }),
             signal: AbortSignal.timeout(8_000),
           });
-          if (fedR.ok) {
-            const fedJ = (await fedR.json()) as { dispatches?: unknown[] };
-            members.push({
-              substrate: mirror.substrate,
-              reachable: true,
-              dispatches: fedJ?.dispatches ?? [],
-            });
-          } else {
-            members.push({ substrate: mirror.substrate, reachable: false, dispatches: [] });
-          }
+          const fedJ = (await fedR.json()) as { content?: { body?: { dispatches?: unknown[] } }; body?: { dispatches?: unknown[] } };
+          members.push({ substrate, reachable: fedR.ok, dispatches: fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? [] });
         } catch {
-          members.push({ substrate: mirror.substrate, reachable: false, dispatches: [] });
+          members.push({ substrate, reachable: false, dispatches: [] });
         }
       }
     }
   } catch { /* fail-open */ }
 
-  // (3) recent open substrateGap entries from development-vessel (local + mirror)
-  const devEndpoints: Array<{ substrate: string; url: string }> = [
-    { substrate: "local", url: `${Config.activityApiEndpoint}/substrate-gaps?status=open&limit=20` },
-  ];
+  // (3) open gaps from development-vessel
   try {
-    const gapMirrorR = await fetch(
-      `${Config.discoveryEndpoint}/registry/mirrors?kind=development-vessel`,
-      { signal: AbortSignal.timeout(5_000) },
-    );
-    if (gapMirrorR.ok) {
-      const gapMirrorJ = (await gapMirrorR.json()) as { mirrors?: Array<{ substrate: string; endpoint?: string }> };
-      for (const m of gapMirrorJ?.mirrors ?? []) {
-        if (m.endpoint) {
-          devEndpoints.push({
-            substrate: m.substrate,
-            url: `${m.endpoint.replace(/\/+$/, "")}/substrate-gaps?status=open&limit=20`,
-          });
-        }
+    const gr = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status: "open", limit: 50 } } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (gr.ok) {
+      const gj = (await gr.json()) as { body?: { gaps?: Array<{ id: string; category: string; status: string; summary: string }> } };
+      for (const g of gj?.body?.gaps ?? []) {
+        gaps.push({ substrate: "local", id: g.id, category: g.category, status: g.status, summary: g.summary });
       }
     }
   } catch { /* fail-open */ }
-  for (const dep of devEndpoints) {
-    try {
-      const gr = await fetch(dep.url, { signal: AbortSignal.timeout(5_000) });
-      if (gr.ok) {
-        const gj = (await gr.json()) as { gaps?: Array<{ id: string; category: string; status: string; summary: string }> };
-        for (const g of gj?.gaps ?? []) {
-          gaps.push({ substrate: dep.substrate, id: g.id, category: g.category, status: g.status, summary: g.summary });
-        }
-      }
-    } catch { /* fail-open */ }
-  }
 
-  // (4) boredom-attributed dispatches (operator or origin tag containing "boredom")
+  // (4) boredom: attributed dispatches + condition/rhythm selection snapshots
   for (const m of members) {
     for (const d of m.dispatches) {
       const rec = d as Record<string, unknown>;
       const op = String(rec["operator"] ?? "");
-      const origin = String(rec["origin"] ?? "");
-      if (op.includes("boredom") || origin.includes("boredom")) {
-        boredom.push(d);
+      const goalText = String(rec["goal"] ?? "");
+      if (op.includes("boredom") || goalText.includes("boredom")) {
+        boredom.push({ kind: "dispatch", substrate: m.substrate, ...rec });
       }
     }
   }
+  try {
+    const br = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ impulse: { type: "poolImpulse", shape: "boredomSelectionSnapshot", limit: 5 } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (br.ok) {
+      const bj = (await br.json()) as { body?: unknown };
+      const bb = bj?.body as Record<string, unknown> | unknown[] | undefined;
+      let items: unknown[] = [];
+      if (Array.isArray(bb)) items = bb;
+      else if (bb && Array.isArray((bb as Record<string, unknown>)["impulses"])) items = (bb as Record<string, unknown>)["impulses"] as unknown[];
+      else if (bb && Array.isArray((bb as Record<string, unknown>)["records"])) items = (bb as Record<string, unknown>)["records"] as unknown[];
+      for (const it of items) boredom.push({ kind: "selection_snapshot", ...(it as Record<string, unknown>) });
+    }
+  } catch { /* fail-open */ }
 
-  // (5) rhythm due-state from rhythm_conductor_tick / rhythm_reality_sync producers
-  const rhythmShapes = ["rhythm_conductor_tick", "rhythm_reality_sync"];
-  for (const shape of rhythmShapes) {
+  // (5) rhythm due-state via authed capability lookup
+  for (const shape of ["rhythm_conductor_tick", "rhythm_reality_sync"]) {
     try {
-      const rr = await fetch(`${Config.discoveryEndpoint}/resolve`, {
+      const rr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: feedAuthHeaders,
         body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
         signal: AbortSignal.timeout(5_000),
       });
-      if (rr.ok) {
-        const rj = (await rr.json()) as { content?: { vessels?: Array<{ endpoint?: string }> } };
-        const producerEndpoint = rj?.content?.vessels?.[0]?.endpoint;
-        if (producerEndpoint) {
-          const pr = await fetch(`${producerEndpoint.replace(/\/+$/, "")}/v2/impulses/resolve`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ impulse: { pointer: { type: shape } } }),
-            signal: AbortSignal.timeout(5_000),
-          });
-          if (pr.ok) {
-            const pj = (await pr.json()) as unknown;
-            rhythms.push({ shape, data: pj });
-          }
-        }
-      }
+      if (!rr.ok) continue;
+      const rj = (await rr.json()) as { content?: { vessels?: Array<{ endpoint?: string }> } };
+      const producerEndpoint = rj?.content?.vessels?.[0]?.endpoint;
+      if (!producerEndpoint) continue;
+      const pr = await fetch(`${producerEndpoint.replace(/\/+$/, "")}/v2/impulses/resolve`, {
+        method: "POST",
+        headers: feedAuthHeaders,
+        body: JSON.stringify({ impulse: { pointer: { type: shape } } }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (pr.ok) rhythms.push({ shape, result: await pr.json() });
     } catch { /* fail-open */ }
   }
 
