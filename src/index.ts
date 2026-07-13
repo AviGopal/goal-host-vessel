@@ -178,6 +178,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
+import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { routedComplete, routedText, flushRouterFeedback } from "./llm-router";
 import { orderRing } from "./mem-ring";
 import {
@@ -3678,7 +3679,7 @@ async function runGoalWithRecovery(
               signal: AbortSignal.timeout(5_000),
             });
             const earlyDj = await earlyDr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-            const earlyV = earlyDj?.content?.vessels?.[0];
+            const earlyV = pickSatisfierProducer((earlyDj?.content?.vessels ?? []) as import("./satisfier-pick.js").SatisfierProducer[]);
             if (earlyV?.endpoint) {
               earlyComposeUrl = `${earlyV.endpoint.replace(/\/+$/, "")}${asResolvePath(earlyV.resolve_endpoint)}`;
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose producer resolved via discovery → ${earlyComposeUrl}`);
