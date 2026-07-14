@@ -3823,6 +3823,7 @@ async function runGoalWithRecovery(
       ) {
         const suppressedShape = walk.selectedTemplateId.slice("satisfier:".length);
         console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
+        tap(`[goal-host-vessel] ${opts.surface}: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes`);
         const retryWalk = await runGoalAsPoolWalk(goal, {
           variables: opts.variables,
           tags: opts.tags,
@@ -3837,6 +3838,35 @@ async function runGoalWithRecovery(
         });
         if (retryWalk.reached) return retryWalk;
         walk = retryWalk.attempts > 0 ? retryWalk : walk;
+      }
+
+      // ALTERNATIVE-FRAMING retry — guard: at most once per dispatch
+      if (walk.reached === false && goalTargetDecision !== null && Array.isArray(goalTargetDecision.alternatives) && goalTargetDecision.alternatives.length > 0) {
+        const currentShapes: string[] = seededOutputShapes ?? [];
+        const altShapes = goalTargetDecision.alternatives.find(
+          (alt: string[]) =>
+            Array.isArray(alt) &&
+            alt.length > 0 &&
+            !(alt.length === currentShapes.length && alt.every((s, i) => s === currentShapes[i]))
+        ) ?? null;
+        if (altShapes !== null) {
+          tap(`[goal-host-vessel] ${opts.surface}: walk: re-framing to alternative target shapes ${JSON.stringify(altShapes)} after no-pick/hollow termination`);
+          const altWalkResult = await runGoalAsPoolWalk(goal, {
+            variables: opts.variables,
+            tags: opts.tags,
+            parentExecutionId: opts.parentExecutionId,
+            compositionChain: opts.compositionChain,
+            expectedOutputShapes: altShapes,
+            terminalOutputShapes: undefined,
+            surface: opts.surface,
+            stepSink: opts.stepSink,
+            learningSink: opts.learningSink,
+            suppressSatisfierShapes: undefined,
+          });
+          if (altWalkResult.reached) {
+            walk = altWalkResult;
+          }
+        }
       }
       const editIntentGoal = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
       // A >0-step walk that "reached" via a source_code / analysis READ satisfier does
