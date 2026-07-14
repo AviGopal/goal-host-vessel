@@ -2163,9 +2163,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       return out;
     };
     // (a) Try resolving the target shape directly with goal-extracted args.
-    const _pfSlice = poolImpulses.slice(-2).map(imp => { try { return JSON.stringify((imp as any).content ?? imp); } catch { return String(imp); } }).join("\n");
-    const _priorFindings = _pfSlice.length > 4000 ? _pfSlice.slice(-4000) : _pfSlice;
-    const directArgsRaw = (await llmExtractPointerArgs(shape, _priorFindings)) ?? {};
+    const directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
     const directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
