@@ -1762,7 +1762,7 @@ async function runGoalAsPoolWalk(
   let walkTerminationReason: string | undefined;
   for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
 
-  const llmExtractPointerArgs = async (shape: string, correction?: string): Promise<Record<string, unknown> | null> => {
+  async function llmExtractPointerArgs(shape: string, correction?: string): Promise<Record<string, unknown> | null> {
     if (!LLM_VESSEL_ENDPOINT) return null;
     let schemaContract = "";
    try {
@@ -1797,11 +1797,19 @@ async function runGoalAsPoolWalk(
     } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
     const nowIso = new Date().toISOString();
     const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
-    const prompt = `${temporalGrounding}${schemaContract}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.
-
-GOAL: ${goal}
-
-Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If PAYLOAD GUIDANCE is present above, follow its field structure exactly (including any nested objects it specifies); otherwise emit a flat object. Do NOT add a top-level "type" key or wrap the result in a "pointer" key.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`;
+    const priorFindings = poolImpulses
+        .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal" && !terminalShapes.has(s); })
+        .map((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?"; let c: string; try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } return `- ${s}: ${c.slice(0, 800)}`; })
+        .join("\n");
+      const promptParts = [
+        `${temporalGrounding}${schemaContract}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.`,
+        `GOAL: ${goal}`,
+        `Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If PAYLOAD GUIDANCE is present above, follow its field structure exactly (including any nested objects it specifies); otherwise emit a flat object. Do NOT add a top-level "type" key or wrap the result in a "pointer" key.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`,
+        ...(priorFindings && priorFindings.length > 0
+          ? [`\nPRIOR FINDINGS (from preceding walk steps — use these to fill required fields not explicit in the goal text, e.g. gap class, entity name):\n${priorFindings}`]
+          : []),
+      ];
+      const prompt = promptParts.join("\n\n");
     try {
       const rr = await routedComplete(goalHashOf(goal), "pointer_arg_extraction", {
         prompt, model: "claude-haiku-4-5-20251001",
@@ -2155,7 +2163,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       return out;
     };
     // (a) Try resolving the target shape directly with goal-extracted args.
-    const directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+    const _pfSlice = poolImpulses.slice(-2).map(imp => { try { return JSON.stringify((imp as any).content ?? imp); } catch { return String(imp); } }).join("\n");
+    const _priorFindings = _pfSlice.length > 4000 ? _pfSlice.slice(-4000) : _pfSlice;
+    const directArgsRaw = (await llmExtractPointerArgs(shape, _priorFindings)) ?? {};
     const directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
