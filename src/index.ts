@@ -82,7 +82,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
     if (capR.ok) {
       const capJ = (await capR.json()) as { content?: { vessels?: Array<Record<string, unknown>> } };
       for (const row of capJ?.content?.vessels ?? []) {
-        const id = String(row["id"] ?? "");
+        const id = String(row["vesselId"] ?? row["id"] ?? "");
         const maArr = row["libp2p_multiaddr"];
         const ma = Array.isArray(maArr) && typeof maArr[0] === "string" ? maArr[0] : null;
         if (!id.includes("@") || !ma) continue;
