@@ -178,6 +178,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 import { appendFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
+import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { routedComplete, routedText, flushRouterFeedback } from "./llm-router";
 import { orderRing } from "./mem-ring";
