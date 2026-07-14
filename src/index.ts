@@ -2880,7 +2880,64 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (chain.length === 0 && !filedGap && missingNow.length > 0) {
         filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
       }
+      // --- vessel-resolver producer scan (gap walk-blind-to-vessel-resolver-producers) ---
+      let _vrCandidateInjected = false;
+      if (missingNow.length > 0) {
+        const missingShape = missingNow[0]!;
+        try {
+          const _vrDiscoResp = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ pointer: { type: "vesselCapability", shape: missingShape } }),
+            signal: AbortSignal.timeout(4_000),
+          });
+          if (_vrDiscoResp.ok) {
+            const _vrDiscoJson = await _vrDiscoResp.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
+            const _vrVessels = _vrDiscoJson?.content?.vessels ?? [];
+            if (_vrVessels.length > 0) {
+              const _vrV = _vrVessels[0]!;
+              const _vrEndpoint = _vrV.endpoint ?? "";
+              if (_vrEndpoint && !satisfierTried.has(missingShape)) {
+                tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
+                const _vrResolved = await vesselResolveShape(missingShape);
+                if (_vrResolved) {
+                  addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`);
+                  const _vrSatId = `satisfier:${missingShape}`;
+                  const _vrSynthTrace: ExecutionTrace = {
+                    id: `walk-satisfier-${++satisfierSeq}-${Date.now()}`,
+                    templateId: _vrSatId,
+                    templateName: `vessel-resolve injected (${missingShape})`,
+                    status: "completed",
+                    parentExecutionId: lastExecId,
+                    compositionChain: [...chainExecIds],
+                    inputImpulseIds: [],
+                    outputImpulseIds: [],
+                    tasks: [{ taskId: "satisfier-resolve", description: `resolve ${missingShape} via connected vessel`, resolverId: missingShape, resolverTier: "pattern", inputImpulseIds: [], outputImpulseIds: [], outputShapes: [missingShape], success: true }],
+                    costUsd: 0,
+                    durationMs: 0,
+                    tags: opts.tags,
+                    metadata: { satisfier: true, shape: missingShape },
+                  };
+                  satisfierTraces.push(_vrSynthTrace);
+                  chain.push(_vrSatId);
+                  exclude.add(normActivityId(_vrSatId));
+                  chainExecIds.push(_vrSynthTrace.id);
+                  lastTrace = _vrSynthTrace;
+                  lastExecId = _vrSynthTrace.id;
+                  lastPick = _vrSatId;
+                  recordStep({ selected: { templateId: _vrSatId, source: "satisfier" }, candidates: [], excluded: excludedNow(), status: "completed", newShapes: [missingShape], rationale: `vessel-resolver producer scan: injected vesselResolve for "${missingShape}" (walk was blind to this resolver)`, poolBefore: iterPoolBefore, poolAfter: shapeArr() });
+                  consecutiveNoProgress = 0;
+                  _vrCandidateInjected = true;
+                  continue;
+                }
+              }
+            }
+          }
+        } catch { /* discovery unreachable — fall through to termination */ }
+      }
+      if (!_vrCandidateInjected) {
       walkTerminationReason = missingNow.length > 0 ? `no producer or constructible payload for missing shapes [${missingNow.join(",")}]` : "opportunistic walk found no applicable pick (empty inferred target)";
+      }
       if (filedGap) opts.learningSink?.gapsFiled.push(filedGap);
       console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
       if (missingNow.length > 0) {
