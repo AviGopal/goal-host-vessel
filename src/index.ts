@@ -89,7 +89,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
         const targetVessel = id.split("@")[0];
         const substrate = id.slice(id.indexOf("@") + 1);
         try {
-          const fedR = await fetch(`http://127.0.0.1:8401/egress/resolve?target=${encodeURIComponent(ma)}`, {
+          const fedR = await fetch(`${Config.fedTransportEgress}/egress/resolve?target=${encodeURIComponent(ma)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ impulse: { pointer: { type: "activeDispatches", _fedTargetVessel: targetVessel } } }),
