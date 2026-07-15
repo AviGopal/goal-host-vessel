@@ -3844,7 +3844,20 @@ async function runGoalWithRecovery(
           learningSink: opts.learningSink,
           suppressSatisfierShapes: [suppressedShape],
         });
-        if (retryWalk.reached) return retryWalk;
+        if (retryWalk.reached) {
+          // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
+          // launders-hollow-into-reach): a suppressed-satisfier retry must NOT be
+          // accepted as reached for an EDIT-INTENT goal unless the retry actually
+          // produced an edit-result shape. Otherwise a hollow read/author satisfier,
+          // once suppressed, launders into a false reach that never edited the named
+          // file (observed dispatches 4c3300b3 / 51a5fcc2). When the goal names a
+          // repos source file with edit language and the retry produced no edit
+          // result, fall through to the edit-intent routing below instead of returning.
+          const _reEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
+          const _reEditShapes = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
+          const _reRetryDidNotEdit = (retryWalk.completionShapes ?? []).every((s) => !_reEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+          if (!(_reEditIntent && _reRetryDidNotEdit)) return retryWalk;
+        }
         walk = retryWalk.attempts > 0 ? retryWalk : walk;
       }
 
