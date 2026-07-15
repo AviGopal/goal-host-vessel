@@ -2449,7 +2449,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         ? missingForSatisfier.filter((s) => !terminalShapes.has(s))
         : missingForSatisfier;
       const liveForSatisfier = await liveShapes();
-      const satisfiableNow = eligibleForSatisfier.find((s) => liveForSatisfier.has(s) && !satisfierTried.has(s) && !minted.has(s));
+      const satisfiableNow = eligibleForSatisfier.find((s) => (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s));
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
         if (resolved) {
