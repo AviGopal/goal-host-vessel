@@ -6327,6 +6327,9 @@ async function handleResolve(req: Request): Promise<Response> {
         tags: (body.tags ?? pointer.tags),
         expected_output_shapes: (body.expected_output_shapes ?? pointer.expected_output_shapes),
         operator: (body.operator ?? pointer.operator),
+            target_template_id: (body.target_template_id ?? pointer.target_template_id),
+            parent_execution_id: (body.parent_execution_id ?? pointer.parent_execution_id),
+            composition_chain: (body.composition_chain ?? pointer.composition_chain),
       }),
     });
     return handleRunGoal(synthetic);
