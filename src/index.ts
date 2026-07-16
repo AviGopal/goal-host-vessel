@@ -6307,7 +6307,7 @@ async function handleResolve(req: Request): Promise<Response> {
   // MCP-fronted dispatches; the top-level form is the legacy convenience
   // shape. Each field falls back from top-level → impulse.pointer.
   const pointer = ((body.impulse as Record<string, unknown> | undefined)
-    ?.pointer as Record<string, unknown> | undefined) ?? {};
+    ?.pointer as Record<string, unknown> | undefined) ?? (body.pointer as Record<string, unknown> | undefined) ?? {};
 
   const type = (body.type as string | undefined) ?? (pointer.type as string | undefined);
 
