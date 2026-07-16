@@ -209,7 +209,7 @@ async function routeOverRanked(
   taskType: string,
   body: { prompt: string; maxTokens?: number; system?: string; model?: string },
 ): Promise<RoutedResult> {
-  const payload: Record<string, unknown> = { type: "llm_completion", prompt: body.prompt };
+  const payload: Record<string, unknown> = { type: "llm_completion", prompt: body.prompt, task_type: taskType };
   if (body.maxTokens) payload.max_tokens = body.maxTokens;
   if (body.system) payload.system = body.system;
   for (const sel of ranked.slice(0, 2)) {
@@ -293,7 +293,7 @@ export async function routedComplete(
           method: "POST",
           headers: authHeaders(),
           // No model override — the vessel's own pinned default applies.
-          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}) }),
+          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}), task_type: taskType }),
           signal: controller.signal,
         });
       } finally {
