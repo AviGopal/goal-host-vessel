@@ -13,5 +13,15 @@ export interface SatisfierProducer {
 export function pickSatisfierProducer(
   producers: SatisfierProducer[],
 ): SatisfierProducer | undefined {
-  return producers[0];
+  if (producers.length === 0) return undefined;
+  let best: SatisfierProducer | undefined;
+  let bestScore = -Infinity;
+  for (const p of producers) {
+    const score = typeof p["priority"] === "number" ? (p["priority"] as number) : 0;
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return best ?? producers[0];
 }
