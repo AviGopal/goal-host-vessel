@@ -6362,19 +6362,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: {
-        dispatchId: rec.dispatchId,
-        status: rec.status,
-        reached: rec.reached ?? null,
-        poolShapes: rec.poolShapes ?? [],
-        pendingTargets: rec.pendingTargets ?? [],
-        poolEvents: rec.poolEvents ?? [],
-        walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [],
-        currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null,
-        steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [],
-        learning: (rec as { learning?: LearningConsequences }).learning ?? null,
-        answerBody: (rec as { answerBody?: string }).answerBody ?? null,
-      },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, error: rec.error },
     });
   }
   if (type === "poolImpulse_write") {
