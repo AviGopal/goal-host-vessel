@@ -3760,7 +3760,7 @@ async function runGoalWithRecovery(
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
       const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize)\b/i.test(goalForRouting) : false;
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize|create|author|generate)\b/i.test(goalForRouting) : false;
       // Also treat as an edit intent when the goal names exactly one repos source file
       // (aligns early predicate with the late 0-step detector's file-path-only test).
       const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb
