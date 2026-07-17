@@ -3769,6 +3769,13 @@ async function runGoalWithRecovery(
       if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
         const earlyEditFile = earlyFileMatch[0]!;
         const earlyEditVessel = earlyFileMatch[1]!;
+        // Multi-file goals (2026-07-17): a goal may name SEVERAL repos paths; the
+        // single-path spec told feature_compose "this EXACT path only" and silently
+        // dropped the rest (gap spliceability-goal-host-index-edit-intent-region
+        // documents the coax trail). Enumerate every named path and union the
+        // vessels; single-file goals keep the exact wording below.
+        const earlyAllFiles = Array.from(new Set(goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? [earlyEditFile]));
+        const earlyAllVessels = Array.from(new Set(earlyAllFiles.map((f) => f.split("/")[1]!)));
         const earlyAfterFile = goalForRouting.slice(goalForRouting.indexOf(earlyEditFile) + earlyEditFile.length);
         const earlyEditLine = earlyAfterFile.match(/^:(\d+)/)?.[1] ?? goalForRouting.match(/\bline\s+~?(\d+)/i)?.[1];
         const earlyEditSite = earlyEditLine ? `${earlyEditFile}:${earlyEditLine}` : earlyEditFile;
@@ -3776,7 +3783,9 @@ async function runGoalWithRecovery(
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT DETECTED (pre-walk, names ${earlyEditFile}) — routing to feature_compose`);
           const earlySpec = [
             "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
-            `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${earlyEditFile}`,
+            earlyAllFiles.length > 1
+              ? `Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${earlyAllFiles.join(", ")}`
+              : `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${earlyEditFile}`,
             "The change MUST typecheck.",
             "",
             `GOAL: ${goalForRouting}`,
@@ -3805,7 +3814,7 @@ async function runGoalWithRecovery(
                 pointer: {
                   type: "feature_compose",
                   spec: earlySpec,
-                  verify_vessels: [`repos/${earlyEditVessel}`],
+                  verify_vessels: earlyAllVessels.map((v) => `repos/${v}`),
                   land: true,
                   gap: {
                     id: earlyGapId,
@@ -3964,6 +3973,9 @@ async function runGoalWithRecovery(
         if (fileMatch) {
           const editFile = fileMatch[0];
           const editVessel = fileMatch[1]!;
+          // Multi-file goals: mirror of the early block's enumeration (see there).
+          const allEditFiles = Array.from(new Set(goal.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? [editFile]));
+          const allEditVessels = Array.from(new Set(allEditFiles.map((f) => f.split("/")[1]!)));
           // Carry a line reference from the goal TEXT into edit_site (2026-07-02):
           // dev-vessel's near-edit-site grounding parses ':<n>' / 'line <n>' from
           // edit_site; without it the excerpt defaults to top-of-file. Accept either
@@ -3985,7 +3997,9 @@ async function runGoalWithRecovery(
             const spec = createIntent
               ? [
                   "Author the smallest, verifiable code change that satisfies this development goal, drafting a REAL working implementation — never a TODO/stub body.",
-                  `Primary target file: ${editFile}. CREATE it with a \`create_file\` op if it does not yet exist; edit it in place if it does.`,
+                  allEditFiles.length > 1
+                    ? `Target files — every one of these named paths needs its full required change (create the ones that do not exist, edit the rest in place; no wired stubs): ${allEditFiles.join(", ")}`
+                    : `Primary target file: ${editFile}. CREATE it with a \`create_file\` op if it does not yet exist; edit it in place if it does.`,
                   "You MAY also create a sibling test file and edit the vessel's resolver-registration files (e.g. src/config.ts and src/routes/impulses.ts, per the three-place rule) when wiring a new resolver requires it. Keep total edits minimal and strictly necessary; do not touch package.json.",
                   "The change MUST typecheck AND pass the vessel's lint/shape-dispatch check.",
                   "",
@@ -3993,7 +4007,9 @@ async function runGoalWithRecovery(
                 ].join("\n")
               : [
                   "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
-                  `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${editFile}`,
+                  allEditFiles.length > 1
+                    ? `Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${allEditFiles.join(", ")}`
+                    : `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${editFile}`,
                   "The change MUST typecheck.",
                   "",
                   `GOAL: ${goal}`,
@@ -4028,7 +4044,7 @@ async function runGoalWithRecovery(
                   pointer: {
                     type: "feature_compose",
                     spec,
-                    verify_vessels: [`repos/${editVessel}`],
+                    verify_vessels: allEditVessels.map((v) => `repos/${v}`),
                     land: true,
                     gap: {
                       id: gapId,
