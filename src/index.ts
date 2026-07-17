@@ -2666,7 +2666,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // K-wide bundle spends its fan-out on producers that actually produce T
         // (discovery returns scaffolds first; without this the bundle is all
         // scaffolds → 0 new shapes → 2 no-progress steps → stop, never reaching).
-        .sort((a, b) => scaffoldRank(a) - scaffoldRank(b));
+        .sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target));
       }
       // Fire the horizontal bundle only when >=2 GENUINE producers exist; a bundle
       // of pure scaffolds does no real work — fall through to the single-pick path
@@ -2787,7 +2787,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const feasibleProducer = (c: WalkCandidate): boolean =>
         notScaffold(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
       // 1. A GENUINE (non-hollow-scaffold) feasible producer of a target shape.
-      pick = candidates.find((c) => feasibleProducer(c) && !isHollowScaffold(c.id))
+      pick = [...candidates].sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target)).find((c) => feasibleProducer(c) && scaffoldRank(c, target) <= 0)
         // 2. A scaffold producer is acceptable ONLY for a target with no live
         //    resolver (not bridge-authorable) — otherwise prefer bridge-authoring.
         ?? candidates.find((c) => feasibleProducer(c) && !bridgeableTarget(c));
