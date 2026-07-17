@@ -2615,16 +2615,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // NOT settle for a hollow scaffold of it. Note: a bare live-resolver wrapper like
     // `auto-bridge-code_quality` (no `-to-` chaining) IS a genuine producer and is
     // deliberately NOT matched here.
-    const isHollowScaffold = (id: string): boolean => {
-      const n = normActivityId(id);
-      return /^(compose-|learned-compose|proposed_pattern_authored_|repaired-)/.test(n)
-        || /-to-/.test(n); // chained composite bridge = hollow scaffold
-    };
-    // Genuine-first ranking key: genuine producers rank 0, hollow scaffolds rank 1.
-    // Stable-sorting candidates by this key floats real producers ahead of the
-    // ~581 compose-*/learned-*/proposed_*/repaired-*/X-to-Y scaffolds that shape-
-    // match a target but produce 0 new shapes when run.
-    const scaffoldRank = (c: WalkCandidate): number => (isHollowScaffold(c.id) ? 1 : 0);
+    const { isHollowScaffold, scaffoldRank } = makeProducerPickHelpers(normActivityId);
     const liveSetB = target.size > 0 ? await liveShapes() : new Set<string>();
     const bridgeableTarget = (c: WalkCandidate): boolean =>
       c.outputShapes.some((s) => missingTargetsB.includes(s) && liveSetB.has(s));
