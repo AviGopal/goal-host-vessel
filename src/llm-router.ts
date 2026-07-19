@@ -313,10 +313,17 @@ export async function routedComplete(
     } catch {
       await postFeedback(winner.vesselId, taskType, false);
     }
-    // --- Fallback path (routed vessel failed) ---
+    // --- Fallback path (routed vessel failed): cascade through the OTHER ranked
+    // producers (including federated hub arms reached via egress) BEFORE the single
+    // env fallback, instead of jumping straight to a possibly-dead
+    // LLM_VESSEL_ENDPOINT. This is what stops the reach verifier / inference from
+    // fail-closing when the local Thompson-winner arm is credit-dead but a
+    // quota-having in-identity-group arm exists. ---
+    const rest = scored.slice(1).map((s) => s.sel);
     const fb = fallbackSelection();
-    if (!fb) return { ok: false, json: null, vesselId: null };
-    return routeOverRanked([fb], dispatchId, taskType, body);
+    const cascade = fb ? [...rest, fb] : rest;
+    if (cascade.length === 0) return { ok: false, json: null, vesselId: null };
+    return routeOverRanked(cascade, dispatchId, taskType, body);
   }
 
   const ranked = scored.map((s) => s.sel);

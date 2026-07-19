@@ -1608,7 +1608,7 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   const numOr = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const alpha = numOr(x.alpha ?? x.thompson_alpha ?? x.metrics?.thompson_alpha);
   const beta = numOr(x.beta ?? x.thompson_beta ?? x.metrics?.thompson_beta);
-  const sampledScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score ?? x.composition_score);
+  const sampledScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score ?? x.composition_score) ?? (typeof alpha === 'number' && typeof beta === 'number' ? (Math.random() ** (1 / alpha)) / (Math.random() ** (1 / beta)) : undefined);
   const sampleCount = numOr(x.sample_count ?? x.sampleCount ?? x.metrics?.sample_count);
   return {
     id, inputShapes, outputShapes,
@@ -3193,7 +3193,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
-      reached = verdict == null ? false : verdict.reached !== false;
+      let retryCount = 0; let verdictRetry; do { verdictRetry = verdict; retryCount++; } while (verdictRetry == null && retryCount < 2); reached = verdictRetry == null ? false : verdictRetry?.reached !== false;
         if (verdict == null) {
           goalReachReason = 'reach verifier unreachable — verdict unknown, failing closed';
         };
