@@ -6856,6 +6856,55 @@ const server = Bun.serve({
       const dispatchId = url.pathname.slice("/executions/".length);
       const record = executionStore.get(dispatchId);
       if (!record) return Response.json({ error: "dispatch not found" }, { status: 404 });
+      // Poll-time oracle-label consumption: when serving a TERMINAL dispatch whose
+      // learning has not yet consumed an oracle label, resolve a
+      // goal_verification_label for this execution from activity-api's oracle
+      // corpus (fire-and-forget; the poll response is never blocked on it) and
+      // convert its verdict into Thompson feedback on the selected template,
+      // mirroring the penaliseHollowTemplate fetch idiom.
+      const learn = record.learning;
+      if (record.status !== "running" && learn && !learn.oracleLabelWritten && record.executionId && record.selectedTemplateId) {
+        learn.oracleLabelWritten = true;
+        const labelExecId = record.executionId;
+        const labelTemplateId = record.selectedTemplateId;
+        void (async () => {
+          try {
+            const labelRes = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: 1 } }),
+              signal: AbortSignal.timeout(15_000),
+            });
+            if (!labelRes.ok) return;
+            const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
+            let labels: Array<{ verdict?: string }> = [];
+            try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string }>) : []; } catch { labels = []; }
+            const labelVerdict = labels[0]?.verdict;
+            if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") return;
+            if (labelVerdict !== "partial") {
+              await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+                body: JSON.stringify({
+                  activity_id: labelTemplateId,
+                  direction: labelVerdict === "achieved" ? "positive" : "negative",
+                  intensity: 1,
+                  reason: "oracle label consumption",
+                }),
+                signal: AbortSignal.timeout(15_000),
+              });
+            }
+            learn.alphaBetaDelta.push({
+              templateId: labelTemplateId,
+              dAlpha: labelVerdict === "achieved" ? 1 : 0,
+              dBeta: labelVerdict === "not_achieved" ? 1 : 0,
+            });
+            console.log(`[oracle-label] consumed verdict=${labelVerdict} for execution ${labelExecId} -> feedback on ${labelTemplateId}`);
+          } catch (e) {
+            console.warn(`[oracle-label] consumption failed (non-fatal): ${(e as Error).message}`);
+          }
+        })();
+      }
       return Response.json({
         dispatchId: record.dispatchId,
         status: record.status,
@@ -6868,6 +6917,7 @@ const server = Bun.serve({
         completionShapes: (record as { completionShapes?: string[] | null }).completionShapes ?? null,
         error: record.error,
         walkLog: record.walkLog,
+        learning: record.learning ?? null,
       });
     }
 
