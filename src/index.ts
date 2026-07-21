@@ -3856,14 +3856,18 @@ async function runGoalWithRecovery(
               const earlySummary = typeof earlyBody.summary === "string" && earlyBody.summary.trim()
                 ? ` — ${earlyBody.summary.trim().slice(0, 160)}` : "";
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=FAVORABLE${earlyLandedSha ? ` landed=${earlyLandedSha}` : " (staged)"}${earlySummary}`);
+              // SUBSTANCE GRADE: reached iff a real landing occurred (feature_compose set
+              // earlyLandedSha only on push_status==="pushed" + new_git_sha). A "staged FAVORABLE"
+              // (typecheck-clean but not committed/pushed) is not a reach.
+              if (!earlyLandedSha) { await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed"); }
               return {
                 result: null,
-                status: "completed" as const,
+                status: earlyLandedSha ? ("completed" as const) : ("failed" as const),
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `early edit-intent routed to feature_compose; ${earlyLandedSha ? `landed ${earlyLandedSha}` : "staged FAVORABLE"}${earlySummary}`,
-                reached: true,
+                goalReachReason: `early edit-intent routed to feature_compose; ${earlyLandedSha ? `landed ${earlyLandedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${earlySummary}`,
+                reached: !!earlyLandedSha,
                 executionId: earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined,
               };
             }
@@ -4146,14 +4150,17 @@ async function runGoalWithRecovery(
                   })),
                 });
               } catch { /* durable edit-intent trace is best-effort */ }
+              // SUBSTANCE GRADE: reached iff a real landing occurred (landedSha set only on
+              // push_status==="pushed" + new_git_sha). "staged FAVORABLE" is not a reach.
+              if (!landedSha) { await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed"); }
               return {
                 result: null,
-                status: "completed",
+                status: landedSha ? "completed" : "failed",
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE"}${summary}`,
-                reached: true,
+                goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${summary}`,
+                reached: !!landedSha,
                 executionId: landedSha ? `feature_compose:${landedSha}` : undefined,
               };
             }
@@ -4204,15 +4211,23 @@ async function runGoalWithRecovery(
                 const pwtJson = await pwtResp.json() as { success?: boolean; shape?: string; body?: Record<string, unknown> };
                 const pwtBody = (pwtJson.body ?? {}) as Record<string, unknown>;
                 if (pwtJson.success !== false && (pwtJson.shape === "mitosisStaged" || pwtBody["dispatched"] === true)) {
-                  tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools STAGED mitosis for ${editFile} (${String(pwtBody["mitosis_version_id"] ?? "")})`);
+                  // SUBSTANCE GRADE (staged != landed): mitosisStaged is definitionally
+                  // pre-landing — the patch is typecheck-clean in the clone but NOT committed/
+                  // pushed to origin/dev (landing is a separate async mitosis cutover). Grading
+                  // this reached=true was the hollow green (dispatch 40d343e6: reached=yes, origin
+                  // unchanged). A staged clone is not a reach; grade honest-not-reached so the
+                  // posterior learns the truth and escalation can fire. Fail-CLOSED: staged is
+                  // itself proof of not-landed, so no git check is needed here.
+                  tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools STAGED (NOT landed) mitosis for ${editFile} (${String(pwtBody["mitosis_version_id"] ?? "")}) — grading staged-not-landed`);
+                  await penaliseHollowTemplate("patch_with_tools", "staged-not-landed");
                   return {
                     result: null,
-                    status: "completed",
+                    status: "failed",
                     selectedTemplateId: "patch_with_tools",
-                    completionShapes: ["fileEditResult"],
+                    completionShapes: ["mitosisCutoverReport"],
                     attempts: 2,
-                    goalReachReason: `feature_compose verdict=${verdict || "unknown"} (${failWhy}); escalated to patch_with_tools which staged a typecheck-verified mitosis for ${editFile}`,
-                    reached: true,
+                    goalReachReason: `staged-not-landed — feature_compose verdict=${verdict || "unknown"} (${failWhy}); escalated to patch_with_tools which STAGED a typecheck-verified mitosis for ${editFile} but it is not committed/pushed to origin/dev (cutover pending/failed); a staged clone is not a reach`,
+                    reached: false,
                     executionId: `patch_with_tools:${goalHashOf(goal as string)}`,
                   };
                 }
