@@ -3931,8 +3931,24 @@ async function runGoalWithRecovery(
             learningSink: opts.learningSink,
             suppressSatisfierShapes: undefined,
           });
-          if (altWalkResult.reached) {
+          // B1 punt-shape guard: the ALTERNATIVE-FRAMING retry only fires after the
+          // original walk was HOLLOW, so a reframe that "reached" solely by producing
+          // punt/dispatch shapes (obsidian_dispatch_goal = hand to a human, dispatch_goal
+          // / goal_execution = re-dispatch) has NOT reached the ORIGINAL goal — it moved
+          // the goalposts to a trivial hand-off (the evidenced rubber-stamp: an impossible
+          // deploy goal "reached" via obsidian_dispatch_goal with answerBody=null). Accept
+          // the reframe only when it produced at least one substantive artifact shape
+          // (excluding punts and walk-mechanics shapes goal/dispatch_id/poolImpulse_write).
+          const PUNT_OR_MECHANICS = new Set([
+            "obsidian_dispatch_goal", "dispatch_goal", "goal_execution",
+            "goal", "dispatch_id", "poolImpulse_write",
+          ]);
+          const altProduced = (altWalkResult.completionShapes ?? []).map((sh) => String(sh));
+          const altHasSubstance = altProduced.some((sh) => !PUNT_OR_MECHANICS.has(sh));
+          if (altWalkResult.reached && altHasSubstance) {
             walk = altWalkResult;
+          } else if (altWalkResult.reached) {
+            tap(`[goal-host-vessel] ${opts.surface}: walk: reframe REJECTED as punt-only — reached only via hand-off/dispatch shapes ${JSON.stringify(altProduced)}; original goal NOT reached (fails closed)`);
           }
         }
       }
