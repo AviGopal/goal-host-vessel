@@ -805,6 +805,26 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     return { reached: false, reason: "deterministic:no-output — execution produced no content", completion_shapes: [] };
   }
 
+  // Deterministic NEGATIVE reach for the edit-intent family (no LLM): patch_with_tools
+  // returns `mitosisStaged` — the patch is STAGED in the clone and typecheck-clean, but
+  // NOT committed/pushed to origin (landing is a separate async mitosis cutover, which for
+  // 42b32a91 never advanced origin). Staged-but-unlanded is NOT a reach: a working-tree edit
+  // that the operator would see as "not done" must not grade reached. Without this, such a
+  // report falls through to the content-presence LLM judge below, which rubber-stamps it —
+  // a hollow green that poisons every downstream posterior (Thompson, landability, VoI credit
+  // all trained on a false outcome). Grading it honest-not-reached instead feeds the existing
+  // beta-penalty + hollow-concept mint so the loop LEARNS the truth and escalation can fire —
+  // the operator's fallback success condition. Keyed on the PRODUCED shape, not the goal text,
+  // so read/explain goals that merely name a src file are unaffected (they never emit
+  // mitosisStaged). Fail-open: if a genuine landing IS evidenced (a landed:true cutover line
+  // in the digest), the check yields and normal verification proceeds — never suppress a real reach.
+  const stagedNotLanded =
+    meaningfulShapes.includes("mitosisStaged") &&
+    !dig.split("\n").some((l) => /"landed"\s*:\s*true/.test(l));
+  if (stagedNotLanded) {
+    return { reached: false, reason: "deterministic:staged-not-landed — patch_with_tools staged the edit in the clone (typecheck-clean) but it is not committed/pushed to origin (mitosis cutover pending/failed); a working-tree edit is not a reach", completion_shapes: ["mitosisCutoverReport"] };
+  }
+
   if (dig !== "") {
     // Error envelope check: reject ONLY when EVERY non-empty content line is an
     // error/failure line (the whole digest is an error), never on mere substring
