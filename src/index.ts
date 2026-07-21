@@ -3193,7 +3193,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
-      let retryCount = 0; let verdictRetry; do { verdictRetry = verdict; retryCount++; } while (verdictRetry == null && retryCount < 2); reached = verdictRetry == null ? false : verdictRetry?.reached !== false;
+      let retryCount = 0; let verdictRetry; do { verdictRetry = verdict; retryCount++; } while (verdictRetry == null && retryCount < 2); reached = verdictRetry == null ? false : verdictRetry?.reached === true;
         if (verdict == null) {
           goalReachReason = 'reach verifier unreachable — verdict unknown, failing closed';
         };
@@ -4388,7 +4388,7 @@ async function runGoalWithRecovery(
         }
         const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined);
         completionShapes = verdict?.completion_shapes ?? null;
-        reached = verdict?.reached !== false;
+        reached = verdict?.reached === true;
         if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
