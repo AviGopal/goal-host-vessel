@@ -5734,6 +5734,21 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // subject to Bun's built-in 300s connection timeout. The caller polls
   // GET /executions/:dispatchId for the outcome.
   const requeueId = typeof variables.requeue_dispatch_id === "string" ? variables.requeue_dispatch_id : "";
+  // Coalesce duplicate in-flight goals: if an identical free-form goal is already
+  // RUNNING, return its dispatchId instead of starting a redundant walk. Bounds the
+  // gap-drain / no-producer-escalation livelock — many uncapped dispatchers plus the
+  // self-dispatch amplifiers (escalateNoProducerToInvestigation, resume) re-issue the
+  // same unreachable goal dozens of times, saturating the in-flight pool and starving
+  // real work. Skips requeues (intentional re-run) and targetTemplateId (no goal text).
+  if (typeof goal === "string" && goal.trim().length > 0 && !requeueId && !targetTemplateId) {
+    const norm = goal.trim();
+    for (const rec of executionStore.values()) {
+      if (rec.status === "running" && typeof rec.goal === "string" && rec.goal.trim() === norm) {
+        console.log(`[run-goal] coalesced duplicate in-flight goal -> ${rec.dispatchId} (${norm.slice(0, 60)})`);
+        return Response.json({ dispatchId: rec.dispatchId, status: "running", coalesced: true }, { status: 202 });
+      }
+    }
+  }
         const dispatchId = requeueId && !executionStore.has(requeueId) ? requeueId : crypto.randomUUID();
   pruneStore();
   // Requeued dispatches carry their lineage: requeuedAt arms the one-requeue
