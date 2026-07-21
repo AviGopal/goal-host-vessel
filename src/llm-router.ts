@@ -48,6 +48,7 @@ interface Producer { vesselId: string; endpoint: string; resolveUrl: string; }
 interface Arm { alpha: number; beta: number; }
 
 // ── discovery of llm_completion producers (short TTL cache) ──────────────────
+// llm_completion producers are resolved through discovery per call (30s TTL) and the forward target is built live from the fresh discovery row's libp2p_multiaddr, so a hub restart never requires a spoke edit.
 let producerCache: { at: number; producers: Producer[] } | null = null;
 const PRODUCER_TTL_MS = 30_000;
 
