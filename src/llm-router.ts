@@ -64,7 +64,7 @@ async function discoverProducers(): Promise<Producer[]> {
     if (!r.ok) return producerCache?.producers ?? [];
     const j: any = await r.json();
     const vessels: any[] = j?.content?.vessels ?? j?.vessels ?? [];
-    const fedEgress = process.env["FED_TRANSPORT_EGRESS"] ?? "http://127.0.0.1:8401";
+    const fedEgress = process.env["FED_TRANSPORT_EGRESS"] ?? "http://127.0.0.1:8401"; // Egress target is the fresh discovery libp2p_multiaddr[0] resolved per call
     const preferLibp2p = process.env["PREFER_LIBP2P_ROUTE"] === "1";
     const producers: Producer[] = vessels
       .map((v) => {
