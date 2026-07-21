@@ -5740,7 +5740,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // self-dispatch amplifiers (escalateNoProducerToInvestigation, resume) re-issue the
   // same unreachable goal dozens of times, saturating the in-flight pool and starving
   // real work. Skips requeues (intentional re-run) and targetTemplateId (no goal text).
-  if (typeof goal === "string" && goal.trim().length > 0 && !requeueId && !targetTemplateId) {
+  if (typeof goal === "string" && goal.trim().length > 0 && !targetTemplateId) {
     const norm = goal.trim();
     for (const rec of executionStore.values()) {
       if (rec.status === "running" && typeof rec.goal === "string" && rec.goal.trim() === norm) {
