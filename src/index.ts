@@ -862,11 +862,18 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     // Mirror of the negative checks above and of the edit-intent route which already
     // trusts FAVORABLE. Structure-anchored: report shape AND FAVORABLE verdict on the
     // SAME digest line (truncation of the verdict only degrades to the LLM, never a false positive).
+    // A FAVORABLE featureComposeReport is set on TYPECHECK alone (feature-compose.ts),
+    // BEFORE the land step — so FAVORABLE-but-staged is not a reach. Require the LANDED
+    // conjunct (push_status:"pushed" / a new_git_sha in the digest). This is the grader-side
+    // inverse of bfc6af1 (which fixed the walk RETURN sites): without it the grader greens a
+    // staged clone and feeds the ribosome/Thompson a hollow lie. Fail-toward-honest: if the
+    // landing evidence is absent the branch falls THROUGH to the LLM judge below, which — shown
+    // no landing — grades not-reached; a genuinely landed FAVORABLE still carries the sha and greens.
     const favorableCompose = dig.split("\n").some((l) =>
       /featureComposeReport/.test(l) && /"verdict"\s*:\s*"?FAVORABLE/i.test(l)
-    );
+    ) && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
     if (favorableCompose) {
-      return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified and applied by feature_compose", completion_shapes: ["featureComposeReport"] };
+      return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified, applied by feature_compose, AND landed on origin/dev", completion_shapes: ["featureComposeReport"] };
     }
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
@@ -4136,7 +4143,11 @@ async function runGoalWithRecovery(
                   status: "completed",
                   inputImpulseIds: [],
                   outputImpulseIds: landedSha ? [`git:${landedSha}`] : [],
-                  tags: [...(opts.tags ?? []), "reached:true", "completion_shapes:fileEditResult", "edit_intent:true"],
+                  // Durable trace the ribosome/Thompson READ: tag reached from the landed sha,
+                  // not unconditionally. A staged (non-landed) FAVORABLE must not persist a
+                  // reached:true trace (that is a hollow green feeding the learning loop even though
+                  // the RETURN is already honest via reached:!!landedSha).
+                  tags: [...(opts.tags ?? []), landedSha ? "reached:true" : "reached:false", ...(landedSha ? ["completion_shapes:fileEditResult"] : []), "edit_intent:true"],
                   metadata: { satisfier: false, edit_intent: true, landed_sha: landedSha, edit_file: editFile, edit_site: editSite, summary: body.summary, op_count: body.op_count, applied: body.applied },
                   tasks: (Array.isArray(body.applied) ? body.applied : [null]).map((op: any, i: number) => ({
                     taskId: `compose-op-${i + 1}`,
