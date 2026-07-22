@@ -873,7 +873,32 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
       /featureComposeReport/.test(l) && /"verdict"\s*:\s*"?FAVORABLE/i.test(l)
     ) && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
     if (favorableCompose) {
-      return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified, applied by feature_compose, AND landed on origin/dev", completion_shapes: ["featureComposeReport"], deterministic: true };
+      // STRONG credit (deterministic:true → isSubstanceHonestReach → creditReachedTemplate)
+      // is gated on VERIFIED SUBSTANCE, not the producer's self-declared FAVORABLE.
+      // feature_compose's semantic gate FAILS OPEN on an LLM-judge outage
+      // (development-vessel feature-compose.ts: addresses:true / on_live_path:true /
+      // verified:false) so a flaky judge cannot wedge landing — but a fail-open FAVORABLE is
+      // UNVERIFIED and must not earn the strong flag. Require, on top of FAVORABLE + landed
+      // sha: (a) the code-set non-fail-open marker semantic_gate.verified:true (an LLM cannot
+      // inject it), AND (b) a DETERMINISTIC reachability signal — reachable_symbols non-empty
+      // (grep-derived changed symbol found live, no LLM). Both sit inside semantic_gate, which
+      // serializes BEFORE cutovers.new_git_sha in the report body, so they are visible on
+      // exactly the digests where the existing sha check already succeeds — no NEW truncation
+      // miss. When absent (fail-open, LLM outage, symbol-less edit, or a truncated digest)
+      // degrade to deterministic:false: reached stays TRUE because it DID land, so credit
+      // flows via the downstream-use ledger (d737edb), never as a strong stamp on a hollow
+      // green. The contaminated on_live_path (true even on fail-open) is deliberately unused.
+      const verifiedSubstance =
+        /"verified"\s*:\s*true/.test(dig) &&
+        /"reachable_symbols"\s*:\s*\[\s*"/.test(dig);
+      return {
+        reached: true,
+        reason: verifiedSubstance
+          ? "deterministic:favorable-compose — semantic gate consulted (verified) + reachable-symbol substance, applied by feature_compose AND landed on origin/dev"
+          : "favorable-compose — landed on origin/dev but semantic gate was fail-open/unverified (no reachable-symbol substance); strong credit withheld, deferring to downstream-use ledger",
+        completion_shapes: ["featureComposeReport"],
+        deterministic: verifiedSubstance,
+      };
     }
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
