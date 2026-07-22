@@ -1299,25 +1299,37 @@ function isSubstanceHonestReach(verdict: GoalReachVerdict | null | undefined): b
   return !!verdict && verdict.reached === true && verdict.deterministic === true;
 }
 // DOWNSTREAM-USE substance gate (the standing law "verify reach by downstream USE,
-// not an LLM verdict"): the walk's ACTUALLY-produced shapes have a live productive
-// CONSUMER in the registry ⇒ the output is substance a next walk can use. Registry-
-// grounded (discover-by-shapes backward), never a model string, so unspoofable by
-// goal text or the reach judge. 349/384 shapes have zero consumer, so this is
-// discriminating, not a rubber-stamp. Fail-closed (no credit) on any error.
+// not an LLM verdict"). PRIOR DEFECT (closed here): this POSTed discover-by-shapes
+// backward and returned true the instant ANY activity merely DECLARED the produced
+// shape as an input — registry CAPABILITY, not USE. That credited hollow greens: a
+// shape like `source_code` has 25 declaring consumers yet ZERO productive traces
+// (verdict falsely_covered), so a bare LLM-yes (deterministic:false) earned Thompson
+// alpha on capability alone — the exact self-deception consumer-productivity-audit.ts:8-21
+// names by hand ("the system lying to itself"). NOW trace-grounded: delegate to
+// development-vessel's consumer_productivity_audit, which returns productively_consumed
+// ONLY when a candidate consumer has a SUCCESS trace consuming the shape AND emitting a
+// genuine (non-proposal) downstream output. Credit iff >=1 produced shape is
+// productively_consumed — ACTUAL downstream use, unspoofable by goal text or the
+// reach-judge string. Fail-closed (no credit) on any error/timeout: the honest default
+// is to withhold, never to rubber-stamp. Reuse, not mint (law 3): composes an existing
+// resolver already trusted by vessel_arrival_scan's "integrated" gate.
 async function producedShapesConsumable(shapes: string[]): Promise<boolean> {
   const meaningful = shapes.filter((s) => s && s !== "goal");
   if (meaningful.length === 0) return false;
   try {
-    const cr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ required_shapes: meaningful, mode: "backward", limit: 1 }),
-      signal: AbortSignal.timeout(8_000),
+      body: JSON.stringify({ impulse: { pointer: { type: "consumer_productivity_audit", shapes: meaningful, requireTraceEvidence: true } } }),
+      signal: AbortSignal.timeout(12_000),
     });
-    if (!cr.ok) return false;
-    const cj: any = await cr.json();
-    const consumers = cj?.activities ?? cj?.matches ?? [];
-    return Array.isArray(consumers) && consumers.length > 0;
+    if (!r.ok) return false;
+    const j: any = await r.json();
+    const body = j?.body ?? j?.content ?? j;
+    const reports: any[] = Array.isArray(body?.shapes) ? body.shapes : [];
+    // Credit iff at least one produced shape is PRODUCTIVELY consumed (a real SUCCESS
+    // trace consumes it and emits a genuine output), never merely declared-covered.
+    return reports.some((s) => s?.verdict === "productively_consumed");
   } catch { return false; }
 }
 // Symmetric credit — the exact inverse of penaliseHollowTemplate. Same /v2/activities/feedback
