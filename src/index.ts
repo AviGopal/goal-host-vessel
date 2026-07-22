@@ -795,7 +795,7 @@ const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1
 // target shape — the operator's point: identify the shapes of the completion
 // STATE, emergently). On not-reached we downgrade status to failed and β-penalise
 // the selected template so Thompson stops reinforcing hollow completions.
-interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; }
+interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; }
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
@@ -873,7 +873,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
       /featureComposeReport/.test(l) && /"verdict"\s*:\s*"?FAVORABLE/i.test(l)
     ) && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
     if (favorableCompose) {
-      return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified, applied by feature_compose, AND landed on origin/dev", completion_shapes: ["featureComposeReport"] };
+      return { reached: true, reason: "deterministic:favorable-compose — typecheck-clean change verified, applied by feature_compose, AND landed on origin/dev", completion_shapes: ["featureComposeReport"], deterministic: true };
     }
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
@@ -903,7 +903,20 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
     const j: any = rr.json;
     const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
     const m = String(text).match(/\{[\s\S]*\}/);
-    return m ? (JSON.parse(m[0]) as GoalReachVerdict) : null;
+    if (!m) return null;
+    const p: any = JSON.parse(m[0]);
+    // SANITIZE — reason/deterministic are LLM-writable; whitelist fields and FORCE
+    // deterministic:false so a model-injected {"deterministic":true} or a "deterministic:"-
+    // prefixed reason can NEVER reach isSubstanceHonestReach. Only CODE sets the flag
+    // (favorable-compose :876). Credit thus never fires on a bare LLM-yes (the reach judge
+    // rubber-stamps some trivial/impossible goals: negative_control reached 3/3).
+    return {
+      reached: !!p.reached,
+      reason: typeof p.reason === "string" ? p.reason : "",
+      completion_shapes: Array.isArray(p.completion_shapes) ? p.completion_shapes.map(String) : [],
+      missing: Array.isArray(p.missing) ? p.missing.map(String) : [],
+      deterministic: false,
+    };
   } catch { return null; }
 }
 
@@ -1275,6 +1288,53 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
   // the hollow template (no α change). Return the delta so terminalization can
   // surface it in DispatchRecord.learning (decision-transparency, 2026-07-07).
   return { templateId: activityId, dAlpha: 0, dBeta: 2 };
+}
+// A reach is SUBSTANCE-HONEST iff the CODE-authored `deterministic` flag is set
+// (verifyGoalReached sets it ONLY on favorable-compose = a landed sha :876; the LLM
+// reach-judge parse is sanitized to deterministic:false so a bare LLM-yes can never
+// set it). Used for the recovery-loop credit; the general-walk site additionally
+// admits a registry-consumer-backed reach (producedShapesConsumable) — both are
+// substance, never a model string.
+function isSubstanceHonestReach(verdict: GoalReachVerdict | null | undefined): boolean {
+  return !!verdict && verdict.reached === true && verdict.deterministic === true;
+}
+// DOWNSTREAM-USE substance gate (the standing law "verify reach by downstream USE,
+// not an LLM verdict"): the walk's ACTUALLY-produced shapes have a live productive
+// CONSUMER in the registry ⇒ the output is substance a next walk can use. Registry-
+// grounded (discover-by-shapes backward), never a model string, so unspoofable by
+// goal text or the reach judge. 349/384 shapes have zero consumer, so this is
+// discriminating, not a rubber-stamp. Fail-closed (no credit) on any error.
+async function producedShapesConsumable(shapes: string[]): Promise<boolean> {
+  const meaningful = shapes.filter((s) => s && s !== "goal");
+  if (meaningful.length === 0) return false;
+  try {
+    const cr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ required_shapes: meaningful, mode: "backward", limit: 1 }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!cr.ok) return false;
+    const cj: any = await cr.json();
+    const consumers = cj?.activities ?? cj?.matches ?? [];
+    return Array.isArray(consumers) && consumers.length > 0;
+  } catch { return false; }
+}
+// Symmetric credit — the exact inverse of penaliseHollowTemplate. Same /v2/activities/feedback
+// channel (direction:"positive" intensity:2 mirrors the penalty's negative/2). The engine
+// template trace this walk emits carries dispatcher_used:goal-host + no reach tag ⇒
+// classifyReach 'ungraded' ⇒ SKIP, so this POST is the SOLE α source (no double-count).
+// Only ever called behind a substance gate (deterministic flag OR producedShapesConsumable).
+async function creditReachedTemplate(activityId: string, reason: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
+  try {
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ activity_id: activityId, direction: "positive", intensity: 2, reason: `substance-honest reach (landed/consumable): ${reason}`.slice(0, 200) }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch { /* non-fatal, symmetric with penaliseHollowTemplate */ }
+  return { templateId: activityId, dAlpha: 2, dBeta: 0 };
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
 // goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
@@ -3268,6 +3328,16 @@ If one of those sibling shapes is the action that would create what the goal ask
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
         tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        // SYMMETRIC CREDIT (mirror of the HOLLOW β-penalty at :3247), gated on SUBSTANCE:
+        // a landed/deterministic reach OR the walk's produced shapes have a live downstream
+        // CONSUMER in the registry (verify-reach-by-downstream-use — registry-grounded, never
+        // the LLM verdict). Leaf attribution = lastPick, symmetric with the penalty. The engine
+        // trace is ungraded/SKIPped ⇒ this feedback POST is the sole α source (no double-count).
+        if (verdict.deterministic === true || await producedShapesConsumable([...producedShapes])) {
+          const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
+          opts.learningSink?.alphaBetaDelta.push(_abCredit);
+          tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
+        }
         // ANSWER-DELIVERY (decision-transparency, 2026-07-07): a genuinely-reached
         // obsidian question carries a decision-ready markdown answerBody the vault can
         // render, and a produced goal_answer pool shape. The reach-judge rationale
@@ -4458,6 +4528,7 @@ async function runGoalWithRecovery(
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+          if (isSubstanceHonestReach(verdict)) { await creditReachedTemplate(selId, verdict.reason ?? "goal reached"); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
           void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
