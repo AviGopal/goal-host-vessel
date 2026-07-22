@@ -4265,6 +4265,21 @@ async function runGoalWithRecovery(
                 ? ` — ${body.summary.trim().slice(0, 160)}` : "";
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=FAVORABLE${landedSha ? ` landed=${landedSha}` : " (staged)"}${summary}`);
               try {
+                // SUBSTANCE GATE for the durable reached:true tag the ribosome/Thompson READ.
+                // landedSha alone is NOT reach: a fail-open (LLM-judge-down) or mis-localized
+                // FAVORABLE can commit yet not do what the goal asked (observed live 2026-07-22:
+                // a mis-localized edit landed reached:true under an LLM outage). Require the same
+                // DETERMINISTIC diff-substance the walk favorable-compose gate uses: the code-set
+                // semantic_gate.verified:true (an LLM cannot forge it) AND a non-empty grep-derived
+                // reachable_symbols. Unverified-but-landed => tag dispatcher_used:goal-host so
+                // classifyReach returns 'ungraded' (SKIP: no alpha, no beta) — the honest 'cannot
+                // grade synchronously' outcome; retroactive downstream-use credit still applies if
+                // the output is later consumed. Never a strong alpha on an unverified green.
+                const editSubstanceVerified = (() => {
+                  const sg = body.semantic_gate as Record<string, unknown> | undefined;
+                  const rs = sg?.reachable_symbols;
+                  return !!(sg && sg.verified === true && Array.isArray(rs) && rs.length > 0);
+                })();
                 void persistSatisfierTrace({
                   id: landedSha ? `feature_compose:${landedSha}` : `feature_compose:staged-${editSite}`,
                   templateId: "feature_compose",
@@ -4276,7 +4291,7 @@ async function runGoalWithRecovery(
                   // not unconditionally. A staged (non-landed) FAVORABLE must not persist a
                   // reached:true trace (that is a hollow green feeding the learning loop even though
                   // the RETURN is already honest via reached:!!landedSha).
-                  tags: [...(opts.tags ?? []), landedSha ? "reached:true" : "reached:false", ...(landedSha ? ["completion_shapes:fileEditResult"] : []), "edit_intent:true"],
+                  tags: [...(opts.tags ?? []), landedSha ? (editSubstanceVerified ? "reached:true" : "dispatcher_used:goal-host") : "reached:false", ...(landedSha && editSubstanceVerified ? ["completion_shapes:fileEditResult"] : []), "edit_intent:true"],
                   metadata: { satisfier: false, edit_intent: true, landed_sha: landedSha, edit_file: editFile, edit_site: editSite, summary: body.summary, op_count: body.op_count, applied: body.applied },
                   tasks: (Array.isArray(body.applied) ? body.applied : [null]).map((op: any, i: number) => ({
                     taskId: `compose-op-${i + 1}`,
