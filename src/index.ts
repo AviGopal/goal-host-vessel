@@ -2518,6 +2518,20 @@ If one of those sibling shapes is the action that would create what the goal ask
   let consecutiveNoProgress = 0;
   let earlyReachVerdict: GoalReachVerdict | null = null;
   let satisfierSeq = 0; // synthetic-trace id counter for vessel-resolve satisfier steps
+  // IN-CHAIN CONSUMPTION LEDGER (replaces the lossy consumer_productivity_audit clamp at
+  // the reach-credit gate below). chainProduced accumulates shapes a strictly-earlier
+  // successful step emitted; consumedInChain gains a shape only when a LATER step's declared
+  // input equals one — a genuine, computed producer→consumer edge that carried an impulse
+  // en route to the reach. Pure in-memory set arithmetic (no dispatch/resolve, no LLM
+  // verdict): unspoofable by goal text, fail-closed (empty ⇒ withhold). Complements the
+  // retroactive ANCESTOR credit (activity-api propagateCreditAlongChain, fired on this
+  // walk's ingested trace via composition_chain).
+  const chainProduced = new Set<string>();
+  const consumedInChain = new Set<string>();
+  const ledgerStep = (inputShapes: string[] | undefined, newOutputs: string[]): void => {
+    for (const s of (inputShapes ?? [])) if (chainProduced.has(s)) consumedInChain.add(s);
+    for (const s of newOutputs) if (s && s !== "activityExecutionSummary") chainProduced.add(s);
+  };
   // Per-step decision tree (decision-transparency, 2026-07-07): each walk selection
   // pushes a WalkStep here; mirrorWalkState mirrors it onto rec.steps every iteration
   // so goalWalkState surfaces the structured tree WHILE the walk runs.
@@ -2634,6 +2648,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           };
           satisfierTraces.push(synthTrace);
           chain.push(satId);
+          ledgerStep(undefined, [satisfiableNow]);
           exclude.add(normActivityId(satId));
           chainExecIds.push(synthTrace.id);
           lastTrace = synthTrace;
@@ -2839,6 +2854,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           if (bestPickId) lastPick = bestPickId;
         }
         const bundleNew = [...producedShapes].filter((s) => !iterPoolBefore.includes(s));
+        for (const bc of bundle) ledgerStep(bc.inputShapes, []);
+        ledgerStep(undefined, bundleNew);
         for (let bi = 0; bi < bundle.length; bi++) {
           const bc = bundle[bi];
           const bt = branchResults[bi];
@@ -3065,6 +3082,7 @@ If one of those sibling shapes is the action that would create what the goal ask
                   };
                   satisfierTraces.push(_vrSynthTrace);
                   chain.push(_vrSatId);
+                  ledgerStep(undefined, [missingShape]);
                   exclude.add(normActivityId(_vrSatId));
                   chainExecIds.push(_vrSynthTrace.id);
                   lastTrace = _vrSynthTrace;
@@ -3169,6 +3187,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     chain.push(pick.id);
     exclude.add(normActivityId(pick.id));
     const _stepNew = [...producedShapes].filter((s) => !iterPoolBefore.includes(s));
+    if (trace.status !== "failed") ledgerStep(pick.inputShapes, _stepNew);
     recordStep({
       selected: {
         templateId: pick.id, source: pickSource,
@@ -3341,11 +3360,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       } else if (verdict && verdict.reached === true) {
         tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // SYMMETRIC CREDIT (mirror of the HOLLOW β-penalty at :3247), gated on SUBSTANCE:
-        // a landed/deterministic reach OR the walk's produced shapes have a live downstream
-        // CONSUMER in the registry (verify-reach-by-downstream-use — registry-grounded, never
-        // the LLM verdict). Leaf attribution = lastPick, symmetric with the penalty. The engine
-        // trace is ungraded/SKIPped ⇒ this feedback POST is the sole α source (no double-count).
-        if (verdict.deterministic === true || await producedShapesConsumable([...producedShapes])) {
+        // a landed/deterministic reach OR a genuine IN-CHAIN producer→consumer edge carried an
+        // impulse to the reach (consumedInChain, built above) — ACTUAL in-walk data-flow use,
+        // never registry capability and never the lossy consumer_productivity_audit (which
+        // under-reports truly_covered ~0 from a biased 100-trace window ⇒ a blanket clamp).
+        // Leaf attribution = lastPick, symmetric with the penalty. The engine trace is
+        // ungraded/SKIPped ⇒ this feedback POST is the sole synchronous α source (no double-count).
+        // producedShapesConsumable stays defined for the OUT-OF-BAND retroactive/active path.
+        if (verdict.deterministic === true || consumedInChain.size > 0) {
           const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
           opts.learningSink?.alphaBetaDelta.push(_abCredit);
           tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
