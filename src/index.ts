@@ -855,7 +855,7 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
   return { reached: false, reason: `deterministic:wrong-compute-answer — recomputed ${label} does not match any distinctive answer token in the output (e.g. ${claimed[0]})`, completion_shapes: [] };
 }
 
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string): Promise<GoalReachVerdict | null> {
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
   const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
@@ -968,6 +968,9 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // ── End deterministic pre-check — fall through to LLM ───────────────────
 
   if (!LLM_VESSEL_ENDPOINT) return null;
+  const cmdSection = commandEvidence
+    ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. Apply this degenerate-result skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
+    : "";
   const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
 
 GOAL: ${goal}
@@ -977,7 +980,7 @@ Task summary: ${taskSummary}${contentDigest ? `\n\nProduced output CONTENT (trun
 
 Judge by SUBSTANTIVE FULFILLMENT OF INTENT, not by verbatim text. The test is whether the produced output meaningfully accomplishes what the goal asked for. VERBATIM / EXACT-CHARACTER / EXACT-BYTE / EXACT-STRING equality is NOT required and MUST NOT be the basis for rejection: a goal that says 'write a note saying X' is REACHED by a note whose content conveys X, even if the wording, length, byte-count, or formatting differ from any literal text in the goal. Example: goal asks for a note with a 43-character phrase and the output is 40 bytes but conveys the same meaning → REACHED. Differences in length, punctuation, or phrasing are NOT grounds for hollow.
 
-STILL score HOLLOW (reached:false) when the output genuinely fails the intent: nothing was produced; the WRONG shape was produced; the content is empty / 0-byte / a bare placeholder / a refusal or error envelope; or the output is MATERIALLY INCOMPLETE versus an explicitly multi-part goal (e.g. goal says move ALL inbox files but only one was moved; goal asks for problems WITH line numbers but the list is empty). A shape name alone is NOT evidence — when content is shown, judge the actual content, but judge it for MEANING, not literal match.
+STILL score HOLLOW (reached:false) when the output genuinely fails the intent: nothing was produced; the WRONG shape was produced; the content is empty / 0-byte / a bare placeholder / a refusal or error envelope; or the output is MATERIALLY INCOMPLETE versus an explicitly multi-part goal (e.g. goal says move ALL inbox files but only one was moved; goal asks for problems WITH line numbers but the list is empty). A shape name alone is NOT evidence — when content is shown, judge the actual content, but judge it for MEANING, not literal match.${cmdSection}
 
 Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
 
@@ -2502,6 +2505,15 @@ If one of those sibling shapes is the action that would create what the goal ask
     };
     // (a) Try resolving the target shape directly with goal-extracted args.
     const directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+    // COMMAND<->INTENT EVIDENCE (law 8): record the synthesized executable for this shape
+    // ONLY when the resolve that USED it SUCCEEDS (called at each success return below), so
+    // a failed command is never mis-attributed to content produced by another path.
+    const recordExecutorCommand = (args: Record<string, unknown>): void => {
+      for (const k of ["command", "cmd", "script", "sql"]) {
+        const val = args[k];
+        if (typeof val === "string" && val.trim()) { executorCommands.set(shape, val); return; }
+      }
+    };
     const directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
     const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
@@ -2513,14 +2525,16 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
         // fall through to action-then-read / bridge / escalate
       } else {
+        recordExecutorCommand(directArgsRaw);
         return { content: direct };
       }
     }
     if (lastRawResolveReason) {
       const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
       if (correctedRaw) {
-        const corrected = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, ...correctedRaw }));
-        if (corrected != null) { console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
+        const mergedArgs = { ...directArgsRaw, ...correctedRaw };
+        const corrected = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody(mergedArgs));
+        if (corrected != null) { recordExecutorCommand(mergedArgs); console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
       }
     }
     // (a.5) INVESTIGATION FALLBACK: deterministic resolver failed because a required
@@ -2710,6 +2724,11 @@ If one of those sibling shapes is the action that would create what the goal ask
   let consecutiveNoProgress = 0;
   let earlyReachVerdict: GoalReachVerdict | null = null;
   let satisfierSeq = 0; // synthetic-trace id counter for vessel-resolve satisfier steps
+  // COMMAND<->INTENT EVIDENCE (law 8): the executable synthesized for each executor-shape
+  // resolve, keyed by the produced shape, recorded ONLY on success. Surfaced into the reach
+  // grade as a separate commandEvidence param (NOT folded into the deterministic-scanned
+  // digest) so the grader can judge command<->intent alignment. Last-wins per shape.
+  const executorCommands = new Map<string, string>();
   // IN-CHAIN CONSUMPTION LEDGER (replaces the lossy consumer_productivity_audit clamp at
   // the reach-credit gate below). chainProduced accumulates shapes a strictly-earlier
   // successful step emitted; consumedInChain gains a shape only when a LATER step's declared
@@ -3436,11 +3455,16 @@ If one of those sibling shapes is the action that would create what the goal ask
         .join("\n");
       const interimDigest = [interimCaptured, interimPool].filter(Boolean).join("\n").slice(0, 8000);
       try {
+        const interimCommandEvidence = [...executorCommands.entries()]
+          .filter(([sh]) => producedShapes.has(sh))
+          .map(([sh, cmd]) => `- ${sh} was produced by RUNNING: \`${String(cmd).slice(0, 1000)}\``)
+          .join("\n");
         const interim = await verifyGoalReached(
           goal,
           [...producedShapes],
           `walk(${chain.length} steps): ${chain.map(normActivityId).join(" → ")}`,
           interimDigest || undefined,
+          interimCommandEvidence || undefined,
         );
         if (interim && interim.reached === true) {
           earlyReachVerdict = interim;
@@ -3500,8 +3524,12 @@ If one of those sibling shapes is the action that would create what the goal ask
     try {
       // Honour an early reach verdict captured mid-walk (before pollution) instead
       // of re-judging the now-polluted end-state pool. (2026-06-25)
+      const commandEvidence = [...executorCommands.entries()]
+        .filter(([sh]) => producedShapes.has(sh))
+        .map(([sh, cmd]) => `- ${sh} was produced by RUNNING: \`${String(cmd).slice(0, 1000)}\``)
+        .join("\n");
       const verdict = earlyReachVerdict
-        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined);
+        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined);
       completionShapes = verdict?.completion_shapes ?? null;
       let retryCount = 0; let verdictRetry; do { verdictRetry = verdict; retryCount++; } while (verdictRetry == null && retryCount < 2); reached = verdictRetry == null ? false : verdictRetry?.reached === true;
         if (verdict == null) {
