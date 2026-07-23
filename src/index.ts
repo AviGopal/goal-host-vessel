@@ -3392,10 +3392,23 @@ If one of those sibling shapes is the action that would create what the goal ask
         // Leaf attribution = lastPick, symmetric with the penalty. The engine trace is
         // ungraded/SKIPped ⇒ this feedback POST is the sole synchronous α source (no double-count).
         // producedShapesConsumable stays defined for the OUT-OF-BAND retroactive/active path.
-        if (verdict.deterministic === true || consumedInChain.size > 0) {
+        // An fs-write EFFECT shape (fileEditResult/fileWriteResult/fs_edit/fs_write) is one
+        // local-tools ADVERTISES but never applies (see UNRESOLVABLE_FS_WRITE below): the
+        // impulse can flow producer->consumer IN-CHAIN yet nothing lands on disk/origin. So
+        // the consumedInChain edge is NOT substance for an edit-effect reach — only a landed
+        // sha (the deterministic flag, set ONLY on favorable-compose@:876) is. Crediting the
+        // in-chain edge here rubber-stamped a hollow fileEditResult reach (dispatch 48400e93:
+        // reached:true yet both target files absent on origin/dev) and fed a false posterior.
+        // Require deterministic for an edit-effect reach; never credit on the edge alone.
+        const UNRESOLVED_FS_EFFECT = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
+        const editEffectReach = (verdict.completion_shapes ?? []).some((s) => UNRESOLVED_FS_EFFECT.has(String(s)))
+          || [...producedShapes].some((s) => UNRESOLVED_FS_EFFECT.has(String(s)));
+        if (verdict.deterministic === true || (consumedInChain.size > 0 && !editEffectReach)) {
           const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
           opts.learningSink?.alphaBetaDelta.push(_abCredit);
           tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
+        } else if (consumedInChain.size > 0 && editEffectReach) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit for ${lastPick} — edit-effect reach via in-chain edge only (no landed sha); fileEditResult/fileWriteResult is advertised-not-applied, not substance`);
         }
         // ANSWER-DELIVERY (decision-transparency, 2026-07-07): a genuinely-reached
         // obsidian question carries a decision-ready markdown answerBody the vault can
