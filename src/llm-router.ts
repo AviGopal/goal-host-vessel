@@ -345,6 +345,17 @@ export async function routedText(
   return typeof text === "string" && text.length > 0 ? text : null;
 }
 
+/** Envelope-safe unwrap of a RAW llm_completion_dispatch / hub-proxied response.
+ *  Handles the federated proxy envelope {content:{shape,value}} identically to the
+ *  inline unwrap in routedComplete (llm-router.ts:305-306). Returns "" for any
+ *  non-string / empty payload — never fabricates. Use at every raw fetch of an LLM
+ *  completion in goal-host so no spoke->hub answer is silently dropped. */
+export function unwrapLlmContent(j: any): string {
+  const inner = (j && typeof j === "object" && j.content && typeof j.content === "object" && (j.content.body !== undefined || j.content.shape !== undefined)) ? j.content : j;
+  const text: unknown = inner?.body?.content ?? inner?.content ?? inner?.body?.text ?? inner?.value ?? "";
+  return typeof text === "string" ? text : "";
+}
+
 /**
  * Post one Beta update per buffered selection for this dispatch, then clear the
  * buffer. Called once at the dispatch's terminal point with the final reach

@@ -181,7 +181,8 @@ import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, g
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { makeProducerPickHelpers } from "./producer-pick.js";
-import { routedComplete, routedText, flushRouterFeedback } from "./llm-router";
+import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent } from "./llm-router";
+import { createHash } from "node:crypto";
 import { orderRing } from "./mem-ring";
 import {
   GoalHost,
@@ -796,6 +797,64 @@ const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1
 // STATE, emergently). On not-reached we downgrade status to failed and β-penalise
 // the selected template so Thompson stops reinforcing hollow completions.
 interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; }
+
+// ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
+// The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
+// required — correct for prose/note goals, WRONG for a goal whose target is ONE
+// mechanically-verifiable value (a hash, the N-th Fibonacci, a factorial), where a
+// wrong digit string was being rubber-stamped reached. This recomputes INDEPENDENTLY
+// (in-process, no shell/injection surface) and can ONLY REJECT a provably-wrong
+// DISTINCTIVE answer before the LLM sees it — it NEVER greens: a match or any ambiguity
+// falls through to the LLM (which also validates write/completeness). Strictly
+// fail-toward-honest (mirrors the ':820 never suppress a real reach' guarantee):
+// unclassified / ambiguous / answer-absent / truncated => null (LLM fallthrough).
+function dcFib(n: bigint): bigint { if (n <= 0n) return 0n; let x = 0n, y = 1n; for (let i = 2n; i <= n; i++) { const t = x + y; x = y; y = t; } return y; }
+function dcFactorialStr(n: bigint): string { let r = 1n; for (let i = 2n; i <= n; i++) r *= i; return r.toString(); }
+function dcNumericCandidates(dig: string, minDigits: number): string[] {
+  // comma/underscore grouping only — NO \s (space/newline) so distinct numbers never merge into a bogus token
+  const raw = dig.match(/\d[\d,_]{0,64}\d|\d/g) ?? [];
+  const out = new Set<string>();
+  for (const t of raw) { const d = t.replace(/[,_]/g, ""); if (/^\d+$/.test(d) && d.length >= minDigits) out.add(d); }
+  return [...out];
+}
+function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict | null {
+  const g = goal.toLowerCase();
+  const computeVerb = /\b(compute|calculate|hash|digest|what\s+is|what's|give\s+me|produce|generate|find)\b/.test(g);
+  let expected: Set<string> | null = null; let claimed: string[] = []; let label = "";
+  // 1) sha256/sha512 of a SINGLE delimited literal. md5(32)/sha1(40) EXCLUDED (their
+  //    hex length collides with UUIDs / git commit shas -> false-reject). Delimiters:
+  //    backtick + double/curly quotes, NOT a bare apostrophe (contractions corrupt
+  //    single-quote pairing). Verb-gated so an explanatory goal does not classify.
+  if (computeVerb) {
+    const hashM = g.match(/\b(sha-?512|sha-?256)\b/);
+    const lits = [ ...goal.matchAll(/`([^`]{1,4096})`/g), ...goal.matchAll(/"([^"]{1,4096})"/g), ...goal.matchAll(/[“”]([^“”]{1,4096})[“”]/g) ].map((m) => m[1]);
+    if (hashM && lits.length > 0 && new Set(lits).size === 1) {
+      const algo = hashM[1].replace(/-/g, "") === "sha512" ? "sha512" : "sha256";
+      try {
+        const hex = createHash(algo).update(lits[0], "utf8").digest("hex").toLowerCase();
+        expected = new Set([hex]);
+        claimed = [...new Set((dig.match(new RegExp(`\\b[0-9a-f]{${hex.length}}\\b`, "gi")) ?? []).map((s) => s.toLowerCase()))];
+        label = `${algo}(<${lits[0].length}-byte literal>)`;
+      } catch { return null; }
+    }
+  }
+  // 2) N-th Fibonacci — accept F(n-1),F(n),F(n+1) to absorb ALL off-by-one conventions.
+  //    Distinctive only when the answer is long (>=7 digits). Cap 20000 (event-loop safe).
+  if (!expected) {
+    const fm = g.match(/\bfib(?:onacci)?\b[^\d]{0,24}(\d{1,6})\b/) || g.match(/\b(\d{1,6})(?:st|nd|rd|th)?\s+fib(?:onacci)?\b/);
+    if (fm) { const n = BigInt(fm[1]); if (n <= 20000n) { const vs = [dcFib(n > 0n ? n - 1n : 0n), dcFib(n), dcFib(n + 1n)].map((v) => v.toString()); if (Math.max(...vs.map((v) => v.length)) >= 7) { expected = new Set(vs); claimed = dcNumericCandidates(dig, 6); label = `fib(${n})`; } else return null; } }
+  }
+  // 3) Factorial of N. Cap 2000 (~5735 digits; synchronous BigInt stays sub-ms).
+  if (!expected) {
+    const fm = g.match(/\bfactorial\b[^\d]{0,16}(\d{1,4})\b/) || g.match(/\b(\d{1,4})\s*!/);
+    if (fm) { const n = BigInt(fm[1]); if (n >= 8n && n <= 2000n) { expected = new Set([dcFactorialStr(n)]); claimed = dcNumericCandidates(dig, 5); label = `${n}!`; } }
+  }
+  if (!expected) return null;                          // unclassified => LLM fallthrough
+  if (claimed.length === 0) return null;                // no answer of this form present => cannot verify => fall through
+  if (claimed.some((c) => expected!.has(c))) return null; // TRUTH PRESENT => not a deterministic green; hand to the LLM
+  return { reached: false, reason: `deterministic:wrong-compute-answer — recomputed ${label} does not match any distinctive answer token in the output (e.g. ${claimed[0]})`, completion_shapes: [] };
+}
+
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
@@ -900,6 +959,11 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
         deterministic: verifiedSubstance,
       };
     }
+    // Residual 2 (honest-grade): deterministic single-answer compute goals — recompute
+    // and REJECT a provably-wrong output BEFORE the exact-match-agnostic LLM judge
+    // (:914) can rubber-stamp it. Only ever rejects; a match/ambiguity falls through.
+    const computeVerdict = verifyDeterministicCompute(goal, dig);
+    if (computeVerdict) return computeVerdict;
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
 
@@ -1019,7 +1083,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   try {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
     if (!r.ok) return null;
-    const j = await r.json() as any; text = j?.body?.text ?? j?.text ?? j?.content ?? ""; toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
+    const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
   } catch { return null; }
   if (!text || text.trim().length === 0) return null;
   const calledWrites = [...new Set(toolCalls.map((c: any) => c?.tool_name).filter((n: any) => typeof n === "string" && writeShapes.includes(n)))];
@@ -1936,6 +2000,14 @@ async function runGoalAsPoolWalk(
   async function llmExtractPointerArgs(shape: string, correction?: string): Promise<Record<string, unknown> | null> {
     if (!LLM_VESSEL_ENDPOINT) return null;
     let schemaContract = "";
+    // EXECUTOR-SHAPE SYNTHESIS (Residual 1a): for a tool/executor shape whose required
+    // field is an executable (command/script/sql), that field must be SYNTHESIZED to
+    // ACCOMPLISH the goal, not copied verbatim from the goal text. Detected schema-first,
+    // then via the resolver's own rejection message + a shape-name heuristic — so it fires
+    // for shellResult, whose owning vessel advertises no resolver_schema.
+    let executorGuidance = "";
+    let execField = "";
+    const EXEC_FIELDS = ["command", "cmd", "script", "sql"];
    try {
      const sep = await endpointForShape(shape);
      if (sep) {
@@ -1951,6 +2023,7 @@ async function runGoalAsPoolWalk(
          if (cc && cc.known === true && Array.isArray(cc.fields)) {
            const req = cc.fields.filter((f: any) => f.required).map((f: any) => f.name);
            const opt = cc.fields.filter((f: any) => !f.required).map((f: any) => f.name);
+           if (!execField) execField = req.find((r: string) => EXEC_FIELDS.includes(r)) ?? "";
            schemaContract = `AUTHORITATIVE PAYLOAD CONTRACT for shape "${shape}" (from the owning vessel — this is the exact structure to emit, prefer it over any prose guidance): put the pointer args UNDER the key "${cc.envelope}" as a nested object. REQUIRED fields, all must be present with real values from the goal: ${req.join(", ") || "(none)"}. Optional fields: ${opt.join(", ") || "(none)"}. Your JSON output must have the form { "${cc.envelope}": { ${req.map((r: string) => `"${r}": <value>`).join(", ")} } } (add optional fields when the goal specifies them).\n\n`;
          }
        }
@@ -1966,6 +2039,11 @@ async function runGoalAsPoolWalk(
         if (lines.length) howToGuidance = `PAYLOAD GUIDANCE for shape "${shape}" from the substrate's knowledge store — the correct pointer-arg field structure to emit (follow it EXACTLY, including any nested objects it names):\n${lines.join("\n")}\n\n`;
       }
     } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
+    // Fallback executor detection (schema-independent): the resolver's own rejection names
+    // the missing executable field, or the shape name marks a shell/exec resolver.
+    if (!execField && correction) { const mm = correction.match(/\b(command|cmd|script|sql)\b/i); if (mm) execField = mm[1].toLowerCase(); }
+    if (!execField && /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command";
+    if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic, self-contained, referencing only paths/values the goal names. Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}.\n\n`;
     const nowIso = new Date().toISOString();
     const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
     const priorFindings = poolImpulses
@@ -1973,7 +2051,7 @@ async function runGoalAsPoolWalk(
         .map((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?"; let c: string; try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } return `- ${s}: ${c.slice(0, 800)}`; })
         .join("\n");
       const promptParts = [
-        `${temporalGrounding}${schemaContract}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.`,
+        `${temporalGrounding}${schemaContract}${executorGuidance}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.`,
         `GOAL: ${goal}`,
         `Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If PAYLOAD GUIDANCE is present above, follow its field structure exactly (including any nested objects it specifies); otherwise emit a flat object. Do NOT add a top-level "type" key or wrap the result in a "pointer" key.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`,
         ...(priorFindings && priorFindings.length > 0
@@ -2368,8 +2446,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           const ir = await fetch(`${invEp.endpoint}${invEp.resolvePath}`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: invPrompt, max_tokens: 4096 } } }), signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
           if (ir.ok) {
             const ij: any = await ir.json();
-            const itext: string = ij?.body?.text ?? ij?.text ?? ij?.content ?? "";
-            if (typeof itext === "string" && itext.length > 0) {
+            const itext = unwrapLlmContent(ij);
+            if (itext.length > 0) {
               tap(`[goal-host-vessel] walk: satisfier produced "${shape}" via tool-enabled LLM investigation (reason: ${lastRawResolveReason})`);
               return { content: itext };
             }
