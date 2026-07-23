@@ -969,7 +969,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
 
   if (!LLM_VESSEL_ENDPOINT) return null;
   const cmdSection = commandEvidence
-    ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. Apply this degenerate-result skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
+    ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. ALSO grade HOLLOW when the command merely ECHOES or PRINTS a literal answer (e.g. echo or printf of a constant) instead of MEASURING it — a self-emitted answer is the model asserting, not evidence. Apply this skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
     : "";
   const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
 
@@ -1098,18 +1098,22 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
     return { ok: true, result: typeof c === "string" ? c : JSON.stringify(c) };
   } catch (e) { return { ok: false, error: String((e as Error)?.message ?? e).slice(0, 160) }; }
 }
-async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
-  if (!LLM_VESSEL_ENDPOINT) return null;
+// Module-level grounded tool->observe loop, extracted from universalToolFallback so the
+// a.5 investigation fallback REUSES the same EXECUTING loop instead of fabricating an answer.
+// Dispatches llm_completion_dispatch WITH tools, EXECUTES returned tool_calls via ufExecuteTool,
+// feeds real observations back, loops. Same caps / (tool,args) dedup / wall-clock deadline /
+// grounding-vs-write separation as the ReAct fallback. Resolves the dispatch url itself; returns
+// null if unavailable. Fail-open: any dispatch error breaks the loop, returning what was gathered.
+// Records commandEvidence ("- <tool> was RUN as: `<cmd>`") for any tool carrying an executable
+// field, so the reach grader can judge command<->intent (incl. echo/printf self-launder) on BOTH
+// call paths. groundedOk counts read/shell results ONLY — a write's success is a side effect,
+// never grounding.
+async function runGroundedToolLoop(
+  basePrompt: string,
+  tools: any[],
+  writeShapeList: string[],
+): Promise<{ finalText: string; groundedOk: number; executedOk: number; executed: Array<{ tool: string; ok: boolean }>; observations: string[]; calledWriteShapes: Set<string>; commandEvidence: string } | null> {
   const url = await ufResolveUrl("llm_completion_dispatch"); if (!url) return null;
-  const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
-  const tools: any[] = [...UNIVERSAL_READ_TOOLS];
-  for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
-  const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
-  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
-  // ── REAL ReAct loop: dispatch → EXECUTE requested tools → observe → re-dispatch ──
-  // Fixes the hollow-green where the model answered from MEMORY (0 executed tools) and
-  // the judge rubber-stamped it. Bounded by MAX_ITERS, a per-turn call cap, a per-tool
-  // timeout, AND a wall-clock deadline enforced INSIDE the tool loop.
   const allowlist = new Set<string>(tools.map((t: any) => String(t?.name)).filter(Boolean));
   const MAX_ITERS = 4;
   const MAX_CALLS_PER_ITER = 8;
@@ -1119,21 +1123,24 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const observations: string[] = [];
   const doneKeys = new Set<string>();          // (tool,args) already executed OK — never re-run
   const calledWriteShapes = new Set<string>();
+  const commandLines: string[] = [];           // "<tool> was RUN as: <cmd>" for command<->intent scrutiny
   let groundedOk = 0;                          // real DATA gathered (read/shell tools) — the ONLY grounding
   let executedOk = 0;                          // any successful tool incl. writes — for the honest summary
   let finalText = "";
-  // Tolerate every tool_call envelope variant (Anthropic {name,input}, OpenAI
-  // {function:{name,arguments}}, dev-vessel {tool_name,tool_input}).
   const nameOf = (c: any): string => String(c?.tool_name ?? c?.name ?? c?.function?.name ?? "");
   const argsOf = (c: any): Record<string, unknown> => {
     let a: any = c?.tool_input ?? c?.input ?? c?.arguments ?? c?.args ?? c?.function?.arguments;
     if (typeof a === "string") { try { a = JSON.parse(a); } catch { a = {}; } }
     return (a && typeof a === "object") ? a as Record<string, unknown> : {};
   };
+  const execFieldOf = (a: Record<string, unknown>): string | null => {
+    for (const k of ["command", "cmd", "script", "sql"]) { const v = a[k]; if (typeof v === "string" && v.trim()) return v.trim(); }
+    return null;
+  };
   for (let iter = 0; iter < MAX_ITERS && Date.now() < deadline; iter++) {
     const iterPrompt = observations.length
-      ? `${prompt}\n\nTOOL OBSERVATIONS SO FAR (real results you MUST reason over — do not contradict or invent beyond them):\n${observations.join("\n\n").slice(0, 12000)}\n\nUsing ONLY these real results, either call MORE tools to gather what is still missing, or give your FINAL answer grounded strictly in them.`
-      : prompt;
+      ? `${basePrompt}\n\nTOOL OBSERVATIONS SO FAR (real results you MUST reason over — do not contradict or invent beyond them):\n${observations.join("\n\n").slice(0, 12000)}\n\nUsing ONLY these real results, either call MORE tools to gather what is still missing, or give your FINAL answer grounded strictly in them.`
+      : basePrompt;
     let text = ""; let toolCalls: any[] = [];
     try {
       const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(ITER_TIMEOUT_MS) });
@@ -1151,9 +1158,11 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
         if (doneKeys.has(key)) continue;         // already ran this exact call — skip re-exec (anti-spin)
         const res = await ufExecuteTool(nm, a, allowlist);
         executed.push({ tool: nm, ok: res.ok });
+        const execCmd = execFieldOf(a);
+        if (execCmd) commandLines.push(`- ${nm} was RUN as: \`${execCmd.slice(0, 400)}\``);
         if (res.ok) {
           executedOk++; progressed = true; doneKeys.add(key);
-          if (writeShapes.includes(nm)) {
+          if (writeShapeList.includes(nm)) {
             calledWriteShapes.add(nm);           // side EFFECT — recorded, NOT grounding
             observations.push(`TOOL ${nm} (write) => ${res.result.slice(0, 400)}`);
           } else {
@@ -1171,6 +1180,22 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     finalText = (text || "").trim();
     break;
   }
+  return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
+}
+async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
+  const tools: any[] = [...UNIVERSAL_READ_TOOLS];
+  for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
+  const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
+  // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
+  // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
+  const loop = await runGroundedToolLoop(prompt, tools, writeShapes);
+  if (!loop) return null;
+  const { groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence } = loop;
+  let finalText = loop.finalText;
   // GROUNDING GATE — a reach must rest on real gathered DATA (read/shell), never on a
   // write side-effect or LLM memory. 0 grounded reads => ungrounded => return null so the
   // walk files a gap. This is what closes "REACHED after 0 tool calls" (the hollow-green).
@@ -1181,7 +1206,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const toolSummary = executed.map((e) => `${e.tool}${e.ok ? "" : "!"}`).join(", ");
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
   const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
-  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest);
+  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
   if (verdict?.reached && groundedOk > 0) {
     console.log(`[goal-host-vessel] universal ReAct fallback REACHED goal (${groundedOk} grounded read(s), ${executedOk}/${executed.length} tool(s) OK)`);
     return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
@@ -2543,17 +2568,23 @@ If one of those sibling shapes is the action that would create what the goal ask
     //       and produce the content itself before falling through to a hollow bridge.
     if (LLM_VESSEL_ENDPOINT && !terminalShapes.has(shape) && !shape.endsWith("_write") && lastRawResolveReason && /required|missing|must (be|provide|include)|is not (a )?(valid|provided)|no .*(path|file|arg)/i.test(lastRawResolveReason)) {
       try {
-        const invEp = await endpointForShape("llm_completion_dispatch");
-        if (invEp) {
-          const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (source_code, fs_read, codeSearchResult, shellResult) to FIND and READ the relevant source/files yourself — do not ask for them.\n\nGoal:\n${goal}\n\nRespond with ONLY the concrete content (file contents, analysis, or answer) — no preamble, no code fences.`;
-          const ir = await fetch(`${invEp.endpoint}${invEp.resolvePath}`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: invPrompt, max_tokens: 4096 } } }), signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
-          if (ir.ok) {
-            const ij: any = await ir.json();
-            const itext = unwrapLlmContent(ij);
-            if (itext.length > 0) {
-              tap(`[goal-host-vessel] walk: satisfier produced "${shape}" via tool-enabled LLM investigation (reason: ${lastRawResolveReason})`);
-              return { content: itext };
-            }
+        // GROUNDED investigation: the SAME executing loop as the ReAct fallback, with READ-and-
+        // inspect tools (the _write impulse-shape boundary is preserved; note shellResult still
+        // runs arbitrary shell). It EXECUTES tools and yields content ONLY when at least one read
+        // actually grounded (inv.groundedOk >= 1) — never an un-executed LLM answer (the root of
+        // the ".rs count = 6" hollow-green was returning an ungrounded LLM guess here).
+        const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (source_code, fs_read, codeSearchResult, shellResult) to FIND and READ the relevant source/files yourself BEFORE answering — do not ask for them, and never answer from memory; an answer not grounded in what your tools actually returned is INVALID.\n\nGoal:\n${goal}\n\nWhen finished, respond with ONLY the concrete content (file contents, analysis, or answer) grounded in your tool results — no preamble, no code fences.`;
+        const inv = await runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, []);
+        if (inv && inv.groundedOk >= 1) {
+          const invContent = inv.finalText.trim() || inv.observations.join("\n\n").slice(0, 6000);
+          if (invContent.length > 0) {
+            // COMMAND<->INTENT (law 8): surface the command(s) the investigation RAN into the same
+            // executorCommands channel the direct/corrected paths use, so the walk's final reach
+            // grader applies command-intent + degenerate/self-emitted (echo/printf) skepticism to
+            // this content too — an echo-laundered shell answer is no longer invisible.
+            if (inv.commandEvidence) executorCommands.set(shape, inv.commandEvidence.slice(0, 1000));
+            tap(`[goal-host-vessel] walk: satisfier produced "${shape}" via GROUNDED tool-enabled investigation (${inv.groundedOk} read(s), reason: ${lastRawResolveReason})`);
+            return { content: invContent };
           }
         }
       } catch { /* fail-open: fall through to action-then-read / bridge */ }
