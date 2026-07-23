@@ -82,6 +82,11 @@ export async function inferGoalTargetShapes(
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
   const model = opts.model ?? "claude-haiku-4-5-20251001";
+  // shellResult is the UNIVERSAL executor (real bash). Steer imperative / system-
+  // inspection goals to it — but ONLY mention it when it is actually producible.
+  const shellRule = known.has("shellResult")
+    ? `\n\nSPECIAL RULE — the "shellResult" shape is the UNIVERSAL EXECUTOR: producing it RUNS a real shell command. If the goal is fundamentally about RUNNING a command or INSPECTING the repo / filesystem / running system — counting, listing, "how many", "report the current", checking, or running some command X — and NO more-specific analysis / write / data-processing shape in the KNOWN list fits, choose "shellResult". Do NOT choose "shellResult" for analysis / review / note-writing / data-processing / code-edit goals that have a specific matching shape (e.g. problem_detection, code_quality, a write shape) — those are not shell jobs.`
+    : "";
   const prompt = `You route a substrate GOAL to the output impulse shape(s) whose PRODUCTION would satisfy it.
 
 GOAL: ${goal}
@@ -89,7 +94,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list — these are the shapes the substrate can actually produce):
 ${JSON.stringify(knownShapes)}
 
-Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Pick the most specific capability-matched shapes (e.g. a "find code-quality risks" goal maps to code-analysis shapes like problem_detection / code_quality, NOT to a note-writing or summary shape). If nothing in the list fits, return an empty array.
+Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Pick the most specific capability-matched shapes (e.g. a "find code-quality risks" goal maps to code-analysis shapes like problem_detection / code_quality, NOT to a note-writing or summary shape). If nothing in the list fits, return an empty array.${shellRule}
 
 Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
 
@@ -166,6 +171,9 @@ export async function inferGoalTargetDecision(
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
   const model = opts.model ?? "claude-haiku-4-5-20251001";
+  const shellRule = known.has("shellResult")
+    ? `\n\nSPECIAL RULE — the "shellResult" shape is the UNIVERSAL EXECUTOR: producing it RUNS a real shell command. If the goal is fundamentally about RUNNING a command or INSPECTING the repo / filesystem / running system — counting, listing, "how many", "report the current", checking, or running some command X — and NO more-specific analysis / write / data-processing shape in the KNOWN list fits, choose "shellResult". Do NOT choose "shellResult" for analysis / review / note-writing / data-processing / code-edit goals that have a specific matching shape (e.g. problem_detection, code_quality, a write shape) — those are not shell jobs.`
+    : "";
   const prompt = `You route a substrate GOAL to the output impulse shape(s) whose PRODUCTION would satisfy it.
 
 GOAL: ${goal}
@@ -173,7 +181,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list):
 ${JSON.stringify(knownShapes)}
 
-Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-3 shapes from the KNOWN list.
+Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-3 shapes from the KNOWN list.${shellRule}
 
 Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternatives": [[...], [...]]}`;
 

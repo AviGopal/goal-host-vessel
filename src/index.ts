@@ -1071,6 +1071,30 @@ async function ufBuildWriteTool(shape: string): Promise<any | null> {
   const inner = { type: "object", properties: Object.fromEntries(names.map((f) => [f, { type: "string" }])), required: req };
   return { name: shape, description: `Perform the '${shape}' write/create action. ${envelope ? `Pass a single '${envelope}' object with fields ${names.join(", ")} (required: ${req.join(", ")}).` : `Fields: ${names.join(", ")}.`} Build the payload FAITHFULLY from the goal and what you read; never invent unrelated content.`, input_schema: envelope ? { type: "object", properties: { [envelope]: inner }, required: [envelope] } : inner };
 }
+// Execute ONE model-requested tool by resolving its shape against the owning vessel
+// (reusing ufResolveUrl — the module-level endpointForShape analogue) and POSTing the
+// rawResolve envelope {impulse:{pointer:{type:shape,...args}}}. `allowlist` = the exact
+// tool names we advertised (UNIVERSAL_READ_TOOLS + the goal's own write shapes); a name
+// outside it is REFUSED, so the model can never drive a shape we didn't authorize.
+// Mirrors rawResolve's content/body/success unwrap + error discipline. Fail-open: any
+// error => {ok:false} (counted as a failed exec, never as grounding).
+async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
+  if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
+  const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
+  try {
+    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...args } } }), signal: AbortSignal.timeout(60_000) });
+    if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
+    const j = await r.json() as any;
+    let c: unknown = j;
+    if (j && typeof j === "object") {
+      if (j.success === false) return { ok: false, error: String(j.error ?? "resolver failed").slice(0, 180) };
+      if (typeof j.error === "string" && j.error && !("content" in j) && !("body" in j)) return { ok: false, error: j.error.slice(0, 180) };
+      if ("content" in j) c = j.content; else if ("body" in j) c = j.body;
+    }
+    if (c == null || (typeof c === "string" && c.trim().length === 0)) return { ok: false, error: "empty result" };
+    return { ok: true, result: typeof c === "string" ? c : JSON.stringify(c) };
+  } catch (e) { return { ok: false, error: String((e as Error)?.message ?? e).slice(0, 160) }; }
+}
 async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
   const url = await ufResolveUrl("llm_completion_dispatch"); if (!url) return null;
@@ -1079,19 +1103,84 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
   const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
   const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
-  let text = ""; let toolCalls: any[] = [];
-  try {
-    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
-    if (!r.ok) return null;
-    const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
-  } catch { return null; }
-  if (!text || text.trim().length === 0) return null;
-  const calledWrites = [...new Set(toolCalls.map((c: any) => c?.tool_name).filter((n: any) => typeof n === "string" && writeShapes.includes(n)))];
-  const produced = [...new Set([...targetShapes, ...calledWrites])];
+  // ── REAL ReAct loop: dispatch → EXECUTE requested tools → observe → re-dispatch ──
+  // Fixes the hollow-green where the model answered from MEMORY (0 executed tools) and
+  // the judge rubber-stamped it. Bounded by MAX_ITERS, a per-turn call cap, a per-tool
+  // timeout, AND a wall-clock deadline enforced INSIDE the tool loop.
+  const allowlist = new Set<string>(tools.map((t: any) => String(t?.name)).filter(Boolean));
+  const MAX_ITERS = 4;
+  const MAX_CALLS_PER_ITER = 8;
+  const ITER_TIMEOUT_MS = Math.min(PROXY_TIMEOUT_MS, 90_000);
+  const deadline = Date.now() + Math.min(PROXY_TIMEOUT_MS, 210_000);
+  const executed: Array<{ tool: string; ok: boolean }> = [];
+  const observations: string[] = [];
+  const doneKeys = new Set<string>();          // (tool,args) already executed OK — never re-run
+  const calledWriteShapes = new Set<string>();
+  let groundedOk = 0;                          // real DATA gathered (read/shell tools) — the ONLY grounding
+  let executedOk = 0;                          // any successful tool incl. writes — for the honest summary
+  let finalText = "";
+  // Tolerate every tool_call envelope variant (Anthropic {name,input}, OpenAI
+  // {function:{name,arguments}}, dev-vessel {tool_name,tool_input}).
+  const nameOf = (c: any): string => String(c?.tool_name ?? c?.name ?? c?.function?.name ?? "");
+  const argsOf = (c: any): Record<string, unknown> => {
+    let a: any = c?.tool_input ?? c?.input ?? c?.arguments ?? c?.args ?? c?.function?.arguments;
+    if (typeof a === "string") { try { a = JSON.parse(a); } catch { a = {}; } }
+    return (a && typeof a === "object") ? a as Record<string, unknown> : {};
+  };
+  for (let iter = 0; iter < MAX_ITERS && Date.now() < deadline; iter++) {
+    const iterPrompt = observations.length
+      ? `${prompt}\n\nTOOL OBSERVATIONS SO FAR (real results you MUST reason over — do not contradict or invent beyond them):\n${observations.join("\n\n").slice(0, 12000)}\n\nUsing ONLY these real results, either call MORE tools to gather what is still missing, or give your FINAL answer grounded strictly in them.`
+      : prompt;
+    let text = ""; let toolCalls: any[] = [];
+    try {
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(ITER_TIMEOUT_MS) });
+      if (!r.ok) break;
+      const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
+    } catch { break; }
+    if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+      let progressed = false;
+      const calls = (toolCalls as any[]).slice(0, MAX_CALLS_PER_ITER);
+      for (const c of calls) {
+        if (Date.now() >= deadline) break;      // wall-clock enforced INSIDE the turn
+        const nm = nameOf(c); if (!nm) continue;
+        const a = argsOf(c);
+        const key = `${nm}:${JSON.stringify(a)}`;
+        if (doneKeys.has(key)) continue;         // already ran this exact call — skip re-exec (anti-spin)
+        const res = await ufExecuteTool(nm, a, allowlist);
+        executed.push({ tool: nm, ok: res.ok });
+        if (res.ok) {
+          executedOk++; progressed = true; doneKeys.add(key);
+          if (writeShapes.includes(nm)) {
+            calledWriteShapes.add(nm);           // side EFFECT — recorded, NOT grounding
+            observations.push(`TOOL ${nm} (write) => ${res.result.slice(0, 400)}`);
+          } else {
+            groundedOk++;                         // real gathered DATA — the grounding
+            observations.push(`TOOL ${nm}(${JSON.stringify(a).slice(0, 300)}) =>\n${res.result.slice(0, 4000)}`);
+          }
+        } else {
+          observations.push(`TOOL ${nm} ERROR: ${res.error}`);
+        }
+      }
+      if (!progressed) break;                    // nothing new executed (all dup/unauthorized/failed) — stop spinning
+      continue;                                  // feed real observations into the next turn
+    }
+    // No tool_calls => the model returned a (hopefully grounded) final answer.
+    finalText = (text || "").trim();
+    break;
+  }
+  // GROUNDING GATE — a reach must rest on real gathered DATA (read/shell), never on a
+  // write side-effect or LLM memory. 0 grounded reads => ungrounded => return null so the
+  // walk files a gap. This is what closes "REACHED after 0 tool calls" (the hollow-green).
+  if (groundedOk === 0) return null;
+  if (!finalText) { finalText = observations.join("\n\n").slice(0, 6000); console.log(`[goal-host-vessel] universal ReAct fallback: cap/deadline hit before a final answer — judging on ${groundedOk} grounded tool output(s)`); }
+  const produced = [...new Set([...targetShapes, ...calledWriteShapes])];
   if (produced.length === 0) produced.push("universal_fallback_result");
-  const verdict = await verifyGoalReached(goal, produced, `universal tool fallback: ${toolCalls.length} tool call(s)`, text.slice(0, 6000));
-  if (verdict?.reached) {
-    console.log(`[goal-host-vessel] universal tool-enabled fallback REACHED goal after hollow structured walk (${toolCalls.length} tool calls)`);
+  const toolSummary = executed.map((e) => `${e.tool}${e.ok ? "" : "!"}`).join(", ");
+  const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
+  const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
+  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest);
+  if (verdict?.reached && groundedOk > 0) {
+    console.log(`[goal-host-vessel] universal ReAct fallback REACHED goal (${groundedOk} grounded read(s), ${executedOk}/${executed.length} tool(s) OK)`);
     return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
   }
   return null;
@@ -3926,6 +4015,37 @@ async function runGoalWithRecovery(
       );
       goalTargetDecision = decision;
       if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
+      // SHELL SAFETY NET (FIX B, 2026-07-23): an IMPERATIVE / system-inspection goal
+      // ("count the .ts files under …", "how many vessels are running", "list …",
+      // "check …", "run …") maps to no bespoke producer, so inference returns nothing
+      // and the walk goes opportunistic → hollow. shellResult is the UNIVERSAL executor
+      // (local-tools real bash + the executor-command synthesis in llmExtractPointerArgs),
+      // the PROVEN satisfier for "run a command / inspect the repo|fs|running system".
+      // Seed it deterministically. CONSERVATIVE + FAIL-OPEN: fires ONLY when (a) inference
+      // produced NOTHING usable (so a legitimately-inferred specific shape is never masked),
+      // (b) shellResult is in the live vocabulary, and (c) the goal matches an imperative
+      // verb AND an inspection noun AND carries NO write/analysis/edit signal.
+      if (
+        knownShapes &&
+        knownShapes.includes("shellResult") &&
+        (!seededOutputShapes || seededOutputShapes.length === 0)
+      ) {
+        const g = goal.toLowerCase();
+        const imperativeInspect =
+          /\b(count|list|find|show|how\s+many|how\s+much|number\s+of|report\s+the\s+current|check|run|execute|ls|grep|cat|tail|head|du|df|ps|which)\b/.test(g);
+        const inspectNoun =
+          /(\bfiles?\b|\bdirector(?:y|ies)\b|\bfolders?\b|\bvessels?\b|\bunits?\b|\bservices?\b|\bprocesses?\b|\bcontainers?\b|\bcommits?\b|\bbranch(?:es)?\b|\bports?\b|\bdisk\b|\bstatus\b|\brunning\b|\bsystemd\b|\bdocker\b|\brepos?\b|\b[\w-]+\.(?:ts|js|md|json|txt|py|sh|go|rs|yaml|yml|toml|sql)\b)/.test(g);
+        const writeAnalysisEdit =
+          /\b(write|note|summ|analy|review|assess|audit|refactor|edit|implement|propose|proposal|document|concept|explain|design|draft|save|record|export|dump|generate)\b/.test(g);
+        if (imperativeInspect && inspectNoun && !writeAnalysisEdit) {
+          seededOutputShapes = ["shellResult"];
+          goalTargetDecision = { shapes: ["shellResult"], confidence: 0.5, alternatives: [] };
+          tap(
+            `[goal-host-vessel] ${opts.surface}: shell safety-net seeded shellResult for imperative/system-inspection goal ` +
+              JSON.stringify({ goal_hash: goalHashOf(goal) }),
+          );
+        }
+      }
     }
     // COMPOSITION (derivation-intent, 2026-06-30): when the goal is a derive→emit
     // SEQUENCE ("analyze X then write findings to note Y"), the seeded shapes above
