@@ -1504,6 +1504,26 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
 function isSubstanceHonestReach(verdict: GoalReachVerdict | null | undefined): boolean {
   return !!verdict && verdict.reached === true && verdict.deterministic === true;
 }
+// GROUNDED-honesty gate for MINTING (distinct from isSubstanceHonestReach, which is
+// landed-edit-only and would reject EVERY honest tool/shell reach). A reach is mint-worthy
+// iff its answer is anchored in something EXECUTED, not a bare LLM "yes":
+//  (a) deterministic===true      — a landed code edit (favorable-compose@:876);
+//  (b) commandEvidence present    — an EXECUTED tool/command produced a reach shape (the
+//      command<->intent grader already flips echo/printf + degenerate 0/empty to
+//      reached:false, so a surviving reached:true carrying a command is a genuinely-run one);
+//  (c) a real IN-CHAIN producer->consumer edge, EXCEPT an advertised-not-applied fs-write
+//      effect (which needs (a)). FAIL-TOWARD-SKIP: absent all anchors, do not mint — under-
+//      learn, never mint hollow. Learning must compound from honest grounded reaches only.
+function isGroundedHonestReach(
+  v: GoalReachVerdict | null | undefined,
+  ev: { commandEvidence?: string; consumedInChain?: number; editEffectReach?: boolean },
+): boolean {
+  if (!v || v.reached !== true) return false;
+  if (v.deterministic === true) return true;
+  if ((ev.commandEvidence ?? "").trim().length > 0) return true;
+  if ((ev.consumedInChain ?? 0) > 0 && !ev.editEffectReach) return true;
+  return false;
+}
 // DOWNSTREAM-USE substance gate (the standing law "verify reach by downstream USE,
 // not an LLM verdict"). PRIOR DEFECT (closed here): this POSTed discover-by-shapes
 // backward and returned true the instant ANY activity merely DECLARED the produced
@@ -1739,9 +1759,10 @@ function buildCompositeTraceFromChain(
   } as ExecutionTrace;
 }
 
-async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }): Promise<void> {
+async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean): Promise<void> {
   const executionId = trace?.id;
   if (!executionId) return;
+  if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
   try {
     // Execute ribosome-extract via the LOCAL executor (host.runGoal), not by
     // POSTing activityDispatch to activity-api /v2/impulses/resolve — activity-api
@@ -3814,14 +3835,19 @@ If one of those sibling shapes is the action that would create what the goal ask
         // trace from the whole chain and mint THAT, so a derive→emit composition
         // yields a fresh learned-* template (taskCount≥2), not nothing. A single
         // satisfier step alone is still skipped (no recipe to extract).
+        // MINT-HONESTY GATE (learn only from GROUNDED reaches): mint a composition only
+        // when the reach was anchored in something EXECUTED (landed edit / run command /
+        // real in-chain edge), never a bare LLM-yes — else the learning loop pollutes the
+        // template store with hollow templates that win selection traffic and fail.
+        const mintGrounded = isGroundedHonestReach(verdict, { commandEvidence, consumedInChain: consumedInChain.size, editEffectReach });
         if (!satisfierOnly) {
-          void mintReachedTrace(lastTrace as any);
+          void mintReachedTrace(lastTrace as any, mintGrounded);
         } else if (chain.length >= 2) {
           const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags, poolImpulses);
           // Persist the composite so ribosome-extract can read it by id, then mint.
           void (async () => {
             try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
-            await mintReachedTrace(composite as any);
+            await mintReachedTrace(composite as any, mintGrounded);
           })();
         }
       }
@@ -4873,7 +4899,7 @@ async function runGoalWithRecovery(
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           if (isSubstanceHonestReach(verdict)) { await creditReachedTemplate(selId, verdict.reason ?? "goal reached"); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
-          void mintReachedTrace(result.trace as any);  // reach → mint the working trace into a new activity seed
+          void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     } else if (!goal && status === "completed" && selId) {
