@@ -4207,7 +4207,8 @@ async function runGoalWithRecovery(
       const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize|create|author|generate)\b/i.test(goalForRouting) : false;
       // Also treat as an edit intent when the goal names exactly one repos source file
       // (aligns early predicate with the late 0-step detector's file-path-only test).
-      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb
+      const earlyReadVerb = /\b(count|list|show|find|search|grep|report|read|inspect|analyze|analyse|describe|summarize|summarise|explain|locate|enumerate|display|print|identify|examine)\b/i;
+      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb && !earlyReadVerb
         ? (goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? []).length === 1
         : false;
       if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
