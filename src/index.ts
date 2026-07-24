@@ -2183,7 +2183,7 @@ async function runGoalAsPoolWalk(
     // Fallback executor detection (schema-independent): the resolver's own rejection names
     // the missing executable field, or the shape name marks a shell/exec resolver.
     if (!execField && correction) { const mm = correction.match(/\b(command|cmd|script|sql)\b/i); if (mm) execField = mm[1].toLowerCase(); }
-    if (!execField && /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command";
+    if (!execField) { const _em = shape.match(/(^|[_-])(sql|script|cmd|command)([_-]|$|result|query)/i); if (_em) execField = _em[2].toLowerCase(); else if (/(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command"; }
     if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic, self-contained, referencing only paths/values the goal names. Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}.\n\n`;
     const nowIso = new Date().toISOString();
     const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
