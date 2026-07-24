@@ -3738,6 +3738,22 @@ If one of those sibling shapes is the action that would create what the goal ask
       } else if (verdict && verdict.reached === true) {
         tap(`REACHED via ${chain.length}-step chain`);
         goalReachReason = verdict.reason;
+        // LEVER-3 legibility (gap-satisfier-reach-content-invisible): surface the produced
+        // CONTENT of the reached target shapes so a satisfier reach is AUDITABLE — the
+        // synthTrace persists ∅→∅, so without this an external reach (reached:true) is
+        // unverifiable and external-info reach-rate is unmeasurable. Observability only.
+        try {
+          const _reachedShapes = (verdict.completion_shapes && verdict.completion_shapes.length > 0)
+            ? verdict.completion_shapes.map(String)
+            : [...target];
+          for (const _rs of _reachedShapes) {
+            const _imp = poolImpulses.find((im) => (im.metadata as { shape?: string } | undefined)?.shape === _rs);
+            if (!_imp) continue;
+            let _cs: string;
+            try { _cs = typeof _imp.content === "string" ? _imp.content : JSON.stringify(_imp.content); } catch { _cs = String(_imp.content); }
+            tap(`[goal-host-vessel] walk(${opts.surface}): REACH-CONTENT ${_rs} (${_cs.length} chars) = ${_cs.slice(0, 600)}`);
+          }
+        } catch { /* observability only — never affect the reach verdict */ }
         // SYMMETRIC CREDIT (mirror of the HOLLOW β-penalty at :3247), gated on SUBSTANCE:
         // a landed/deterministic reach OR a genuine IN-CHAIN producer→consumer edge carried an
         // impulse to the reach (consumedInChain, built above) — ACTUAL in-walk data-flow use,
