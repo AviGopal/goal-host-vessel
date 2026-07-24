@@ -1584,7 +1584,23 @@ async function creditReachedTemplate(activityId: string, reason: string): Promis
 // path_activities is the attribution unit (the composition that ran). reached is
 // the goal-reach verdict (NOT execution-status), so the per-goal posterior tracks
 // genuine goal achievement, not hollow completion.
-type WalkTier = "learned_pathway" | "satisfier" | "universal_tool_fallback" | "fresh_derivation";
+type WalkTier = "learned_pathway" | "satisfier" | "universal_tool_fallback" | "feature_compose" | "fresh_derivation";
+// Ratchet legibility (2026-07-24): classify HOW a walk reached, so goal_execution_paths
+// records fresh-derivation -> learned-reuse transitions instead of a null tier.
+function tierOf(id: string | undefined | null): WalkTier {
+  const s = String(id ?? "");
+  if (s === "universal-tool-fallback") return "universal_tool_fallback";
+  if (s.startsWith("satisfier:")) return "satisfier";
+  if (s.includes("learned-") || s.includes("composed-cap")) return "learned_pathway";
+  if (s.includes("feature_compose")) return "feature_compose";
+  return "fresh_derivation";
+}
+function tierFromChain(chainIds: string[]): WalkTier {
+  // Any reused learned/composed composition in the chain => learned_pathway;
+  // else classify the last pick.
+  if (chainIds.some((id) => id.includes("learned-") || id.includes("composed-cap"))) return "learned_pathway";
+  return tierOf(chainIds[chainIds.length - 1]);
+}
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation"): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   try {
@@ -2875,7 +2891,38 @@ If one of those sibling shapes is the action that would create what the goal ask
         ? missingForSatisfier.filter((s) => !terminalShapes.has(s))
         : missingForSatisfier;
       const liveForSatisfier = await liveShapes();
-      const satisfiableNow = eligibleForSatisfier.find((s) => (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s));
+      // COMPOSITION-PREFERENCE PROBE (Fix #2, 2026-07-24): when >1 target shape is still
+      // missing, a single-shape satisfier would reach only ONE and short-circuit (dropping
+      // the rest of the goal). Before taking it, consult recommend for a learned/composed
+      // producer covering >=2 of the missing shapes AND executable now; if one exists, SKIP
+      // the satisfier so control falls through to candidate selection (b) which picks the
+      // multi-covering composition (the ratchet's reuse tooth). Fail-open: any error leaves
+      // preferComposition=false so the satisfier fires exactly as before (floor untouched).
+      let preferComposition = false;
+      if (missingForSatisfier.length > 1) {
+        try {
+          const _psig = (await getCachedStateSignature())?.signature_hash;
+          const _pr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...missingForSatisfier], exclude_activities: chain, limit: 12, min_success_rate: 0, ...(_psig ? { state_signature: _psig } : {}) }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (_pr.ok) {
+            const _pj: any = await _pr.json();
+            const _precs = _pj?.recommendations ?? _pj?.body?.recommendations ?? [];
+            preferComposition = (Array.isArray(_precs) ? _precs : [])
+              .map(readCandidateShapes)
+              .some((c: WalkCandidate | null) =>
+                c !== null &&
+                !exclude.has(normActivityId(c.id)) && !chain.includes(c.id) &&
+                c.outputShapes.filter((sh) => missingForSatisfier.includes(sh)).length >= 2 &&
+                (c.inputShapes.length === 0 || c.inputShapes.every((sh) => producedShapes.has(sh))));
+            if (preferComposition) tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION — a producer covers >=2 of missing target ${JSON.stringify(missingForSatisfier)}; suppressing single-shape satisfier so the composition (ratchet reuse) is selected`);
+          }
+        } catch { preferComposition = false; }
+      }
+      const satisfiableNow = preferComposition ? undefined : eligibleForSatisfier.find((s) => (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s));
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
         if (resolved) {
@@ -3610,6 +3657,28 @@ If one of those sibling shapes is the action that would create what the goal ask
           goalReachReason = `seed-only completion — the walk reached only on pre-existing seed shapes (${JSON.stringify((verdict?.completion_shapes ?? []).filter((sh) => seedShapes.has(sh)))}); no new human-consumable answer was produced for the obsidian surface`;
         }
       }
+      // PARTIAL-COVERAGE GUARD (reach-gate, Fix #1, 2026-07-24): a genuine MULTI-shape
+      // target (opts.expectedOutputShapes) requires ALL its shapes. A single-shape
+      // vessel-resolve satisfier can produce ONE and get rubber-stamped reached, dropping
+      // the goal's remaining half. Flip such a STRICT-subset reach to not-reached so the
+      // satisfier-suppression / alternative-framing / bridge-mint recovery drives the
+      // uncovered shape to a FULL reach. Floor-safe: inert for single-shape targets
+      // (target.size<2) and when the reach was via shapes DISJOINT from the target
+      // (coveredTargets.length===0 -> a legitimate different path, not a partial short-circuit).
+      if (reached === true && target.size >= 2) {
+        const coveredTargets = [...target].filter((s) => producedShapes.has(s));
+        if (coveredTargets.length > 0 && coveredTargets.length < target.size) {
+          const uncovered = [...target].filter((s) => !producedShapes.has(s));
+          reached = false;
+          const _pcReason = `partial-coverage — reached on a STRICT SUBSET of the required target shapes: produced ${JSON.stringify(coveredTargets)} of ${JSON.stringify([...target])}; missing ${JSON.stringify(uncovered)} (single-shape satisfier short-circuit dropped the goal's remaining half)`;
+          if (verdict) {
+            (verdict as GoalReachVerdict).reached = false;
+            (verdict as GoalReachVerdict).reason = _pcReason;
+            (verdict as GoalReachVerdict).missing = [...new Set([...((verdict as GoalReachVerdict).missing ?? []), ...uncovered])];
+          }
+          goalReachReason = _pcReason;
+        }
+      }
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
@@ -3884,7 +3953,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
     }
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
-    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd);
+    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, tierFromChain(chain));
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
 
@@ -4927,7 +4996,7 @@ async function runGoalWithRecovery(
     }
     // Per-goal learning: record this attempt's goal -> path -> reach outcome.
     const tr = result.trace as { durationMs?: number; costUsd?: number };
-    if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0);
+    if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId));
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
     if (selId) excluded.push(selId);
     // Alter the approach for the next attempt (engine-selected approaches only).
@@ -6250,25 +6319,41 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // of requeueing again), and requeueOf preserves the ancestor dispatch id so
   // attempt history stays traceable for composition-graph accounting.
   // WHY-NOW trigger: categorize why this dispatch exists, once, from the signals
-  // the caller already supplied (operator / tags / variables.source / requeue).
+  // the caller already supplied (operator / tags / variables / requeue).
   // Serialized so the obsidian panel leads with the machine reason instead of
   // text-inferring it from the goal string. Precedence is intentional: an
-  // explicit operator wins, then recovery lineage, then the self-development
-  // families, then the dispatcher's own reason, then boredom.
+  // explicit operator wins, then the decompose/recovery lineage, then the
+  // self-development families, then the gap-drain observer, then boredom. Order
+  // and match keys are anchored to what the real autonomous dispatchers emit
+  // (boredom-vessel baseTags, development-vessel gap/drain resolvers, goal-host's
+  // own auto-draft & resume paths) — not to the documented value set alone.
   const trigger: string | undefined = (() => {
     const t = Array.isArray(tags) ? tags : [];
     const has = (v: string) => t.includes(v);
     const pref = (p: string) => t.find((x) => typeof x === "string" && x.startsWith(p));
-    const src = typeof (variables as Record<string, unknown>).source === "string"
-      ? (variables as Record<string, unknown>).source as string
-      : "";
+    const vars = variables as Record<string, unknown>;
+    const src = typeof vars.source === "string" ? (vars.source as string) : "";
+    const triggeredBy = typeof vars.triggered_by === "string" ? (vars.triggered_by as string) : "";
+    const goalText = typeof goal === "string" ? goal : "";
     if (operator) return "operator";
+    // An "investigate and decompose" goal escalated from a gap that could not be
+    // closed directly reads as gap-decompose, not bare recovery — inspect the goal
+    // text before the escalation lineage falls through to recovery below.
+    if (pref("escalated_from:") && /^\s*investigate and decompose/i.test(goalText)) return "gap-decompose";
     if (requeueId || pref("escalated_from:") || pref("resumed_from:")) return "recovery";
     if (has("substrate.auto.draft") || pref("auto_draft_for_dispatch:")) return "gap-decompose";
     if (has("gap_generated")) return "gap-closing";
+    if (triggeredBy === "gap-drain") return "gap-drain";
+    // Boredom's baseTags ALWAYS carry a dispatcher_reason:<sample-reason>
+    // (thompson_sample, exploration_bonus, comparison_probe, …); categorize the
+    // dispatch as boredom (idle-time self-selection) before falling through to
+    // that sub-reason, so the human sees "idle-time work" not sampler jargon.
+    if (has("boredom_autonomous") || pref("intent:boredom_source") || has("boredom_source")
+        || src === "boredom-vessel" || src === "dispatch_latest_auto_draft") return "boredom";
+    // An explicit dispatcher reason from any non-boredom dispatcher passes through
+    // verbatim (future rhythm-due / learning-mode senders would land here).
     const dr = pref("dispatcher_reason:");
     if (dr) return dr.slice("dispatcher_reason:".length) || undefined;
-    if (has("boredom_autonomous") || pref("intent:boredom_source") || src === "boredom-vessel") return "boredom";
     return undefined;
   })();
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
