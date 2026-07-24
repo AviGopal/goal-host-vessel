@@ -6344,6 +6344,14 @@ async function handleRunGoal(req: Request): Promise<Response> {
     if (has("substrate.auto.draft") || pref("auto_draft_for_dispatch:")) return "gap-decompose";
     if (has("gap_generated")) return "gap-closing";
     if (triggeredBy === "gap-drain") return "gap-drain";
+    // Note-driven: the substrate read something in a human's Obsidian vault (an
+    // inbox request, a project-plan note, an assist-bridge pattern) and formed a
+    // goal from it. This is the "from reading the notes" origin — machine-distinct
+    // from operator dispatch and from idle boredom. Signals are the literal tags
+    // the note-scan resolvers emit (dispatcher:obsidian-vessel / source:inbox,
+    // dispatcher:project_plan / note:<path>, variables.source obsidian_assist_bridge).
+    if (pref("note:") || has("dispatcher:obsidian-vessel") || has("source:inbox")
+        || has("dispatcher:project_plan") || src === "obsidian_assist_bridge") return "note";
     // Boredom's baseTags ALWAYS carry a dispatcher_reason:<sample-reason>
     // (thompson_sample, exploration_bonus, comparison_probe, …); categorize the
     // dispatch as boredom (idle-time self-selection) before falling through to
