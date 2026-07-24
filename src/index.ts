@@ -6246,7 +6246,29 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // cap in drainInterruptedRequeue (a second interruption terminalizes instead
   // of requeueing again), and requeueOf preserves the ancestor dispatch id so
   // attempt history stays traceable for composition-graph accounting.
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
+  // WHY-NOW trigger: categorize why this dispatch exists, once, from the signals
+  // the caller already supplied (operator / tags / variables.source / requeue).
+  // Serialized so the obsidian panel leads with the machine reason instead of
+  // text-inferring it from the goal string. Precedence is intentional: an
+  // explicit operator wins, then recovery lineage, then the self-development
+  // families, then the dispatcher's own reason, then boredom.
+  const trigger: string | undefined = (() => {
+    const t = Array.isArray(tags) ? tags : [];
+    const has = (v: string) => t.includes(v);
+    const pref = (p: string) => t.find((x) => typeof x === "string" && x.startsWith(p));
+    const src = typeof (variables as Record<string, unknown>).source === "string"
+      ? (variables as Record<string, unknown>).source as string
+      : "";
+    if (operator) return "operator";
+    if (requeueId || pref("escalated_from:") || pref("resumed_from:")) return "recovery";
+    if (has("substrate.auto.draft") || pref("auto_draft_for_dispatch:")) return "gap-decompose";
+    if (has("gap_generated")) return "gap-closing";
+    const dr = pref("dispatcher_reason:");
+    if (dr) return dr.slice("dispatcher_reason:".length) || undefined;
+    if (has("boredom_autonomous") || pref("intent:boredom_source") || src === "boredom-vessel") return "boredom";
+    return undefined;
+  })();
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
   executionStore.set(dispatchId, record);
   persistDispatchStore();
       if (!("dispatch_id" in variables)) variables.dispatch_id = dispatchId;
@@ -6875,6 +6897,7 @@ async function handleResolve(req: Request): Promise<Response> {
         status: r.status,
         reached: r.reached ?? null,
         operator: r.operator ?? null,
+        trigger: r.trigger ?? null,
         startedAt: r.startedAt,
         selectedTemplateId: r.selectedTemplateId ?? null,
         executionId: r.executionId ?? null,
@@ -7022,6 +7045,17 @@ interface DispatchRecord {
   requeuedAt?: number;
   requeueOf?: string;
   inferenceConfidence?: number | null;
+  /**
+   * WHY-NOW: the categorized reason this dispatch exists, derived once at record
+   * creation from the operator/tags/source the caller supplied. goal-host KNOWS
+   * this at dispatch time but historically dropped it at serialization, forcing
+   * the obsidian panel to text-infer it from the goal string. Surfaced by the
+   * activeDispatches serializer and GET /executions/:id so panel-narrative's
+   * runningNarrative can lead with the machine trigger instead of guessing.
+   * Values: operator | recovery | gap-decompose | gap-closing | boredom |
+   * rhythm-due | gap-drain | learning-mode | <dispatcher_reason>.
+   */
+  trigger?: string;
   /** The dispatched goal text — surfaced so the operator feedback plane (provide_feedback) can auto-derive it. */
   goal?: string;
   executionId?: string;
@@ -7433,6 +7467,7 @@ const server = Bun.serve({
         reached: record.reached ?? null,
         goalReachReason: record.goalReachReason ?? null,
         operator: record.operator ?? null,
+        trigger: record.trigger ?? null,
         goal: record.goal,
         executionId: record.executionId,
         selectedTemplateId: record.selectedTemplateId,
