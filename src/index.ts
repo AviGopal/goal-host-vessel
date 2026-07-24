@@ -3710,6 +3710,68 @@ If one of those sibling shapes is the action that would create what the goal ask
           goalReachReason = _pcReason;
         }
       }
+      // DOWNSTREAM-USE RECOMPUTE PROBE (gap-multistep-derived-value-rubber-stamp; operator-chosen
+      // honest floor). A multi-step goal that DERIVES a mechanical value (count/length of chars or
+      // words of a fetched element) and writes it to a file rubber-stamps: the value is
+      // LLM-interpolated (Haiku miscounts), the gate cannot recompute (the operand lives in the
+      // fetched content, not the goal text), and the written number is not in the digest. Here, at
+      // the reach point, RE-DERIVE the value from the VISIBLE intermediate (poolImpulses) and
+      // compare against the ACTUAL written file (fs_read). Fail-toward-honest: flip reached→false
+      // ONLY on a provable mismatch with a confidently-isolated operand and a single-number file;
+      // any uncertainty or error leaves the reach verdict unchanged.
+      if (reached === true) {
+        try {
+          const _g = goal.toLowerCase();
+          const _isCount = /\b(count|number of|how many|length)\b/.test(_g) && /\b(character|char|letter|word)s?\b/.test(_g);
+          const _writesFile = /\bwrite\b/.test(_g) && (/\bfile\b/.test(_g) || /\/\S+/.test(goal));
+          if (_isCount && _writesFile) {
+            const _fetched = poolImpulses
+              .map((im) => { try { return typeof im.content === "string" ? im.content : JSON.stringify(im.content); } catch { return ""; } })
+              .join("\n");
+            let _operand: string | null = null;
+            const _elem = _g.match(/\b(h1|h2|h3|title|heading|header)\b/);
+            if (_elem) {
+              const _tag = /heading|header|h1/.test(_elem[1]) ? "h1" : (_elem[1] === "title" ? "title" : _elem[1]);
+              const _m = _fetched.match(new RegExp(`<${_tag}[^>]*>([^<]{1,400})</${_tag}>`, "i"));
+              if (_m) _operand = _m[1];
+            }
+            if (_operand === null) {
+              const _q = goal.match(/[`"\u201c]([^`"\u201d]{1,400})[`"\u201d]/);
+              if (_q) _operand = _q[1];
+            }
+            if (_operand !== null && _operand.trim().length > 0) {
+              const _wantWords = /\bwords?\b/.test(_g);
+              const _expected = _wantWords ? _operand.trim().split(/\s+/).filter(Boolean).length : [..._operand].length;
+              const _pathM = goal.match(/(\/[\w./\-]+\.\w+)/) || goal.match(/\bfile\s+([\w./\-]+)/i);
+              const _path = _pathM ? _pathM[1] : null;
+              // fs_read (development-vessel) refuses paths outside the workspace root (e.g. /tmp),
+              // so read the ACTUAL written file via shellResult `cat` (local-tools, in-container,
+              // any path). Strict path guard: absolute, word/dot/slash/hyphen only, no traversal.
+              const _pathSafe = _path !== null && /^\/[\w./\-]+$/.test(_path) && !_path.includes("..");
+              if (_pathSafe && _path !== null && Number.isFinite(_expected)) {
+                const _shEp = await endpointForShape("shellResult");
+                const _fileRaw = _shEp ? await rawResolve("shellResult", _shEp.endpoint, _shEp.resolvePath, { command: `cat ${_path}` }) : null;
+                let _fileContent: unknown = _fileRaw;
+                if (_fileRaw && typeof _fileRaw === "object" && "stdout" in (_fileRaw as Record<string, unknown>)) _fileContent = (_fileRaw as Record<string, unknown>)["stdout"];
+                else if (_fileRaw && typeof _fileRaw === "object" && "content" in (_fileRaw as Record<string, unknown>)) _fileContent = (_fileRaw as Record<string, unknown>)["content"];
+                const _fileStr = typeof _fileContent === "string" ? _fileContent : JSON.stringify(_fileContent ?? "");
+                const _fileNums = (_fileStr.match(/\d+/g) ?? []).map((n) => parseInt(n, 10));
+                if (_fileNums.length === 1) {
+                  if (_fileNums[0] !== _expected) {
+                    reached = false;
+                    const _rr = `deterministic:wrong-derived-value — goal writes the ${_wantWords ? "word" : "character"} count of ${JSON.stringify(_operand.slice(0, 80))} (recomputed=${_expected}) but the written file ${_path} contains ${_fileNums[0]} — the derived value was LLM-interpolated and is wrong`;
+                    if (verdict) { (verdict as GoalReachVerdict).reached = false; (verdict as GoalReachVerdict).reason = _rr; }
+                    goalReachReason = _rr;
+                    tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${_rr}`);
+                  } else {
+                    tap(`[goal-host-vessel] walk(${opts.surface}): DERIVED-VALUE VERIFIED — ${_path}=${_fileNums[0]} matches recomputed ${_expected} for ${JSON.stringify(_operand.slice(0, 60))}`);
+                  }
+                }
+              }
+            }
+          }
+        } catch { /* fail-toward-honest: any error leaves the reach verdict unchanged */ }
+      }
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
