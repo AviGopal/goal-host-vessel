@@ -1066,6 +1066,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 // DISCOVERY_ENDPOINT / API_KEY and so stay here).
 const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
+const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[] }>();
 function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal.slice(0, 400), tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
@@ -2643,7 +2644,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       return out;
     };
     // (a) Try resolving the target shape directly with goal-extracted args.
-    const directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+    const _rcHit = reachedCommandCache.get(goalHashOf(goal));
+    let directArgsRaw: Record<string, unknown>;
+    if (_rcHit && _rcHit.shape === shape) {
+      directArgsRaw = { [_rcHit.field]: _rcHit.command };
+      tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
+    } else {
+      directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+    }
     // COMMAND<->INTENT EVIDENCE (law 8): record the synthesized executable for this shape
     // ONLY when the resolve that USED it SUCCEEDS (called at each success return below), so
     // a failed command is never mis-attributed to content produced by another path.
@@ -4107,6 +4115,16 @@ If one of those sibling shapes is the action that would create what the goal ask
     } catch (e) {
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
     }
+    if (reached) {
+      for (const [sh, cmd] of executorCommands.entries()) {
+        if (producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
+          const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
+          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes] });
+          break;
+        }
+      }
+    }
+
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
     void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, tierFromChain(chain));
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
