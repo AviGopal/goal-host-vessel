@@ -2201,7 +2201,7 @@ async function runGoalAsPoolWalk(
     // the missing executable field, or the shape name marks a shell/exec resolver.
     if (!execField && correction) { const mm = correction.match(/\b(command|cmd|script|sql)\b/i); if (mm) execField = mm[1].toLowerCase(); }
     if (!execField) { const _em = shape.match(/(^|[_-])(sql|script|cmd|command)([_-]|$|result|query)/i); if (_em) execField = _em[2].toLowerCase(); else if (/(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command"; }
-    if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic, self-contained, referencing only paths/values the goal names. Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}.\n\n`;
+    if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic, self-contained, referencing only paths/values the goal names. Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}. AVAILABLE INTERPRETERS: bash, jq, bun, awk, perl — there is NO python, python3, node, or bc in this container. For any arithmetic or string computation you would normally reach for python (digit sums, factorials, primality, parsing), synthesize it with bun -e \x27<javascript>\x27, or perl -e \x27<perl>\x27, or awk — NEVER python or python3. Example: goal "sum the digits of 391" -> {"${execField}":"bun -e \x27console.log([...String(391)].reduce((a,c)=>a+ +c,0))\x27"}.\n\n`;
     const nowIso = new Date().toISOString();
     const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
     const priorFindings = poolImpulses
@@ -2440,26 +2440,8 @@ async function runGoalAsPoolWalk(
         console.log(`[goal-host-vessel] walk rawResolve ${shape}: resolver rejected — ${pObj["error"].slice(0, 140)}`);
         return null;
       }
-    }
-    // EXTERNAL-EVIDENCE / HTTP FAILURE ENVELOPE (honest-reach, gap-contentless-external-satisfier-reach):
-    // resolvers like web_resource and http_fetch return a success-SHAPED body carrying an
-    // in-band failure marker (ok:false, HTTP status >= 400, or a failure_mode) with no usable
-    // payload on a non-2xx fetch. That is NOT produced content — without this the single-shape
-    // vessel-resolve satisfier pools the errored envelope, the reach-gate sees the target SHAPE
-    // and rubber-stamps a HOLLOW reach (the external fact was never fetched). Return null so the
-    // satisfier falls through to recovery/re-frame, exactly as for success:false above.
-    if (content !== null && typeof content === "object" && !Array.isArray(content)) {
-      const _c = content as Record<string, unknown>;
-      const _statusNum = typeof _c["status"] === "number" ? (_c["status"] as number) : Number.NaN;
-      const _isExternalFailure =
-        _c["ok"] === false ||
-        (Number.isFinite(_statusNum) && _statusNum >= 400) ||
-        (typeof _c["failure_mode"] === "string" && (_c["failure_mode"] as string).length > 0);
-      if (_isExternalFailure) {
-        lastRawResolveReason = `external-evidence failure: ${JSON.stringify({ ok: _c["ok"], status: _c["status"], failure_mode: _c["failure_mode"], error: _c["error"] }).slice(0, 180)}`;
-        console.log(`[goal-host-vessel] walk rawResolve ${shape}: external-evidence FAILURE envelope (ok=${String(_c["ok"])} status=${String(_c["status"])}) — not produced content, falling through`);
-        return null;
-      }
+      if ("content" in pObj) content = pObj["content"];
+      else if ("body" in pObj) content = pObj["body"];
     }
     if (content == null || (typeof content === "string" && content.trim().length === 0) || (Array.isArray(content) && content.length === 0)) {
       lastRawResolveReason = "resolver returned empty content";
