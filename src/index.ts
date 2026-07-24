@@ -25,6 +25,12 @@ interface FeedMember {
   substrate: string;
   reachable: boolean;
   dispatches: unknown[];
+  // Optional descriptors for peer substrates surfaced from PEER_DISCOVERY_ENDPOINTS.
+  // A resolver/relay hub federates resolvers to this spoke but may mask its
+  // goal-host (not a runner) — role + vesselCount let the panel show it honestly
+  // as a peer without implying it dispatches goals.
+  role?: string;
+  vesselCount?: number | null;
 }
 
 interface FeedGap {
@@ -104,6 +110,43 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
       }
     }
   } catch { /* fail-open */ }
+
+  // (2b) peer substrates from PEER_DISCOVERY_ENDPOINTS — the hub(s) this spoke
+  // federates UP to for resolvers. A resolver/relay hub commonly masks its own
+  // goal-host (so it runs no goals and section (2)'s activeDispatches fanout
+  // finds no @hub capability row to egress to), yet it IS a live member of the
+  // group with real vessels. Surface it so the panel reflects the true
+  // multi-container topology instead of collapsing to 'local'. Enumerated over
+  // the cheap authed HTTP discovery /health — already reachable, no dependence
+  // on the relay egress (RELAY_MULTIADDR may be unset); tight 2.5s timeout,
+  // fail-open per peer, deduped against members already added by section (2).
+  {
+    const peerEndpoints = String(process.env.PEER_DISCOVERY_ENDPOINTS ?? "")
+      .split(",").map((x) => x.trim()).filter(Boolean);
+    const peerLabels = String(process.env.PEER_SUBSTRATE_LABELS ?? "")
+      .split(",").map((x) => x.trim());
+    const seenSub = new Set(members.map((m) => m.substrate));
+    for (let i = 0; i < peerEndpoints.length; i++) {
+      const peer = peerEndpoints[i].replace(/\/+$/, "");
+      let host = peer;
+      try { host = new URL(peer).host; } catch { /* keep raw endpoint as label */ }
+      const substrate = peerLabels[i] && peerLabels[i].length > 0 ? peerLabels[i] : host;
+      if (seenSub.has(substrate)) continue;
+      seenSub.add(substrate);
+      try {
+        const hr = await fetch(`${peer}/health`, {
+          method: "GET",
+          headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          signal: AbortSignal.timeout(2_500),
+        });
+        const hj = hr.ok ? ((await hr.json()) as Record<string, unknown>) : {};
+        const vesselCount = typeof hj["registeredVessels"] === "number" ? (hj["registeredVessels"] as number) : null;
+        members.push({ substrate, reachable: hr.ok, role: "resolver-hub", vesselCount, dispatches: [] });
+      } catch {
+        members.push({ substrate, reachable: false, role: "resolver-hub", vesselCount: null, dispatches: [] });
+      }
+    }
+  }
 
   // (3) open gaps from development-vessel
   try {
