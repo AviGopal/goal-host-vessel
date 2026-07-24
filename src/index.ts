@@ -1002,9 +1002,12 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
     // prefixed reason can NEVER reach isSubstanceHonestReach. Only CODE sets the flag
     // (favorable-compose :876). Credit thus never fires on a bare LLM-yes (the reach judge
     // rubber-stamps some trivial/impossible goals: negative_control reached 3/3).
+    const negationPhrases = ["did not provide", "does not contain", "did not contain", "not provided", "but the output", "no output", "lacks", "failing to"];
+    const reason = p.reason as string;
+    const hasNegation = negationPhrases.some((phrase) => reason.includes(phrase));
     return {
-      reached: !!p.reached,
-      reason: typeof p.reason === "string" ? p.reason : "",
+      reached: !!(p.reached && !hasNegation),
+      reason,
       completion_shapes: Array.isArray(p.completion_shapes) ? p.completion_shapes.map(String) : [],
       missing: Array.isArray(p.missing) ? p.missing.map(String) : [],
       deterministic: false,
