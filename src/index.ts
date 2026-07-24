@@ -3742,7 +3742,10 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_operand !== null && _operand.trim().length > 0) {
               const _wantWords = /\bwords?\b/.test(_g);
               const _expected = _wantWords ? _operand.trim().split(/\s+/).filter(Boolean).length : [..._operand].length;
-              const _pathM = goal.match(/(\/[\w./\-]+\.\w+)/) || goal.match(/\bfile\s+([\w./\-]+)/i);
+              // Match the WRITE-TARGET path, not the fetched URL: goal.match(/\/.../ ) on the whole
+              // goal would grab "//example.com" from https://example.com. Anchor on the write verb;
+              // fall back to an absolute path under a known runtime dir.
+              const _pathM = goal.match(/\bwrite\b[^/]{0,120}?(\/[\w./\-]+\.\w+)/i) || goal.match(/(?:^|\s)(\/(?:tmp|home|var|root|workspace)\/[\w./\-]+\.\w+)/i);
               const _path = _pathM ? _pathM[1] : null;
               // fs_read (development-vessel) refuses paths outside the workspace root (e.g. /tmp),
               // so read the ACTUAL written file via shellResult `cat` (local-tools, in-container,
