@@ -3633,7 +3633,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch (e) { console.warn("[goal-host-vessel] capability-gap filing error (non-fatal):", (e as Error).message); }
       } else if (verdict && verdict.reached === true) {
-        tap(`[goal-host-vessel] walk(${opts.surface}): REACHED via ${chain.length}-step chain — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        tap(`REACHED via ${chain.length}-step chain`);
+        goalReachReason = verdict.reason;
         // SYMMETRIC CREDIT (mirror of the HOLLOW β-penalty at :3247), gated on SUBSTANCE:
         // a landed/deterministic reach OR a genuine IN-CHAIN producer→consumer edge carried an
         // impulse to the reach (consumedInChain, built above) — ACTUAL in-walk data-flow use,
