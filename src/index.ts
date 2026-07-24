@@ -2451,10 +2451,22 @@ async function runGoalAsPoolWalk(
     if (content !== null && typeof content === "object" && !Array.isArray(content)) {
       const _c = content as Record<string, unknown>;
       const _statusNum = typeof _c["status"] === "number" ? (_c["status"] as number) : Number.NaN;
+      // A fetch/external-evidence envelope is identified by trust or url+domain markers.
+      // Its ONLY usable payload is a non-empty content/bodyText string; a rejected url
+      // ({trust:"rejected", reason}), a non-2xx ({ok:false, status}), or any such envelope
+      // with no real payload is a FAILURE, not produced content — the walk re-frames to a
+      // bare web_resource with no url and the resolver returns {trust:"rejected"}, which has
+      // no ok/status/failure_mode marker and would otherwise be pooled + rubber-stamped.
+      const _hasRealPayload =
+        (typeof _c["content"] === "string" && (_c["content"] as string).trim().length > 0) ||
+        (typeof _c["bodyText"] === "string" && (_c["bodyText"] as string).trim().length > 0);
+      const _isFetchEnvelope = "trust" in _c || ("url" in _c && "domain" in _c);
       const _isExternalFailure =
         _c["ok"] === false ||
         (Number.isFinite(_statusNum) && _statusNum >= 400) ||
-        (typeof _c["failure_mode"] === "string" && (_c["failure_mode"] as string).length > 0);
+        (typeof _c["failure_mode"] === "string" && (_c["failure_mode"] as string).length > 0) ||
+        _c["trust"] === "rejected" ||
+        (_isFetchEnvelope && !_hasRealPayload);
       if (_isExternalFailure) {
         lastRawResolveReason = `external-evidence failure: ${JSON.stringify({ ok: _c["ok"], status: _c["status"], failure_mode: _c["failure_mode"], error: _c["error"] }).slice(0, 180)}`;
         console.log(`[goal-host-vessel] walk rawResolve ${shape}: external-evidence FAILURE envelope (ok=${String(_c["ok"])} status=${String(_c["status"])}) — not produced content, falling through`);
