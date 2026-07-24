@@ -3477,6 +3477,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     });
     const progressed = producedShapes.size > beforeSize;
     tap(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
+    if (target.size > 0 && !_stepNew.some((s) => target.has(s))) continue;
+
     if (!progressed) {
       consecutiveNoProgress++;
       if (consecutiveNoProgress >= 2) {
@@ -3499,6 +3501,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // by execId — fold the just-run step's captured digest in FIRST so the
       // judge sees genuine artifacts (the written + sensed note), not stubs. (2026-06-25)
       const interimCaptured = (lastExecId && reachContentDigests.get(lastExecId)) || "";
+
       const interimPool = poolImpulses
         .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
         .map((imp) => {
