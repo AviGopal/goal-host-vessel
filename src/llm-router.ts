@@ -294,7 +294,7 @@ export async function routedComplete(
           method: "POST",
           headers: authHeaders(),
           // No model override — the vessel's own pinned default applies.
-          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}), task_type: taskType }),
+          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}), ...(body.model ? { model: body.model } : {}), task_type: taskType }),
           signal: controller.signal,
         });
       } finally {
