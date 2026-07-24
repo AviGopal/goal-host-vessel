@@ -2440,8 +2440,26 @@ async function runGoalAsPoolWalk(
         console.log(`[goal-host-vessel] walk rawResolve ${shape}: resolver rejected — ${pObj["error"].slice(0, 140)}`);
         return null;
       }
-      if ("content" in pObj) content = pObj["content"];
-      else if ("body" in pObj) content = pObj["body"];
+    }
+    // EXTERNAL-EVIDENCE / HTTP FAILURE ENVELOPE (honest-reach, gap-contentless-external-satisfier-reach):
+    // resolvers like web_resource and http_fetch return a success-SHAPED body carrying an
+    // in-band failure marker (ok:false, HTTP status >= 400, or a failure_mode) with no usable
+    // payload on a non-2xx fetch. That is NOT produced content — without this the single-shape
+    // vessel-resolve satisfier pools the errored envelope, the reach-gate sees the target SHAPE
+    // and rubber-stamps a HOLLOW reach (the external fact was never fetched). Return null so the
+    // satisfier falls through to recovery/re-frame, exactly as for success:false above.
+    if (content !== null && typeof content === "object" && !Array.isArray(content)) {
+      const _c = content as Record<string, unknown>;
+      const _statusNum = typeof _c["status"] === "number" ? (_c["status"] as number) : Number.NaN;
+      const _isExternalFailure =
+        _c["ok"] === false ||
+        (Number.isFinite(_statusNum) && _statusNum >= 400) ||
+        (typeof _c["failure_mode"] === "string" && (_c["failure_mode"] as string).length > 0);
+      if (_isExternalFailure) {
+        lastRawResolveReason = `external-evidence failure: ${JSON.stringify({ ok: _c["ok"], status: _c["status"], failure_mode: _c["failure_mode"], error: _c["error"] }).slice(0, 180)}`;
+        console.log(`[goal-host-vessel] walk rawResolve ${shape}: external-evidence FAILURE envelope (ok=${String(_c["ok"])} status=${String(_c["status"])}) — not produced content, falling through`);
+        return null;
+      }
     }
     if (content == null || (typeof content === "string" && content.trim().length === 0) || (Array.isArray(content) && content.length === 0)) {
       lastRawResolveReason = "resolver returned empty content";
