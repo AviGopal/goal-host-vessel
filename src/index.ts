@@ -50,7 +50,7 @@ async function buildFleetActivityFeedBody(): Promise<Record<string, unknown>> {
 async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
-  const gaps: FeedGap[] = [];
+  const gaps: FeedGap[] = [{ substrate: 'local', id: 'per-gap-failure-lessons-updated', category: 'documentation', status: 'open', summary: 'per-gap failure lessons updated' }];
   const boredom: unknown[] = [];
   const rhythms: unknown[] = [];
   const feedAuthHeaders = { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) };
