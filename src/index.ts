@@ -1188,7 +1188,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const tools: any[] = [...UNIVERSAL_READ_TOOLS];
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
   const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
-  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The available shell interpreters are bash, jq, and bun ONLY (no python, python3, node, or bc in this container). The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
   // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
@@ -4207,8 +4207,7 @@ async function runGoalWithRecovery(
       const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize|create|author|generate)\b/i.test(goalForRouting) : false;
       // Also treat as an edit intent when the goal names exactly one repos source file
       // (aligns early predicate with the late 0-step detector's file-path-only test).
-      const earlyReadVerb = /\b(count|list|show|find|search|grep|report|read|inspect|analyze|analyse|describe|summarize|summarise|explain|locate|enumerate|display|print|identify|examine)\b/i;
-      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb && !earlyReadVerb
+      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb
         ? (goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? []).length === 1
         : false;
       if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
