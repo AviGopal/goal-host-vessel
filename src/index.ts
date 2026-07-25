@@ -1000,7 +1000,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
           ? "deterministic:favorable-compose — semantic gate consulted (verified) + reachable-symbol substance, applied by feature_compose AND landed on origin/dev"
           : "favorable-compose — landed on origin/dev but semantic gate was fail-open/unverified (no reachable-symbol substance); strong credit withheld, deferring to downstream-use ledger",
         completion_shapes: ["featureComposeReport"],
-        deterministic: verifiedSubstance,
+        deterministic: verifiedSubstance ?? false,
       };
     }
     // Residual 2 (honest-grade): deterministic single-answer compute goals — recompute
