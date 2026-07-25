@@ -2216,7 +2216,7 @@ async function runGoalAsPoolWalk(
   const mkImpulse = (shape: string, content: unknown, summary?: string): Impulse => ({
     id: `walk-${shape}-${++impulseSeq}`,
     pointer: { type: "memo" },
-    metadata: { shape, summary: summary ?? `pool impulse (${shape})`, producedBy: "goal-host-walk", goalSignature: shape },
+    metadata: { shape, summary: summary ?? `pool impulse (${shape})`, producedBy: "goal-host-walk", goalSignature: goalHashOf(goal) },
     loaded: true,
     content,
   });
