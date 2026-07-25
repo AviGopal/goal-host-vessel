@@ -219,7 +219,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   return { generated_at, members, gaps, boredom, rhythms };
 }
 
-import { appendFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { decideContinuation } from "./walk-continuation.js";
@@ -1080,6 +1080,33 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
 const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }>();
+// PERSISTENCE (2026-07-25): reachedCommandCache is the "known command" library — a verified command
+// that a NEW similar goal reuses (Tier-1 exact replay + Tier-2/multi-slot rebind). In-process it
+// resets on every restart/deploy, so the learned reuse never compounds across restarts. Persist it
+// to a JSONL file on the /workspace volume (append-on-reach, load-on-boot) so the known library is
+// DURABLE — the system learns to assess the unknown with the known across restarts, not just within
+// one process. Fail-open throughout: any I/O error leaves the in-process cache authoritative; a load
+// failure starts empty rather than breaking boot.
+const REACHED_CMD_CACHE_PATH = process.env.REACHED_CMD_CACHE_PATH ?? "/workspace/.goal-host-reached-commands.jsonl";
+const REACHED_CMD_CACHE_MAX_LOAD = 2000;
+function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }): void {
+  appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
+}
+async function loadReachedCommandCache(): Promise<void> {
+  try {
+    const raw = await readFile(REACHED_CMD_CACHE_PATH, "utf-8").catch(() => "");
+    if (!raw) return;
+    const lines = raw.split("\n").filter((l) => l.trim());
+    let n = 0;
+    for (const line of lines.slice(-REACHED_CMD_CACHE_MAX_LOAD)) { // last-N wins on dedup by hash (most recent verified command)
+      try {
+        const e = JSON.parse(line) as { hash?: string; command?: string; field?: string; shape?: string; targetShapes?: string[]; goalText?: string };
+        if (e.hash && e.command && e.field && e.shape) { reachedCommandCache.set(e.hash, { command: e.command, field: e.field, shape: e.shape, targetShapes: e.targetShapes ?? [], goalText: e.goalText ?? "" }); n++; }
+      } catch { /* skip malformed line */ }
+    }
+    console.log(`[goal-host-vessel] reached-command cache: loaded ${reachedCommandCache.size} persisted commands (${n} lines) from ${REACHED_CMD_CACHE_PATH}`);
+  } catch { /* fail-open: start empty */ }
+}
 // ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24; multi-slot 2026-07-25) ──
 // On an exact goal_hash MISS, before the LLM synthesis call, REUSE a verified command from a
 // SIMILAR prior goal by swapping ONLY the varying content span. Pure, synchronous, zero-LLM,
@@ -4276,6 +4303,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
           reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal });
+          persistReachedCommand(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal }); // durable known-command library
           break;
         }
       }
@@ -7998,6 +8026,7 @@ console.log(
   ` | llm: ${LLM_VESSEL_ENDPOINT ? `vessel(${LLM_VESSEL_ENDPOINT})` : "in-process"}`,
 );
 
+void loadReachedCommandCache(); // populate the known-command library from durable storage (fail-open, async)
 registerBuiltinResolvers();
 await registerDevVesselProxies();
 await registerDiscoveryProxies();
