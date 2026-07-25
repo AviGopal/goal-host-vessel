@@ -1850,6 +1850,7 @@ function buildCompositeTraceFromChain(
   costUsd: number,
   tags?: string[],
   poolImpulses?: Array<{ id: string; metadata?: { shape?: string } }>,
+  goalSignature?: string,
 ): ExecutionTrace {
   const shapeOf = (id: string): string => (id.startsWith("satisfier:") ? id.slice("satisfier:".length) : id);
   // Map each produced shape to its REAL pool-impulse id so the composite trace's
@@ -1877,6 +1878,7 @@ function buildCompositeTraceFromChain(
       inputImpulseIds: prevId ? [prevId] : [],
       outputImpulseIds: outId ? [outId] : [],
       outputShapes: producedShapes.includes(sh) ? [sh] : [],
+      servesIntent: goalSignature,
       success: true,
     };
   });
@@ -1906,11 +1908,11 @@ function buildCompositeTraceFromChain(
     costUsd,
     durationMs,
     tags,
-    metadata: { satisfier: false, composite: true, chain },
+    metadata: { satisfier: false, composite: true, chain, goalSignature },
   } as ExecutionTrace;
 }
 
-async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean): Promise<void> {
+async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string): Promise<void> {
   const executionId = trace?.id;
   if (!executionId) return;
   if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
@@ -1950,6 +1952,10 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
       depth: Array.isArray(trace.compositionChain) ? trace.compositionChain.length : 0,
       impulseCount: trace.outputImpulseIds?.length ?? 0,
       hasGoalContext: true,
+      // Companion to goalSignature on pool impulses: stamp the PRODUCING INTENT onto the
+      // earned composition edge so the ribosome can read which goal this reusable template
+      // was extracted from (intent-on-edge, not just structure).
+      goalSignature: goalSignature ?? null,
       // ribosome-extract's acquire_trace_signature task short-circuits the whole
       // chain unless lifecycle.qualityEligible === 'true' (normally stamped by the
       // lifecycle dispatcher). On the reach→mint path there is no dispatcher, so we
@@ -3034,6 +3040,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     const rec = executionStore.get(wid);
     if (!rec) return;
     rec.poolShapes = [...producedShapes];
+    // CAUSAL-INTENT LEGIBILITY: surface each live pool impulse's provenance (which intent
+    // produced it, via what) so the pool's content is causally attributable to intent AT ANY
+    // MOMENT via goalWalkState — not just stamped-but-dark on the impulse metadata.
+    (rec as { poolProvenance?: unknown }).poolProvenance = poolImpulses.map((im) => {
+      const m = (im.metadata ?? {}) as { shape?: string; goalSignature?: string; producedBy?: string };
+      return { shape: m.shape, goalSignature: m.goalSignature ?? null, producedBy: m.producedBy ?? null };
+    });
     rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
     // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
     // the record EACH iteration so goalWalkState surfaces WHY the walk is doing
@@ -4221,13 +4234,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         const mintGrounded = isGroundedHonestReach(verdict, { commandEvidence, consumedInChain: consumedInChain.size, editEffectReach });
         walkGroundedVerdict = mintGrounded;
         if (!satisfierOnly) {
-          void mintReachedTrace(lastTrace as any, mintGrounded);
+          void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal));
         } else if (chain.length >= 2) {
-          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags, poolImpulses);
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags, poolImpulses, goalHashOf(goal));
           // Persist the composite so ribosome-extract can read it by id, then mint.
           void (async () => {
             try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
-            await mintReachedTrace(composite as any, mintGrounded);
+            await mintReachedTrace(composite as any, mintGrounded, goalHashOf(goal));
           })();
         }
       }
@@ -5342,7 +5355,7 @@ async function runGoalWithRecovery(
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           if (isSubstanceHonestReach(verdict)) { await creditReachedTemplate(selId, verdict.reason ?? "goal reached"); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
-          void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
+          void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     } else if (!goal && status === "completed" && selId) {
@@ -7378,7 +7391,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
   if (type === "poolImpulse_write") {
