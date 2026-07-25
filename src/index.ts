@@ -899,6 +899,9 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
   return { reached: false, reason: `deterministic:wrong-compute-answer — recomputed ${label} does not match any distinctive answer token in the output (e.g. ${claimed[0]})`, completion_shapes: [] };
 }
 
+/**
+ * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
+ */
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
