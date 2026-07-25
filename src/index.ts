@@ -3848,13 +3848,20 @@ If one of those sibling shapes is the action that would create what the goal ask
         .filter(([sh]) => producedShapes.has(sh))
         .map(([sh, cmd]) => `- ${sh} was produced by RUNNING: \`${String(cmd).slice(0, 1000)}\``)
         .join("\n");
-      const verdict = earlyReachVerdict
+      let verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined);
+      // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
+      // before failing closed, so a correct/grounded answer is not lost to a momentary verifier outage.
+      // (The prior loop only re-read the same null verdict without ever re-invoking the verifier — a no-op.)
+      for (let _r = 0; verdict == null && _r < 2; _r++) {
+        await new Promise((res) => setTimeout(res, 400 * (_r + 1)));
+        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined);
+      }
       completionShapes = verdict?.completion_shapes ?? null;
-      let retryCount = 0; let verdictRetry; do { verdictRetry = verdict; retryCount++; } while (verdictRetry == null && retryCount < 2); reached = verdictRetry == null ? false : verdictRetry?.reached === true;
-        if (verdict == null) {
-          goalReachReason = 'reach verifier unreachable — verdict unknown, failing closed';
-        };
+      reached = verdict == null ? false : verdict.reached === true;
+      if (verdict == null) {
+        goalReachReason = 'reach verifier unreachable after retries — verdict unknown, failing closed';
+      }
       // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): an obsidian-
       // surface question/request that "reached" on ONLY pre-existing seed shapes
       // produced no new human-consumable answer — force not-reached so the recovery
