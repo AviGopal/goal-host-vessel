@@ -258,7 +258,27 @@ async function routeOverRanked(
  * vessel's pinned default (the learned arm) applies. The selection is buffered
  * under dispatchId for end-of-dispatch reward.
  */
+// Location-independence (law 11): llm_completion may resolve on a LOCAL arm OR via a federated
+// hub arm over the relay — the caller must not care which. A transient producer-set gap (local
+// arms de-advertising on a quota cooldown) or a relay round-trip hiccup should not fail the call.
+// Retry the whole resolve (discover -> route -> cascade) a couple times with a short backoff so
+// hub-served resolution is as seamless as local. Only retries on a failed result, so it adds
+// latency solely on the already-failing path.
 export async function routedComplete(
+  dispatchId: string,
+  taskType: string,
+  body: { prompt: string; maxTokens?: number; system?: string; model?: string },
+): Promise<RoutedResult> {
+  let last: RoutedResult = { ok: false, json: null, vesselId: null };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    last = await routedCompleteOnce(dispatchId, taskType, body);
+    if (last.ok) return last;
+    if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+  }
+  return last;
+}
+
+async function routedCompleteOnce(
   dispatchId: string,
   taskType: string,
   body: { prompt: string; maxTokens?: number; system?: string; model?: string },
