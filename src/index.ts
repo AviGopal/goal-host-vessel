@@ -5074,6 +5074,26 @@ async function runGoalWithRecovery(
               if (pwtResp.ok) {
                 const pwtJson = await pwtResp.json() as { success?: boolean; shape?: string; body?: Record<string, unknown> };
                 const pwtBody = (pwtJson.body ?? {}) as Record<string, unknown>;
+                // SUBSTANCE GRADE (landed == reached): patch_with_tools now carries landed:true +
+                // landed_sha/new_git_sha when its cutover actually committed+pushed to origin/dev.
+                // Mirror the feature_compose positive (reached:true + fileEditResult) BEFORE the
+                // staged branch so a REAL deterministic landing is not mis-graded staged-not-landed.
+                const pwtLandedSha = (pwtBody["landed"] === true && typeof pwtBody["landed_sha"] === "string" && (pwtBody["landed_sha"] as string).trim())
+                  ? (pwtBody["landed_sha"] as string).trim()
+                  : (typeof pwtBody["new_git_sha"] === "string" && (pwtBody["new_git_sha"] as string).trim() ? (pwtBody["new_git_sha"] as string).trim() : null);
+                if (pwtJson.success !== false && pwtLandedSha) {
+                  tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools LANDED ${pwtLandedSha} for ${editFile} — grading reached:true`);
+                  return {
+                    result: null,
+                    status: "completed",
+                    selectedTemplateId: "patch_with_tools",
+                    completionShapes: ["fileEditResult"],
+                    attempts: 2,
+                    goalReachReason: `landed ${pwtLandedSha} — feature_compose verdict=${verdict || "unknown"} (${failWhy}); escalated to patch_with_tools which committed/pushed a typecheck-verified patch for ${editFile} to origin/dev`,
+                    reached: true,
+                    executionId: `patch_with_tools:${pwtLandedSha}`,
+                  };
+                }
                 if (pwtJson.success !== false && (pwtJson.shape === "mitosisStaged" || pwtBody["dispatched"] === true)) {
                   // SUBSTANCE GRADE (staged != landed): mitosisStaged is definitionally
                   // pre-landing — the patch is typecheck-clean in the clone but NOT committed/
