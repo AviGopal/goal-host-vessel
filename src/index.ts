@@ -1067,7 +1067,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
 const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }>();
-// ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24) ──
+// ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24; multi-slot 2026-07-25) ──
 // On an exact goal_hash MISS, before the LLM synthesis call, REUSE a verified command from a
 // SIMILAR prior goal by swapping ONLY the varying content span. Pure, synchronous, zero-LLM,
 // zero-network. HIGH-PRECISION/LOW-RECALL: every uncertainty ABSTAINS (returns null -> falls
@@ -1087,23 +1087,55 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     if (!e.goalText) continue;
     const A = toks(e.goalText), B = toks(goalNow);
     if (A.length < 3 || B.length < 3) continue;
-    let p = 0; while (p < A.length && p < B.length && norm(A[p].raw) === norm(B[p].raw)) p++;
-    let sfx = 0; while (sfx < A.length - p && sfx < B.length - p && norm(A[A.length - 1 - sfx].raw) === norm(B[B.length - 1 - sfx].raw)) sfx++;
-    const aMid = A.length - p - sfx, bMid = B.length - p - sfx;
-    if (aMid < 1 || bMid < 1) continue;
-    const shared = p + sfx;
-    const ratio = shared / Math.max(A.length, B.length);
-    if (shared < 3 || ratio < 0.6) continue;
-    const oldContent = e.goalText.slice(A[p].start, A[A.length - 1 - sfx].end).trim();
-    const newContent = goalNow.slice(B[p].start, B[B.length - 1 - sfx].end).trim();
-    if (oldContent.length < 2 || newContent.length < 1) continue;
-    if (isNum(oldContent) !== isNum(newContent)) continue;
-    if (META.test(newContent) && !META.test(oldContent)) continue;
-    const first = e.command.indexOf(oldContent);
-    if (first < 0) continue;
-    if (e.command.indexOf(oldContent, first + 1) >= 0) continue;
-    const newCommand = e.command.slice(0, first) + newContent + e.command.slice(first + oldContent.length);
+    const na = A.map((t) => norm(t.raw)), nb = B.map((t) => norm(t.raw));
+    const la = na.length, lb = nb.length;
+    // LCS(suffix) DP over normalized tokens: the matched subsequence is the shared SCAFFOLD; the
+    // gaps between matches are the varying content SLOTS. Generalizes the single prefix/suffix span
+    // to MULTIPLE slots (e.g. BOTH operands of "multiply 6 by 7" -> "multiply 9 by 8"), each of
+    // which is independently literal-gated against the verified command — the same causal safety.
+    const dp: number[][] = Array.from({ length: la + 1 }, () => new Array<number>(lb + 1).fill(0));
+    for (let i = la - 1; i >= 0; i--) for (let j = lb - 1; j >= 0; j--) dp[i][j] = na[i] === nb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const lcsLen = dp[0][0];
+    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.5) continue; // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
+    // backtrack the alignment; the gaps between matched anchors are slot token-index ranges
+    const slots: Array<{ ai0: number; ai1: number; bi0: number; bi1: number }> = [];
+    let i = 0, j = 0, ai0 = 0, bi0 = 0;
+    while (i < la && j < lb) {
+      if (na[i] === nb[j]) { if (i > ai0 || j > bi0) slots.push({ ai0, ai1: i, bi0, bi1: j }); i++; j++; ai0 = i; bi0 = j; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) i++; else j++;
+    }
+    if (la > ai0 || lb > bi0) slots.push({ ai0, ai1: la, bi0, bi1: lb });
+    if (slots.length < 1) continue;
+    const subs: Array<{ pos: number; len: number; newText: string }> = [];
+    let ok = true;
+    for (const s2 of slots) {
+      if (s2.ai1 <= s2.ai0 || s2.bi1 <= s2.bi0) { ok = false; break; } // pure insert/delete on one side -> refuse
+      const oldContent = e.goalText.slice(A[s2.ai0].start, A[s2.ai1 - 1].end).trim();
+      const newContent = goalNow.slice(B[s2.bi0].start, B[s2.bi1 - 1].end).trim();
+      const numeric = isNum(oldContent);
+      if (newContent.length < 1 || oldContent.length < 1) { ok = false; break; }
+      if (!numeric && oldContent.length < 2) { ok = false; break; }                  // prose fragment floor (a single digit is a full token, so exempt numerics)
+      if (numeric !== isNum(newContent)) { ok = false; break; }                      // type-congruence
+      if (META.test(newContent) && !META.test(oldContent)) { ok = false; break; }    // injection guard
+      const first = e.command.indexOf(oldContent);
+      if (first < 0) { ok = false; break; }                                          // LOAD-BEARING literal gate
+      if (e.command.indexOf(oldContent, first + 1) >= 0) { ok = false; break; }      // ambiguous occurrence -> refuse
+      if (numeric) {                                                                 // sub-token guard: a numeric literal must not be embedded in a larger number (e.g. "6" inside "16"/"6.5")
+        const bch = first > 0 ? e.command[first - 1] : "";
+        const ach = e.command[first + oldContent.length] ?? "";
+        if (/[\d.]/.test(bch) || /[\d.]/.test(ach)) { ok = false; break; }
+      }
+      subs.push({ pos: first, len: oldContent.length, newText: newContent });
+    }
+    if (!ok || subs.length < 1) continue;
+    subs.sort((x, y) => x.pos - y.pos);
+    let overlap = false;
+    for (let k = 1; k < subs.length; k++) if (subs[k].pos < subs[k - 1].pos + subs[k - 1].len) { overlap = true; break; }
+    if (overlap) continue;
+    let newCommand = e.command;
+    for (let k = subs.length - 1; k >= 0; k--) newCommand = newCommand.slice(0, subs[k].pos) + subs[k].newText + newCommand.slice(subs[k].pos + subs[k].len); // apply right-to-left so earlier positions stay valid
     if (newCommand === e.command || /\n/.test(newCommand)) continue;
+    const ratio = lcsLen / Math.max(la, lb);
     if (!best || ratio > best.ratio) best = { ratio, field: e.field, command: newCommand, srcHash };
   }
   return best;
