@@ -271,8 +271,15 @@ export async function routedComplete(
 ): Promise<RoutedResult> {
   let last: RoutedResult = { ok: false, json: null, vesselId: null };
   for (let attempt = 0; attempt < 3; attempt++) {
+    const startedAt = Date.now();
     last = await routedCompleteOnce(dispatchId, taskType, body);
     if (last.ok) return last;
+    // Only retry a FAST failure — an empty/transient producer set during a de-advertise cooldown,
+    // or a connection refusal — which re-discovering on the next attempt is likely to recover. A
+    // SLOW failure means a producer WAS tried and timed out; retrying just triples a slow hub call
+    // (latency amplification observed when local arms exhaust and the hub relay is slow). Bail so
+    // the caller fails fast instead of hanging on 3x a 60s attempt.
+    if (Date.now() - startedAt > 3000) break;
     if (attempt < 2) await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
   }
   return last;
