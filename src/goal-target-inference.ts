@@ -56,12 +56,18 @@ export interface InferGoalTargetShapesOpts {
    */
   complete?: (prompt: string) => Promise<string | null>;
   decisionCache?: Map<string, GoalTargetDecision>;
+  /** Shapes the caller expects the goal to produce; when undefined, infer from goal. */
+  expectedOutputShapes?: string[];
+  /** A pre-pinned target template id; when provided, skip inference. */
+  firstTarget?: string;
 }
 
 /**
  * Infer the 1-3 producible output shapes that satisfy `goal`, constrained to
- * `knownShapes`. Caches by goal_hash so a second call with the same goal does not
- * re-hit the LLM. Returns [] when inference is unavailable / empty / unparseable.
+ * `knownShapes`. When expectedOutputShapes is undefined and firstTarget is not
+ * provided, this function will infer goal-satisfying shapes to seed the walk.
+ * Caches by goal_hash so a second call with the same goal does not re-hit the
+ * LLM. Returns [] when inference is unavailable / empty / unparseable.
  */
 export async function inferGoalTargetShapes(
   goal: string,
@@ -71,6 +77,19 @@ export async function inferGoalTargetShapes(
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return [];
   if (!opts.complete && !llmEndpoint) return [];
+
+  // If caller did not provide expectedOutputShapes and no firstTarget is pinned,
+  // infer the goal-satisfying output shapes from the known producible vocabulary
+  // to seed the walk with goal-relevant targets instead of running opportunistically.
+  if (opts.expectedOutputShapes === undefined && !opts.firstTarget) {
+    const inferred = await inferGoalTargetShapes(goal, knownShapes, {
+      ...opts,
+      expectedOutputShapes: [],
+    });
+    if (inferred.length > 0) {
+      return inferred;
+    }
+  }
 
   const cache = opts.cache;
   const cacheKey = goalHashOf(goal);
