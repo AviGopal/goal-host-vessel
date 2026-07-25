@@ -1011,6 +1011,16 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
 
+  // Deterministic NEGATIVE (edit-intent family, verify-by-content): an edit-intent goal
+  // (names a repos/<vessel> source file + mutation language) is reached ONLY by a produced
+  // edit-result shape; a bare fileContent READ is not an edit. Placed AFTER the favorable-
+  // compose positive so genuine landed edits already returned reached:true above.
+  if (goal && /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal)
+      && /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove)\b/i.test(goal)
+      && !meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))) {
+    return { reached: false, reason: "deterministic:edit-intent-no-edit-result — a fileContent read is not an edit", completion_shapes: [] };
+  }
+
   if (!LLM_VESSEL_ENDPOINT) return null;
   const cmdSection = commandEvidence
     ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. ALSO grade HOLLOW when the command merely ECHOES or PRINTS a literal answer (e.g. echo or printf of a constant) instead of MEASURING it — a self-emitted answer is the model asserting, not evidence. Apply this skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
