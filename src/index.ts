@@ -2695,7 +2695,31 @@ If one of those sibling shapes is the action that would create what the goal ask
         return s ? s : raw;
       } catch { return raw; }
     };
-    const processedBody = boundBody ? await processTerminalContent(shape, boundBody) : boundBody;
+    // DIRECT-BIND a computed mechanical value (fix A): when the goal asks to WRITE a single
+    // computed value (count/number/result/length) and a shellResult intermediate produced a clean
+    // short single-line value, bind that value DIRECTLY rather than LLM-transforming the findings
+    // blob (Haiku miscounts). The shell IS the calculator; its stdout is the answer — no LLM
+    // interpolation of the arithmetic. Scoped: only for a single-value write with a clean shell result.
+    let _directComputed: string | null = null;
+    if (terminalShapes.has(shape)) {
+      const _gLow = goal.toLowerCase();
+      const _wantsSingleValue = /\bwrite\s+only\b/.test(_gLow) ||
+        /\b(write|save|store|output|record)\b[^.]{0,60}\b(the |that |only )?(number|count|result|value|total|length|digit|sum)\b/.test(_gLow);
+      if (_wantsSingleValue) {
+        for (const _imp of poolImpulses) {
+          const _sh = (_imp.metadata as { shape?: string } | undefined)?.shape;
+          if (_sh !== "shellResult") continue;
+          const _raw = _imp.content as unknown;
+          const _stdout = (_raw && typeof _raw === "object" && "stdout" in (_raw as Record<string, unknown>))
+            ? String((_raw as Record<string, unknown>)["stdout"]) : (typeof _raw === "string" ? _raw : "");
+          const _trimmed = _stdout.trim();
+          if (_trimmed && _trimmed.length <= 64 && !_trimmed.includes("\n") && !/error|not found|no such|command not/i.test(_trimmed)) {
+            _directComputed = _trimmed;
+          }
+        }
+      }
+    }
+    const processedBody = _directComputed !== null ? _directComputed : (boundBody ? await processTerminalContent(shape, boundBody) : boundBody);
     let writeEnvelope: { envelope: string; required: string[] } | null = null;
     try {
       const sep0 = await endpointForShape(shape);
@@ -3050,9 +3074,20 @@ If one of those sibling shapes is the action that would create what the goal ask
       // is empty (the common single-shape case): every shape passes the filter.
       const intermediatesPending = terminalShapes.size > 0 &&
         missingForSatisfier.some((s) => !terminalShapes.has(s));
-      const eligibleForSatisfier = intermediatesPending
+      let eligibleForSatisfier = intermediatesPending
         ? missingForSatisfier.filter((s) => !terminalShapes.has(s))
         : missingForSatisfier;
+      // COMPUTE-DEFERRAL (fix A, composition-ordering): an executor/compute shape (shellResult)
+      // consumes another intermediate's output as its operand (e.g. wc -c on a fetched h1). Defer it
+      // behind non-executor intermediates so its command is synthesized AFTER the operand lands in
+      // the pool. Mirrors terminal deferral: pure selection-ordering, never mutates satisfierTried,
+      // no loop risk. No-op when the executor is the only/last pending shape (single-step shell goal
+      // where the operand is already present) — guarded by the some(!isExecutor) check.
+      const _isExecutorShape = (sh: string) =>
+        /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command|(^|[_-])(sql|script|cmd)([_-]|$|result|query))/i.test(sh);
+      if (eligibleForSatisfier.some((sh) => !_isExecutorShape(sh))) {
+        eligibleForSatisfier = eligibleForSatisfier.filter((sh) => !_isExecutorShape(sh));
+      }
       const liveForSatisfier = await liveShapes();
       // COMPOSITION-PREFERENCE PROBE (Fix #2, 2026-07-24): when >1 target shape is still
       // missing, a single-shape satisfier would reach only ONE and short-circuit (dropping
@@ -4459,6 +4494,31 @@ async function runGoalWithRecovery(
             `[goal-host-vessel] ${opts.surface}: shell safety-net seeded shellResult for imperative/system-inspection goal ` +
               JSON.stringify({ goal_hash: goalHashOf(goal) }),
           );
+        }
+      }
+      // COMPUTE-CHAIN AUGMENTATION (fix A, composition-ordering): a goal that FETCHES/READS
+      // external content, DERIVES a mechanical value from it, and WRITES the value is a 3-shape
+      // composition [source, shellResult(compute), write]. The LLM inference collapses it to
+      // [source, write] (dropping compute -> the value gets LLM-interpolated at the write terminal
+      // and miscounted). Deterministically inject the compute shape between source and write when the
+      // goal carries all three signals and the inferred target has a source + a write but no compute.
+      // Ordering (source->compute->write) is enforced by the compute-deferral in satisfier selection;
+      // the write binds the shell value directly (direct-bind). Fires ONLY on the exact 3-verb pattern.
+      if (knownShapes && knownShapes.includes("shellResult") && Array.isArray(seededOutputShapes)) {
+        const _g3 = goal.toLowerCase();
+        const _srcRe = /http_fetch|web_resource|fileContent|fs_read/;
+        const _wrRe = /fileWriteResult|fs_write|fileEditResult/;
+        const _hasSourceVerb = /\b(fetch|read|load|download|get|retrieve|scrape|pull)\b/.test(_g3);
+        const _hasDeriveVerb = /\b(count|number of|how many|length|sum|total|average|multiply|product|compute|calculate|derive|word count|character count)\b/.test(_g3);
+        const _hasWriteVerb = /\b(write|save|store|output|record)\b/.test(_g3) && (/\bfile\b/.test(_g3) || /\/\S+/.test(goal));
+        const _src = seededOutputShapes.filter((sh) => _srcRe.test(sh));
+        const _wr = seededOutputShapes.filter((sh) => _wrRe.test(sh));
+        const _hasCompute = seededOutputShapes.includes("shellResult");
+        if (_hasSourceVerb && _hasDeriveVerb && _hasWriteVerb && _src.length > 0 && _wr.length > 0 && !_hasCompute) {
+          const _rest = seededOutputShapes.filter((sh) => !_src.includes(sh) && !_wr.includes(sh));
+          seededOutputShapes = [..._src, ..._rest, "shellResult", ..._wr].slice(0, 3);
+          goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
+          tap(`[goal-host-vessel] ${opts.surface}: compute-chain augmentation injected shellResult into derive-from-source-and-write target ` + JSON.stringify({ goal_hash: goalHashOf(goal), shapes: seededOutputShapes }));
         }
       }
     }
