@@ -264,7 +264,26 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
       alternatives.push(filteredAlt);
       if (alternatives.length >= 2) break;
     }
-    const decision: GoalTargetDecision = { shapes: filteredShapes, confidence, alternatives };
+    // FETCH+MEASURE → shellResult (deterministic override, 2026-07-25). A goal that
+    // FETCHES a source AND applies a SHELL-COMPUTABLE MEASURE ("fetch <url> and count the
+    // distinct tags") is mis-routed to http_fetch — a FETCH-ONLY shape that cannot compute,
+    // so the satisfier produces the raw blob and the reach-gate greens a HOLLOW answer.
+    // VERIFIED live: the same goal phrased "using a shell command" infers shellResult and
+    // REACHES (exact count 11); phrased "fetch" infers http_fetch and hollow-greens
+    // (shellResult already sits in its alternatives). shellResult is the UNIVERSAL EXECUTOR
+    // — it curls AND computes in one op. Promote it over the fetch-only terminal. Never
+    // fires for prose summarize/analyze/persist goals (a shell cannot do those).
+    let outShapes = filteredShapes;
+    if (known.has("shellResult") && !outShapes.includes("shellResult")) {
+      const FETCH_RE = /\bhttps?:\/\/|\b(fetch|download|curl|scrape)\b/i;
+      const SHELL_MEASURE_RE = /\b(count|how many|number of|distinct|unique|most (?:frequen\w*|common)|frequen\w*|occurr\w*|\bsum\b|total|bytes?\b|byte count|\blength\b|line count|longer|shorter|larger|smaller|\bcompare\b)\b/i;
+      const NOT_SHELLABLE_RE = /\b(summar\w*|analy[sz]e|explain|describe|sentiment|classif\w*|translat\w*|rewrite|as a concept|store .*\bconcept\b|write .*\bnote\b)\b/i;
+      const FETCH_ONLY = new Set(["http_fetch", "httpResponse", "http_response", "web_resource", "fileContent", "source_code"]);
+      if (FETCH_RE.test(goal) && SHELL_MEASURE_RE.test(goal) && !NOT_SHELLABLE_RE.test(goal) && outShapes.some((s) => FETCH_ONLY.has(s))) {
+        outShapes = [...outShapes.filter((s) => !FETCH_ONLY.has(s)), "shellResult"];
+      }
+    }
+    const decision: GoalTargetDecision = { shapes: outShapes, confidence, alternatives };
     if (decisionCache) {
       if (decisionCache.size >= INFER_CACHE_MAX) {
         const first = decisionCache.keys().next().value;
