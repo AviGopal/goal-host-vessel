@@ -1066,7 +1066,48 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 // DISCOVERY_ENDPOINT / API_KEY and so stay here).
 const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
-const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[] }>();
+const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }>();
+// ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24) ──
+// On an exact goal_hash MISS, before the LLM synthesis call, REUSE a verified command from a
+// SIMILAR prior goal by swapping ONLY the varying content span. Pure, synchronous, zero-LLM,
+// zero-network. HIGH-PRECISION/LOW-RECALL: every uncertainty ABSTAINS (returns null -> falls
+// to llmExtractPointerArgs), never emits a wrong rebind. The load-bearing gate is that the
+// varying goal span appears LITERALLY (exactly once) in the verified command — a causal proof
+// that that span is what flowed into the command, not a similarity heuristic.
+function tryLexicalRebind(goalNow: string, shape: string): { field: string; command: string; srcHash: string } | null {
+  const REBIND_EXEC_FIELDS = ["command", "cmd", "script", "sql"];
+  const META = /[;&|`$><\n\\]|\$\(/;
+  const isNum = (x: string) => /^-?\d+(\.\d+)?$/.test(x.trim());
+  const toks = (str: string) => Array.from(str.matchAll(/\S+/g)).map((m) => ({ raw: m[0], start: m.index as number, end: (m.index as number) + m[0].length }));
+  const norm = (t: string) => t.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, "");
+  let best: { ratio: number; field: string; command: string; srcHash: string } | null = null;
+  for (const [srcHash, e] of reachedCommandCache.entries()) {
+    if (e.shape !== shape) continue;
+    if (!REBIND_EXEC_FIELDS.includes(e.field)) continue;
+    if (!e.goalText) continue;
+    const A = toks(e.goalText), B = toks(goalNow);
+    if (A.length < 3 || B.length < 3) continue;
+    let p = 0; while (p < A.length && p < B.length && norm(A[p].raw) === norm(B[p].raw)) p++;
+    let sfx = 0; while (sfx < A.length - p && sfx < B.length - p && norm(A[A.length - 1 - sfx].raw) === norm(B[B.length - 1 - sfx].raw)) sfx++;
+    const aMid = A.length - p - sfx, bMid = B.length - p - sfx;
+    if (aMid < 1 || bMid < 1) continue;
+    const shared = p + sfx;
+    const ratio = shared / Math.max(A.length, B.length);
+    if (shared < 3 || ratio < 0.6) continue;
+    const oldContent = e.goalText.slice(A[p].start, A[A.length - 1 - sfx].end).trim();
+    const newContent = goalNow.slice(B[p].start, B[B.length - 1 - sfx].end).trim();
+    if (oldContent.length < 2 || newContent.length < 1) continue;
+    if (isNum(oldContent) !== isNum(newContent)) continue;
+    if (META.test(newContent) && !META.test(oldContent)) continue;
+    const first = e.command.indexOf(oldContent);
+    if (first < 0) continue;
+    if (e.command.indexOf(oldContent, first + 1) >= 0) continue;
+    const newCommand = e.command.slice(0, first) + newContent + e.command.slice(first + oldContent.length);
+    if (newCommand === e.command || /\n/.test(newCommand)) continue;
+    if (!best || ratio > best.ratio) best = { ratio, field: e.field, command: newCommand, srcHash };
+  }
+  return best;
+}
 function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal.slice(0, 400), tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
@@ -2136,6 +2177,7 @@ async function runGoalAsPoolWalk(
   // producedShapes is the set of shapes currently available to consume; poolImpulses
   // are the concrete impulses (with content) we seed into each step's execution.
   const producedShapes = new Set<string>();
+  let commandReuseFired = false; // Tier-2 lexical rebind fired this walk -> record as learned_pathway
   const poolImpulses: Impulse[] = [];
   let impulseSeq = 0;
   const mkImpulse = (shape: string, content: unknown, summary?: string): Impulse => ({
@@ -2650,7 +2692,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
     } else {
-      directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+      const _rebind = tryLexicalRebind(goal, shape);
+      if (_rebind) {
+        directArgsRaw = { [_rebind.field]: _rebind.command };
+        commandReuseFired = true;
+        tap(`[goal-host-vessel] walk: REBOUND verified command for "${shape}" from a similar goal (src ${_rebind.srcHash}) — content swapped, SKIPPED pointer_arg_extraction synthesis`);
+      } else {
+        directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+      }
     }
     // COMMAND<->INTENT EVIDENCE (law 8): record the synthesized executable for this shape
     // ONLY when the resolve that USED it SUCCEEDS (called at each success return below), so
@@ -4119,14 +4168,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       for (const [sh, cmd] of executorCommands.entries()) {
         if (producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
-          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes] });
+          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal });
           break;
         }
       }
     }
 
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
-    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, tierFromChain(chain));
+    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain));
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
 
