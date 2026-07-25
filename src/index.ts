@@ -4240,7 +4240,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           // Persist the composite so ribosome-extract can read it by id, then mint.
           void (async () => {
             try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
-            await mintReachedTrace(composite as any, mintGrounded, goalHashOf(goal));
+            const compositeGrounded = mintGrounded || composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2;
+            await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal));
           })();
         }
       }
