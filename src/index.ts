@@ -1877,6 +1877,7 @@ function buildCompositeTraceFromChain(
       resolverTier: "pattern" as const,
       inputImpulseIds: prevId ? [prevId] : [],
       outputImpulseIds: outId ? [outId] : [],
+      inputShapes: prevSh ? [prevSh] : [],
       outputShapes: producedShapes.includes(sh) ? [sh] : [],
       servesIntent: goalSignature,
       success: true,
