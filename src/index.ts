@@ -24,7 +24,7 @@ import { Config } from './config';
 interface FeedMember {
   substrate: string;
   reachable: boolean;
-  dispatches: unknown[];
+  dispatches: Array<Record<string, unknown>>;
   // Optional descriptors for peer substrates surfaced from PEER_DISCOVERY_ENDPOINTS.
   // A resolver/relay hub federates resolvers to this spoke but may mask its
   // goal-host (not a runner) — role + vesselCount let the panel show it honestly
@@ -57,12 +57,12 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
   const gaps: FeedGap[] = [{ substrate: 'local', id: 'per-gap-failure-lessons-updated', category: 'documentation', status: 'open', summary: 'per-gap failure lessons updated' }];
-  const boredom: unknown[] = [];
-  const rhythms: unknown[] = [];
+  const boredom: Record<string, unknown>[] = [];
+  const rhythms: Record<string, unknown>[] = [];
   const feedAuthHeaders = { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) };
 
   // (1) local dispatches — in-process, same source as the activeDispatches branch
-  const localDispatches: unknown[] = [...executionStore.values()]
+  const localDispatches: Record<string, unknown>[] = [...executionStore.values()]
     .sort((a, b) => b.startedAt - a.startedAt)
     .slice(0, 50)
     .map((r) => ({
@@ -102,7 +102,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
             body: JSON.stringify({ impulse: { pointer: { type: "activeDispatches", _fedTargetVessel: targetVessel } } }),
             signal: AbortSignal.timeout(8_000),
           });
-          const fedJ = (await fedR.json()) as { content?: { body?: { dispatches?: unknown[] } }; body?: { dispatches?: unknown[] } };
+          const fedJ = (await fedR.json()) as { content?: { body?: { dispatches?: Array<Record<string, unknown>> } }; body?: { dispatches?: Array<Record<string, unknown>> } };
           members.push({ substrate, reachable: fedR.ok, dispatches: fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? [] });
         } catch {
           members.push({ substrate, reachable: false, dispatches: [] });
