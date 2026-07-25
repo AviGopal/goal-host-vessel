@@ -4714,16 +4714,21 @@ async function runGoalWithRecovery(
             if (earlyVerdict === "FAVORABLE") {
               const earlyCutovers = Array.isArray(earlyBody.cutovers) ? earlyBody.cutovers as Array<Record<string, unknown>> : [];
               let earlyLandedSha: string | null = null;
+              let earlyPushStatus: string | null = null;
               for (const c of earlyCutovers) {
                 const rr = ((c ?? {}).result ?? {}) as Record<string, unknown>;
                 if (rr.push_status === "pushed" && typeof rr.new_git_sha === "string" && rr.new_git_sha.trim()) {
                   earlyLandedSha = rr.new_git_sha.trim();
+                  earlyPushStatus = "pushed";
                   break;
                 }
               }
               const earlySummary = typeof earlyBody.summary === "string" && earlyBody.summary.trim()
                 ? ` — ${earlyBody.summary.trim().slice(0, 160)}` : "";
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=FAVORABLE${earlyLandedSha ? ` landed=${earlyLandedSha}` : " (staged)"}${earlySummary}`);
+              const earlyVerdict = earlyPushStatus === "pushed" ? "FAVORABLE" : "UNFAVORABLE";
+              const earlyReason = earlyPushStatus === "pushed" ? "" : " staged-not-landed";
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=${earlyVerdict}${earlyReason}`);
+              tap(`[goal-host-vessel] ${opts.surface}: landed SHA ${earlyLandedSha ?? "(staged)"}${earlySummary}`);
               // SUBSTANCE GRADE: reached iff a real landing occurred (feature_compose set
               // earlyLandedSha only on push_status==="pushed" + new_git_sha). A "staged FAVORABLE"
               // (typecheck-clean but not committed/pushed) is not a reach.
