@@ -3007,6 +3007,9 @@ If one of those sibling shapes is the action that would create what the goal ask
   // so goalWalkState surfaces the structured tree WHILE the walk runs.
   const walkSteps: WalkStep[] = [];
   let walkStepIndex = 0;
+  // Walk-level trust verdict, surfaced on goalWalkState at terminalization. Set
+  // where the mint-honesty gate computes it; read after the reach-verify try.
+  let walkGroundedVerdict: boolean | undefined;
 
   // ── 2-3. Walk the shape graph ──────────────────────────────────────────────
   // Live walk-state mirror (goalWalkState read shape): snapshot the pool +
@@ -4196,6 +4199,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // real in-chain edge), never a bare LLM-yes — else the learning loop pollutes the
         // template store with hollow templates that win selection traffic and fail.
         const mintGrounded = isGroundedHonestReach(verdict, { commandEvidence, consumedInChain: consumedInChain.size, editEffectReach });
+        walkGroundedVerdict = mintGrounded;
         if (!satisfierOnly) {
           void mintReachedTrace(lastTrace as any, mintGrounded);
         } else if (chain.length >= 2) {
@@ -4244,6 +4248,14 @@ If one of those sibling shapes is the action that would create what the goal ask
 
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
     void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain));
+    {
+      const _wid = opts.variables.dispatch_id;
+      const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
+      if (_rec) {
+        (_rec as { walkTier?: string }).walkTier = commandReuseFired ? "learned_pathway" : tierFromChain(chain);
+        if (walkGroundedVerdict !== undefined) (_rec as { grounded?: boolean }).grounded = walkGroundedVerdict;
+      }
+    }
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
 
@@ -7326,7 +7338,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
   if (type === "poolImpulse_write") {
