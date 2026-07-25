@@ -23,7 +23,7 @@ import { Config } from './config';
 
 interface FeedMember {
   substrate: string;
-  reachable: boolean;
+  reachable: boolean | null;
   dispatches: Array<Record<string, unknown>>;
   // Optional descriptors for peer substrates surfaced from PEER_DISCOVERY_ENDPOINTS.
   // A resolver/relay hub federates resolvers to this spoke but may mask its
@@ -103,9 +103,9 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
             signal: AbortSignal.timeout(8_000),
           });
           const fedJ = (await fedR.json()) as { content?: { body?: { dispatches?: Array<Record<string, unknown>> } }; body?: { dispatches?: Array<Record<string, unknown>> } };
-          members.push({ substrate, reachable: fedR.ok, dispatches: fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? [] });
+          members.push({ substrate, reachable: fedR.ok ? true : null, dispatches: fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? [] });
         } catch {
-          members.push({ substrate, reachable: false, dispatches: [] });
+          members.push({ substrate, reachable: null, dispatches: [] });
         }
       }
     }
