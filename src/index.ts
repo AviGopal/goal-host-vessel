@@ -1110,8 +1110,9 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     let ok = true;
     for (const s2 of slots) {
       if (s2.ai1 <= s2.ai0 || s2.bi1 <= s2.bi0) { ok = false; break; } // pure insert/delete on one side -> refuse
-      const oldContent = e.goalText.slice(A[s2.ai0].start, A[s2.ai1 - 1].end).trim();
-      const newContent = goalNow.slice(B[s2.bi0].start, B[s2.bi1 - 1].end).trim();
+      const stripPunct = (x: string) => x.replace(/^[,.;:!?]+|[,.;:!?]+$/g, "").trim(); // strip goal-grammar punctuation at slot boundaries (e.g. "5," -> "5") so it matches the command literal
+      const oldContent = stripPunct(e.goalText.slice(A[s2.ai0].start, A[s2.ai1 - 1].end));
+      const newContent = stripPunct(goalNow.slice(B[s2.bi0].start, B[s2.bi1 - 1].end));
       const numeric = isNum(oldContent);
       if (newContent.length < 1 || oldContent.length < 1) { ok = false; break; }
       if (!numeric && oldContent.length < 2) { ok = false; break; }                  // prose fragment floor (a single digit is a full token, so exempt numerics)
