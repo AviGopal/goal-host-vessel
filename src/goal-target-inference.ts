@@ -24,12 +24,12 @@ export type FetchLike = typeof fetch;
 // FNV-1a 32-bit. NOT Date.now()-based — same goal must map to the same key so the
 // cache actually deduplicates LLM calls across retries / re-dispatches.
 export function goalHashOf(goal: string): string {
-  let h = 0x811c9dc5;
+  let hash = 2166136261 >>> 0; // FNV-1a 32-bit offset basis
   for (let i = 0; i < goal.length; i++) {
-    h ^= goal.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
+    hash ^= goal.charCodeAt(i);
+    hash = (hash * 16777619) >>> 0; // FNV prime
   }
-  return (h >>> 0).toString(16).padStart(8, "0");
+  return hash.toString(16).padStart(8, "0");
 }
 
 const INFER_CACHE_MAX = 512;
