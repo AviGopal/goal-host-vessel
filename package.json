@@ -6,7 +6,8 @@
   "scripts": {
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
-    "line-count": "bun run src/scripts/line-count.js"
+    "line-count": "bun run src/scripts/line-count.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
