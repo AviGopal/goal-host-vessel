@@ -274,13 +274,20 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
     // — it curls AND computes in one op. Promote it over the fetch-only terminal. Never
     // fires for prose summarize/analyze/persist goals (a shell cannot do those).
     let outShapes = filteredShapes;
-    if (known.has("shellResult") && !outShapes.includes("shellResult")) {
+    // Fire whether shellResult must be PROMOTED (absent) or is already CO-PRESENT
+    // alongside a fetch-only shape. The co-present case is the load-bearing one:
+    // when upstream emits [http_fetch, shellResult] together, derivation-split
+    // labels http_fetch an INTERMEDIATE and the walk mis-bridges it to source_code
+    // (auto-bridge-source_code, universally bindable) → produces the raw shape, never
+    // shellResult → hollow partial-coverage. Collapsing to [shellResult] keeps the
+    // goal on the universal executor (curls AND computes in one op), as D1 proved.
+    if (known.has("shellResult")) {
       const FETCH_RE = /\bhttps?:\/\/|\b(fetch|download|curl|scrape)\b/i;
       const SHELL_MEASURE_RE = /\b(count|how many|number of|distinct|unique|most (?:frequen\w*|common)|frequen\w*|occurr\w*|\bsum\b|total|bytes?\b|byte count|\blength\b|line count|longer|shorter|larger|smaller|\bcompare\b)\b/i;
       const NOT_SHELLABLE_RE = /\b(summar\w*|analy[sz]e|explain|describe|sentiment|classif\w*|translat\w*|rewrite|as a concept|store .*\bconcept\b|write .*\bnote\b)\b/i;
       const FETCH_ONLY = new Set(["http_fetch", "httpResponse", "http_response", "web_resource", "fileContent", "source_code"]);
       if (FETCH_RE.test(goal) && SHELL_MEASURE_RE.test(goal) && !NOT_SHELLABLE_RE.test(goal) && outShapes.some((s) => FETCH_ONLY.has(s))) {
-        outShapes = [...outShapes.filter((s) => !FETCH_ONLY.has(s)), "shellResult"];
+        outShapes = [...outShapes.filter((s) => !FETCH_ONLY.has(s) && s !== "shellResult"), "shellResult"];
       }
     }
     const decision: GoalTargetDecision = { shapes: outShapes, confidence, alternatives };
