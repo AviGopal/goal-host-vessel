@@ -467,8 +467,29 @@ setInterval(() => {
   );
 }, BUS_STATS_INTERVAL_MS).unref();
 
-process.on("SIGTERM", () => { void flushMemDump("SIGTERM"); });
-process.on("SIGINT", () => { void flushMemDump("SIGINT"); });
+// GRACEFUL DRAIN (gap-mitosis-cutover-interrupts-in-flight-dispatches, 2026-07-26):
+// `systemctl restart` (mitosis cutover) sends SIGTERM to the unit's cgroup. We used
+// to only flush the mem-dump and exit immediately, KILLING every in-flight walk
+// ("interrupted: goal-host restarted (cutover)"). Instead: stop accepting NEW
+// dispatches (handleRunGoal returns 503 so the caller retries the restarted instance)
+// and wait for in-flight walks to drain to zero, bounded under the unit's 90s
+// TimeoutStopSec so systemd never SIGKILLs us mid-drain.
+let draining = false;
+async function gracefulShutdown(sig: string): Promise<void> {
+  if (draining) return;
+  draining = true;
+  void flushMemDump(sig);
+  const deadline = Date.now() + Number(process.env["GOAL_HOST_DRAIN_MS"] ?? "80000");
+  for (;;) {
+    const inFlight = [...executionStore.values()].filter((r) => r.status === "running").length;
+    if (inFlight === 0) { console.log(`[goal-host-vessel] ${sig}: drained (0 in-flight) — exiting`); break; }
+    if (Date.now() >= deadline) { console.log(`[goal-host-vessel] ${sig}: drain deadline with ${inFlight} in-flight — exiting`); break; }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  process.exit(0);
+}
+process.on("SIGTERM", () => { void gracefulShutdown("SIGTERM"); });
+process.on("SIGINT", () => { void gracefulShutdown("SIGINT"); });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Iteration 6 of the OOM hunt — periodic Bun.gc(true) workaround.
@@ -6676,6 +6697,9 @@ discoveryLoop.onUnhealthy(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function handleRunGoal(req: Request): Promise<Response> {
+  // Reject new dispatches while draining for a graceful restart (cutover) so the
+  // in-flight set can reach zero; the caller retries against the fresh instance.
+  if (draining) return Response.json({ error: "goal-host draining for restart — retry", draining: true }, { status: 503 });
   let body: Record<string, unknown>;
   try {
     const parsed = await req.json();
