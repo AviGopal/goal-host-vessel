@@ -289,7 +289,16 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
       const SHELL_MEASURE_RE = /\b(count|how many|number of|distinct|unique|most (?:frequen\w*|common)|frequen\w*|occurr\w*|\bsum\b|total|bytes?\b|byte count|\blength\b|line count|longer|shorter|larger|smaller|\bcompare\b)\b/i;
       const NOT_SHELLABLE_RE = /\b(summar\w*|analy[sz]e|explain|describe|sentiment|classif\w*|translat\w*|rewrite|as a concept|store .*\bconcept\b|write .*\bnote\b)\b/i;
       const FETCH_ONLY = new Set(["http_fetch", "httpResponse", "http_response", "web_resource", "fileContent", "source_code"]);
-      if (FETCH_RE.test(goal) && SHELL_MEASURE_RE.test(goal) && !NOT_SHELLABLE_RE.test(goal) && outShapes.some((s) => FETCH_ONLY.has(s))) {
+      // LOCAL-source compute parity (ROOT A, 2026-07-26): a LOCAL-file measure goal
+      // ("count the lines in file X") matches no FETCH verb, so the remote-only FETCH_RE
+      // gate never fired and a confident LLM [fileContent] survived -> hollow raw read.
+      // Fire ALSO when a raw local-source shape is already inferred: "wc -l <path>" is ONE
+      // shell command that reads the file itself, so COLLAPSE to [shellResult] (chain=1;
+      // shellResult does not consume fileContent). Same SHELL_MEASURE/!NOT_SHELLABLE guard
+      // keeps pure-read and prose/write goals untouched.
+      const LOCAL_SOURCE = new Set(["fileContent", "source_code"]);
+      const hasLocalSource = outShapes.some((s) => LOCAL_SOURCE.has(s));
+      if ((FETCH_RE.test(goal) || hasLocalSource) && SHELL_MEASURE_RE.test(goal) && !NOT_SHELLABLE_RE.test(goal) && outShapes.some((s) => FETCH_ONLY.has(s))) {
         outShapes = [...outShapes.filter((s) => !FETCH_ONLY.has(s) && s !== "shellResult"), "shellResult"];
       }
     }
