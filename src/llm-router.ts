@@ -393,7 +393,11 @@ export async function flushRouterFeedback(dispatchId: string, reached: boolean):
   if (!buf) return;
   buffers.delete(dispatchId);
   await Promise.allSettled(
-    buf.map((s) =>
+    // ORACLE INTEGRITY (L12 effect-as-cause): the reach-verification arm produces
+    // the very `reached` verdict this reward is keyed on, so rewarding it would let
+    // the grader earn credit from its own output (a self-referential loop). Exclude
+    // it — the reach judge is graded only against external signal, never itself.
+    buf.filter((s) => s.taskType !== "reach_verification").map((s) =>
       fetch(`${ACTIVITY_API_ENDPOINT.replace(/\/$/, "")}/v2/llm-router/feedback`, {
         method: "POST",
         headers: authHeaders(),

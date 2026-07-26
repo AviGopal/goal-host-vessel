@@ -2242,6 +2242,10 @@ async function runGoalAsPoolWalk(
     learningSink?: LearningConsequences;
     /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
     suppressSatisfierShapes?: string[];
+    /** EVALUABILITY (per-dispatch, shape-driven; L1/L12): ablate the learned pathway so a floor/counterfactual arm can be run and RECORDED. disableReuse/forceFloor suppress the reached-command cache + lexical rebind (cold derivation); pinnedPriors/seed reserved for seeded selection. */
+    ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
+    /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
+    learningMode?: "observe" | "learn";
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -2823,13 +2827,22 @@ If one of those sibling shapes is the action that would create what the goal ask
       return out;
     };
     // (a) Try resolving the target shape directly with goal-extracted args.
-    const _rcHit = reachedCommandCache.get(goalHashOf(goal));
+    // EVALUABILITY (ablation): forceFloor/disableReuse suppresses BOTH the reached-
+    // command cache hit and the lexical rebind so the walk runs the COLD derivation
+    // (the floor arm). The suppressed hit is logged as a counterfactual so the
+    // ablation is observable in the trace (L1/L12 change-one-thing-and-record-it).
+    const _suppressReuse = opts.ablation?.disableReuse === true || opts.ablation?.forceFloor === true;
+    const _rcHitRaw = reachedCommandCache.get(goalHashOf(goal));
+    if (_suppressReuse && _rcHitRaw && _rcHitRaw.shape === shape) {
+      tap(`[goal-host-vessel] walk(${opts.surface}): reuse SUPPRESSED by ablation (forceFloor/disableReuse) — a reached-command cache HIT for "${shape}" was IGNORED; running cold derivation (floor arm)`);
+    }
+    const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
     if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
     } else {
-      const _rebind = tryLexicalRebind(goal, shape);
+      const _rebind = _suppressReuse ? null : tryLexicalRebind(goal, shape);
       if (_rebind) {
         directArgsRaw = { [_rebind.field]: _rebind.command };
         commandReuseFired = true;
@@ -4295,14 +4308,14 @@ If one of those sibling shapes is the action that would create what the goal ask
         const mintGrounded = isGroundedHonestReach(verdict, { commandEvidence, consumedInChain: consumedInChain.size, editEffectReach });
         walkGroundedVerdict = mintGrounded;
         if (!satisfierOnly) {
-          void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal));
+          if (opts.learningMode !== "observe") void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal));
         } else if (chain.length >= 2) {
           const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags, poolImpulses, goalHashOf(goal));
           // Persist the composite so ribosome-extract can read it by id, then mint.
           void (async () => {
             try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
             const compositeGrounded = mintGrounded || composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2;
-            await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal));
+            if (opts.learningMode !== "observe") await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal));
           })();
         }
       }
@@ -4333,7 +4346,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     if (reached) {
       for (const [sh, cmd] of executorCommands.entries()) {
-        if (producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
+        if (opts.learningMode !== "observe" && producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
           reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal });
           persistReachedCommand(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal }); // durable known-command library
@@ -4343,7 +4356,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
 
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
-    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain));
+    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain));
     {
       const _wid = opts.variables.dispatch_id;
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
@@ -4408,6 +4421,10 @@ async function runGoalWithRecovery(
     stepSink?: string[];
     /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
     learningSink?: LearningConsequences;
+    /** EVALUABILITY (per-dispatch, shape-driven; L1/L12): ablate the learned pathway so a floor/counterfactual arm can be run and RECORDED. disableReuse/forceFloor suppress the reached-command cache + lexical rebind (cold derivation); pinnedPriors/seed reserved for seeded selection. */
+    ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
+    /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
+    learningMode?: "observe" | "learn";
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap (outer): mirror goal-decomposition lines to the caller's sink.
@@ -4831,6 +4848,8 @@ async function countAsyncFunctions(): Promise<number> {
         surface: opts.surface,
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
+        ablation: opts.ablation,
+        learningMode: opts.learningMode,
       });
       // IN-DISPATCH SATISFIER RETRY: a HOLLOW verdict reached via a vessel-resolve
       // satisfier means the satisfier resolved but produced nothing goal-satisfying —
@@ -4855,6 +4874,8 @@ async function countAsyncFunctions(): Promise<number> {
           surface: opts.surface,
           stepSink: opts.stepSink,
           learningSink: opts.learningSink,
+        ablation: opts.ablation,
+        learningMode: opts.learningMode,
           suppressSatisfierShapes: [suppressedShape],
         });
         if (retryWalk.reached) {
@@ -4895,6 +4916,8 @@ async function countAsyncFunctions(): Promise<number> {
             surface: opts.surface,
             stepSink: opts.stepSink,
             learningSink: opts.learningSink,
+        ablation: opts.ablation,
+        learningMode: opts.learningMode,
             suppressSatisfierShapes: undefined,
           });
           // B1 punt-shape guard: the ALTERNATIVE-FRAMING retry only fires after the
@@ -5448,7 +5471,7 @@ async function countAsyncFunctions(): Promise<number> {
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           if (isSubstanceHonestReach(verdict)) { await creditReachedTemplate(selId, verdict.reason ?? "goal reached"); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
-          void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
+          if (opts.learningMode !== "observe") void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     } else if (!goal && status === "completed" && selId) {
@@ -5469,7 +5492,7 @@ async function countAsyncFunctions(): Promise<number> {
     }
     // Per-goal learning: record this attempt's goal -> path -> reach outcome.
     const tr = result.trace as { durationMs?: number; costUsd?: number };
-    if (goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId));
+    if (opts.learningMode !== "observe" && goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId));
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
     if (selId) excluded.push(selId);
     // Alter the approach for the next attempt (engine-selected approaches only).
@@ -6732,6 +6755,14 @@ async function handleRunGoal(req: Request): Promise<Response> {
     variables.goal = body.goal;
   }
   const tags = Array.isArray(body.tags) ? (body.tags as string[]) : undefined;
+  // EVALUABILITY controls (per-dispatch, shape-driven; L1). Absent -> current behaviour.
+  const ablation = (typeof body.ablation === "object" && body.ablation !== null)
+    ? (body.ablation as { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number })
+    : undefined;
+  const learningMode: "observe" | "learn" | undefined =
+    body.learning_mode === "observe" || body.learning_mode === "learn"
+      ? (body.learning_mode as "observe" | "learn")
+      : undefined;
   const expectedOutputShapes = Array.isArray(body.expected_output_shapes)
     ? (body.expected_output_shapes as string[]).filter((s) => typeof s === "string")
     : undefined;
@@ -7228,6 +7259,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         surface: "/run-goal",
         stepSink: walkStepSink,
         learningSink,
+        ablation,
+        learningMode,
       });
       record.status = seek.status;
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
@@ -7243,12 +7276,15 @@ async function handleRunGoal(req: Request): Promise<Response> {
       })();
       const walk_tier: string = seek.attempts != null ? String(seek.attempts) : "0";
       effectiveTags.push(`execution_path:${execution_path}`, `walk_tier:${walk_tier}`);
+      if (learningMode) effectiveTags.push(`learning_mode:${learningMode}`);
+      if (ablation) effectiveTags.push(`ablation:${[ablation.disableReuse ? "disableReuse" : "", ablation.forceFloor ? "forceFloor" : "", ablation.pinnedPriors ? "pinnedPriors" : ""].filter(Boolean).join("+") || "set"}`);
       record.walkLog = [...(record.walkLog ?? []), `[dispatch] execution_path=${execution_path} walk_tier=${walk_tier}`];
       record.inferenceConfidence = typeof goal === "string" ? (inferredTargetDecisionCache.get(goalHashOf(goal))?.confidence ?? null) : null;
       // Reward the LLM router: attribute every routed selection this dispatch made
       // (buffered under the goal hash) to the final reach verdict — α on reach, β on
-      // hollow. Fire-and-forget; never blocks the dispatch.
-      void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
+      // hollow. Fire-and-forget; never blocks the dispatch. Skipped in observe mode
+      // so a held-out measurement does not update router posteriors.
+      if (learningMode !== "observe") void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
       record.walkLog = walkStepSink;
       record.executionId = seek.executionId ?? seek.result?.trace?.id ?? `goal-seek:no-trace:${goalHashOf(String(goal ?? ""))}`;
       record.selectedTemplateId = seek.selectedTemplateId;
