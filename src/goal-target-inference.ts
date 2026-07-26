@@ -380,14 +380,14 @@ export async function inferDerivationSplit(
 
 GOAL: ${goal}
 
-Decide whether this is a DERIVATION/SEQUENCE goal: one that first DERIVES content (analyzes / reviews / inspects / finds problems in a source) and THEN EMITS that derived content to a DISTINCT downstream sink (writes it to a note / file / concept). If so, split the shapes:
-- "intermediate": the derive/analysis shape(s) — produced FIRST (e.g. problem_detection, code_quality).
-- "terminal": the emit/write shape(s) — the final sink (e.g. fileWriteResult, fs_write, concept_write) whose content should be the DERIVED findings.
+Decide whether this is a DERIVATION/SEQUENCE goal: one that first reads/derives from a SOURCE and THEN produces a DISTINCT deliverable from it. The deliverable (terminal) may be either (a) an EMIT to a downstream sink (writes the derived content to a note / file / concept), or (b) a derived/extracted/computed VALUE returned inline (e.g. a count, an extracted field, a shell-computed number). If so, split the shapes:
+- "intermediate": the RAW SOURCE read or analysis shape(s) produced FIRST as the MEANS of the derivation (e.g. fileContent, source_code, codeReadResult, problem_detection, code_quality).
+- "terminal": the DELIVERABLE shape(s) — the goal's actual answer, whether an emit/write sink (e.g. fileWriteResult, fs_write, concept_write) OR a derived/extracted/computed value (e.g. json_path_extract, shellResult) — whose content is the DERIVED result.
 
 RULES:
-- ONLY split when the goal genuinely has TWO distinct stages (a derive stage AND a separate emit stage). If it is a PLAIN single-step goal (just analyze, or just write), return an EMPTY "intermediate" array and put ALL shapes in "terminal".
+- ONLY split when the goal genuinely has TWO distinct stages (a read/derive stage AND a separate deliverable stage). If it is a PLAIN single-step goal (just read, or just write), return an EMPTY "intermediate" array and put ALL shapes in "terminal".
 - Every shape you return MUST be from the given list — do not invent shapes.
-- A shape is "terminal" if it is a write/emit/persist of the result; "intermediate" if it is the analysis/derivation whose output feeds the write.
+- A RAW SOURCE read (fileContent, source_code, codeReadResult) is the MEANS of a derivation, never the deliverable: put it in "intermediate" whenever any other shape is present. A shape is "terminal" if it is the write/emit sink OR the derived/computed value the goal asks for.
 
 Respond with ONLY JSON: {"intermediate": ["..."], "terminal": ["..."]}`;
 
@@ -420,6 +420,28 @@ Respond with ONLY JSON: {"intermediate": ["..."], "terminal": ["..."]}`;
     // Any inferred shape the LLM didn't classify defaults to terminal (safe: it's a
     // target that must be produced, just not deferred-as-derived).
     for (const s of inferredTargets) if (!intermediate.includes(s) && !terminal.includes(s)) terminal.push(s);
+    // DERIVE-AND-RETURN INVERSION GUARD (2026-07-26, law 8): the prompt recognizes
+    // both emit-to-sink and derived-value deliverables, but the split is a
+    // NON-DETERMINISTIC LLM call that can still invert — labeling the raw source read
+    // (fileContent/source_code/codeReadResult) as "terminal" and the derived answer as
+    // "intermediate", so the reach gate greens on the raw input. Encode the load-bearing
+    // fact deterministically: a raw-source read is the MEANS of a derivation, never its
+    // deliverable, whenever any non-raw target shape exists.
+    const RAW_SOURCE_SHAPES = new Set(["fileContent", "source_code", "codeReadResult"]);
+    if (inferredTargets.some((s) => !RAW_SOURCE_SHAPES.has(s))) {
+      const rawInTerminal = terminal.filter((s) => RAW_SOURCE_SHAPES.has(s));
+      if (rawInTerminal.length > 0) {
+        terminal = terminal.filter((s) => !RAW_SOURCE_SHAPES.has(s));
+        for (const s of rawInTerminal) if (!intermediate.includes(s)) intermediate.push(s);
+        // If demotion emptied terminal, the derived shapes the LLM buried in
+        // intermediate ARE the deliverable — promote them.
+        const derivedInIntermediate = intermediate.filter((s) => !RAW_SOURCE_SHAPES.has(s));
+        if (terminal.length === 0 && derivedInIntermediate.length > 0) {
+          terminal = derivedInIntermediate.slice();
+          intermediate = intermediate.filter((s) => RAW_SOURCE_SHAPES.has(s));
+        }
+      }
+    }
     // A valid derivation needs BOTH a non-empty intermediate AND a non-empty terminal.
     // Otherwise it's effectively single-stage → no deferral.
     if (intermediate.length === 0 || terminal.length === 0) return noSplit;
