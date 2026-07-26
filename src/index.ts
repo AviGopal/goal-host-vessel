@@ -4881,7 +4881,8 @@ async function runGoalWithRecovery(
           // shape-based, and fails CLOSED: a genuine compute reach produces shellResult
           // (outside this set) and passes untouched. Containment only — adds no capability.
           const RAW_INPUT = new Set([
-            "http_fetch", "fileContent", "source_code", "code_introspect",
+            "http_fetch", "httpResponse", "http_response", "fileContent",
+            "source_code", "web_resource", "codeSearchResult", "code_introspect",
             "sourceCodeAnalysis", "gitStatus",
           ]);
           const altProduced = (altWalkResult.completionShapes ?? []).map((sh) => String(sh));
