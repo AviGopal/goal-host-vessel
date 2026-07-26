@@ -477,15 +477,20 @@ setInterval(() => {
 let draining = false;
 async function gracefulShutdown(sig: string): Promise<void> {
   if (draining) return;
-  draining = true;
+  draining = true;              // handleRunGoal now 503s new dispatches
   void flushMemDump(sig);
+  // Stop advertising so discovery routes new work elsewhere, but keep the HTTP
+  // listener UP during the drain so in-flight walks' own self-calls still resolve.
+  try { await discoveryLoop.stop(); } catch { /* best-effort */ }
   const deadline = Date.now() + Number(process.env["GOAL_HOST_DRAIN_MS"] ?? "80000");
   for (;;) {
     const inFlight = [...executionStore.values()].filter((r) => r.status === "running").length;
-    if (inFlight === 0) { console.log(`[goal-host-vessel] ${sig}: drained (0 in-flight) — exiting`); break; }
-    if (Date.now() >= deadline) { console.log(`[goal-host-vessel] ${sig}: drain deadline with ${inFlight} in-flight — exiting`); break; }
+    if (inFlight === 0) { console.log(`[goal-host-vessel] ${sig}: drained (0 in-flight)`); break; }
+    if (Date.now() >= deadline) { console.log(`[goal-host-vessel] ${sig}: drain deadline with ${inFlight} in-flight`); break; }
     await new Promise((r) => setTimeout(r, 500));
   }
+  try { server.stop(true); } catch { /* best-effort */ }
+  console.log("[goal-host-vessel] stopped");
   process.exit(0);
 }
 process.on("SIGTERM", () => { void gracefulShutdown("SIGTERM"); });
@@ -8123,10 +8128,8 @@ if (WS_SUBSCRIBER_ENABLED) {
 }
 await discoveryLoop.start();
 
-// Graceful shutdown on SIGTERM.
-process.on("SIGTERM", async () => {
-  await discoveryLoop.stop();
-  server.stop(true);
-  console.log("[goal-host-vessel] stopped");
-  process.exit(0);
-});
+// Graceful shutdown on SIGTERM/SIGINT is handled by gracefulShutdown() near the top
+// of this file: it drains in-flight walks BEFORE discoveryLoop.stop() + server.stop()
+// + exit. A second exit-immediately handler here previously RACED that drain and
+// process.exit(0)'d before the loop could iterate — killing in-flight dispatches on
+// every cutover. Removed; gracefulShutdown is now the single shutdown path.
