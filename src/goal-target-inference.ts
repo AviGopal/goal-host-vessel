@@ -85,13 +85,7 @@ export async function inferGoalTargetShapes(
   // infer the goal-satisfying output shapes from the known producible vocabulary
   // to seed the walk with goal-relevant targets instead of running opportunistically.
   if (opts.expectedOutputShapes === undefined && !opts.firstTarget) {
-    const inferred = await inferGoalTargetShapes(goal, knownShapes, {
-      ...opts,
-      expectedOutputShapes: [],
-    });
-    if (inferred.length > 0) {
-      return inferred;
-    }
+    return [];
   }
 
   const cache = opts.cache;
