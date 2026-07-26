@@ -2375,7 +2375,7 @@ async function runGoalAsPoolWalk(
         .map((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?"; let c: string; try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } return `- ${s}: ${c.slice(0, 800)}`; })
         .join("\n");
       const promptParts = [
-        `${temporalGrounding}${schemaContract}${executorGuidance}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.`,
+        `${temporalGrounding}${schemaContract}${executorGuidance}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. ${execField ? `This is an EXECUTOR shape: emit ONLY the field "${execField}" holding the synthesized executable described above. Do NOT emit a "path", "file", or "query" field — a path is not the deliverable here; the runnable ${execField} is.` : `For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.`}`,
         `GOAL: ${goal}`,
         `Respond with ONLY a JSON object of the pointer arg fields the resolver needs. If PAYLOAD GUIDANCE is present above, follow its field structure exactly (including any nested objects it specifies); otherwise emit a flat object. Do NOT add a top-level "type" key or wrap the result in a "pointer" key.${correction ? `\nA PREVIOUS ATTEMPT WAS REJECTED BY THE RESOLVER WITH: ${correction}\nEmit corrected args including the required fields (sensible values from the goal, or defaults like limit=10, since_hours=24).` : ""}`,
         ...(priorFindings && priorFindings.length > 0
@@ -2434,9 +2434,16 @@ async function runGoalAsPoolWalk(
         (typeof rawPathVal === "string" && /^repos\//.test(rawPathVal.trim()))
           ? `/workspace/${rawPathVal.trim()}`
           : rawPathVal;
-      if (typeof pathVal === "string" && pathVal.length > 0) {
+      if (!execField && typeof pathVal === "string" && pathVal.length > 0) {
         for (const k of ["path", "file_path", "filePath", "logFilePath"]) if (!(k in args)) args[k] = pathVal;
         for (const k of ["file_paths", "filePaths"]) if (!(k in args)) args[k] = [pathVal];
+      }
+      // EXECUTOR INTEGRITY (ROOT B, 2026-07-26): if this is an executor shape but the model
+      // bound a locator instead of the executable, drop the locator so the POST carries no
+      // misleading field — the resolver returns a clean "<execField> is required" that the
+      // caller's correction round (which re-injects executorGuidance) repairs into the command.
+      if (execField && !(execField in args)) {
+        for (const k of ["path", "file", "file_path", "filePath", "query", "q"]) delete args[k];
       }
       return args;
     } catch (e) { lastRawResolveReason = String((e as Error)?.message ?? "fetch failed").slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: fetch threw ${String((e as Error)?.message ?? "").slice(0, 140)}`); return null; }
