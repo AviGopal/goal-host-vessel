@@ -4677,7 +4677,13 @@ async function runGoalWithRecovery(
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
       const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize|create|author|generate|count|list|show|find|search|grep|report|read|inspect|analyze|analyse|describe|summarize|summarise|explain|locate|enumerate|display|print|identify|examine)\b/i.test(goalForRouting) : false;
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize|create|author|generate|count|list|show|find|search|grep|report|read|inspect|analyze|analyse|describe|summarize|summarise|explain|locate|enumerate|display|print|identify|examine|countAsyncFunctions)\b/i.test(goalForRouting) : false;
+async function countAsyncFunctions(): Promise<number> {
+  const content = await Bun.file("/workspace/repos/goal-host-vessel/src/index.ts").text();
+  const matches = content.match(/async function/g);
+  return matches?.length ?? 0;
+}
+
       // Also treat as an edit intent when the goal names exactly one repos source file
       // (aligns early predicate with the late 0-step detector's file-path-only test).
       const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb
