@@ -24,9 +24,12 @@ export type FetchLike = typeof fetch;
 // FNV-1a 32-bit. NOT Date.now()-based — same goal must map to the same key so the
 // cache actually deduplicates LLM calls across retries / re-dispatches.
 export function goalHashOf(goal: string): string {
+  // Normalize goal text to address semantic_reject behavior by ensuring consistent
+  // representation before hashing. NFC normalization handles Unicode equivalence.
+  const normalized = goal.normalize("NFC");
   let hash = 2166136261 >>> 0; // FNV-1a 32-bit offset basis
-  for (let i = 0; i < goal.length; i++) {
-    hash ^= goal.charCodeAt(i);
+  for (let i = 0; i < normalized.length; i++) {
+    hash ^= normalized.charCodeAt(i);
     hash = (hash * 16777619) >>> 0; // FNV prime
   }
   return hash.toString(16).padStart(8, "0");
