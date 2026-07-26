@@ -178,6 +178,25 @@ export async function inferGoalTargetDecision(
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
 
+  // EXPLANATORY / CONCEPTUAL PROSE-ANSWER ROUTE (D1 floor, 2026-07-26). A plain
+  // "explain / what is / define / describe / how does X work / why does" question
+  // has NO bespoke producer, so the LLM target-inference below COLLIDES the goal's
+  // subject word onto an internal shape sharing a token ("impulse" -> poolImpulse /
+  // impulseRelevance @0.95), scatters to junk satisfiers, and hollow-greens a
+  // relevance TABLE. llm_completion_dispatch IS producible + dispatchable; its result
+  // lands as llm_completion_result (raw prose the reach-gate judges on content). Route
+  // the question straight to it, DETERMINISTICALLY, before the colliding LLM call and
+  // any stale cache hit. Tight guard: explanatory lead AND no compute/fetch/analysis/
+  // edit/write signal, so the shellResult / analysis / edit-intent / persist families
+  // keep their own paths.
+  if (knownShapes.includes("llm_completion_dispatch")) {
+    const EXPLANATORY_RE = /\b(explain|describe|define|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
+    const NOT_PROSE_RE = /\b(count|how many|how much|number of|sum|total|bytes?|line count|lines?|digest|sha-?\d|hash|checksum|list|report the current|running|status|analy[sz]e|review|audit|problem_detection|code_quality|refactor|implement|fix|edit|patch|write (a|the)? ?(note|file|concept)|save|store|persist|fetch|download|curl|scrape|repos\/[\w.-]+\/)\b|https?:\/\//i;
+    if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal)) {
+      return { shapes: ["llm_completion_dispatch"], confidence: 0.7, alternatives: [] };
+    }
+  }
+
   const decisionCache = opts.decisionCache;
   const cacheKey = goalHashOf(goal);
   if (decisionCache) {

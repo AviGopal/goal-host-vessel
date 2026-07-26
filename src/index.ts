@@ -3057,7 +3057,11 @@ If one of those sibling shapes is the action that would create what the goal ask
   const isObsidianSurface = typeof opts.variables.obsidian_vessel_endpoint === "string"
     && (opts.variables.obsidian_vessel_endpoint as string).length > 0;
   const isQuestionGoal = /\?\s*$/.test(goal)
-    || /^\s*(what|who|whom|whose|when|where|why|how|which|is|are|am|do|does|did|can|could|should|would|will|list|show|tell|explain|describe|summar|report|give|find)\b/i.test(goal);
+    || /^\s*(what|who|whom|whose|when|where|why|how|which|is|are|am|do|does|did|can|could|should|would|will|list|show|tell|explain|describe|summar|report|give|find)\b/i.test(goal)
+    // De-anchored (D2, 2026-07-26): an explanatory/interrogative verb after ONE leading
+    // qualifier clause ("In two plain sentences, explain X") is a question. Restricted
+    // verb set + one-comma prefix keeps compute/edit ("In file X, count/find the lines") NOT questions.
+    || /^\s*[^,?]{1,60},\s*(what|who|whom|whose|when|where|why|how|which|is|are|explain|describe|summar|tell|report)\b/i.test(goal);
   const isObsidianQuestion = isObsidianSurface && isQuestionGoal;
   // With an explicit target, "met" = all target shapes produced. With NO target,
   // never short-circuit here — walk opportunistically (progress-driven), stopping
@@ -3923,6 +3927,20 @@ If one of those sibling shapes is the action that would create what the goal ask
         return `- ${s}: ${c.slice(0, 1500)}`;
       })
       .join("\n");
+
+    // Human-facing digest (D3, 2026-07-26): SAME filter + 1500-char content cap as
+    // poolDigest, but WITHOUT the internal `- <shape>: ` prefix — used ONLY at the
+    // answerBody Basis and bridgeBody Findings sites below. poolDigest above stays
+    // verbatim so the reach-gate (contentDigest -> verifyGoalReached) keeps shape names.
+    const poolDigestHuman = poolImpulses
+      .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
+      .map((imp) => {
+        let c: string;
+        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        return c.slice(0, 1500);
+      })
+      .filter((c) => c.trim().length > 0)
+      .join("\n\n");
     // Caps sized so a real content-bearing output (e.g. a code_annotation list of
     // functions+line-numbers, or code_quality metrics) survives intact for the LLM
     // judge — the shape-name-era 600/4000 caps truncated list outputs mid-content,
@@ -4133,7 +4151,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             "",
             verdict.reason ?? "",
             "",
-            poolDigest ? `## Basis\n\n${poolDigest.slice(0, 3000)}` : "",
+            poolDigestHuman ? `## Basis\n\n${poolDigestHuman.slice(0, 3000)}` : "",
           ].filter(Boolean).join("\n");
           addToPool("goal_answer", answerBody, "rendered answer for obsidian question goal");
         }
@@ -4168,7 +4186,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             // Human-consumable body: prefer the rendered answer, else the produced pool findings.
             const bridgeBody = (answerBody && answerBody.trim().length > 0)
               ? answerBody
-              : [`# ${goal.slice(0, 200)}`, "", (verdict.reason ?? ""), "", poolDigest ? `## Findings\n\n${poolDigest.slice(0, 4000)}` : ""].filter(Boolean).join("\n");
+              : [`# ${goal.slice(0, 200)}`, "", (verdict.reason ?? ""), "", poolDigestHuman ? `## Findings\n\n${poolDigestHuman.slice(0, 4000)}` : ""].filter(Boolean).join("\n");
             const slugify = (s: string): string =>
               s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "finding";
             const titleText = goal.replace(/\s+/g, " ").trim().slice(0, 80);
