@@ -4870,12 +4870,31 @@ async function runGoalWithRecovery(
             "obsidian_dispatch_goal", "dispatch_goal", "goal_execution",
             "goal", "dispatch_id", "poolImpulse_write",
           ]);
+          // Raw-input/retrieval shapes: producing ONLY these is the raw SOURCE, not a
+          // DERIVED answer. When the ORIGINAL target wanted a computed/derived shape
+          // (anything outside this set, e.g. shellResult) but the reframe "reached" solely
+          // by producing raw-input shapes, it moved the goalposts from the computed answer
+          // to the raw source — the derivation-over-source hollow-green. Evidenced:
+          // demo-nova-N5b greened reached:yes on a raw http_fetch/code_introspect blob for a
+          // compute goal, while the equivalent N2b/N6b reframes honestly failed — a
+          // non-deterministic inner-reach-judge coin-flip. This backstop is DETERMINISTIC,
+          // shape-based, and fails CLOSED: a genuine compute reach produces shellResult
+          // (outside this set) and passes untouched. Containment only — adds no capability.
+          const RAW_INPUT = new Set([
+            "http_fetch", "httpResponse", "http_response", "fileContent",
+            "source_code", "web_resource", "codeSearchResult", "code_introspect",
+            "sourceCodeAnalysis",
+          ]);
           const altProduced = (altWalkResult.completionShapes ?? []).map((sh) => String(sh));
-          const altHasSubstance = altProduced.some((sh) => !PUNT_OR_MECHANICS.has(sh));
+          const altSubstantive = altProduced.filter((sh) => !PUNT_OR_MECHANICS.has(sh));
+          const origTarget = Array.isArray(goalTargetDecision.shapes) ? goalTargetDecision.shapes.map((sh) => String(sh)) : [];
+          const origWantedDerived = origTarget.some((sh) => !RAW_INPUT.has(sh) && !PUNT_OR_MECHANICS.has(sh));
+          const altOnlyRawInput = altSubstantive.length > 0 && altSubstantive.every((sh) => RAW_INPUT.has(sh));
+          const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput);
           if (altWalkResult.reached && altHasSubstance) {
             walk = altWalkResult;
           } else if (altWalkResult.reached) {
-            tap(`[goal-host-vessel] ${opts.surface}: walk: reframe REJECTED as punt-only — reached only via hand-off/dispatch shapes ${JSON.stringify(altProduced)}; original goal NOT reached (fails closed)`);
+            tap(`[goal-host-vessel] ${opts.surface}: walk: reframe REJECTED — ${altOnlyRawInput ? "raw-input-only for a derived-answer goal (derivation-over-source)" : "punt-only hand-off"} ${JSON.stringify(altProduced)}; original goal NOT reached (fails closed)`);
           }
         }
       }
