@@ -2860,9 +2860,50 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (typeof val === "string" && val.trim()) { executorCommands.set(shape, val); return; }
       }
     };
-    const directArgs = bindBody(directArgsRaw);
+    // FLOOR-RELIABILITY (gap-cold-floor-command-synthesis-unreliable-cache-masks):
+    // for an EXECUTOR/command shape the cold-synthesized command can RUN yet return a
+    // DEGENERATE value (empty stdout / non-zero exit / stderr error / literal "null").
+    // Previously that was accepted as success, the reach-gate later graded it HOLLOW,
+    // and the walk wandered to junk shapes. The reached-command cache masked this by
+    // replaying an already-verified command. Here we give COLD synthesis the same
+    // first-mile reliability: detect a degenerate result and re-synthesize the command
+    // with the failure fed back, bounded, BEFORE accepting it. Scoped to executor/
+    // command shapes that are not terminal writes — good commands never enter the loop.
+    const _isExecShape = /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command|(^|[_-])(sql|script|cmd)([_-]|$|result|query))/i.test(shape);
+    const _degenerateReason = (r: unknown): string | null => {
+      if (r == null) return "the command produced no result";
+      const o = (typeof r === "object" && r !== null) ? (r as Record<string, unknown>) : null;
+      const stdout = o && "stdout" in o ? String(o["stdout"] ?? "") : (typeof r === "string" ? String(r) : "");
+      const stderr = o && "stderr" in o ? String(o["stderr"] ?? "") : "";
+      const exit = o && ("exitCode" in o || "exit" in o) ? Number(o["exitCode"] ?? o["exit"]) : 0;
+      const st = stdout.trim();
+      if (exit && exit !== 0) return `the command exited ${exit}` + (stderr.trim() ? ` with stderr: ${stderr.slice(0, 200)}` : "");
+      if (!st && stderr.trim()) return `the command produced only stderr: ${stderr.slice(0, 200)}`;
+      if (!st) return "the command produced empty stdout";
+      if (/^(null|undefined|nan)$/i.test(st)) return `the command printed "${st}" instead of a real value`;
+      if (/\b(command not found|no such file|not found|permission denied|cannot access)\b/i.test(st)) return `the command output looks like an error: ${st.slice(0, 200)}`;
+      return null;
+    };
+    let directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
-    const direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+    let direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+    if (_isExecShape && !terminalShapes.has(shape)) {
+      let _tries = 0;
+      let _deg = _degenerateReason(direct);
+      while (_deg && _tries < 2) {
+        _tries++;
+        const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
+        const _corr = `Your previous ${shape} command ${_prevCmd ? JSON.stringify(_prevCmd) : "(none)"} was WRONG: ${_deg}. Synthesize a CORRECTED, self-contained, non-interactive command that actually PRODUCES the value the goal asks for: verify the exact file path the goal names, ensure the command PRINTS the number/result to stdout, and never print null. Emit only the corrected command.`;
+        const _reSyn = await llmExtractPointerArgs(shape, _corr);
+        if (!_reSyn) break;
+        directArgsRaw = { ...directArgsRaw, ..._reSyn };
+        directArgs = bindBody(directArgsRaw);
+        const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+        if (_re != null) direct = _re;
+        _deg = _degenerateReason(direct);
+        tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 80) + ")" : "now produces a value"}`);
+      }
+    }
     if (direct != null) {
       const v = await verifyWritePersisted(shape, direct);
       if (v !== null && "persisted" in v && v.persisted === true) {
