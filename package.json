@@ -6,7 +6,8 @@
   "scripts": {
     "start": "bun src/index.ts",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit --strict"
+    "typecheck": "bunx tsc --noEmit --strict",
+    "update-lessons": "bun run --filter goal-host-vessel src/lessons-updater.ts"
   }
   },
   "dependencies": {
