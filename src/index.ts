@@ -4576,6 +4576,38 @@ async function runGoalWithRecovery(
     }
     // --- end gap-record hydration ---
 
+    // SHELL SAFETY NET (FIX B, 2026-07-23): an IMPERATIVE / system-inspection goal
+    // ("count the .ts files under …", "how many vessels are running", "list …",
+    // "check …", "run …") maps to no bespoke producer, so inference returns nothing
+    // and the walk goes opportunistic → hollow. shellResult is the UNIVERSAL executor
+    // (local-tools real bash + the executor-command synthesis in llmExtractPointerArgs),
+    // the PROVEN satisfier for "run a command / inspect the repo|fs|running system".
+    // Seed it deterministically. CONSERVATIVE + FAIL-OPEN: fires ONLY when (a) inference
+    // produced NOTHING usable (so a legitimately-inferred specific shape is never masked),
+    // (b) shellResult is in the live vocabulary, and (c) the goal matches an imperative
+    // verb AND an inspection noun AND carries NO write/analysis/edit signal.
+    if (
+      knownShapes &&
+      knownShapes.includes("shellResult") &&
+      (!seededOutputShapes || seededOutputShapes.length === 0)
+    ) {
+      const g = goal.toLowerCase();
+      const imperativeInspect =
+        /\b(count|list|find|show|how\s+many|how\s+much|number\s+of|report\s+the\s+current|check|run|execute|ls|grep|cat|tail|head|du|df|ps|which)\b/.test(g);
+      const inspectNoun =
+        /(\bfiles?\b|\bdirector(?:y|ies)\b|\bfolders?\b|\bvessels?\b|\bunits?\b|\bservices?\b|\bprocesses?\b|\bcontainers?\b|\bcommits?\b|\bbranch(?:es)?\b|\bports?\b|\bdisk\b|\bstatus\b|\brunning\b|\bsystemd\b|\bdocker\b|\brepos?\b|\b[\w-]+\.(?:ts|js|md|json|txt|py|sh|go|rs|yaml|yml|toml|sql)\b)/.test(g);
+      const writeAnalysisEdit =
+        /\b(write|note|summ|analy|review|assess|audit|refactor|edit|implement|propose|proposal|document|concept|explain|design|draft|save|record|export|dump|generate)\b/.test(g);
+      if (imperativeInspect && inspectNoun && !writeAnalysisEdit) {
+        seededOutputShapes = ["shellResult"];
+        goalTargetDecision = { shapes: ["shellResult"], confidence: 0.5, alternatives: [] };
+        tap(
+          `[goal-host-vessel] ${opts.surface}: shell safety-net seeded shellResult for imperative/system-inspection goal ` +
+            JSON.stringify({ goal_hash: goalHashOf(goal) }),
+        );
+      }
+    }
+
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         decisionCache: inferredTargetDecisionCache,
         llmEndpoint: LLM_VESSEL_ENDPOINT,
