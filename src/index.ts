@@ -2349,6 +2349,33 @@ async function runGoalAsPoolWalk(
     return v;
   };
 
+  // KEYSTONE (content-threading -> function-composition, 2026-07-27): deterministically
+  // interpolate {{shape}} / {{shape.field}} placeholders in an executor command with the
+  // CONTENT of already-produced pool shapes (poolVars), shell-safe single-quoted. This makes
+  // the command that RUNS a FUNCTION of threaded input shapes (the LLM chooses only the
+  // operator/structure), so the resolver sequence is a genuine f(g(x)) variable-interpolation-
+  // through-functions: correctness reduces to selecting the right activity and causality is
+  // assignable to the threaded prerequisite shapes. Unknown placeholders are left intact.
+  const _shq = (v: string): string => "'" + v.replace(/'/g, "'\\''") + "'";
+  const _valForPlaceholder = (raw: unknown, field?: string): string | null => {
+    let val: unknown = raw;
+    if (field && val && typeof val === "object" && val !== null) val = (val as Record<string, unknown>)[field];
+    if (val == null) return null;
+    if (typeof val === "string") return val;
+    if (typeof val === "object") {
+      const o = val as Record<string, unknown>;
+      for (const k of ["content", "stdout", "value", "text", "path", "body"]) if (typeof o[k] === "string") return o[k] as string;
+      try { return JSON.stringify(val); } catch { return null; }
+    }
+    return String(val);
+  };
+  const interpolateExecPlaceholders = (cmd: string, vars: Record<string, unknown>): string =>
+    cmd.replace(/\{\{\s*([a-zA-Z0-9_:]+)(?:\.([a-zA-Z0-9_]+))?\s*\}\}/g, (m: string, sh: string, field?: string) => {
+      if (!(sh in vars)) return m;
+      const val = _valForPlaceholder(vars[sh], field);
+      return val == null ? m : _shq(val);
+    });
+
   // ── VESSEL-RESOLVE SATISFIER (additive, 2026-06-28) ────────────────────────
   // When a MISSING target/input shape has a LIVE resolver advertised by a
   // connected vessel (per discovery / shapeEndpointMap), bring that vessel's
@@ -2420,7 +2447,7 @@ async function runGoalAsPoolWalk(
     // the missing executable field, or the shape name marks a shell/exec resolver.
     if (!execField && correction) { const mm = correction.match(/\b(command|cmd|script|sql)\b/i); if (mm) execField = mm[1].toLowerCase(); }
     if (!execField) { const _em = shape.match(/(^|[_-])(sql|script|cmd|command)([_-]|$|result|query)/i); if (_em) execField = _em[2].toLowerCase(); else if (/(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command"; }
-    if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic, self-contained, referencing only paths/values the goal names. Output ONLY the computed value to stdout — do NOT write, tee, redirect (> or >>), or save the result to any file/note/path; for COUNTING lines/words/characters/bytes of a FILE, run wc DIRECTLY on the file path (wc -l FILE for lines, wc -w FILE for words, wc -c FILE for bytes, wc -m FILE for characters) and take the leading number — do NOT read the file and re-serialize/JSON-encode its content first (re-encoding changes the character/byte count); PERSISTING the result is a SEPARATE downstream step, and a command that pipes the value into tee/a file frequently mangles the count (produces the wrong number). Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}. AVAILABLE INTERPRETERS: bash, jq, bun, awk, perl — there is NO python, python3, node, or bc in this container. For any arithmetic or string computation you would normally reach for python (digit sums, factorials, primality, parsing), synthesize it with bun -e \x27<javascript>\x27, or perl -e \x27<perl>\x27, or awk — NEVER python or python3. Example: goal "sum the digits of 391" -> {"${execField}":"bun -e \x27console.log([...String(391)].reduce((a,c)=>a+ +c,0))\x27"}.\n\n`;
+    if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic. PREFER threading an ALREADY-PRODUCED pool operand by its SHAPE as a {{shape}} or {{shape.field}} placeholder (e.g. "wc -l {{fileContent.path}}", or compute over {{shellResult}}) — placeholders are interpolated deterministically from the pool (shell-quoted for you), so the command becomes a FUNCTION of threaded inputs; ONLY inline a literal path/value when NO produced pool shape supplies that operand (it is named solely in the goal). Do NOT wrap {{...}} placeholders in quotes yourself. Output ONLY the computed value to stdout — do NOT write, tee, redirect (> or >>), or save the result to any file/note/path; for COUNTING lines/words/characters/bytes of a FILE, run wc DIRECTLY on the file path (wc -l FILE for lines, wc -w FILE for words, wc -c FILE for bytes, wc -m FILE for characters) and take the leading number — do NOT read the file and re-serialize/JSON-encode its content first (re-encoding changes the character/byte count); PERSISTING the result is a SEPARATE downstream step, and a command that pipes the value into tee/a file frequently mangles the count (produces the wrong number). Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}. AVAILABLE INTERPRETERS: bash, jq, bun, awk, perl — there is NO python, python3, node, or bc in this container. For any arithmetic or string computation you would normally reach for python (digit sums, factorials, primality, parsing), synthesize it with bun -e \x27<javascript>\x27, or perl -e \x27<perl>\x27, or awk — NEVER python or python3. Example: goal "sum the digits of 391" -> {"${execField}":"bun -e \x27console.log([...String(391)].reduce((a,c)=>a+ +c,0))\x27"}.\n\n`;
     const nowIso = new Date().toISOString();
     const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
     const priorFindings = poolImpulses
@@ -2649,6 +2676,15 @@ async function runGoalAsPoolWalk(
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     const pointer: Record<string, unknown> = { type: shape, ...base, ...extraArgs };
+    // KEYSTONE: thread produced pool-shape content into the executor command deterministically,
+    // so the command that RUNS is a function of threaded inputs (not an LLM-re-derived literal).
+    for (const _ef of ["command", "cmd", "script", "sql"]) {
+      const _c = pointer[_ef];
+      if (typeof _c === "string" && _c.includes("{{")) {
+        const _interp = interpolateExecPlaceholders(_c, base);
+        if (_interp !== _c) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: threaded pool shapes into ${_ef} deterministically (command is now a function of threaded inputs)`); pointer[_ef] = _interp; }
+      }
+    }
     let resp: Response;
     try {
       resp = await fetch(`${endpoint}${resolvePath}`, {
