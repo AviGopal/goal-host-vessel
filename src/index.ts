@@ -2481,7 +2481,8 @@ async function runGoalAsPoolWalk(
     // honest not-reached). Thread the KNOWN endpoint + exact query so the command reads the REAL
     // registry — the system assessing itself with what it knows.
     if (execField &&
-        /\b(registr(?:y|ies|ered|ration)|discovery|vessels?|shapes?|resolvers?|endpoints?|fleet)\b/i.test(goal) &&
+        /\b(vessels?|shapes?|resolvers?|capabilit(?:y|ies)|advertis(?:ed)?[- ]?shapes?)\b/i.test(goal) &&
+        /\b(registr(?:y|ies|ered|ration)|discovery|advertis)\b/i.test(goal) &&
         /\b(how many|how much|number of|count|list|which|are there|registered|advertis|running|healthy)\b/i.test(goal)) {
       executorGuidance += `SUBSTRATE SELF-INVENTORY: the discovery registry is the substrate\x27s own known registry of vessels and shapes, reachable at ${DISCOVERY_ENDPOINT} with NO auth. GET ${DISCOVERY_ENDPOINT}/registry/stats returns JSON {"totalVessels":N,"totalShapes":N,"healthyCount":N}; GET ${DISCOVERY_ENDPOINT}/registry/shapes returns {"shapes":[...]}. To answer a vessel/shape COUNT or LIST, curl the matching endpoint and extract the field with jq — e.g. "how many vessels are registered" -> {"${execField}":"curl -s ${DISCOVERY_ENDPOINT}/registry/stats | jq .totalVessels"}; "how many shapes" -> jq .totalShapes; "list the registered shapes" -> curl -s ${DISCOVERY_ENDPOINT}/registry/shapes | jq -r \x27.shapes | join(",")\x27. Do NOT guess a different endpoint/port or a docker/systemctl command. If the goal asks about a category that is NOT one the registry actually reports (only vessels, shapes, resolvers, healthy exist) — e.g. an invented/unknown entity — there is NO such count: output NOTHING (empty) rather than substituting an unrelated field like totalVessels, so the goal HONESTLY does not reach (confabulating a real count for a nonexistent entity is a hollow green).\n\n`;
     }
