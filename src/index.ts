@@ -2839,6 +2839,13 @@ If one of those sibling shapes is the action that would create what the goal ask
             _directComputed = _trimmed;
           }
         }
+        if (_directComputed === null) {
+          // HONEST-BIND: the terminal must emit a REAL produced computed value. None is in the
+          // pool yet, so refuse to satisfy the terminal with an LLM-synthesized (confabulated)
+          // body — return null so the walk produces the compute intermediate first, then binds it.
+          tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" DEFERRED — the single computed value it must emit is not in the pool yet; refusing a CONFABULATED body (the compute must run and land first)`);
+          return null;
+        }
       }
     }
     const processedBody = _directComputed !== null ? _directComputed : (boundBody ? await processTerminalContent(shape, boundBody) : boundBody);
@@ -3347,6 +3354,14 @@ If one of those sibling shapes is the action that would create what the goal ask
                 !exclude.has(normActivityId(c.id)) && !chain.includes(c.id) &&
                 c.outputShapes.filter((sh) => missingForSatisfier.includes(sh)).length >= 2 &&
                 (c.inputShapes.length === 0 || c.inputShapes.every((sh) => producedShapes.has(sh))));
+            // A directly-satisfiable INTERMEDIATE (non-terminal) shape must RUN rather than be
+            // suppressed for a speculative composite: leaked/unbindable composites (the store has
+            // ~383) get "preferred", fail to execute, and the walk reframes into confabulation.
+            // Reliable direct compute of the intermediate beats a multi-cover composite here.
+            if (preferComposition && eligibleForSatisfier.some((s) => !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s))) {
+              preferComposition = false;
+              tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION declined — a directly-satisfiable intermediate is available; running the real compute first (a leaked composite would derail into reframe->confabulation)`);
+            }
             if (preferComposition && _prefCompBudget <= 0) {
               preferComposition = false;
               tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION budget exhausted — a covering composite was already preferred but did not resolve the target; running the REAL single-shape satisfier so the genuine computed value is produced (not a confabulated one)`);
