@@ -3957,6 +3957,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     } else {
       consecutiveNoProgress = 0;
+      // HONEST-REACH GUARD (gap-multistage-pipeline-collapses-to-hollow-green): for a
+      // derive->emit / multi-target goal, do NOT run the early-reach check until the
+      // derivation-split TERMINAL shapes are genuinely produced. Otherwise the interim
+      // judge can green on an intermediate (e.g. a confabulated llm_completion asserting
+      // the computed value) before the real compute+emit happened — forcing the value to
+      // come from the real producer, not an LLM assertion.
+      const _terminalsPending = terminalShapes.size > 0 && [...terminalShapes].some((s) => !producedShapes.has(s));
+      if (!_terminalsPending) {
       // Incremental reach-check (2026-06-25): judge reach NOW, while the just-
       // produced — and, for a sense-back bridge, freshly SENSED — evidence is at
       // the front of the pool, and STOP before the walk wanders into no-progress
@@ -4001,6 +4009,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       } catch (e) {
         console.warn(`[goal-host-vessel] walk incremental reach-check error (non-fatal): ${(e as Error).message}`);
       }
+      } // end honest-reach guard: only early-reach once derivation terminals are produced
     }
   }
 
