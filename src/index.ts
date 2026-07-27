@@ -5033,16 +5033,25 @@ async function runGoalWithRecovery(
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
       const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|extend|apply|implement|introduce|convert|migrate|inline|extract|wrap|skip|serialize|create|author|generate|count|list|show|find|search|grep|report|read|inspect|analyze|analyse|describe|summarize|summarise|explain|locate|enumerate|display|print|identify|examine|countAsyncFunctions)\b/i.test(goalForRouting) : false;
-async function countAsyncFunctions(): Promise<number> {
-  const content = await Bun.file("/workspace/repos/goal-host-vessel/src/index.ts").text();
-  const matches = content.match(/async function/g);
-  return matches?.length ?? 0;
-}
-
-      // Also treat as an edit intent when the goal names exactly one repos source file
-      // (aligns early predicate with the late 0-step detector's file-path-only test).
-      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb
+      // EDIT-VERB predicate — RESTORED to the same clean edit-verb set as the late 0-step
+      // detector (goalIsEditIntent / _reEditIntent, lines ~5203/~5282) after two substrate-authored
+      // "compose-report" mitosis cutovers POLLUTED it with READ verbs (report/read/count/list/show/
+      // summarize/explain/...) and injected an orphan countAsyncFunctions function mid-body. That
+      // self-corruption made READ-ONLY goals ("report the value of the version field in repos/
+      // activity-api/package.json") match a fake "edit verb" and route to feature_compose, which
+      // then EDITED + committed the file (an unrequested version bump 1.20.9->1.20.10) — a read goal
+      // causing a code change. Keep this list IDENTICAL to the two late detectors.
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goalForRouting) : false;
+      // READ-ONLY intent: a goal that REPORTS/READS/SUMMARIZES/EXPLAINS/COUNTS a file's content or a
+      // field is NOT an edit, even when it names exactly one repos file — without this the file-only
+      // heuristic below routes every read-over-a-named-file goal into feature_compose.
+      const earlyReadOnlyVerb = earlyFileMatch
+        ? /\b(report|read|show|display|print|summar(?:y|ise|ize|ising|izing)?|explain|describe|what(?:'s| is| are)|which|value of|the\s+\w+\s+of|count|how many|number of|list|enumerate|tell me|based on|overview|gist)\b/i.test(goalForRouting)
+        : false;
+      // Also treat as an edit intent when the goal names exactly one repos source file with NO edit
+      // verb AND NO read-only verb (aligns with the late 0-step detector's file-path-only test, but
+      // never hijacks a read-only goal into an edit).
+      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb && !earlyReadOnlyVerb
         ? (goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? []).length === 1
         : false;
       if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
