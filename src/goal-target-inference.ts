@@ -197,6 +197,28 @@ export async function inferGoalTargetDecision(
     }
   }
 
+  // EXTRACT-FROM-SOURCE route (2026-07-27, everyday-task floor). EVIDENCE: a live probe
+  // "Read repos/.../package.json and report the value of its name field" reached HOLLOW-GREEN
+  // via satisfier:fileContent — the walk resolved the RAW file read and the reach gate greened
+  // because the answer is EMBEDDED in the raw content; the extraction NEVER RAN, so there was no
+  // observable derived value to grade or to attach causality to. A goal that reads a NAMED
+  // file/source AND asks to REPORT / GET / EXTRACT a SPECIFIC value/field/key FROM it must
+  // PRODUCE the extracted value, not terminate on the raw read. shellResult is the compute that
+  // jq/greps the field: routing here forces a REAL, OBSERVABLE, gradable extraction activity
+  // (correctness = choosing the right extraction; causality attaches to the file operand),
+  // turning a hollow read into a threaded compute over the source. TIGHT GUARD: an extract VERB
+  // + a concrete config value/field NOUN + a file operand, and NOT a summarize/explain/analyze/
+  // code-quality ask (those keep their prose / analysis / detection paths).
+  if (knownShapes.includes("shellResult")) {
+    const EXTRACT_VERB = /\b(report|extract|get|find|show|print|tell me|give me|what(?:'s| is| are)|which)\b/i;
+    const VALUE_NOUN = /\b(value|field|key|version|name|entry|entries|property|properties|attribute|setting|settings|dependenc(?:y|ies)|devdependenc\w*|script|scripts|main|license|author|homepage|repository|url|port|endpoint)\b/i;
+    const FILE_OPERAND = /repos\/[\w.-]+\/[\w./-]+\.\w+|\b[\w-]+\.(?:json|ts|tsx|js|jsx|md|txt|ya?ml|toml|lock|cfg|ini|sh|py|sql|env)\b/i;
+    const NOT_EXTRACT = /\b(summar|explain|describe|overview|analy[sz]e|review|audit|refactor|rewrite|gist|understand|two\s+sentences?|what\s+is\s+.*\s+about|quality|problem|complexity|coverage|security|performance|architecture|conformance)\b/i;
+    if (EXTRACT_VERB.test(goal) && VALUE_NOUN.test(goal) && FILE_OPERAND.test(goal) && !NOT_EXTRACT.test(goal)) {
+      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+    }
+  }
+
   const decisionCache = opts.decisionCache;
   const cacheKey = goalHashOf(goal);
   if (decisionCache) {

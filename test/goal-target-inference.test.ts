@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { inferGoalTargetShapes, goalHashOf } from "../src/goal-target-inference";
+import { inferGoalTargetShapes, inferGoalTargetDecision, goalHashOf } from "../src/goal-target-inference";
 
 const KNOWN = ["problem_detection", "code_quality", "source_code", "obsidian:write_note", "concept"];
 
@@ -133,6 +133,66 @@ describe("inferGoalTargetShapes", () => {
       fetchImpl,
     });
     expect(out).toEqual(["source_code"]);
+  });
+});
+
+// EXTRACT-FROM-SOURCE route (2026-07-27). "Read FILE and report the value of field X"
+// must route to the compute (shellResult) that EXTRACTS the value, not green on the raw
+// read. The route is DETERMINISTIC (returns before the LLM call), so a throwing fetch
+// proves no LLM was consulted when it fires.
+describe("inferGoalTargetDecision — extract-from-source route", () => {
+  const KX = ["shellResult", "fileContent", "problem_detection", "llm_completion_dispatch"];
+  const throwLLM = (async () => { throw new Error("LLM must NOT be called on the deterministic extract route"); }) as unknown as typeof fetch;
+
+  it("routes 'report the value of package.json name field' to shellResult without hitting the LLM", async () => {
+    const out = await inferGoalTargetDecision(
+      'Read the file repos/goal-host-vessel/package.json and report the value of its "name" field.',
+      KX,
+      { llmEndpoint: "http://llm.test", fetchImpl: throwLLM },
+    );
+    expect(out.shapes).toEqual(["shellResult"]);
+  });
+
+  it("routes 'how many dependencies in package.json' to shellResult", async () => {
+    const out = await inferGoalTargetDecision(
+      "Read repos/activity-api/package.json and report how many entries are under its dependencies.",
+      KX,
+      { llmEndpoint: "http://llm.test", fetchImpl: throwLLM },
+    );
+    expect(out.shapes).toEqual(["shellResult"]);
+  });
+
+  it("does NOT route a summarize-the-file ask (falls through to the LLM path)", async () => {
+    const { fetchImpl, calls } = fakeLLM(["llm_completion_dispatch"]);
+    const out = await inferGoalTargetDecision(
+      "Summarize what the file repos/goal-host-vessel/CLAUDE.md is about in two sentences.",
+      KX,
+      { llmEndpoint: "http://llm.test", fetchImpl },
+    );
+    expect(out.shapes).not.toEqual(["shellResult"]);
+    expect(calls()).toBeGreaterThan(0);
+  });
+
+  it("does NOT hijack a code-quality analysis ask over a source file", async () => {
+    const { fetchImpl } = fakeLLM(["problem_detection"]);
+    const out = await inferGoalTargetDecision(
+      "Report the code quality problems of repos/goal-host-vessel/src/index.ts",
+      KX,
+      { llmEndpoint: "http://llm.test", fetchImpl },
+    );
+    expect(out.shapes).not.toEqual(["shellResult"]);
+  });
+
+  it("does NOT route when there is no file operand", async () => {
+    const { fetchImpl } = fakeLLM(["shellResult"]);
+    const out = await inferGoalTargetDecision(
+      "Report the value of the learning rate we are currently using.",
+      KX,
+      { llmEndpoint: "http://llm.test", fetchImpl },
+    );
+    // may or may not be shellResult via the LLM, but the deterministic route must not fire:
+    // proven by the LLM being reachable (no throw). Assert it did not early-return a fabricated 0.6.
+    expect(out.confidence).not.toBe(0.6);
   });
 });
 
