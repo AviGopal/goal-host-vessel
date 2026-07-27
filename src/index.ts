@@ -2130,6 +2130,29 @@ interface LearningConsequences {
   oracleLabelWritten: boolean;
 }
 
+// HUMAN-PRESENTATION (L1): a shaped, mechanics-stripped rendering of reached content
+// the human surface renders GENERICALLY, replacing hardcoded plugin-side view assembly.
+// This PRODUCES the shape (the law-1 keystone); it is NOT yet LEARNED — the render is
+// single-variant + inline here. Making it a Thompson-graded, ribosome-extracted activity
+// graded by human attention is the filed learning-loop gap.
+interface HumanPresentationBlock { kind: "answer" | "basis" | "reason" | "finding"; text: string; }
+interface HumanPresentation {
+  headline: string;
+  blocks: HumanPresentationBlock[];
+  grounding_state: "grounded" | "unverified";
+  reach_state: "reached" | "pending" | "not_reached";
+  source_shape: string;
+  relevance: number;
+}
+function buildHumanPresentation(a: { goal: string; reachState: "reached" | "pending" | "not_reached"; reachReason?: string; basis?: string; grounded: boolean; sourceShape: string; relevance: number; }): HumanPresentation {
+  const blocks: HumanPresentationBlock[] = [];
+  const answer = (a.reachReason ?? "").trim();
+  if (answer) blocks.push({ kind: "answer", text: answer.slice(0, 2000) });
+  const basis = (a.basis ?? "").trim();
+  if (basis) blocks.push({ kind: "basis", text: basis.slice(0, 3000) });
+  return { headline: a.goal.replace(/\s+/g, " ").trim().slice(0, 160), blocks, grounding_state: a.grounded ? "grounded" : "unverified", reach_state: a.reachState, source_shape: a.sourceShape, relevance: Math.max(0, Math.min(1, a.relevance)) };
+}
+
 function readCandidateShapes(x: any): WalkCandidate | null {
   const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
   if (!id) return null;
@@ -4217,6 +4240,19 @@ If one of those sibling shapes is the action that would create what the goal ask
             poolDigestHuman ? `## Basis\n\n${poolDigestHuman.slice(0, 3000)}` : "",
           ].filter(Boolean).join("\n");
           addToPool("goal_answer", answerBody, "rendered answer for obsidian question goal");
+        }
+        // HUMAN-PRESENTATION emission (L1 keystone): the shaped rendering of the reached
+        // content, into the pool so any human surface renders it generically. grounding_state
+        // is honest (deterministic reach = grounded; LLM-judged = unverified). relevance is a
+        // DETERMINISTIC PLACEHOLDER — not yet the learned impulseRelevance signal (filed gap).
+        if (isQuestionGoal || poolDigestHuman.trim().length > 0) {
+          const _grd = verdict?.deterministic === true;
+          const _src = String(verdict?.completion_shapes?.[0] ?? [...target][0] ?? "goal_answer");
+          const _rel = Math.min(1, 0.5 + (_grd ? 0.3 : 0.2) + (isQuestionGoal ? 0.2 : 0.1));
+          addToPool("human_presentation", buildHumanPresentation({
+            goal, reachState: "reached", reachReason: verdict?.reason, basis: poolDigestHuman,
+            grounded: _grd, sourceShape: _src, relevance: _rel,
+          }), "structured human rendering of reached content");
         }
         // ── TERMINAL-OUTPUT MATERIALIZATION AS COMPOSITION (host-vault bridge,
         // 2026-07-07) ──────────────────────────────────────────────────────────
