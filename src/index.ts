@@ -2960,9 +2960,28 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 80) + ")" : "now produces a value"}`);
       }
     }
+    // HONEST-REACH (gap-multistage-pipeline-collapses-to-hollow-green): a derivation-split
+    // TERMINAL write (a derive->emit last mile) whose persisted body is EMPTY is hollow —
+    // the whole point of the terminal was to emit the derived value. The LLM reach-gate can
+    // be fooled into greening it because the computed value exists elsewhere in the pool
+    // (e.g. shellResult stdout), so verify the EMIT itself deterministically here.
+    const _persistedBodyEmpty = (content: unknown): boolean => {
+      try {
+        const str = JSON.stringify(content) ?? "";
+        const bodies = [...str.matchAll(/"body"\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+        if (bodies.length > 0) return bodies.every((b) => b.trim().length === 0);
+        const alt = [...str.matchAll(/"(?:content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+        if (alt.length > 0) return alt.every((b) => b.trim().length === 0);
+        return false; // no body/content field found in readback -> cannot prove empty, don't over-reject
+      } catch { return false; }
+    };
     if (direct != null) {
       const v = await verifyWritePersisted(shape, direct);
-      if (v !== null && "persisted" in v && v.persisted === true) {
+      const _terminalWrite = terminalShapes.has(shape) && (/_write$/.test(shape) || shape === "write_note");
+      if (v !== null && "persisted" in v && v.persisted === true && _terminalWrite && _persistedBodyEmpty(v.content)) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" persisted with an EMPTY body — not a genuine emit; treating as unsatisfied so reach is graded honestly (not a hollow green)`);
+        // fall through: the terminal shape stays unsatisfied -> honest not-reached
+      } else if (v !== null && "persisted" in v && v.persisted === true) {
         return { content: v.content };
       } else if (v !== null && "persisted" in v && v.persisted === false) {
         tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
