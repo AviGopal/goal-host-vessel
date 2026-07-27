@@ -2553,11 +2553,21 @@ async function runGoalAsPoolWalk(
       const tryParseId = (v: unknown): string | undefined => {
         if (typeof v === "object" && v !== null) {
           const obj = v as Record<string, unknown>;
-          if (typeof obj["id"] === "string") return obj["id"];
+          // The identifier may sit at the top level OR nested under `body`
+          // (write resolvers commonly return { success, shape, body: { id | title } }).
+          // For title-keyed stores (memoryNote/concept) the record id IS the title slug,
+          // so `title` is an accepted identifier too.
+          const body = (typeof obj["body"] === "object" && obj["body"] !== null) ? obj["body"] as Record<string, unknown> : null;
+          for (const src of [obj, body]) {
+            if (!src) continue;
+            if (typeof src["id"] === "string" && src["id"]) return src["id"];
+            if (typeof src["title"] === "string" && src["title"]) return src["title"];
+          }
           if (typeof obj["content"] === "string") {
             try {
               const inner = JSON.parse(obj["content"]) as Record<string, unknown>;
-              if (typeof inner["id"] === "string") return inner["id"];
+              if (typeof inner["id"] === "string" && inner["id"]) return inner["id"];
+              if (typeof inner["title"] === "string" && inner["title"]) return inner["title"];
             } catch { /* ignore */ }
           }
         }
@@ -2579,17 +2589,21 @@ async function runGoalAsPoolWalk(
 
       const ep = await endpointForShape(readShape);
       if (!ep) return { persisted: false };
+      // Confirm by whether the readback CONTAINS the identifier anywhere — the read
+      // resolver may return a single record OR a list envelope ({ notes: [...] } /
+      // { body: { notes: [...] } }); a top-level `id` check misses the list form and
+      // false-negatives a write that actually persisted.
+      const confirms = (rr: unknown): boolean => {
+        if (rr == null) return false;
+        try { return JSON.stringify(rr).includes(id!); } catch { return false; }
+      };
       const readResult = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { id });
+      if (confirms(readResult)) return { persisted: true, content: readResult };
+      // Title-keyed stores (memoryNote/concept): the record id is the title slug, so a
+      // read by { id } may miss; retry by { title_prefix }.
+      const byTitle = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { title_prefix: id }).catch(() => null);
+      if (confirms(byTitle)) return { persisted: true, content: byTitle };
       if (readResult != null) {
-        const asObj = typeof readResult === "object" && readResult !== null
-          ? readResult as Record<string, unknown>
-          : null;
-        const hasId =
-          asObj &&
-          (asObj["id"] === id ||
-            (typeof asObj["content"] === "string" && asObj["content"].includes(id)));
-        if (hasId) return { persisted: true, content: readResult };
-
         // concept-db REST fallback
         try {
           const fbResp = await fetch(`${ep.endpoint}/concepts/${id}`, {
