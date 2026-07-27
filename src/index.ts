@@ -3211,6 +3211,13 @@ If one of those sibling shapes is the action that would create what the goal ask
   // walk's ingested trace via composition_chain).
   const chainProduced = new Set<string>();
   const consumedInChain = new Set<string>();
+  // PREFER-COMPOSITION budget (2026-07-27, gap-compute-emit-composed-write-content-binding-garbage):
+  // PREFER-COMPOSITION suppresses the reliable single-shape compute satisfier when a composite
+  // "covers" >=2 missing shapes — but a LEAKED/unbindable composite (of which the store has many)
+  // is preferred, fails to execute, and the walk reframes to a raw read + a CONFABULATED value
+  // instead of ever running the real compute. Cap how many times composition may pre-empt the real
+  // satisfier; once exhausted, run the satisfier so the genuine computed value is produced+bound.
+  let _prefCompBudget = 1;
   const ledgerStep = (inputShapes: string[] | undefined, newOutputs: string[]): void => {
     for (const s of (inputShapes ?? [])) if (chainProduced.has(s)) consumedInChain.add(s);
     for (const s of newOutputs) if (s && s !== "activityExecutionSummary") chainProduced.add(s);
@@ -3340,6 +3347,12 @@ If one of those sibling shapes is the action that would create what the goal ask
                 !exclude.has(normActivityId(c.id)) && !chain.includes(c.id) &&
                 c.outputShapes.filter((sh) => missingForSatisfier.includes(sh)).length >= 2 &&
                 (c.inputShapes.length === 0 || c.inputShapes.every((sh) => producedShapes.has(sh))));
+            if (preferComposition && _prefCompBudget <= 0) {
+              preferComposition = false;
+              tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION budget exhausted — a covering composite was already preferred but did not resolve the target; running the REAL single-shape satisfier so the genuine computed value is produced (not a confabulated one)`);
+            } else if (preferComposition) {
+              _prefCompBudget--;
+            }
             if (preferComposition) tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION — a producer covers >=2 of missing target ${JSON.stringify(missingForSatisfier)}; suppressing single-shape satisfier so the composition (ratchet reuse) is selected`);
           }
         } catch { preferComposition = false; }
