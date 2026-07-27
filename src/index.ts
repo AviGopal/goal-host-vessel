@@ -2882,6 +2882,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (!st) return "the command produced empty stdout";
       if (/^(null|undefined|nan)$/i.test(st)) return `the command printed "${st}" instead of a real value`;
       if (/\b(command not found|no such file|not found|permission denied|cannot access)\b/i.test(st)) return `the command output looks like an error: ${st.slice(0, 200)}`;
+      // A "0" result for a COUNT/how-many/length goal on a non-empty target is almost
+      // always a wrong command or file path (mirrors the reach-gate's own 0/empty
+      // skepticism, applied EARLY so the walk self-corrects the command instead of
+      // accepting 0 and wandering). Bounded by the retry cap, so a genuinely-zero
+      // answer still returns after the retries exhaust.
+      if (/^0+$/.test(st) && /\b(count|number of|how many|length|words?|lines?|characters?|chars?)\b/i.test(goal)) {
+        return `the command returned "0" for a count/measure goal on a non-empty target — likely the wrong command or file path`;
+      }
       return null;
     };
     let directArgs = bindBody(directArgsRaw);
