@@ -1371,7 +1371,12 @@ async function runGroundedToolLoop(
   return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
 }
 async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
-  if (!LLM_VESSEL_ENDPOINT) return null;
+  // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
+  // the entire ReAct parity FLOOR because LLM_VESSEL_ENDPOINT is unset in the running container —
+  // yet the grounded loop resolves llm_completion_dispatch via DISCOVERY (ufResolveUrl), not that
+  // env var. Gating the floor behind an unobservable, unset config value is exactly the
+  // behaviour-behind-config violation the substrate forbids; runGroundedToolLoop already returns
+  // null when the dispatch is genuinely unavailable, so removing the gate stays fail-open.
   const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
   const tools: any[] = [...UNIVERSAL_READ_TOOLS];
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
@@ -1387,7 +1392,17 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // GROUNDING GATE — a reach must rest on real gathered DATA (read/shell), never on a
   // write side-effect or LLM memory. 0 grounded reads => ungrounded => return null so the
   // walk files a gap. This is what closes "REACHED after 0 tool calls" (the hollow-green).
-  if (groundedOk === 0) return null;
+  // GROUNDING ACCOUNTING (2026-07-27, corrected). llm_completion_dispatch resolves via discovery
+  // to the dev-vessel AGENTIC wrapper, which runs its OWN tool loop INTERNALLY (VERIFIED live: it
+  // reports real reads and REFUSES a non-existent file — "the file does not exist" — rather than
+  // confabulating a value) but surfaces NO client-side tool_calls. So groundedOk (which counts only
+  // CLIENT-executed tools) is 0 for a genuinely grounded answer, and the old `groundedOk===0 =>
+  // null` gate (written when the dispatch was a BARE, non-agentic completion) discarded EVERY
+  // grounded wrapper answer — the second half of why the ReAct floor was dead. Trust the agentic
+  // wrapper's SUBSTANTIVE answer and let the reach gate (verifyGoalReached — rejects degenerate/
+  // echo/empty/error/placeholder) be the honesty backstop. Hard-fail ONLY when the loop produced
+  // NOTHING usable: no client-side grounding AND no answer text AND no observations.
+  if (groundedOk === 0 && !finalText.trim() && observations.length === 0) return null;
   if (!finalText) { finalText = observations.join("\n\n").slice(0, 6000); console.log(`[goal-host-vessel] universal ReAct fallback: cap/deadline hit before a final answer — judging on ${groundedOk} grounded tool output(s)`); }
   const produced = [...new Set([...targetShapes, ...calledWriteShapes])];
   if (produced.length === 0) produced.push("universal_fallback_result");
@@ -1395,7 +1410,9 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
   const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
-  if (verdict?.reached && groundedOk > 0) {
+  // Reach when the reach gate passes on a SUBSTANTIVE answer — grounded either by CLIENT-executed
+  // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
+  if (verdict?.reached && (groundedOk > 0 || finalText.trim().length > 0)) {
     console.log(`[goal-host-vessel] universal ReAct fallback REACHED goal (${groundedOk} grounded read(s), ${executedOk}/${executed.length} tool(s) OK)`);
     return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
   }
