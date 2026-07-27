@@ -3521,6 +3521,37 @@ If one of those sibling shapes is the action that would create what the goal ask
     const notScaffold = (c: WalkCandidate): boolean =>
       !(c.outputShapes.length === 1 && c.outputShapes[0] === "activityExecutionSummary");
 
+    // GOAL-RELEVANCE GUARD for learned composites (2026-07-27). EVIDENCE (live probes):
+    // prose goals ("summarize repos/X/CLAUDE.md", "what is vessel Y's purpose based on its
+    // README") MIS-SELECTED an irrelevant high-posterior learned composite (e.g.
+    // <composed-cap-author-a-behavior-neutral-seam-extraction>, <learned-deadline-note-index>)
+    // and FAILED — selection matched on OUTPUT-SHAPE overlap + Thompson posterior with NO check
+    // that the composite's PURPOSE serves the goal. Such composites "advance" the goal only via
+    // GENERIC BYPRODUCT shapes (fileContent/source_code/activity_template/fileWriteResult) —
+    // means and side effects, never a deliverable — and every one of those shapes has a DIRECT
+    // resolver satisfier that runs BEFORE candidate selection, so a byproduct-only composite is
+    // never the legitimate way to produce them. Reject a LEARNED COMPOSITE whose match to the
+    // goal rests ONLY on byproduct shapes; a genuinely-relevant learned pathway (incl. a learned
+    // prose composite) advances via a real result shape (llm_completion_result, a specific
+    // analysis/write shape) and is EXEMPTED by hasSpecificMatch. Dropping the misapplied composite
+    // lets the walk fall to the grounded read->llm / universal-tool path (which reads the REAL
+    // file) instead of hollow-greening on a misapplied known pathway — "assess the unknown with
+    // the known" without MISapplying the known.
+    const GENERIC_BYPRODUCT_SHAPES = new Set([
+      "fileContent", "source_code", "codeReadResult", "activity_template",
+      "fileWriteResult", "activityExecutionSummary", "trace",
+    ]);
+    const isIrrelevantLearnedComposite = (c: WalkCandidate): boolean => {
+      const cid = normActivityId(c.id);
+      if (!(cid.includes("learned-") || cid.includes("composed-cap"))) return false;
+      const advancing = target.size > 0
+        ? c.outputShapes.filter((s) => missingTargetsB.includes(s))
+        : c.outputShapes.filter((s) => s !== "activityExecutionSummary" && !producedShapes.has(s));
+      if (advancing.length === 0) return false; // doesn't advance → other gates handle it
+      const hasSpecificMatch = advancing.some((s) => !GENERIC_BYPRODUCT_SHAPES.has(s));
+      return !hasSpecificMatch;
+    };
+
     // Hollow-scaffold id families (compose wrappers, proposed-pattern autodrafts,
     // learned-tick clones, repaired autodrafts, and chained X-to-Y bridges) shape-
     // match a target but do no genuine work and get reach-gate-β-penalised. A target
@@ -3700,7 +3731,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     let pick: WalkCandidate | undefined;
     if (target.size > 0) {
       const feasibleProducer = (c: WalkCandidate): boolean =>
-        notScaffold(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
+        notScaffold(c) && !isIrrelevantLearnedComposite(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
       // 1. A GENUINE (non-hollow-scaffold) feasible producer of a target shape.
       pick = [...candidates].sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target)).find((c) => feasibleProducer(c) && scaffoldRank(c, target) <= 0)
         // 2. A scaffold producer is acceptable ONLY for a target with no live
@@ -3710,7 +3741,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // those inputs first (add as sub-targets) rather than executing the
       // producer prematurely — this is how the chain is built backward.
       if (!pick) {
-        const needsInputs = candidates.find((c) => notScaffold(c) && advancesTarget(c) && c.inputShapes.length > 0);
+        const needsInputs = candidates.find((c) => notScaffold(c) && !isIrrelevantLearnedComposite(c) && advancesTarget(c) && c.inputShapes.length > 0);
         if (needsInputs) {
           let added = false;
           for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
@@ -3722,8 +3753,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     } else {
       // Opportunistic: any genuine forward progress.
-      pick = candidates.find((c) => notScaffold(c) && inputsSatisfied(c) && makesProgress(c))
-        ?? candidates.find((c) => notScaffold(c) && makesProgress(c));
+      pick = candidates.find((c) => notScaffold(c) && !isIrrelevantLearnedComposite(c) && inputsSatisfied(c) && makesProgress(c))
+        ?? candidates.find((c) => notScaffold(c) && !isIrrelevantLearnedComposite(c) && makesProgress(c));
     }
 
     // (c) BACKWARD-CHAIN — find a producer of a missing target shape.
