@@ -219,6 +219,25 @@ export async function inferGoalTargetDecision(
     }
   }
 
+  // REGISTRY / SYSTEM-INVENTORY COUNT route (registry-misroute, 2026-07-27). EVIDENCE: a live
+  // probe "How many vessels are currently registered in the discovery registry? Report the
+  // number." mis-routed to auto-bridge-source_code (produced source_code, missing shellResult)
+  // — the LLM read "discovery registry" as a CODEBASE to READ rather than a LIVE system to
+  // QUERY + COUNT. A COUNT/LIST over the RUNNING registry / fleet / system is answered by a real
+  // curl of the discovery registry piped to a count = shellResult (the universal executor),
+  // NEVER by reading source. Route DETERMINISTICALLY here (pre-LLM) so the LLM's source_code
+  // guess can't win (and can't be clobbered onto the shell safety-net seed downstream). TIGHT
+  // GUARD: a count/how-many ASK + a LIVE-inventory noun, and NOT an analyze/review/summarize/
+  // edit/quality ask (those keep their analysis / detection / composition paths).
+  if (knownShapes.includes("shellResult")) {
+    const COUNT_ASK = /\b(how many|how much|number of|count|list|are there|report the (?:number|count))\b/i;
+    const INVENTORY_NOUN = /\b(registr(?:y|ies|ed)|vessels?|discovery|services?|systemd|units?|containers?|processes|fleet|shapes?|resolvers?|endpoints?|ports?|advertis)\w*/i;
+    const NOT_INVENTORY = /\b(analy[sz]e|review|summar|audit|refactor|edit|implement|\bfix\b|quality|problem|complexity|security|write|persist|propose|\bnote\b|concept)\b/i;
+    if (COUNT_ASK.test(goal) && INVENTORY_NOUN.test(goal) && !NOT_INVENTORY.test(goal)) {
+      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+    }
+  }
+
   const decisionCache = opts.decisionCache;
   const cacheKey = goalHashOf(goal);
   if (decisionCache) {

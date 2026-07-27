@@ -207,3 +207,17 @@ describe("goalHashOf", () => {
     expect(goalHashOf("goal A")).not.toBe(goalHashOf("goal B"));
   });
 });
+
+describe("inferGoalTargetDecision — registry/inventory count route", () => {
+  const KR = ["shellResult", "fileContent", "source_code", "problem_detection"];
+  const throwLLM = (async () => { throw new Error("LLM must NOT be called on the deterministic registry route"); }) as unknown as typeof fetch;
+  it("routes 'how many vessels registered in discovery' to shellResult without the LLM", async () => {
+    const out = await inferGoalTargetDecision("How many vessels are currently registered in the discovery registry? Report the number.", KR, { llmEndpoint: "http://llm.test", fetchImpl: throwLLM });
+    expect(out.shapes).toEqual(["shellResult"]);
+  });
+  it("does NOT hijack an analysis-over-registry goal", async () => {
+    const { fetchImpl } = fakeLLM(["problem_detection"]);
+    const out = await inferGoalTargetDecision("Review the code quality problems in the discovery vessel", KR, { llmEndpoint: "http://llm.test", fetchImpl });
+    expect(out.shapes).not.toEqual(["shellResult"]);
+  });
+});
