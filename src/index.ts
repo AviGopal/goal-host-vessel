@@ -2415,6 +2415,12 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
+  // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): step-0's satisfier
+  // does satisfierTried.add(shape) BEFORE resolving, so a single TRANSIENT null (LLM
+  // lane cooldown, transport blip) permanently blacklists the shape and the last-chance
+  // direct-resolve scan is skipped — the walk declares "no producer" after ONE flake.
+  // Allow exactly one retry per shape when the prior failure was transient.
+  const satisfierRetry = new Map<string, number>();
   let walkTerminationReason: string | undefined;
   for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
 
@@ -3572,6 +3578,12 @@ If one of those sibling shapes is the action that would create what the goal ask
       "fileContent", "source_code", "codeReadResult", "activity_template",
       "fileWriteResult", "activityExecutionSummary", "trace",
     ]);
+    // NOISE = byproduct shapes PLUS generic tool wrappers. A learned composite whose
+    // only output is a generic tool_output/tool_result advances no specific deliverable
+    // (e.g. <learned-deadline-note-index-v2-robust>: input [goal], output [tool_output]).
+    const GENERIC_NOISE_SHAPES = new Set([
+      ...GENERIC_BYPRODUCT_SHAPES, "tool_output", "tool_result", "toolOutput", "tool_call",
+    ]);
     const isIrrelevantLearnedComposite = (c: WalkCandidate): boolean => {
       const cid = normActivityId(c.id);
       if (!(cid.includes("learned-") || cid.includes("composed-cap"))) return false;
@@ -3591,7 +3603,18 @@ If one of those sibling shapes is the action that would create what the goal ask
       const advancing = target.size > 0
         ? c.outputShapes.filter((s) => missingTargetsB.includes(s))
         : c.outputShapes.filter((s) => s !== "activityExecutionSummary" && !producedShapes.has(s));
-      if (advancing.length === 0) return false; // doesn't advance → other gates handle it
+      if (advancing.length === 0) {
+        // A learned/composed composite that advances NOTHING toward a real target,
+        // fires purely from ever-present SEED shapes (goal/operator/vault_path …), and
+        // emits only generic NOISE (tool_output-class) is a dead-end. It cannot produce
+        // the deliverable and will hollow-run, wasting the walk's single satisfier shot
+        // (the <deadline-note-index> mis-pick for a prose "what is a resolver" goal).
+        // Reject it so the walk falls to the real target satisfier / grounded floor.
+        const firesFromSeedsOnly = c.inputShapes.length > 0 && c.inputShapes.every((sh) => seedShapes.has(sh));
+        const allNoiseOutputs = c.outputShapes.length > 0 && c.outputShapes.every((sh) => GENERIC_NOISE_SHAPES.has(sh));
+        if (target.size > 0 && firesFromSeedsOnly && allNoiseOutputs) return true;
+        return false; // otherwise: doesn't advance → other gates handle it
+      }
       const hasSpecificMatch = advancing.some((s) => !GENERIC_BYPRODUCT_SHAPES.has(s));
       return !hasSpecificMatch;
     };
@@ -3933,6 +3956,19 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_vrVessels.length > 0) {
               const _vrV = _vrVessels[0]!;
               const _vrEndpoint = _vrV.endpoint ?? "";
+              // Regime-2 un-poison: if step-0 already blacklisted this shape but the
+              // prior rawResolve failure was TRANSIENT (not a genuine capability gap),
+              // clear the flag once so this last-chance scan re-attempts the resolve.
+              // vesselResolveShape re-adds to satisfierTried, so it re-blacklists after;
+              // a real outage still nulls via rawResolve → honest "no producer".
+              const _priorTransient = typeof lastRawResolveReason === "string"
+                && /external-evidence failure|cascading|no vessel advertising|rate.?limit|429|402|insufficient|exhaust|transport|timeout|empty content|fetch (threw|failed)/i.test(lastRawResolveReason);
+              const _vrRetried = satisfierRetry.get(missingShape) ?? 0;
+              if (_vrEndpoint && satisfierTried.has(missingShape) && _priorTransient && _vrRetried < 1) {
+                satisfierRetry.set(missingShape, _vrRetried + 1);
+                satisfierTried.delete(missingShape);
+                tap(`[goal-host-vessel] walk: un-poisoning ${missingShape} for one bounded retry (prior failure transient: ${String(lastRawResolveReason).slice(0, 90)})`);
+              }
               if (_vrEndpoint && !satisfierTried.has(missingShape)) {
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
                 const _vrResolved = await vesselResolveShape(missingShape);
