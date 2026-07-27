@@ -8450,10 +8450,14 @@ const server = Bun.serve({
       // convert its verdict into Thompson feedback on the selected template,
       // mirroring the penaliseHollowTemplate fetch idiom.
       const learn = record.learning;
-      if (record.status !== "running" && learn && !learn.oracleLabelWritten && record.executionId && record.selectedTemplateId) {
-        learn.oracleLabelWritten = true;
+      // Poll-time HUMAN reach-override consumption. The oracle-label corpus is
+      // APPEND-ONLY, and a human normally grades AFTER the row first settled — the
+      // prior code latched oracleLabelWritten BEFORE the fetch, so a later grade was
+      // unconsumable forever (dead feedback). Re-read the label EACH terminal poll and
+      // latch only AFTER a valid human label is applied. Override the guard down to
+      // record.executionId so FAILED / satisfier rows (no selectedTemplateId) correct too.
+      if (record.status !== "running" && learn && !learn.oracleLabelWritten && record.executionId) {
         const labelExecId = record.executionId;
-        const labelTemplateId = record.selectedTemplateId;
         void (async () => {
           try {
             const labelRes = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
@@ -8464,29 +8468,29 @@ const server = Bun.serve({
             });
             if (!labelRes.ok) return;
             const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
-            let labels: Array<{ verdict?: string }> = [];
-            try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string }>) : []; } catch { labels = []; }
-            const labelVerdict = labels[0]?.verdict;
+            let labels: Array<{ verdict?: string; notes?: string; labeler?: string }> = [];
+            try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string; notes?: string; labeler?: string }>) : []; } catch { labels = []; }
+            const label = labels[0];
+            const labelVerdict = label?.verdict;
             if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") return;
-            if (labelVerdict !== "partial") {
-              await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-                body: JSON.stringify({
-                  activity_id: labelTemplateId,
-                  direction: labelVerdict === "achieved" ? "positive" : "negative",
-                  intensity: 1,
-                  reason: "oracle label consumption",
-                }),
-                signal: AbortSignal.timeout(15_000),
-              });
+            // A valid label exists — consume it once.
+            learn.oracleLabelWritten = true;
+            // HUMAN OVERRIDE (corrective half, law 13): the human resolver's verdict is
+            // authoritative over the machine grader's — correct record.reached and surface
+            // the directed notes so the next poll + the panel show the human truth. Reach
+            // is deliberately NOT posterior-written: the arm already earns reach credit via
+            // v_shape_conditioned_score (FROM execution.success), and a genuinely-unreachable
+            // goal must not β-condemn a correctly-selected arm (law 12, no double-count).
+            if (label?.labeler === "human") {
+              record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
+              (record as { humanGraded?: boolean }).humanGraded = true;
+              const notes = typeof label?.notes === "string" ? label.notes.trim() : "";
+              (record as { humanReachNotes?: string }).humanReachNotes = notes;
+              record.goalReachReason = `[human override: ${notes || ("reached=" + String(record.reached))}] ${record.goalReachReason ?? ""}`.slice(0, 600);
+              console.log(`[oracle-label] HUMAN reach override verdict=${labelVerdict} for ${labelExecId} -> record.reached=${record.reached} (no posterior β-penalty)`);
+            } else {
+              console.log(`[oracle-label] consumed automated verdict=${labelVerdict} for ${labelExecId} (no override)`);
             }
-            learn.alphaBetaDelta.push({
-              templateId: labelTemplateId,
-              dAlpha: labelVerdict === "achieved" ? 1 : 0,
-              dBeta: labelVerdict === "not_achieved" ? 1 : 0,
-            });
-            console.log(`[oracle-label] consumed verdict=${labelVerdict} for execution ${labelExecId} -> feedback on ${labelTemplateId}`);
           } catch (e) {
             console.warn(`[oracle-label] consumption failed (non-fatal): ${(e as Error).message}`);
           }
@@ -8503,6 +8507,8 @@ const server = Bun.serve({
         executionId: record.executionId,
         selectedTemplateId: record.selectedTemplateId,
         completionShapes: (record as { completionShapes?: string[] | null }).completionShapes ?? null,
+        humanGraded: (record as { humanGraded?: boolean }).humanGraded ?? false,
+        humanReachNotes: (record as { humanReachNotes?: string }).humanReachNotes ?? null,
         error: record.error,
         walkLog: record.walkLog,
         learning: record.learning ?? null,
