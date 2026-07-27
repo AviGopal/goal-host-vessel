@@ -3019,6 +3019,20 @@ If one of those sibling shapes is the action that would create what the goal ask
         _deg = _degenerateReason(direct);
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 80) + ")" : "now produces a value"}`);
       }
+      // HONEST-REACH ON EXHAUSTED SELF-CORRECTION (2026-07-27, surfaced by an adversarial everyday
+      // battery: a "how many vessels registered in discovery" goal produced EMPTY stdout across both
+      // self-correction attempts, yet the walk REACHED "the count of vessels" — a hollow green on a
+      // failed command). After the retries exhaust, a still-degenerate result that is a COMMAND
+      // FAILURE (empty stdout / non-zero exit / stderr-only / null / error-text) is NOT a value:
+      // accepting it as satisfier content greens a compute goal on nothing. REFUSE it (direct=null)
+      // so the shape stays unsatisfied and reach is graded honestly (the walk then falls through to
+      // the grounded universal-tool floor / bridge / honest not-reached). A bare "0" for a count goal
+      // IS a possible genuine value and is still accepted — the retry cap already gave the command a
+      // chance to correct, per the original design intent.
+      if (_deg && !/returned "0"/.test(_deg)) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" STILL a command FAILURE after ${_tries} self-correction attempt(s) (${_deg.slice(0, 80)}) — refusing to satisfy with a failed/empty command; grading reach honestly (no hollow green)`);
+        direct = null;
+      }
     }
     // HONEST-REACH (gap-multistage-pipeline-collapses-to-hollow-green): a derivation-split
     // TERMINAL write (a derive->emit last mile) whose persisted body is EMPTY is hollow —
