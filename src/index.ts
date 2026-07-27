@@ -5252,8 +5252,29 @@ async function countAsyncFunctions(): Promise<number> {
       const goalIsEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
       const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
       const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
-      if (walk.reached === false && !goalIsEditIntent) {
-        try { const uf = await universalToolFallback(goal, seededOutputShapes ?? []); if (uf?.reached) return uf; } catch { /* fail-open */ }
+      // PROSE-OVER-SOURCE GROUNDING (2026-07-27). EVIDENCE (live probes): summarize/explain-
+      // a-named-file goals hollow-REACH — either mis-select an irrelevant learned composite,
+      // or resolve a BARE tool-less llm_completion_dispatch that CONFABULATES from memory
+      // (the keystone threads content only into exec fields, never the prompt; the grounded
+      // ReAct loop fires only on non-reach). So walk.reached can be TRUE yet ungrounded. For a
+      // prose-over-file goal, ALSO run universalToolFallback (which dispatches WITH read tools,
+      // is FORCED to read the real file, gates on groundedOk>0, and re-judges via the reach
+      // gate) and PREFER its grounded answer. Monotonic + safe: the fallback returns a result
+      // ONLY when it genuinely read data AND reached; otherwise null → fall through to the
+      // existing walk result unchanged. Tight guard: a prose VERB + a source operand, and NOT
+      // an extract/count/edit ask (those have honest compute/edit paths already).
+      const goalIsProseOverSource =
+        /\b(summar(?:y|ise|ize|ising|izing)?|explain|describe|what\s+is\b|what'?s\b|purpose\s+of|gist\s+of|overview\s+of|tell me about|walk me through)\b/i.test(goal) &&
+        /(repos\/[\w.-]+|\.(?:md|json|ts|tsx|js|jsx|txt|ya?ml|toml|sh|py)\b|\bREADME\b|\bCLAUDE\b|package\.json|based on (?:its|the)\b|\bvessel\b|\bthe file\b)/i.test(goal) &&
+        !/\b(edit|add |insert|append|change|modify|replace|\bfix\b|remove|delete|update|rename|refactor|\bcount\b|how many|number of|value of|extract|report the value|report whether)\b/i.test(goal);
+      if ((walk.reached === false || goalIsProseOverSource) && !goalIsEditIntent) {
+        try {
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? []);
+          if (uf?.reached) {
+            if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
+            return uf;
+          }
+        } catch { /* fail-open */ }
       }
       if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
       // EDIT-INTENT ROUTING (2026-07-02): a 0-step walk that NAMES a concrete source
