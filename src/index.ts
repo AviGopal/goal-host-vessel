@@ -3326,7 +3326,24 @@ If one of those sibling shapes is the action that would create what the goal ask
     // MOMENT via goalWalkState — not just stamped-but-dark on the impulse metadata.
     (rec as { poolProvenance?: unknown }).poolProvenance = poolImpulses.map((im) => {
       const m = (im.metadata ?? {}) as { shape?: string; goalSignature?: string; producedBy?: string };
-      return { shape: m.shape, goalSignature: m.goalSignature ?? null, producedBy: m.producedBy ?? null };
+      // EVIDENCE LEDGER (2026-07-27): surface a CAPPED preview of each pool impulse's
+      // CONTENT so a human can inspect what the walk actually produced — for BOTH reached
+      // and failed walks (mirrorWalkState runs every iteration regardless of outcome) — and
+      // judge the reach verdict against real evidence, not just shape names. Preview only
+      // (2000-char cap, rides the existing goalWalkState poll — no new resolver, no overlay
+      // fetch); totality-on-demand is a separate activityExecutionTrace(format:'json') read.
+      // Empty/whitespace content is omitted so the ledger never shows a dark row.
+      let c: string;
+      try { c = typeof im.content === "string" ? im.content : JSON.stringify(im.content); } catch { c = String(im.content); }
+      const hasContent = typeof c === "string" && c.trim().length > 0;
+      return {
+        shape: m.shape,
+        goalSignature: m.goalSignature ?? null,
+        producedBy: m.producedBy ?? null,
+        ...(hasContent
+          ? { contentPreview: c.slice(0, 2000), chars: c.length, truncated: c.length > 2000 }
+          : { chars: 0 }),
+      };
     });
     rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
     // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
