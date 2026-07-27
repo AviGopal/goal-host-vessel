@@ -3561,6 +3561,19 @@ If one of those sibling shapes is the action that would create what the goal ask
     const isIrrelevantLearnedComposite = (c: WalkCandidate): boolean => {
       const cid = normActivityId(c.id);
       if (!(cid.includes("learned-") || cid.includes("composed-cap"))) return false;
+      // PROVEN-BAD POSTERIOR (2026-07-27). A learned composite the loop has ALREADY tried
+      // enough times (>=10 real samples) that FAILS almost always (<15% success) is a proven
+      // pollutant — e.g. the leftover <learned-composition-fix-verify-probe-2607> (alpha/beta=
+      // 1/30, ~3% success) that keeps getting sampled onto cold/novel walks and hollow-fails
+      // while producing a legit-LOOKING shellResult (so the byproduct heuristic below can't
+      // catch it). Thompson down-weights it but still EXPLORES it occasionally; a proven-bad
+      // composite should never be SELECTED for a fresh goal. Thresholds mirror the activity-api
+      // evidence gate (MIN_SAMPLES=10). New / under-sampled composites (alpha+beta<12) are
+      // EXEMPT so genuine exploration of unproven pathways is preserved.
+      if (typeof c.alpha === "number" && typeof c.beta === "number") {
+        const n = c.alpha + c.beta;
+        if (n >= 12 && c.alpha / n < 0.15) return true;
+      }
       const advancing = target.size > 0
         ? c.outputShapes.filter((s) => missingTargetsB.includes(s))
         : c.outputShapes.filter((s) => s !== "activityExecutionSummary" && !producedShapes.has(s));
