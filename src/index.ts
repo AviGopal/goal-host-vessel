@@ -2897,6 +2897,17 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (typeof val === "string" && val.trim()) { executorCommands.set(shape, val); return; }
       }
     };
+    // COMPOSED-WRITE TITLE BINDING (composition last-mile): a derive->emit goal that
+    // names an explicit title (e.g. ... a memory note titled "X") must carry that title
+    // into the write args, else the note is written UNTITLED and is unretrievable by its
+    // intended title (the id falls back to the body value). Deterministic extraction from
+    // the goal; never overrides a title the arg-synthesis already produced.
+    if ((/_write$/.test(shape) || shape === "write_note") && !("title" in directArgsRaw)) {
+      const _tm = goal.match(/\btitled?\s+["'\u201c\u201d]([^"'\u201c\u201d]{1,80})["'\u201c\u201d]/i)
+        || goal.match(/\btitle[d]?\s*[:=]\s*["'\u201c\u201d]?([^"'\u201c\u201d\n]{1,80})["'\u201c\u201d]?/i);
+      if (_tm && _tm[1] && _tm[1].trim()) { directArgsRaw = { ...directArgsRaw, title: _tm[1].trim() }; }
+    }
+
     // FLOOR-RELIABILITY (gap-cold-floor-command-synthesis-unreliable-cache-masks):
     // for an EXECUTOR/command shape the cold-synthesized command can RUN yet return a
     // DEGENERATE value (empty stdout / non-zero exit / stderr error / literal "null").
