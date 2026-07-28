@@ -8,7 +8,6 @@
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit --strict",
     "update-lessons": "bun run --filter goal-host-vessel src/lessons-updater.ts"
-  }
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
