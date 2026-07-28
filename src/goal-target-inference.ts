@@ -198,7 +198,7 @@ export async function inferGoalTargetDecision(
     ? "llm_completion_dispatch"
     : (knownShapes.includes("llm_completion") ? "llm_completion" : null);
   if (_proseTarget) {
-    const EXPLANATORY_RE = /\b(explain|describe|define|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
+    const EXPLANATORY_RE = /\b(explain|describe|define|summar\w*|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
     const NOT_PROSE_RE = /\b(count|how many|how much|number of|sum|total|bytes?|line count|lines?|digest|sha-?\d|hash|checksum|list|report the current|running|status|analy[sz]e|review|audit|problem_detection|code_quality|refactor|implement|fix|edit|patch|write (a|the)? ?(note|file|concept)|save|store|persist|fetch|download|curl|scrape|repos\/[\w.-]+\/)\b|https?:\/\//i;
     if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal)) {
       return { shapes: [_proseTarget], confidence: 0.7, alternatives: [] };
