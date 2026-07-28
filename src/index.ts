@@ -8086,6 +8086,52 @@ async function handleRunGoal(req: Request): Promise<Response> {
   return Response.json({ dispatchId, status: "running" }, { status: 202 });
 }
 
+function maybeConsumeOracleLabel(record: DispatchRecord): void {
+  // Poll-time oracle-label consumption — SHARED by GET /executions/:id AND the
+  // goalWalkState resolve branch. The Obsidian panel polls goalWalkState, so the
+  // consumer MUST run there too; otherwise a human reach override is written to the
+  // oracle corpus, shown 'recorded', and silently NEVER applied on the read path.
+  // Fire-and-forget; the oracleLabelWritten latch makes repeated invocation idempotent.
+  // A HUMAN verdict corrects record.reached + surfaces directed notes (corrective, law 13);
+  // reach is NEVER posterior-written — the arm already earns reach credit via
+  // v_shape_conditioned_score (FROM execution.success), so re-writing a β would
+  // double-count and could β-condemn a correctly-selected arm on an unreachable goal (law 12).
+  const learn = record.learning;
+  if (record.status !== "running" && learn && !learn.oracleLabelWritten && record.executionId) {
+    const labelExecId = record.executionId;
+    void (async () => {
+      try {
+        const labelRes = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: 1 } }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!labelRes.ok) return;
+        const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
+        let labels: Array<{ verdict?: string; notes?: string; labeler?: string }> = [];
+        try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string; notes?: string; labeler?: string }>) : []; } catch { labels = []; }
+        const label = labels[0];
+        const labelVerdict = label?.verdict;
+        if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") return;
+        learn.oracleLabelWritten = true;
+        if (label?.labeler === "human") {
+          record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
+          (record as { humanGraded?: boolean }).humanGraded = true;
+          const notes = typeof label?.notes === "string" ? label.notes.trim() : "";
+          (record as { humanReachNotes?: string }).humanReachNotes = notes;
+          record.goalReachReason = `[human override: ${notes || ("reached=" + String(record.reached))}] ${record.goalReachReason ?? ""}`.slice(0, 600);
+          console.log(`[oracle-label] HUMAN reach override verdict=${labelVerdict} for ${labelExecId} -> record.reached=${record.reached} (no posterior β-penalty)`);
+        } else {
+          console.log(`[oracle-label] consumed automated verdict=${labelVerdict} for ${labelExecId} (no override)`);
+        }
+      } catch (e) {
+        console.warn(`[oracle-label] consumption failed (non-fatal): ${(e as Error).message}`);
+      }
+    })();
+  }
+}
+
 async function handleResolve(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try {
@@ -8155,10 +8201,11 @@ async function handleResolve(req: Request): Promise<Response> {
     if (!wid) return Response.json({ resolved: false, shape: "goalWalkState", error: "dispatchId is required" }, { status: 400 });
     const rec = executionStore.get(wid);
     if (!rec) return Response.json({ resolved: false, shape: "goalWalkState", error: "dispatch not found" }, { status: 404 });
+    maybeConsumeOracleLabel(rec);
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
   if (type === "poolImpulse_write") {
@@ -8655,59 +8702,9 @@ const server = Bun.serve({
       const dispatchId = url.pathname.slice("/executions/".length);
       const record = executionStore.get(dispatchId);
       if (!record) return Response.json({ error: "dispatch not found" }, { status: 404 });
-      // Poll-time oracle-label consumption: when serving a TERMINAL dispatch whose
-      // learning has not yet consumed an oracle label, resolve a
-      // goal_verification_label for this execution from activity-api's oracle
-      // corpus (fire-and-forget; the poll response is never blocked on it) and
-      // convert its verdict into Thompson feedback on the selected template,
-      // mirroring the penaliseHollowTemplate fetch idiom.
-      const learn = record.learning;
-      // Poll-time HUMAN reach-override consumption. The oracle-label corpus is
-      // APPEND-ONLY, and a human normally grades AFTER the row first settled — the
-      // prior code latched oracleLabelWritten BEFORE the fetch, so a later grade was
-      // unconsumable forever (dead feedback). Re-read the label EACH terminal poll and
-      // latch only AFTER a valid human label is applied. Override the guard down to
-      // record.executionId so FAILED / satisfier rows (no selectedTemplateId) correct too.
-      if (record.status !== "running" && learn && !learn.oracleLabelWritten && record.executionId) {
-        const labelExecId = record.executionId;
-        void (async () => {
-          try {
-            const labelRes = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-              body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: 1 } }),
-              signal: AbortSignal.timeout(15_000),
-            });
-            if (!labelRes.ok) return;
-            const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
-            let labels: Array<{ verdict?: string; notes?: string; labeler?: string }> = [];
-            try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string; notes?: string; labeler?: string }>) : []; } catch { labels = []; }
-            const label = labels[0];
-            const labelVerdict = label?.verdict;
-            if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") return;
-            // A valid label exists — consume it once.
-            learn.oracleLabelWritten = true;
-            // HUMAN OVERRIDE (corrective half, law 13): the human resolver's verdict is
-            // authoritative over the machine grader's — correct record.reached and surface
-            // the directed notes so the next poll + the panel show the human truth. Reach
-            // is deliberately NOT posterior-written: the arm already earns reach credit via
-            // v_shape_conditioned_score (FROM execution.success), and a genuinely-unreachable
-            // goal must not β-condemn a correctly-selected arm (law 12, no double-count).
-            if (label?.labeler === "human") {
-              record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
-              (record as { humanGraded?: boolean }).humanGraded = true;
-              const notes = typeof label?.notes === "string" ? label.notes.trim() : "";
-              (record as { humanReachNotes?: string }).humanReachNotes = notes;
-              record.goalReachReason = `[human override: ${notes || ("reached=" + String(record.reached))}] ${record.goalReachReason ?? ""}`.slice(0, 600);
-              console.log(`[oracle-label] HUMAN reach override verdict=${labelVerdict} for ${labelExecId} -> record.reached=${record.reached} (no posterior β-penalty)`);
-            } else {
-              console.log(`[oracle-label] consumed automated verdict=${labelVerdict} for ${labelExecId} (no override)`);
-            }
-          } catch (e) {
-            console.warn(`[oracle-label] consumption failed (non-fatal): ${(e as Error).message}`);
-          }
-        })();
-      }
+      // Poll-time oracle-label consumption — shared with the goalWalkState branch
+      // (the Obsidian panel polls goalWalkState, so the consumer must run on both paths).
+      maybeConsumeOracleLabel(record);
       return Response.json({
         dispatchId: record.dispatchId,
         status: record.status,
