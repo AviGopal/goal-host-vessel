@@ -1064,10 +1064,27 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   const deployed = await countAt(`/vessels/${rel.replace(/^repos\//, "")}`);
   const drift = deployed !== null && deployed !== truth
     ? ` (deploy-drift noted: mirror /vessels reports ${deployed}; the git clone is authoritative)` : "";
-  if (new RegExp(`\\b${truth}\\b`).test(dig)) {
-    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); the produced output contains the true count${drift}`, deterministic: true, completion_shapes: [] };
+  // SOUNDNESS: the true count must appear in the output of a GENUINE COUNTING COMMAND, not
+  // anywhere in the (pollution-heavy) digest. A digest packed with unrelated numeric content
+  // (activity_metrics rates, template ids) trivially contains any small integer, so a bare
+  // digit-match false-greens a hollow answer — observed live: count-ts produced shellResult
+  // {"error":"command is required"} (the ls|wc was never synthesised under an LLM-plane
+  // outage) yet an incidental "9" elsewhere in the digest matched. Restrict the match to the
+  // produced shellResult content (the output of the ls/find/wc that actually counted) and
+  // reject an error/empty shellResult. This ties the verified count to its PREREQUISITE
+  // command — the whole point of grading a computation by its observable output. When the
+  // count command cannot be produced (LLM-dead synthesis), this correctly returns null ->
+  // honest-miss instead of a hollow green.
+  const shellOutputs = dig.split("\n")
+    .map((l) => l.match(/^-\s+shellResult:\s*(.*)$/))
+    .filter((m): m is RegExpMatchArray => m !== null)
+    .map((m) => m[1].trim())
+    .filter((c) => c.length > 0 && !/error|command is required|not found|no such|cannot|invalid/i.test(c));
+  const truthRe = new RegExp(`(^|[^0-9])${truth}([^0-9]|$)`);
+  if (shellOutputs.some((c) => truthRe.test(c))) {
+    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); a counting-command (shellResult) output in the produced shapes reports the same count${drift}`, deterministic: true, completion_shapes: [] };
   }
-  return null;                                             // true count not present in output -> LLM
+  return null;                                             // no genuine counting-command output carrying the true count -> LLM/honest-miss
 }
 
 // INDEPENDENT DEPENDENCY-LIST ORACLE \u2014 "list the dependencies of repos/<f>.json" is a KNOWN
