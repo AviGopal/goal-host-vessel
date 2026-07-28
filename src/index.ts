@@ -2291,6 +2291,26 @@ async function runGoalAsPoolWalk(
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
   // stepSink (if provided). Additive — never alters control flow.
   const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
+
+  // SECRET-EXTRACTION REFUSAL (2026-07-27, falsifiability + security). A goal asking to REPORT/
+  // PRINT/REVEAL a SECRET VALUE — an API key, password, token, private key, credential, or the
+  // value of a *_KEY/*_SECRET/*_TOKEN/*_PASSWORD env var — is REFUSED BEFORE any command is
+  // synthesized. Attempting it risks LEAKING the secret (the goal-host process env holds real keys;
+  // a printenv in the executor could exfiltrate them) AND the reach-gate otherwise GREENS it — a
+  // confabulation/leak that left the out-of-capability-secret failure mode UNFALSIFIABLE (measured
+  // by the falsification harness, falsifiability_index 0.7 with this as one of 3 confabulating
+  // modes). Fail HONESTLY and SAFELY here: no command runs. Reading a secret's NON-value metadata
+  // (length / presence / hash / fingerprint) is explicitly NOT gated.
+  {
+    const _g = goal.toLowerCase();
+    const _asksValue = /\b(report|print|show|reveal|extract|echo|display|leak|dump|output|tell me|what(?:'s| is)|value of|get me|give me|expose)\b/.test(_g);
+    const _namesSecret = /\b(api[_ ]?key|access[_ ]?token|private[_ ]?key|client[_ ]?secret|passphrase|password|[a-z0-9]+_(?:key|secret|token|password|passphrase)|anthropic_api_key|openai_api_key|jwt_secret|surrealdb_password|\bcredentials?\b)\b/.test(_g);
+    const _metaNotValue = /\b(length|how long|number of characters|char count|presence|whether .* (?:is )?set|is .* set|exists|does .* exist|hash|sha|fingerprint|last \d|first \d|redact|masked?)\b/.test(_g);
+    if (_asksValue && _namesSecret && !_metaNotValue) {
+      tap(`[goal-host-vessel] ${opts.surface}: SECRET-EXTRACTION REFUSED (pre-execution) — goal asks to reveal a secret/credential VALUE; failing honestly + safely, no command synthesized (the substrate does not exfiltrate secrets). goal_hash=${goalHashOf(goal)}`);
+      return { result: null, status: "failed", selectedTemplateId: "secret-extraction-refused", completionShapes: null, attempts: 0, reached: false, goalReachReason: "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated." };
+    }
+  }
   const MAX_STEPS = parseInt(process.env.GOAL_HOST_WALK_MAX_STEPS ?? "40", 10);
   // Terminal emit targets to DEFER until intermediates are produced (composition).
   const terminalShapes = new Set<string>(opts.terminalOutputShapes ?? []);
