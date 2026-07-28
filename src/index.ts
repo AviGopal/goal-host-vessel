@@ -925,6 +925,44 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
   return { reached: false, reason: `deterministic:wrong-compute-answer — recomputed ${label} does not match any distinctive answer token in the output (e.g. ${claimed[0]})`, completion_shapes: [] };
 }
 
+// INDEPENDENT REGISTRY-INVENTORY ORACLE (2026-07-27). The independent-oracle critical path shared by
+// validatability (gaming_gap) and falsifiability (confabulation_rate): for a self-inventory COUNT over
+// the discovery registry, do NOT trust the command's own stdout — query the AUTHORITATIVE source
+// (/registry/stats) HERE and compare. "Assess the unknown with the known": the registry is the
+// substrate's known self-description. Confirms a real count (independent POSITIVE oracle) and REJECTS a
+// fabricated count for an entity the registry does not track (the nonexistent-entity confabulation,
+// e.g. "17 frobnicate services"). Fails OPEN (null -> LLM) when unreachable or not a registry count.
+async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const g = goal.toLowerCase();
+  const isRegistryCtx = /\b(registr(?:y|ies|ered|ration)|discovery)\b/.test(g);
+  const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
+  if (!isRegistryCtx || !isCountAsk) return null;
+  // Map the goal's counted entity to the ONLY fields the registry reports.
+  const field = /\bvessels?\b/.test(g) ? "totalVessels"
+    : /\bshapes?\b/.test(g) ? "totalShapes"
+    : /\bhealthy\b/.test(g) ? "healthyCount"
+    : null;
+  let stats: Record<string, unknown> | null = null;
+  try {
+    const r = await fetch(`${DISCOVERY_ENDPOINT}/registry/stats`, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) stats = await r.json() as Record<string, unknown>;
+  } catch { return null; }
+  if (!stats) return null;                              // registry unreachable -> cannot verify -> LLM
+  if (field === null) {
+    // The goal counts an entity the registry does NOT track (only vessels/shapes/healthy exist).
+    // There is no such category, so any specific count is a confabulation — honest failure.
+    return { reached: false, reason: "deterministic:unknown-registry-entity — the discovery registry tracks only vessels/shapes/healthy counts; the goal asks to count an entity the registry does not report, so a specific count in the output is confabulated (the substrate cannot invent a real count for a nonexistent category)", completion_shapes: [] };
+  }
+  const expected = String((stats as Record<string, number>)[field] ?? "");
+  if (!expected) return null;
+  const claimed = [...new Set((dig.match(/\b\d{1,7}\b/g) ?? []))];
+  if (claimed.length === 0) return null;                // no number produced -> cannot verify -> LLM
+  if (claimed.includes(expected)) {
+    return { reached: true, reason: `deterministic:verified-registry-count — independently queried ${DISCOVERY_ENDPOINT}/registry/stats.${field}=${expected}; the produced output matches the authoritative registry`, deterministic: true, completion_shapes: [] };
+  }
+  return { reached: false, reason: `deterministic:wrong-registry-count — independently queried registry ${field}=${expected}, but the output reports ${claimed[0]} (the self-graded value does not match the authoritative registry)`, completion_shapes: [] };
+}
+
 /**
  * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
  */
@@ -1039,6 +1077,13 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     if (computeVerdict) return computeVerdict;
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
+
+  // INDEPENDENT REGISTRY-INVENTORY ORACLE — verify a self-inventory count against the authoritative
+  // /registry/stats instead of the self-graded LLM (validatability + falsifiability critical path).
+  {
+    const regV = await verifyRegistryInventoryReach(goal, dig);
+    if (regV) return regV;
+  }
 
   // Deterministic NEGATIVE (edit-intent family, verify-by-content): an edit-intent goal
   // (names a repos/<vessel> source file + mutation language) is reached ONLY by a produced
