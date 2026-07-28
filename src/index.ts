@@ -2925,7 +2925,13 @@ async function runGoalAsPoolWalk(
       resp = await fetch(`${endpoint}${resolvePath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        body: JSON.stringify({ impulse: { pointer } }),
+        // The LLM resolver reads a TOP-LEVEL `prompt` (a prompt nested only in
+        // impulse.pointer is ignored — verified live). Thread it up for llm_completion.
+        body: JSON.stringify(
+          (shape === "llm_completion" || shape === "llmCompletion") && typeof pointer.prompt === "string"
+            ? { impulse: { pointer }, prompt: pointer.prompt }
+            : { impulse: { pointer } }
+        ),
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
       });
     } catch (e) {
