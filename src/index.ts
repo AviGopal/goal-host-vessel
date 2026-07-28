@@ -996,6 +996,31 @@ async function verifyExtractFieldReach(goal: string, dig: string): Promise<GoalR
 }
 
 /**
+ * INDEPENDENT UNMEASURABLE-COUNT ORACLE (2026-07-27, falsifiability critical path).
+ * A goal asking for an EXACT COUNT of a subjective / latent-quality category (bugs, defects,
+ * vulnerabilities, code smells, anti-patterns, design flaws) has NO authoritative enumerable
+ * source \u2014 "the number of bugs in a file" is not deterministically defined, so ANY specific
+ * number the walk produces is a confabulation the self-grader cannot refute. This is the same
+ * archetype as the registry unknown-entity oracle: when there is no authoritative source to
+ * recompute against, the honest verdict is a REJECT, never a green. Fails OPEN (null) for every
+ * MEASURABLE count (files, lines, functions, dependencies, characters, TODO comments, \u2026) \u2014 those
+ * have enumerable sources and are graded by their own oracles / the LLM. Narrow by construction:
+ * only the clearly-subjective quality nouns trigger; measurable nouns are never matched.
+ */
+function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
+  const countAsk = /\b(how many|number of|count (?:the |of |how many )?|exact (?:number|count)|total (?:number )?of)\b/i.test(goal);
+  if (!countAsk) return null;
+  const subjectiveNoun = /\b(bugs?|defects?|vulnerabilit(?:y|ies)|code[ -]?smells?|anti[ -]?patterns?|design flaws?|security (?:holes?|flaws?|vulnerabilit(?:y|ies)))\b/i.test(goal);
+  if (!subjectiveNoun) return null;
+  return {
+    reached: false,
+    reason: "deterministic:unmeasurable-count \u2014 the goal asks for an exact count of a subjective/latent-quality category (bugs/defects/vulnerabilities/smells/anti-patterns) with no authoritative enumerable source; any specific number would be confabulated, so the honest verdict is failure. Measurable counts (files/lines/functions/deps) are not gated.",
+    deterministic: true,
+    completion_shapes: [],
+  };
+}
+
+/**
  * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
  */
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<GoalReachVerdict | null> {
@@ -1122,6 +1147,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const fieldV = await verifyExtractFieldReach(goal, dig);
     if (fieldV) return fieldV;
+  }
+
+  // INDEPENDENT UNMEASURABLE-COUNT ORACLE — a count of a subjective/latent-quality category has no
+  // authoritative enumerable source, so any specific number is a confabulation. Reject (honest fail)
+  // rather than let the self-grader green it. Fails open for all measurable counts.
+  {
+    const unmV = verifyUnmeasurableCountReach(goal);
+    if (unmV) return unmV;
   }
 
   // Deterministic NEGATIVE (edit-intent family, verify-by-content): an edit-intent goal
