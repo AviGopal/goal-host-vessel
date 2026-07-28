@@ -189,11 +189,19 @@ export async function inferGoalTargetDecision(
   // any stale cache hit. Tight guard: explanatory lead AND no compute/fetch/analysis/
   // edit/write signal, so the shellResult / analysis / edit-intent / persist families
   // keep their own paths.
-  if (knownShapes.includes("llm_completion_dispatch")) {
+  // Hub vocab advertises raw `llm_completion` (vessel-resolvable via :8220); the
+  // local substrate advertises the dispatch wrapper `llm_completion_dispatch`.
+  // Fire the deterministic prose route for EITHER, targeting whichever is actually
+  // in the vocabulary — so a pure question reaches instead of falling through to
+  // the LLM inferrer that confabulates obsidian:write_note onto the target set.
+  const _proseTarget = knownShapes.includes("llm_completion_dispatch")
+    ? "llm_completion_dispatch"
+    : (knownShapes.includes("llm_completion") ? "llm_completion" : null);
+  if (_proseTarget) {
     const EXPLANATORY_RE = /\b(explain|describe|define|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
     const NOT_PROSE_RE = /\b(count|how many|how much|number of|sum|total|bytes?|line count|lines?|digest|sha-?\d|hash|checksum|list|report the current|running|status|analy[sz]e|review|audit|problem_detection|code_quality|refactor|implement|fix|edit|patch|write (a|the)? ?(note|file|concept)|save|store|persist|fetch|download|curl|scrape|repos\/[\w.-]+\/)\b|https?:\/\//i;
     if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal)) {
-      return { shapes: ["llm_completion_dispatch"], confidence: 0.7, alternatives: [] };
+      return { shapes: [_proseTarget], confidence: 0.7, alternatives: [] };
     }
   }
 
