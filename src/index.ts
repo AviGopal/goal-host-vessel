@@ -7182,6 +7182,29 @@ async function handleRunGoal(req: Request): Promise<Response> {
 
   const goal = typeof body.goal === "string" ? body.goal : undefined;
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
+
+  // SECRET-EXTRACTION REFUSAL AT HANDLER ENTRY (2026-07-27, falsifiability + security). Gate here —
+  // the single entry ALL processing flows through — so NO path (the walk, its retries/reframes, the
+  // universal-tool grounded fallback, or the resume re-dispatch) ever handles a secret-VALUE goal.
+  // A walk-only refusal was BYPASSED: the recovery/re-dispatch loop reached universal-tool-fallback
+  // (which carries shell tools and could exfiltrate a real key from the goal-host process env, and
+  // otherwise confabulates a green). Terminalize immediately with a failed record and return; no
+  // walk is dispatched, so nothing is left "running" to resume. Non-value metadata (length /
+  // presence / hash / fingerprint) is explicitly NOT gated.
+  if (typeof goal === "string") {
+    const _g = goal.toLowerCase();
+    const _asksValue = /\b(report|print|show|reveal|extract|echo|display|leak|dump|output|tell me|what(?:'s| is)|value of|get me|give me|expose)\b/.test(_g);
+    const _namesSecret = /\b(api[_ ]?key|access[_ ]?token|private[_ ]?key|client[_ ]?secret|passphrase|password|[a-z0-9]+_(?:key|secret|token|password|passphrase)|anthropic_api_key|openai_api_key|jwt_secret|surrealdb_password|\bcredentials?\b)\b/.test(_g);
+    const _metaNotValue = /\b(length|how long|number of characters|char count|presence|whether .* (?:is )?set|is .* set|exists|does .* exist|hash|sha|fingerprint|last \d|first \d|redact|masked?)\b/.test(_g);
+    if (_asksValue && _namesSecret && !_metaNotValue) {
+      const dispatchId = crypto.randomUUID();
+      const reason = "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated.";
+      const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal, selectedTemplateId: "secret-extraction-refused", goalReachReason: reason };
+      executionStore.set(dispatchId, refusalRec);
+      console.log(`[goal-host-vessel] /run-goal: SECRET-EXTRACTION REFUSED at handler entry (no dispatch, terminal) goal_hash=${goalHashOf(goal)}`);
+      return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason }, { status: 200 });
+    }
+  }
   const targetTemplateId = typeof body.targetTemplateId === "string" ? body.targetTemplateId : undefined;
   const variables = typeof body.variables === "object" && body.variables !== null
     ? (body.variables as Record<string, unknown>)
