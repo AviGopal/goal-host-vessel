@@ -963,6 +963,38 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   return { reached: false, reason: `deterministic:wrong-registry-count — independently queried registry ${field}=${expected}, but the output reports ${claimed[0]} (the self-graded value does not match the authoritative registry)`, completion_shapes: [] };
 }
 
+// INDEPENDENT EXTRACT-FIELD ORACLE (2026-07-27, next family on the independent-oracle critical path).
+// For "report the value of its <FIELD> field in repos/<...>.json", READ THE FILE ITSELF and confirm
+// the TRUE field value is present in the produced output — do not trust the command's stdout. This is
+// the "assess the unknown with the known" grader for extraction: the file IS the known ground truth.
+// SAFE + ADDITIVE: only ever CONFIRMS a positive (the true value is textually present -> reach backed
+// by an independent check, lowering the validatability gaming_gap); it NEVER false-rejects (a value
+// not textually present, a complex/absent field, or an unreadable file all fail OPEN -> LLM). For
+// field VALUES the executor root (/workspace/git/super-repo) and the deployed mirror (/vessels) agree,
+// so there is no dir-ambiguity (unlike count-files).
+async function verifyExtractFieldReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const fileM = goal.match(/repos\/[\w.-]+\/[\w.\/-]+\.json\b/);
+  if (!fileM) return null;
+  const fieldM = goal.match(/\b(?:value of |report (?:the )?|the |its )["'`]?([A-Za-z_][\w-]{1,40})["'`]?\s+field\b/i);
+  if (!fieldM) return null;
+  const field = fieldM[1]!;
+  let raw: string | null = null;
+  const candidates = [ `/workspace/git/super-repo/${fileM[0]}`, `/vessels/${fileM[0].replace(/^repos\//, "")}` ];
+  for (const p of candidates) { try { raw = await Bun.file(p).text(); if (raw != null) break; } catch { /* try next */ } }
+  if (raw == null) return null;
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { return null; }
+  if (!(field in parsed)) return null;                 // field absent -> let the LLM grade the absence answer
+  const val = parsed[field];
+  if (typeof val !== "string" && typeof val !== "number" && typeof val !== "boolean") return null; // complex -> LLM
+  const expected = String(val);
+  if (expected.length === 0) return null;
+  if (dig.includes(expected)) {
+    return { reached: true, reason: `deterministic:verified-field-value — independently read ${field}=${JSON.stringify(expected)} from ${fileM[0]}; the produced output contains the true value`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                          // true value not textually present -> cannot confirm here -> LLM
+}
+
 /**
  * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
  */
@@ -1083,6 +1115,13 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const regV = await verifyRegistryInventoryReach(goal, dig);
     if (regV) return regV;
+  }
+
+  // INDEPENDENT EXTRACT-FIELD ORACLE — confirm a field value against the FILE itself, not the
+  // self-graded LLM (the next family conversion on the independent-oracle critical path).
+  {
+    const fieldV = await verifyExtractFieldReach(goal, dig);
+    if (fieldV) return fieldV;
   }
 
   // Deterministic NEGATIVE (edit-intent family, verify-by-content): an edit-intent goal
