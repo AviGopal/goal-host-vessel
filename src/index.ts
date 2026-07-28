@@ -1040,9 +1040,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory -> not a file-count
   const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const ext = extM ? extM[1].toLowerCase() : null;         // null -> count all files
-  const roots = [ `/workspace/git/super-repo/${rel}`, `/vessels/${rel.replace(/^repos\//, "")}` ];
-  const counts: number[] = [];
-  for (const root of roots) {
+  const countAt = async (root: string): Promise<number | null> => {
     try {
       const entries = await readdir(root, { withFileTypes: true });
       let n = 0;
@@ -1051,17 +1049,50 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
         if (ext && !e.name.toLowerCase().endsWith("." + ext)) continue;
         n++;
       }
-      counts.push(n);
-    } catch { /* root missing / not a dir -> skip */ }
-  }
-  if (counts.length === 0) return null;                    // nothing readable -> LLM
-  const uniq = [...new Set(counts)];
-  if (uniq.length !== 1) return null;                      // clone vs deployed disagree = drift -> fail open (flag, never green)
-  const truth = uniq[0]!;
+      return n;
+    } catch { return null; }                                // root missing / not a dir
+  };
+  // The goal names a REPOS-relative path, so the GIT CLONE (/workspace/git/super-repo) is the
+  // AUTHORITATIVE source: it is what "repos/<...>" denotes and what the pull-sync tracks against
+  // origin/dev. The deployed /vessels mirror is a runtime artifact that drifts from the clone in
+  // BOTH directions (observed: goal-host/src clone=9 vs mirror=10 un-pruned; dev-vessel/resolvers
+  // clone=269 vs mirror=244 behind), so it is a DRIFT CROSS-CHECK only, never a co-equal that
+  // forces abstention. Count the clone; verify the output carries that count; note drift when the
+  // mirror disagrees (mirror-to-live non-convergence is a filed gap, not a reason to fail closed).
+  const truth = await countAt(`/workspace/git/super-repo/${rel}`);
+  if (truth === null) return null;                          // clone path unreadable -> LLM
+  const deployed = await countAt(`/vessels/${rel.replace(/^repos\//, "")}`);
+  const drift = deployed !== null && deployed !== truth
+    ? ` (deploy-drift noted: mirror /vessels reports ${deployed}; the git clone is authoritative)` : "";
   if (new RegExp(`\\b${truth}\\b`).test(dig)) {
-    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} (clone+deployed agree); the produced output contains the true count`, deterministic: true, completion_shapes: [] };
+    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); the produced output contains the true count${drift}`, deterministic: true, completion_shapes: [] };
   }
   return null;                                             // true count not present in output -> LLM
+}
+
+// INDEPENDENT DEPENDENCY-LIST ORACLE \u2014 "list the dependencies of repos/<f>.json" is a KNOWN
+// recomputable transform: read the file's dependencies object and confirm the produced output
+// names (most of) the real keys. Grades the transform against the FILE, never the (possibly
+// credit-dead) LLM reach-verifier \u2014 so the transform family survives an LLM-plane outage
+// exactly as extract/count/inventory do. CONFIRM-ONLY and ADDITIVE: returns reached:true on a
+// match and null on anything else (unreadable / empty deps / too few names present -> fall
+// through to LLM), so it can never false-reject.
+async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  if (!/\b(list|enumerate|name|report)\b/i.test(goal) || !/\bdependenc/i.test(goal)) return null;
+  const fileM = goal.match(/repos\/[\w.-]+\/[\w./-]+\.json\b/);
+  if (!fileM) return null;
+  const candidates = [ `/workspace/git/super-repo/${fileM[0]}`, `/vessels/${fileM[0].replace(/^repos\//, "")}` ];
+  let obj: any = null;
+  for (const p of candidates) { try { obj = JSON.parse(await Bun.file(p).text()); break; } catch { /* next candidate */ } }
+  if (obj === null || typeof obj !== "object") return null;   // unreadable -> LLM
+  const devWanted = /\bdev(?:elopment)?\s*dependenc/i.test(goal);
+  const deps = Object.keys((devWanted ? obj.devDependencies : obj.dependencies) ?? {});
+  if (deps.length === 0) return null;                         // nothing to list -> LLM
+  const hit = deps.filter((d) => dig.includes(d)).length;
+  if (hit >= Math.max(1, Math.ceil(0.8 * deps.length))) {
+    return { reached: true, reason: `deterministic:verified-dep-list \u2014 read ${deps.length} ${devWanted ? "dev-" : ""}dependency name(s) from the file itself; the produced output names ${hit}/${deps.length} of them`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                                // too few names present -> LLM
 }
 
 /**
@@ -1207,6 +1238,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const cntV = await verifyCountFilesReach(goal, dig);
     if (cntV) return cntV;
+  }
+
+  // INDEPENDENT DEPENDENCY-LIST ORACLE — grade a "list the dependencies of repos/<f>.json"
+  // transform against the file itself, so the transform family survives an LLM reach-verifier
+  // outage instead of failing closed.
+  {
+    const depV = await verifyListDepsReach(goal, dig);
+    if (depV) return depV;
   }
 
   // Deterministic NEGATIVE (edit-intent family, verify-by-content): an edit-intent goal
