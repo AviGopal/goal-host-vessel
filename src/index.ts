@@ -219,7 +219,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   return { generated_at, members, gaps, boredom, rhythms };
 }
 
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, readFile, readdir } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { decideContinuation } from "./walk-continuation.js";
@@ -1021,6 +1021,50 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
 }
 
 /**
+ * INDEPENDENT COUNT-FILES ORACLE (2026-07-28, oracle-independence critical path).
+ * A goal asking to count files of an extension in a repos/<dir> has an AUTHORITATIVE enumerable
+ * source: the directory itself. Recompute the count HERE (top-level, matching "*.ext in this dir"
+ * semantics) instead of trusting the walk's shellResult or, worse, the LLM reach-verifier (which
+ * flaps even when the resolver is up, sinking every LLM-graded family to fail-closed). DRIFT-SAFE:
+ * the file may exist under the in-container super-repo clone AND the deployed /vessels mirror; count
+ * BOTH and verify only when they AGREE (a disagreement is deploy-drift, not a countable truth -> fail
+ * OPEN so the drift is never silently greened). SAFE+ADDITIVE: only CONFIRMS a positive
+ * (deterministic:verified-file-count); never false-rejects (unreadable/dir-mismatch/absent-number all
+ * fail open -> LLM). Non-recursive by construction, matching `ls DIR/*.ext` ground truth.
+ */
+async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory -> not a file-count
+  const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const ext = extM ? extM[1].toLowerCase() : null;         // null -> count all files
+  const roots = [ `/workspace/git/super-repo/${rel}`, `/vessels/${rel.replace(/^repos\//, "")}` ];
+  const counts: number[] = [];
+  for (const root of roots) {
+    try {
+      const entries = await readdir(root, { withFileTypes: true });
+      let n = 0;
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        if (ext && !e.name.toLowerCase().endsWith("." + ext)) continue;
+        n++;
+      }
+      counts.push(n);
+    } catch { /* root missing / not a dir -> skip */ }
+  }
+  if (counts.length === 0) return null;                    // nothing readable -> LLM
+  const uniq = [...new Set(counts)];
+  if (uniq.length !== 1) return null;                      // clone vs deployed disagree = drift -> fail open (flag, never green)
+  const truth = uniq[0]!;
+  if (new RegExp(`\\b${truth}\\b`).test(dig)) {
+    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} (clone+deployed agree); the produced output contains the true count`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                             // true count not present in output -> LLM
+}
+
+/**
  * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
  */
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<GoalReachVerdict | null> {
@@ -1155,6 +1199,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const unmV = verifyUnmeasurableCountReach(goal);
     if (unmV) return unmV;
+  }
+
+  // INDEPENDENT COUNT-FILES ORACLE — confirm a file-count against the directory itself (both the
+  // clone and the deployed mirror, verified only on agreement), so the count family survives an
+  // LLM reach-verifier outage instead of failing closed.
+  {
+    const cntV = await verifyCountFilesReach(goal, dig);
+    if (cntV) return cntV;
   }
 
   // Deterministic NEGATIVE (edit-intent family, verify-by-content): an edit-intent goal
