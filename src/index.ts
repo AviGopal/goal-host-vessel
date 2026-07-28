@@ -1075,18 +1075,22 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   // command — the whole point of grading a computation by its observable output. When the
   // count command cannot be produced (LLM-dead synthesis), this correctly returns null ->
   // honest-miss instead of a hollow green.
-  const shellOutputs = dig.split("\n")
-    .map((l) => l.match(/^-\s+shellResult:\s*(.*)$/))
-    .filter((m): m is RegExpMatchArray => m !== null)
-    .map((m) => m[1].trim())
-    .filter((c) => c.length > 0 && !/error|command is required|not found|no such|cannot|invalid/i.test(c));
-  // A counting-command stdout is (or contains) a small integer. Collect the numbers a
-  // genuine counting command actually EMITTED, so we can grade the measurement against the
-  // authoritative clone count deterministically end-to-end and NEVER defer a countable goal
-  // to the LLM verifier (which rubber-stamps a wrong number: observed a reached-command-cache
-  // replay that counted the drifted /vessels mirror — 10 vs clone 9, 244 vs clone 269 — and
-  // the LLM greened it "the correct count" with no ground-truth comparison → hollow).
-  const emitted = [...new Set(shellOutputs.flatMap((c) => (c.match(/\b\d{1,6}\b/g) ?? []).map(Number)))];
+  // Collect the numbers a genuine counting operation EMITTED, so we grade the measurement
+  // against the authoritative clone count deterministically end-to-end and NEVER defer a
+  // countable goal to the LLM verifier (which rubber-stamps a wrong number: observed a
+  // reached-command-cache replay that counted the drifted /vessels mirror — 10 vs clone 9,
+  // 244 vs clone 269 — greened "the correct count" with no ground-truth comparison → hollow).
+  // verifyGoalReached is called on TWO digest shapes: the walk-surface poolDigest ("- shellResult:
+  // 10") AND the universalToolFallback digest (finalText + grounded tool outputs, e.g. "There are
+  // 10 .ts files"). Extract from SHORT count-context lines in BOTH, skipping long JSON-blob lines
+  // (activity_metrics etc.) whose incidental integers would poison the match.
+  const countLines = dig.split("\n").map((l) => l.trim()).filter((t) => {
+    if (t.length === 0 || t.length > 160) return false;
+    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
+    return /^-\s+shellResult:/.test(t)
+        || /\bfiles?\b|\.\w{1,6}\b|\bcount|\bnumber\b|\btotal\b|there (?:are|is)/i.test(t);
+  });
+  const emitted = [...new Set(countLines.flatMap((l) => (l.match(/\b\d{1,6}\b/g) ?? []).map(Number)))];
   if (emitted.includes(truth)) {
     return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); a counting-command (shellResult) output reports the same count${drift}`, deterministic: true, completion_shapes: [] };
   }
