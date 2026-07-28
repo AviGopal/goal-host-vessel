@@ -4566,7 +4566,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       // uncovered shape to a FULL reach. Floor-safe: inert for single-shape targets
       // (target.size<2) and when the reach was via shapes DISJOINT from the target
       // (coveredTargets.length===0 -> a legitimate different path, not a partial short-circuit).
-      if (reached === true && target.size >= 2) {
+      // A DETERMINISTIC content oracle (verified-file-count / verified-dep-list /
+      // verified-field-value / verified-registry-count) independently RECOMPUTED the true
+      // answer from the authoritative source and confirmed it in the produced output — that
+      // is the opposite of a single-shape rubber-stamp, so an over-specified target shape that
+      // happens to lack a producer (e.g. `source_code` for a file-COUNT goal under an LLM-plane
+      // outage) must NOT override a confirmed answer. Exempt deterministic reaches from the
+      // partial-coverage flip; keep the guard for LLM-judged reaches (the real rubber-stamp risk).
+      if (reached === true && target.size >= 2 && verdict?.deterministic !== true) {
         const coveredTargets = [...target].filter((s) => producedShapes.has(s));
         if (coveredTargets.length > 0 && coveredTargets.length < target.size) {
           const uncovered = [...target].filter((s) => !producedShapes.has(s));
