@@ -2901,6 +2901,16 @@ async function runGoalAsPoolWalk(
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     const pointer: Record<string, unknown> = { type: shape, ...base, ...extraArgs };
+    // llm_completion / llmCompletion resolvers REQUIRE a non-empty `prompt`. The LLM
+    // pointer-arg extractor does not reliably synthesize one for a bare inferred
+    // llm_completion target (a pure question), so the resolver rejects "body must
+    // include non-empty 'prompt' string" and the walk dies "no producer". Default the
+    // prompt to the goal text (law 13: the system owns payload synthesis). A genuine
+    // LLM failure still returns null below, so honest no-reach is preserved.
+    if ((shape === "llm_completion" || shape === "llmCompletion")
+        && !(typeof pointer.prompt === "string" && (pointer.prompt as string).trim().length > 0)) {
+      pointer.prompt = goal;
+    }
     // KEYSTONE: thread produced pool-shape content into the executor command deterministically,
     // so the command that RUNS is a function of threaded inputs (not an LLM-re-derived literal).
     for (const _ef of ["command", "cmd", "script", "sql"]) {
