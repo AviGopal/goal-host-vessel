@@ -1080,11 +1080,25 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
     .filter((m): m is RegExpMatchArray => m !== null)
     .map((m) => m[1].trim())
     .filter((c) => c.length > 0 && !/error|command is required|not found|no such|cannot|invalid/i.test(c));
-  const truthRe = new RegExp(`(^|[^0-9])${truth}([^0-9]|$)`);
-  if (shellOutputs.some((c) => truthRe.test(c))) {
-    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); a counting-command (shellResult) output in the produced shapes reports the same count${drift}`, deterministic: true, completion_shapes: [] };
+  // A counting-command stdout is (or contains) a small integer. Collect the numbers a
+  // genuine counting command actually EMITTED, so we can grade the measurement against the
+  // authoritative clone count deterministically end-to-end and NEVER defer a countable goal
+  // to the LLM verifier (which rubber-stamps a wrong number: observed a reached-command-cache
+  // replay that counted the drifted /vessels mirror — 10 vs clone 9, 244 vs clone 269 — and
+  // the LLM greened it "the correct count" with no ground-truth comparison → hollow).
+  const emitted = [...new Set(shellOutputs.flatMap((c) => (c.match(/\b\d{1,6}\b/g) ?? []).map(Number)))];
+  if (emitted.includes(truth)) {
+    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); a counting-command (shellResult) output reports the same count${drift}`, deterministic: true, completion_shapes: [] };
   }
-  return null;                                             // no genuine counting-command output carrying the true count -> LLM/honest-miss
+  if (emitted.length > 0) {
+    // A counting command RAN and produced a number, but NOT the authoritative count. A wrong
+    // measured value is HOLLOW, not a reach — reject deterministically so the LLM verifier can
+    // never green it. (Root of the wrong number: the reached-command cache replayed a stale
+    // command that counted the drifted /vessels mirror instead of re-deriving against the clone
+    // — filed as gap-reached-command-cache-stale-count-not-revalidated.)
+    return { reached: false, reason: `deterministic:file-count-mismatch \u2014 the authoritative count (git clone) is ${truth} ${ext ? ("." + ext + " ") : ""}file(s) in ${rel}, but the produced counting-command output reports ${emitted.join("/")}${drift}; a wrong/stale count is not a reach`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                             // no counting-command output at all -> LLM/honest-miss (the walk never measured)
 }
 
 // INDEPENDENT DEPENDENCY-LIST ORACLE \u2014 "list the dependencies of repos/<f>.json" is a KNOWN
