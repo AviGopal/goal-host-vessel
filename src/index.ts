@@ -1037,6 +1037,11 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
  */
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
+  // Mirror buildAggregateCommand's exclusions: a lines/words/contains goal is NOT a pure
+  // file-count — this oracle would compute a FILE-count truth and hard-reject the (possibly
+  // correct) lines/contains answer as a "mismatch". verifyAggregateReach owns those ops.
+  if (/\blines?\b|\bwords?\b|\bcharacters?\b|\bbytes?\b/i.test(goal)) return null;
+  if (/\b(contain|containing|match(?:es|ing)?|with the (?:text|string|word|pattern)|includ(?:e|es|ing))\b/i.test(goal)) return null;
   const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
@@ -1117,6 +1122,19 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
 // last-mile miss. Returns null on any parse miss -> falls through to grounded-LLM synthesis
 // (prior behavior), so it is strictly additive.
 function buildAggregateCommand(goal: string): string | null {
+  const agg = parseAggregateGoal(goal);
+  if (agg) {
+    const aggRoot = `/workspace/git/super-repo/${agg.rel}`;
+    const aggSel = agg.ext ? ` -name '*.${agg.ext}'` : "";
+    switch (agg.op) {
+      case "total_lines":
+        return `find ${aggRoot} -type f${aggSel} -exec cat {} + | wc -l`;
+      case "avg_lines":
+        return `T=$(find ${aggRoot} -type f${aggSel} -exec cat {} + | wc -l); N=$(find ${aggRoot} -type f${aggSel} | wc -l); if [ "$N" -gt 0 ]; then echo $(( (T + N/2) / N )); else echo "no matching files"; fi`;
+      case "grep_files":
+        return `find ${aggRoot} -type f${aggSel} -exec grep -lF '${agg.needle}' {} + | wc -l`;
+    }
+  }
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
   // Fire ONLY for a pure top-level FILE-count by extension — the exact semantics
   // verifyCountFilesReach grades. Require "files" and NOT a content count (lines/words/
@@ -1133,6 +1151,90 @@ function buildAggregateCommand(goal: string): string | null {
   const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const nameSel = extM ? ` -name '*.${extM[1].toLowerCase()}'` : "";
   return `find /workspace/git/super-repo/${rel} -maxdepth 1 -type f${nameSel} | wc -l`;
+}
+
+// ── DETERMINISTIC AGGREGATE FAMILY (total-lines / avg-lines / grep-files) ─────────────
+// One shared parse feeds BOTH the command template (buildAggregateCommand above) and the
+// independent oracle (verifyAggregateReach below), so they can never disagree: one
+// enumeration rule (find -type f ≡ recursive readdir+isFile+suffix), one arithmetic
+// (wc -l ≡ newline count; avg = integer (T+N/2)/N on both sides), one root (the
+// authoritative git clone). Recursive semantics: these goals say "under <dir>".
+type AggOp = "total_lines" | "avg_lines" | "grep_files";
+interface AggParse { op: AggOp; rel: string; ext: string | null; needle?: string }
+
+const LANG_EXT: Record<string, string> = {
+  typescript: "ts", javascript: "js", python: "py", markdown: "md",
+  json: "json", rust: "rs", go: "go", shell: "sh", bash: "sh",
+};
+
+function parseAggregateGoal(goal: string): AggParse | null {
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                 // FILE path -> not a dir aggregate
+  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+files?\b/i);
+  const ext = extLit ? extLit[1].toLowerCase() : extLang ? (LANG_EXT[extLang[1].toLowerCase()] ?? null) : null;
+  // ORDER MATTERS: grep first (goal also says "how many files"), then avg (also says "line").
+  const needleM = goal.match(/\b(?:contain(?:s|ing)?|with|includ(?:e|es|ing))\s+the\s+(?:text|string|word|pattern)\s+["'\u201c]?([\w.$-]{2,64})["'\u201d]?/i)
+               ?? goal.match(/\bcontain(?:s|ing)?\s+["'\u201c]([\w.$ -]{2,64})["'\u201d]/i);
+  if (needleM) {
+    const needle = needleM[1];
+    if (!needle || !/^[\w.$-]{2,64}$/.test(needle)) return null; // shell-safe charset; else fail open
+    return { op: "grep_files", rel, ext, needle };
+  }
+  if (/\b(average|mean)\b/i.test(goal) && /\blines?\b/i.test(goal)) return { op: "avg_lines", rel, ext };
+  if (/\b(total|how many|number of|count)\b/i.test(goal) && /\blines?\b/i.test(goal)) return { op: "total_lines", rel, ext };
+  return null;
+}
+
+async function verifyAggregateReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const agg = parseAggregateGoal(goal);              // SAME parse as the command builder
+  if (!agg) return null;                             // parse miss -> fail open to LLM
+  const listFiles = async (root: string): Promise<string[] | null> => {
+    try {
+      const entries = await readdir(root, { recursive: true, withFileTypes: true });
+      return entries.filter((e) => e.isFile())
+        .filter((e) => !agg.ext || e.name.toLowerCase().endsWith("." + agg.ext))
+        .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? root}/${e.name}`);
+    } catch { return null; }                         // root unreadable -> fail open
+  };
+  const files = await listFiles(`/workspace/git/super-repo/${agg.rel}`);
+  if (files === null) return null;
+  const countNl = (s2: string): number => { let n = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) n++; return n; }; // == wc -l
+  let truth: number; let unit: string;
+  try {
+    if (agg.op === "grep_files") {
+      let n = 0;
+      for (const fp of files) if ((await Bun.file(fp).text()).includes(agg.needle!)) n++;
+      truth = n; unit = `file(s) containing "${agg.needle}"`;
+    } else {
+      let T = 0;
+      for (const fp of files) T += countNl(await Bun.file(fp).text());
+      if (agg.op === "total_lines") { truth = T; unit = "total line(s)"; }
+      else {
+        const N = files.length;
+        if (N === 0) return null;                    // avg of nothing -> fail open
+        truth = Math.floor((T + Math.floor(N / 2)) / N);  // IDENTICAL integer formula as $(( (T+N/2)/N ))
+        unit = "average line(s) per file";
+      }
+    }
+  } catch { return null; }                           // unreadable file -> fail open
+  const aggLines = dig.split("\n").map((l) => l.trim()).filter((t) => {
+    if (t.length === 0 || t.length > 160) return false;
+    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
+    return /^-\s+shellResult:/.test(t)
+        || /\bfiles?\b|\blines?\b|\baverage\b|\bcount|\bnumber\b|\btotal\b|there (?:are|is)/i.test(t);
+  });
+  const emitted = [...new Set(aggLines.flatMap((l) => (l.match(/\b\d{1,8}\b/g) ?? []).map(Number)))];
+  const what = `${truth} ${agg.ext ? "." + agg.ext + " " : ""}${unit} recursively under ${agg.rel} (git clone, authoritative)`;
+  if (emitted.includes(truth)) {
+    return { reached: true, reason: `deterministic:verified-${agg.op} \u2014 independently computed ${what}; a counting-command (shellResult) output reports the same value`, deterministic: true, completion_shapes: [] };
+  }
+  if (emitted.length > 0) {
+    return { reached: false, reason: `deterministic:${agg.op}-mismatch \u2014 authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                       // no command output -> LLM / honest miss
 }
 
 // INDEPENDENT DEPENDENCY-LIST ORACLE \u2014 "list the dependencies of repos/<f>.json" is a KNOWN
@@ -1300,6 +1402,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // INDEPENDENT COUNT-FILES ORACLE — confirm a file-count against the directory itself (both the
   // clone and the deployed mirror, verified only on agreement), so the count family survives an
   // LLM reach-verifier outage instead of failing closed.
+  // INDEPENDENT AGGREGATE ORACLE — total-lines / avg-lines / grep-files, graded against the
+  // authoritative clone with the SAME parse+enumeration+arithmetic as the command template.
+  // MUST run BEFORE verifyCountFilesReach: these goals also match its count trigger, and it
+  // would compute a FILE-count truth and hard-false-reject the (correct) lines/contains answer.
+  {
+    const aggV = await verifyAggregateReach(goal, dig);
+    if (aggV) return aggV;
+  }
   {
     const cntV = await verifyCountFilesReach(goal, dig);
     if (cntV) return cntV;
@@ -2922,7 +3032,7 @@ async function runGoalAsPoolWalk(
         ? vessels.find((x) => x.vesselId === targetVid || x.id === targetVid)
         : undefined;
       const ordered = target ? [target, ...vessels.filter((x) => x !== target)] : vessels;
-      const routeFor = (v: { id?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }) => {
+      const routeFor = (v: { id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }) => {
         if (v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
           // libp2p-reachable peer: route the resolve through the local federation-transport
           // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
@@ -2943,7 +3053,7 @@ async function runGoalAsPoolWalk(
         // egress by vessel name to ensure cross-substrate reachability and avoid location-dependent
         // endpoints (e.g., host.docker.internal) that resolve to wrong hosts from this substrate.
         if (v.discoveredVia === "peer" && (v.id || v.vesselId)) {
-          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: "/egress/resolve?vessel=" + encodeURIComponent(v.id ?? v.vesselId), resolvedByVesselId: v.id ?? v.vesselId };
+          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: "/egress/resolve?vessel=" + encodeURIComponent(v.id ?? v.vesselId ?? ""), resolvedByVesselId: v.id ?? v.vesselId };
         }
         const resolvePath = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
         return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
