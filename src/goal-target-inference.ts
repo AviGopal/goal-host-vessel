@@ -246,6 +246,21 @@ export async function inferGoalTargetDecision(
     }
   }
 
+  // FILE-SYSTEM AGGREGATE route (filesystem-determinism, 2026-07-29). EVIDENCE: count/sum/
+  // average/list asks over filesystem operands (files, lines, .ts/.js, repos/, src/) confabulate
+  // phantom atomic shapes instead of routing to shell executors that grep/wc/find the filesystem.
+  // A count/sum/average/list verb paired with a filesystem noun is deterministically answered by
+  // find | wc or similar = shellResult, NEVER by source_code inference. Route here (pre-LLM) to
+  // ground the executor into real filesystem queries and prevent hallucination of derived shapes.
+  if (knownShapes.includes("shellResult")) {
+    const FS_AGG_VERB = /\b(how many|number of|count|sum|total|average|mean|largest|biggest|smallest|longest|list|contain|containing)\b/i;
+    const FS_NOUN = /\b(files?|source\s+files?|lines?|\.ts|\.js|repos\/[\w.-]+|src\/|director(?:y|ies)|folders?|codebase)\b/i;
+    const NOT_FS_EDIT = /\b(implement|fix|edit|refactor|rewrite|explain|summar\w*|analy[sz]e|review|audit|propose|persist|write\s+(?:a\s+)?(?:note|file|concept))\b/i;
+    if (FS_AGG_VERB.test(goal) && FS_NOUN.test(goal) && !NOT_FS_EDIT.test(goal)) {
+      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+    }
+  }
+
   // SUBSTRATE-DATA AGGREGATE route (everyday-composition floor, 2026-07-29). EVIDENCE: 5/5 live
   // probes of everyday aggregates over the substrate's OWN shaped data ("count open substrateGaps
   // by category top 3", "sum failed_attempts for missing_capability gaps") CONFABULATED a phantom
