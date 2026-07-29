@@ -19,6 +19,8 @@
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { Config } from './config';
 
+const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
+
 // ── fleetActivityFeed ────────────────────────────────────────────────────────
 
 interface FeedMember {
@@ -93,8 +95,9 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
         const maArr = row["libp2p_multiaddr"];
         const ma = Array.isArray(maArr) && typeof maArr[0] === "string" ? maArr[0] : null;
         if (!id.includes("@") || !ma) continue;
-        const targetVessel = id.split("@")[0];
         const substrate = id.slice(id.indexOf("@") + 1);
+        if (substrate === FED_SUBSTRATE_ID) continue;
+        const targetVessel = id.split("@")[0];
         try {
           const fedR = await fetch(`${Config.fedTransportEgress}/egress/resolve?target=${encodeURIComponent(ma)}`, {
             method: "POST",
