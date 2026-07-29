@@ -1716,11 +1716,25 @@ async function fetchPeerRegistryShapes(): Promise<string[]> {
   const out = new Set<string>();
   for (const peer of peers) {
     try {
-      const r = await fetch(`${peer.replace(/\/+$/, "")}/registry/shapes`, {
-        method: "GET",
-        headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        signal: AbortSignal.timeout(8_000),
-      });
+      const url = `${peer.replace(/\/+$/, "")}/registry/shapes`;
+      let r: Response | null = null;
+      const hubKey = process.env.HUB_API_KEY;
+      if (hubKey) {
+        r = await fetch(url, {
+          method: "GET",
+          headers: { Authorization: `ApiKey ${hubKey}` },
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (r.status === 401 || r.status === 403) {
+          r = null;
+        }
+      }
+      if (!r) {
+        r = await fetch(url, {
+          method: "GET",
+          signal: AbortSignal.timeout(8_000),
+        });
+      }
       if (!r.ok) continue;
       const j: any = await r.json();
       for (const s of (Array.isArray(j?.shapes) ? j.shapes : [])) { const v = String(s); if (v) out.add(v); }
