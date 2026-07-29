@@ -1377,6 +1377,17 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
 
+  // INDEPENDENT AGGREGATE ORACLE — total-lines / avg-lines / grep-files, graded against the
+  // authoritative clone with the SAME parse+enumeration+arithmetic as the command template.
+  // MUST run FIRST among the deterministic oracles: its parse requires an explicit repos/ path
+  // (most specific), while the registry-inventory trigger below also matches "total number of
+  // ..." phrasing and would grade a file aggregate against totalVessels (observed live: the
+  // correct 2597 line-count rejected as deterministic:wrong-registry-count vs 15), and
+  // verifyCountFilesReach would compute a FILE-count truth for a lines/contains goal.
+  {
+    const aggV = await verifyAggregateReach(goal, dig);
+    if (aggV) return aggV;
+  }
   // INDEPENDENT REGISTRY-INVENTORY ORACLE — verify a self-inventory count against the authoritative
   // /registry/stats instead of the self-graded LLM (validatability + falsifiability critical path).
   {
@@ -1402,14 +1413,6 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // INDEPENDENT COUNT-FILES ORACLE — confirm a file-count against the directory itself (both the
   // clone and the deployed mirror, verified only on agreement), so the count family survives an
   // LLM reach-verifier outage instead of failing closed.
-  // INDEPENDENT AGGREGATE ORACLE — total-lines / avg-lines / grep-files, graded against the
-  // authoritative clone with the SAME parse+enumeration+arithmetic as the command template.
-  // MUST run BEFORE verifyCountFilesReach: these goals also match its count trigger, and it
-  // would compute a FILE-count truth and hard-false-reject the (correct) lines/contains answer.
-  {
-    const aggV = await verifyAggregateReach(goal, dig);
-    if (aggV) return aggV;
-  }
   {
     const cntV = await verifyCountFilesReach(goal, dig);
     if (cntV) return cntV;
