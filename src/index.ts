@@ -1237,6 +1237,120 @@ async function verifyAggregateReach(goal: string, dig: string): Promise<GoalReac
   return null;                                       // no command output -> LLM / honest miss
 }
 
+// ── DETERMINISTIC GAP-CATEGORY AGGREGATE (most/fewest by category) ────────────────────
+// Same interpolation principle: ONE parse feeds the curl+jq builder AND the oracle.
+function parseGapCategoryAggregate(goal: string): { status: "open" | "closed"; n: number; dir: "most" | "fewest" } | null {
+  if (!/\b(gaps?|substrate\s?gaps?)\b/i.test(goal)) return null;
+  if (!/\bcategor(?:y|ies)\b/i.test(goal)) return null;
+  const most = /\b(most|highest|largest|top)\b/i.test(goal);
+  const fewest = /\b(fewest|least|lowest|smallest)\b/i.test(goal);
+  if (most === fewest) return null;                       // neither or ambiguous -> LLM
+  if (/\bfailed_attempts?\b|\bsum\b|\baverage\b|\bmean\b|\btotal\b/i.test(goal)) return null; // count-by-category ONLY
+  const topM = goal.match(/\btop\s+(\d{1,2})\b/i);
+  return { status: /\bclosed\b/i.test(goal) ? "closed" : "open",
+           n: topM ? Math.min(50, Math.max(1, +topM[1])) : 1,
+           dir: fewest ? "fewest" : "most" };
+}
+
+function buildGapAggregateCommand(goal: string): string | null {
+  const p = parseGapCategoryAggregate(goal);
+  if (!p) return null;
+  const sort = p.dir === "most" ? "sort_by(-.n)" : "sort_by(.n)";
+  return `curl -s -X POST ${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve -H 'Content-Type: application/json' -d '{"impulse":{"pointer":{"type":"substrateGap","status":"${p.status}","limit":2000}}}' | jq -r '.body.gaps | group_by(.category) | map({c:.[0].category,n:length}) | ${sort} | .[0:${p.n}][] | "\\(.c): \\(.n)"'`;
+}
+
+async function fetchGapCategoryCounts(status: "open" | "closed"): Promise<Map<string, number> | null> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status, limit: 2000 } } }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const gaps: any[] = j?.body?.gaps ?? [];
+    if (!Array.isArray(gaps) || gaps.length === 0) return null;   // empty/absent store -> fail open
+    const m = new Map<string, number>();
+    for (const g of gaps) { const c = String(g?.category ?? "?"); m.set(c, (m.get(c) ?? 0) + 1); }
+    return m;
+  } catch { return null; }
+}
+
+async function verifyGapAggregateReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseGapCategoryAggregate(goal);              // SAME parse as the builder
+  if (!p) return null;
+  const counts = await fetchGapCategoryCounts(p.status);
+  if (!counts) return null;                               // store unreachable -> fail open to LLM
+  const entries = [...counts.entries()];
+  const extreme = p.dir === "most" ? Math.max(...entries.map(([, n]) => n)) : Math.min(...entries.map(([, n]) => n));
+  // Tie-mates at the asked extremum; the live store drifts a little between execution and
+  // grading, so accept a count within ±2 of oracle-time truth for a tie-mate category.
+  const tiemates = new Map(entries.filter(([, n]) => n === extreme));
+  const pairRe = /([A-Za-z0-9_.-]{2,64})\s*[:=]\s*(\d{1,5})\b/g;
+  const shortLines = dig.split("\n").map((l) => l.trim()).filter((t) =>
+    t.length > 0 && t.length <= 160 && !/error|not found|cannot|invalid/i.test(t));
+  let sawPair = false;
+  for (const line of shortLines) {
+    let m: RegExpExecArray | null;
+    pairRe.lastIndex = 0;
+    while ((m = pairRe.exec(line)) !== null) {
+      const cat = m[1]!; const n = Number(m[2]);
+      if (!counts.has(cat)) continue;                     // not a gap category -> ignore
+      sawPair = true;
+      if (tiemates.has(cat) && Math.abs(n - (tiemates.get(cat) ?? 0)) <= 2) {
+        return { reached: true, reason: `deterministic:verified-gap-${p.dir}-category \u2014 independently recomputed the ${p.dir} ${p.status}-gap category from the live gap store: "${cat}" (${tiemates.get(cat)}); the produced output reports the same category and count (\u00b12 live-drift tolerance)`, deterministic: true, completion_shapes: [] };
+      }
+    }
+  }
+  if (sawPair) {
+    return { reached: false, reason: `deterministic:gap-aggregate-mismatch \u2014 the ${p.dir} ${p.status}-gap category at grading time is [${[...tiemates.keys()].join(", ")}] (${extreme}), but the produced output asserts a different category/count; a wrong extremum is not a reach (live-drift tolerance \u00b12 applied)`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                            // no category/count pair produced -> LLM / honest miss
+}
+
+// ── DETERMINISTIC SHAPE-PRODUCER LOOKUP (assess the unknown with the known: the registry) ──
+function parseProducerLookup(goal: string): { shape: string; wantList: boolean } | null {
+  if (!/\b(?:how many|which)\s+vessels?\s+(?:advertise|serve|provide|offer)s?\b/i.test(goal)) return null;
+  const sm = goal.match(/\bshape\s+["'\u201c]?([A-Za-z0-9_:.\-]+)/i);
+  if (!sm || !sm[1]) return null;
+  const shape = sm[1].replace(/[?.,;:]+$/, "");
+  if (!shape) return null;
+  return { shape, wantList: /\bwhich\b/i.test(goal) };
+}
+
+async function resolveShapeProducers(shape: string): Promise<string[] | null> {
+  try {
+    const r = await fetch(`${DISCOVERY_ENDPOINT.replace(/\/$/, "")}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;                               // auth/registry failure -> fail open (NOT zero)
+    const j: any = await r.json();
+    const vessels: any[] = j?.content?.vessels ?? [];
+    return [...new Set(vessels.map((v) => String(v?.vesselId ?? v?.id ?? "")).filter(Boolean))];
+  } catch { return null; }
+}
+
+async function verifyShapeProducersReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseProducerLookup(goal);                    // SAME parse as the short-circuit
+  if (!p) return null;
+  const ids = await resolveShapeProducers(p.shape);
+  if (ids === null) return null;                          // registry unreachable -> fail open
+  const shortLines = dig.split("\n").map((l) => l.trim()).filter((t) => t.length > 0 && t.length <= 200);
+  const hasCount = shortLines.some((l) => new RegExp(`\\b${ids.length}\\b`).test(l) && /vessel|advertise|serve|provide|registry|shape/i.test(l));
+  const hasId = ids.length > 0 && ids.some((id) => dig.includes(id));
+  if (p.wantList ? (hasId || (ids.length === 0 && /\b(no|0|zero|none)\b/i.test(dig))) : hasCount) {
+    return { reached: true, reason: `deterministic:verified-shape-producers \u2014 independently queried discovery vesselCapability for "${p.shape}": ${ids.length} producer(s)${ids.length ? ` [${ids.join(", ")}]` : ""}; the produced output reports the same`, deterministic: true, completion_shapes: [] };
+  }
+  if (/\b\d{1,3}\b/.test(dig) || dig.length > 0) {
+    return { reached: false, reason: `deterministic:wrong-shape-producer-count \u2014 discovery reports ${ids.length} producer(s) of "${p.shape}"${ids.length ? ` [${ids.join(", ")}]` : ""}, but the produced output does not state it; a wrong or missing producer answer is not a reach`, deterministic: true, completion_shapes: [] };
+  }
+  return null;
+}
+
 // INDEPENDENT DEPENDENCY-LIST ORACLE \u2014 "list the dependencies of repos/<f>.json" is a KNOWN
 // recomputable transform: read the file's dependencies object and confirm the produced output
 // names (most of) the real keys. Grades the transform against the FILE, never the (possibly
@@ -1387,6 +1501,16 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const aggV = await verifyAggregateReach(goal, dig);
     if (aggV) return aggV;
+  }
+  // Producer-lookup + gap-category oracles: also BEFORE registry-inventory (their goals may
+  // mention "registry"/"how many", which would mis-grade against totalVessels).
+  {
+    const prodV = await verifyShapeProducersReach(goal, dig);
+    if (prodV) return prodV;
+  }
+  {
+    const gapV = await verifyGapAggregateReach(goal, dig);
+    if (gapV) return gapV;
   }
   // INDEPENDENT REGISTRY-INVENTORY ORACLE — verify a self-inventory count against the authoritative
   // /registry/stats instead of the self-graded LLM (validatability + falsifiability critical path).
@@ -3328,6 +3452,24 @@ If one of those sibling shapes is the action that would create what the goal ask
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
     satisfierTried.add(shape);
+    // DETERMINISTIC PRODUCER-LOOKUP: "how many/which vessels advertise|serve shape X" is
+    // answered from the discovery registry via the walk's own AUTHED in-process resolve —
+    // a synthesized shell curl cannot carry the key, and the old path replayed a stale
+    // confabulated source-grep from the reached-command cache. Runs BEFORE the cache and
+    // any endpoint resolution; evicts the poisoned cache entry for this goal.
+    if (shape === "shellResult") {
+      const _plu = parseProducerLookup(goal);
+      if (_plu) {
+        const ids = await resolveShapeProducers(_plu.shape);
+        if (ids !== null) {
+          reachedCommandCache.delete(goalHashOf(goal));
+          tap(`[goal-host-vessel] walk: DETERMINISTIC shape-producer lookup for "${_plu.shape}" via authed discovery resolve (${ids.length} producer(s)) \u2014 SKIPPED cache + command synthesis`);
+          return { content: ids.length
+            ? `${ids.length} vessel(s) advertise the shape "${_plu.shape}" in the discovery registry: ${ids.join(", ")}`
+            : `0 vessels advertise the shape "${_plu.shape}" \u2014 it is not in the registry vocabulary` };
+        }
+      }
+    }
     const ep = await endpointForShape(shape);
     if (!ep) return null;
     // For a deferred TERMINAL write, the body must be the produced intermediate
@@ -3421,7 +3563,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
-    const _aggCmd = shape === "shellResult" ? buildAggregateCommand(goal) : null;
+    const _aggCmd = shape === "shellResult" ? (buildAggregateCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
       tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
@@ -5492,6 +5634,15 @@ async function runGoalWithRecovery(
               JSON.stringify({ goal_hash: goalHashOf(goal) }),
           );
         }
+      }
+      // PRODUCER-LOOKUP OVERRIDE (unconditional for this pattern): "which vessel serves the
+      // shape X" makes inference seed X ITSELF as the target (the token is in knownShapes),
+      // so the walk tries to PRODUCE X instead of answering who produces it. The deterministic
+      // satisfier short-circuit lives on the shellResult path, so route there explicitly.
+      if (knownShapes && knownShapes.includes("shellResult") && parseProducerLookup(goal)) {
+        seededOutputShapes = ["shellResult"];
+        goalTargetDecision = { shapes: ["shellResult"], confidence: 0.7, alternatives: [] };
+        tap(`[goal-host-vessel] ${opts.surface}: producer-lookup override seeded shellResult ` + JSON.stringify({ goal_hash: goalHashOf(goal) }));
       }
       // COMPUTE-CHAIN AUGMENTATION (fix A, composition-ordering): a goal that FETCHES/READS
       // external content, DERIVES a mechanical value from it, and WRITES the value is a 3-shape
