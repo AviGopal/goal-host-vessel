@@ -6,7 +6,7 @@ export function repairSignatureOf(
   const hasher = new Bun.CryptoHasher('sha256');
   hasher.update(payload);
   const hex = hasher.digest('hex');
-  return hex.slice(0, 16);
+  return hex.slice(0, 32);
 }
 
 export function classifyFailure(reason: string | null | undefined): string {
