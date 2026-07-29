@@ -1800,6 +1800,13 @@ function canonicalizeShapeName(raw: string, known: string[]): string | null {
     return null;
   }
 
+  // (d') A DERIVED-VALUE name (count/sum/total/tally/avg/ranking/distribution, or *_by_X / *_per_X /
+  //      sum_of_*) is NEVER an atomic PRODUCIBLE shape — it is a transform over some source shape.
+  //      Passing it through mints a phantom `gap-<slug>` + authoring escalation for a producer that
+  //      must not exist (the everyday-composition confabulation: category_counts, sum_of_failed_attempts).
+  //      Refuse it so the aggregate is decomposed via the shellResult route, not filed as a capability gap.
+  const DERIV_NAME = /(?:^|_)(?:count|counts|sum|total|tally|avg|average|mean|ranking|distribution|histogram)(?:$|_)|^sum_of_|_by_[a-z]+$|_per_[a-z]+$/i;
+  if (DERIV_NAME.test(raw)) { console.log(`[capability-gap] REFUSED derived-value shape "${raw}" — a reduction is a transform over a source shape, not an atomic producer`); return null; }
   // (d) Compact genuinely-novel name passes through
   return raw;
 }
@@ -2748,6 +2755,17 @@ async function runGoalAsPoolWalk(
         /\b(registr(?:y|ies|ered|ration)|discovery|advertis)\b/i.test(goal) &&
         /\b(how many|how much|number of|count|list|which|are there|registered|advertis|running|healthy)\b/i.test(goal)) {
       executorGuidance += `SUBSTRATE SELF-INVENTORY: the discovery registry is the substrate\x27s own known registry of vessels and shapes, reachable at ${DISCOVERY_ENDPOINT} with NO auth. GET ${DISCOVERY_ENDPOINT}/registry/stats returns JSON {"totalVessels":N,"totalShapes":N,"healthyCount":N}; GET ${DISCOVERY_ENDPOINT}/registry/shapes returns {"shapes":[...]}. To answer a vessel/shape COUNT or LIST, curl the matching endpoint and extract the field with jq — e.g. "how many vessels are registered" -> {"${execField}":"curl -s ${DISCOVERY_ENDPOINT}/registry/stats | jq .totalVessels"}; "how many shapes" -> jq .totalShapes; "list the registered shapes" -> curl -s ${DISCOVERY_ENDPOINT}/registry/shapes | jq -r \x27.shapes | join(",")\x27. Do NOT guess a different endpoint/port or a docker/systemctl command. If the goal asks about a category that is NOT one the registry actually reports (only vessels, shapes, resolvers, healthy exist) — e.g. an invented/unknown entity — there is NO such count: output NOTHING (empty) rather than substituting an unrelated field like totalVessels, so the goal HONESTLY does not reach (confabulating a real count for a nonexistent entity is a hollow green).\n\n`;
+    }
+    // SUBSTRATE-DATA AGGREGATE grounding (everyday-composition floor, 2026-07-29). A goal asking a
+    // count/sum/group-by/rank over the substrate's OWN shaped data (gaps/templates/executions) is
+    // fetch-then-transform: curl the shape's REAL read endpoint | jq the reduction. Without the real
+    // endpoint + envelope injected here, the LLM (routed to shellResult) guesses a blind curl -> empty
+    // -> honest-not-reached; WITH it, the load-bearing fact (endpoint + pointer envelope + jq idiom) is
+    // present at synthesis time and the command becomes a deterministic function of the fetched rows.
+    if (execField &&
+        /\b(count|how many|number of|sum|total|group(?:ed)? by|by category|per\s|top\s+\d|rank|most\s+(?:common|frequent)|distribution|tally|average|mean)\b/i.test(goal) &&
+        /\b(gaps?|substrate\s?gaps?|activity\s?templates?|activities|executions?|traces?|failed_attempts?|failure\s?modes?)\b/i.test(goal)) {
+      executorGuidance += `SUBSTRATE-DATA AGGREGATE: the substrate's OWN shaped data is read over real HTTP and reduced with jq — a count/sum/group-by/rank is fetch-then-transform, NOT a phantom producer shape. Use the REAL read endpoint + pointer envelope, then jq the reduction:\n- gaps (substrateGap): POST ${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve (no auth) with -d '{"impulse":{"pointer":{"type":"substrateGap","status":"open","limit":2000}}}'. Response = {"body":{"gaps":[...],"total":N}}; each gap has .category, .status, .classification_metadata.failed_attempts. Reduce over .body.gaps. Example "count open gaps by category, top 3" -> {"${execField}":"curl -s -X POST ${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve -H 'Content-Type: application/json' -d '{\"impulse\":{\"pointer\":{\"type\":\"substrateGap\",\"status\":\"open\",\"limit\":2000}}}' | jq -r '.body.gaps | group_by(.category) | map({c:.[0].category,n:length}) | sort_by(-.n) | .[0:3][] | \"\\(.c): \\(.n)\"'"}. For "sum failed_attempts for missing_capability gaps": jq '[.body.gaps[] | select(.category==\"missing_capability\") | (.classification_metadata.failed_attempts // 0)] | add'.\n- activity templates: GET ${ACTIVITY_API_ENDPOINT}/v2/activities/templates ; executions/traces: GET ${ACTIVITY_API_ENDPOINT}/v2/activities/executions. Output ONLY the computed value(s); do NOT invent a monolithic aggregate shape or guess a different endpoint/port.\n\n`;
     }
     const priorFindings = poolImpulses
         .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal" && !terminalShapes.has(s); })

@@ -246,6 +246,26 @@ export async function inferGoalTargetDecision(
     }
   }
 
+  // SUBSTRATE-DATA AGGREGATE route (everyday-composition floor, 2026-07-29). EVIDENCE: 5/5 live
+  // probes of everyday aggregates over the substrate's OWN shaped data ("count open substrateGaps
+  // by category top 3", "sum failed_attempts for missing_capability gaps") CONFABULATED a phantom
+  // monolithic shape (category_counts, sum_of_failed_attempts) and filed a capability gap instead
+  // of THREADING the known shape through a transform. The INVENTORY_NOUN route above covers the
+  // running fleet (vessels/shapes/resolvers) but EXCLUDES the substrate's DATA shapes (gaps/
+  // templates/traces), so those fall through to the LLM inferrer that hallucinates an atomic
+  // aggregate shape. A count/sum/group-by/rank over an advertised DATA shape is fetch-then-transform
+  // = shellResult (curl the shape's read endpoint | jq the reduction) — the universal executor.
+  // Route DETERMINISTICALLY here (pre-LLM) so the phantom name is never inferred; the real read
+  // endpoint + jq recipe is grounded into the executor guidance (index.ts SUBSTRATE-DATA AGGREGATE).
+  if (knownShapes.includes("shellResult")) {
+    const AGG_VERB = /\b(count|how many|number of|sum|total|group(?:ed)? by|by category|per\s|top\s+\d|rank(?:ed)?|most\s+(?:common|frequent)|distribution|tally|average|mean)\b/i;
+    const SUBSTRATE_NOUN = /\b(gaps?|substrate\s?gaps?|activity\s?templates?|activities|executions?|traces?|failed_attempts?|failure\s?modes?)\b/i;
+    const NOT_AGG = /\b(implement|\bfix\b|edit|refactor|rewrite|explain|summar|analy[sz]e|review|audit|propose|persist|write\s+(?:a|the)?\s*(?:note|file|concept))\b/i;
+    if (AGG_VERB.test(goal) && SUBSTRATE_NOUN.test(goal) && !NOT_AGG.test(goal)) {
+      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+    }
+  }
+
   const decisionCache = opts.decisionCache;
   const cacheKey = goalHashOf(goal);
   if (decisionCache) {
