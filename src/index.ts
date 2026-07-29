@@ -1315,7 +1315,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
     // Routed per task type (reach_verification) across the llm-resolver fleet;
     // buffered under the goal hash and rewarded by this dispatch's final verdict.
     const rr = await routedComplete(goalHashOf(goal), "reach_verification", {
-      prompt, model: "claude-haiku-4-5-20251001",
+      prompt, model: "auto",
     });
     if (!rr.ok) return null;
     const j: any = rr.json;
@@ -2784,7 +2784,7 @@ async function runGoalAsPoolWalk(
       const prompt = promptParts.join("\n\n");
     try {
       const rr = await routedComplete(goalHashOf(goal), "pointer_arg_extraction", {
-        prompt, model: "claude-haiku-4-5-20251001",
+        prompt, model: "auto",
       });
       if (!rr.ok) return null;
       const j: any = rr.json;
@@ -3123,7 +3123,7 @@ GOAL: ${goal}${correctionBlock}
 If one of those sibling shapes is the action that would create what the goal asks for (e.g. a write/create action), respond with ONLY JSON {"shape": "<sibling shape>", "args": { ...flat pointer arg fields extracted from the goal, e.g. path/content }}. If none of them is an appropriate creating action for this goal, respond with {"shape": null}.`;
     try {
       const rr = await routedComplete(goalHashOf(goal), "action_shape_selection", {
-        prompt, model: "claude-haiku-4-5-20251001",
+        prompt, model: "auto",
       });
       if (!rr.ok) return null;
       const j: any = rr.json;
@@ -3179,7 +3179,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       try {
         const prompt = `You are producing the FINAL artifact to store for a goal, from raw material an earlier step produced. Do NOT dump the raw material; TRANSFORM it into exactly what the goal asks to persist — structured, concise, and usable (e.g. a how-to, a note, a summary, a structured record), in the form the goal specifies. \n\nGOAL: ${goal}\n\nTARGET ARTIFACT SHAPE: ${targetShape}\n\nRAW MATERIAL (from investigation/intermediate steps):\n${raw.slice(0, 8000)}\n\nRespond with ONLY the final artifact content to store (plain text; no preamble, no code fences).`;
         const rr = await routedComplete(goalHashOf(goal), "terminal_content_process", {
-          prompt, model: "claude-haiku-4-5-20251001",
+          prompt, model: "auto",
         });
         if (!rr.ok) return raw;
         const j: any = rr.json;
@@ -5281,7 +5281,7 @@ async function runGoalWithRecovery(
         cache: inferredTargetShapeCache,
         complete: (prompt) =>
           routedText(goalHashOf(goal), "goal_target_inference", walkConceptContext + prompt, {
-            model: "claude-haiku-4-5-20251001",
+            model: "auto",
           }),
       });
       tap(
@@ -5363,7 +5363,7 @@ async function runGoalWithRecovery(
         cache: inferredTargetShapeCache,
         complete: (prompt) =>
           routedText(goalHashOf(goal), "derivation_split_classification", prompt, {
-            model: "claude-haiku-4-5-20251001",
+            model: "auto",
           }),
       });
       if (split.intermediate.length > 0 && split.terminal.length > 0) {
@@ -7759,7 +7759,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
               const prompt = `Decide: REUSE existing template or AUTHOR new for this goal.\n\nGoal: ${goal}\n\nCandidates:\n${listing}\n\nPick the NUMBER of a candidate whose name/description is a near-paraphrase of the goal (same subject AND same artifact, just reworded).\nYES: goal "audit anomalous-duration dispatches" + candidate "Audit dispatches with anomalous duration" → match. Goal "show alpha by template" + candidate "Report alpha distribution per template" → match.\nNO: goal "Thompson alpha distribution" + candidate "Audit anomalous-duration dispatches" → NONE (different subject). Goal "stale promoted templates" + candidate "Audit anomalous-duration dispatches" → NONE.\nIf no candidate shares the goal's core subject, answer NONE.\n\nReply ONLY a digit (1-${topN.length}) or NONE.`;
               try {
                 const rr = await routedComplete(goalHashOf(goal as string), "template_candidate_ranking", {
-                  prompt, model: "claude-haiku-4-5-20251001", maxTokens: 10,
+                  prompt, model: "auto", maxTokens: 10,
                 });
                 if (rr.ok) {
                   const lr = (rr.json ?? {}) as { resolved?: boolean; content?: string; body?: { content?: string } };
