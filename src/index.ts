@@ -2939,6 +2939,12 @@ async function runGoalAsPoolWalk(
         if (v.discoveredVia === "peer" && v.peerEndpoint) {
           return { endpoint: v.peerEndpoint.replace(/\/+$/, ""), resolvePath: asResolvePath(v.resolve_endpoint), resolvedByVesselId: v.id };
         }
+        // Peer-discovered vessels without peerEndpoint: always route through federation-transport
+        // egress by vessel name to ensure cross-substrate reachability and avoid location-dependent
+        // endpoints (e.g., host.docker.internal) that resolve to wrong hosts from this substrate.
+        if (v.discoveredVia === "peer" && (v.id || v.vesselId)) {
+          return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: "/egress/resolve?vessel=" + encodeURIComponent(v.id ?? v.vesselId), resolvedByVesselId: v.id ?? v.vesselId };
+        }
         const resolvePath = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
         return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
       };
