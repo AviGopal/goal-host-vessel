@@ -1108,6 +1108,33 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   return null;                                             // no counting-command output at all -> LLM/honest-miss (the walk never measured)
 }
 
+// DETERMINISTIC FILE-COUNT COMMAND BUILDER (operator: the resolver sequence is "an interpolation
+// of variables through functions"). Parses the SAME (path, ext) as verifyCountFilesReach and emits
+// a find|wc that roots at the SAME authoritative tree (/workspace/git/super-repo) with the SAME
+// top-level (non-recursive) semantics (-maxdepth 1 -type f), so the emitted count EQUALS the
+// oracle's `truth` BY CONSTRUCTION -> reach is a function of the PARSE (a threaded variable), not
+// LLM synthesis luck. Causality is clean: a wrong path is a first-mile miss, a wrong reduction a
+// last-mile miss. Returns null on any parse miss -> falls through to grounded-LLM synthesis
+// (prior behavior), so it is strictly additive.
+function buildAggregateCommand(goal: string): string | null {
+  if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
+  // Fire ONLY for a pure top-level FILE-count by extension — the exact semantics
+  // verifyCountFilesReach grades. Require "files" and NOT a content count (lines/words/
+  // chars/bytes) nor a filtered subset (contain/matching/larger/modified); those would make
+  // a bare find|wc count the WRONG set, and since the oracle shares this parse it would AGREE
+  // on the wrong count (a hollow green). Defer all of those to the LLM.
+  if (!/\bfiles?\b/i.test(goal)) return null;
+  if (/\blines?\b|\bwords?\b|\bcharacters?\b|\bbytes?\b/i.test(goal)) return null;
+  if (/\b(contain|containing|match(?:es|ing)?|with the (?:text|string|word|pattern)|includ(?:e|es|ing)|larger|smaller|bigger|greater|more than|less than|modified|changed|older|newer|created)\b/i.test(goal)) return null;
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                 // a FILE path, not a directory
+  const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const nameSel = extM ? ` -name '*.${extM[1].toLowerCase()}'` : "";
+  return `find /workspace/git/super-repo/${rel} -maxdepth 1 -type f${nameSel} | wc -l`;
+}
+
 // INDEPENDENT DEPENDENCY-LIST ORACLE \u2014 "list the dependencies of repos/<f>.json" is a KNOWN
 // recomputable transform: read the file's dependencies object and confirm the produced output
 // names (most of) the real keys. Grades the transform against the FILE, never the (possibly
@@ -3261,7 +3288,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
-    if (_rcHit && _rcHit.shape === shape) {
+    const _aggCmd = shape === "shellResult" ? buildAggregateCommand(goal) : null;
+    if (_aggCmd) {
+      directArgsRaw = { command: _aggCmd };
+      tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
+    } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
     } else {
