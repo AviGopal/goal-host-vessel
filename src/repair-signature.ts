@@ -1,6 +1,6 @@
 export function repairSignatureOf(
   failureClass: string,
-  producedShapes: string[]
+  producedShapes: string[] = []
 ): string {
   const payload = '1f|' + failureClass + '|' + [...producedShapes].sort().join(',');
   const hasher = new Bun.CryptoHasher('sha256');
