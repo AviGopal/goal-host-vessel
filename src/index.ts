@@ -1037,6 +1037,7 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
  */
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
+  if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
   if (isCompositionalGoal(goal)) return null;             // compositional file-count -> not a single-op verdict
   // Mirror buildAggregateCommand's exclusions: a lines/words/contains goal is NOT a pure
   // file-count — this oracle would compute a FILE-count truth and hard-reject the (possibly
@@ -1123,6 +1124,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
 // last-mile miss. Returns null on any parse miss -> falls through to grounded-LLM synthesis
 // (prior behavior), so it is strictly additive.
 function buildAggregateCommand(goal: string): string | null {
+  if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
   const agg = parseAggregateGoal(goal);
   if (agg) {
     const aggRoot = `/workspace/git/super-repo/${agg.rel}`;
@@ -1175,7 +1177,7 @@ const LANG_EXT: Record<string, string> = {
 // LARGEST files" alpha-credited as total-of-all = 8708 vs the real top-3 sum 7767). Refuse these
 // (-> null -> LLM / honest-miss) until the walk can THREAD two ops; honesty > a wrong reach.
 function isCompositionalGoal(goal: string): boolean {
-  if (/\b(percent|percentage|fraction|proportion|ratio|what\s+portion)\b/i.test(goal)) return true;
+  if (/\b(percent|percentage|fraction|proportion|ratio|what\s+portion)\b/i.test(goal) && !parseGapRatio(goal)) return true;
   if (/\b(more|above|below|greater|less|larger|smaller|fewer|higher|lower)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean|median)\b/i.test(goal)) return true;
   if (/\bwhich(?:ever)?\b[\s\S]{0,60}\bor\b/i.test(goal)) return true;
   if (/\bdoes\b[\s\S]{0,80}\bor\b[\s\S]{0,40}\bhave\b/i.test(goal)) return true;
@@ -1187,6 +1189,7 @@ function isCompositionalGoal(goal: string): boolean {
 }
 
 function parseAggregateGoal(goal: string): AggParse | null {
+  if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
   if (parseRankAggregate(goal)) return null;              // rank-then-aggregate owns this goal
   if (isCompositionalGoal(goal)) return null;             // compositional -> LLM/honest-miss, never hollow-green
   const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
@@ -1327,9 +1330,87 @@ async function verifyRankAggregateReach(goal: string, dig: string): Promise<Goal
   return null;                                        // no command output -> LLM / honest miss
 }
 
+// ── THREADED TWO-OP: TWO-SOURCE-COMPARE (which of repos/X or repos/Y has more; by how much) ──
+// op1 = an aggregate over EACH of two named sources; op2 = compare -> (winner, diff) or winner value.
+// Existence-guarded so a missing root never fabricates a 0-vs-N compare; oracle recomputes both.
+interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value"; dir: "more" | "fewer" }
+function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
+  const paths = [...goal.matchAll(/repos\/[\w.-]+\/[\w./-]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ""));
+  const uniq = [...new Set(paths)].filter((p) => !/\.\w{1,6}$/.test(p));
+  if (uniq.length !== 2) return null;                         // needs EXACTLY two distinct dir roots
+  if (!/\bor\b/i.test(goal)) return null;
+  const more = /\bmore\b|\bmost\b|\blarger\b|\bbigger\b|\bgreater\b/i.test(goal);
+  const fewer = /\bfewer\b|\bfewest\b|\bless\b|\bsmaller\b|\bsmallest\b/i.test(goal);
+  if (more === fewer) return null;                            // ambiguous comparator
+  const op: "total_lines" | "file_count" = /\blines?\b/i.test(goal) ? "total_lines" : "file_count";
+  const output: "which_diff" | "winner_value" = /\bwhichever\b|\bhow many\b.*\bhas\b|\bin the\b/i.test(goal) && !/\bhow many more\b|\bby how (?:much|many)\b/i.test(goal) ? "winner_value" : "which_diff";
+  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\b/i);
+  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  return { op, relA: uniq[0]!, relB: uniq[1]!, ext, output, dir: more ? "more" : "fewer" };
+}
+function buildTwoSourceCompareCommand(goal: string): string | null {
+  const p = parseTwoSourceCompare(goal);
+  if (!p) return null;
+  const rootA = `/workspace/git/super-repo/${p.relA}`, rootB = `/workspace/git/super-repo/${p.relB}`;
+  const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
+  const agg = (root: string) => p.op === "total_lines"
+    ? `find ${root} -type f${nameSel} -exec cat {} + | wc -l`
+    : `find ${root} -type f${nameSel} | wc -l`;
+  // dir=more -> the LARGER side wins; dir=fewer -> the SMALLER side wins.
+  const [wAlarger, wBlarger] = p.dir === "more" ? [p.relA, p.relB] : [p.relB, p.relA];
+  const emit = p.output === "which_diff"
+    ? `D=$(( A>B ? A-B : B-A )); if [ "$A" -eq "$B" ]; then echo "tie: 0"; elif [ "$A" -gt "$B" ]; then echo "${wAlarger}: $D"; else echo "${wBlarger}: $D"; fi`
+    : `if [ "$A" -eq "$B" ]; then echo "$A"; elif ${p.dir === "more" ? '[ "$A" -gt "$B" ]' : '[ "$A" -lt "$B" ]'}; then echo "$A"; else echo "$B"; fi`;
+  return `[ -d ${rootA} ] && [ -d ${rootB} ] || { echo "missing source"; exit 1; }; A=$(${agg(rootA)}); B=$(${agg(rootB)}); ${emit}`;
+}
+async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseTwoSourceCompare(goal);
+  if (!p) return null;
+  const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; };
+  const aggregate = async (rel: string): Promise<number | null> => {
+    try {
+      const entries = await readdir(`/workspace/git/super-repo/${rel}`, { recursive: true, withFileTypes: true });
+      const files = entries.filter((e) => e.isFile())
+        .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
+        .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? `/workspace/git/super-repo/${rel}`}/${e.name}`);
+      if (p.op === "file_count") return files.length;
+      let T = 0; for (const fp of files) T += countNl(await Bun.file(fp).text()); return T;
+    } catch { return null; }                                   // missing root -> fail open (never a fabricated 0)
+  };
+  const A = await aggregate(p.relA), B = await aggregate(p.relB);
+  if (A === null || B === null) return null;
+  if (A === B) return null;                                    // tie -> not a deterministic comparison; LLM
+  const winnerRel = (p.dir === "more" ? A > B : A < B) ? p.relA : p.relB;
+  const winnerVal = Math.max(A, B) === (winnerRel === p.relA ? A : B) ? (winnerRel === p.relA ? A : B) : (winnerRel === p.relA ? A : B);
+  const diff = Math.abs(A - B);
+  const digLc = dig.toLowerCase();
+  const winnerNamePresent = digLc.includes(winnerRel.toLowerCase()) || digLc.includes(winnerRel.split("/").slice(0,2).join("/").toLowerCase());
+  const nums = [...new Set((dig.match(/\b\d{1,9}\b/g) ?? []).map(Number))];
+  const unit = p.op === "total_lines" ? "total line(s)" : "file(s)";
+  if (p.output === "which_diff") {
+    if (winnerNamePresent && nums.includes(diff)) {
+      return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 ${winnerRel} has ${p.dir} ${unit} (${p.relA}=${A} vs ${p.relB}=${B}, difference ${diff}); the produced output reports the same winner and difference`, deterministic: true, completion_shapes: [] };
+    }
+    if (nums.length > 0 || winnerNamePresent) {
+      return { reached: false, reason: `deterministic:two-source-compare-mismatch \u2014 authoritative: ${winnerRel} by ${diff} (${p.relA}=${A}, ${p.relB}=${B}); the produced output does not report that winner+difference`, deterministic: true, completion_shapes: [] };
+    }
+  } else {
+    const wv = winnerRel === p.relA ? A : B;
+    if (nums.includes(wv)) {
+      return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 the ${p.dir === "more" ? "larger" : "smaller"} of ${p.relA}/${p.relB} is ${winnerRel} with ${wv} ${unit}; the produced output reports the same value`, deterministic: true, completion_shapes: [] };
+    }
+    if (nums.length > 0) {
+      return { reached: false, reason: `deterministic:two-source-compare-mismatch \u2014 authoritative winner value is ${wv} (${p.relA}=${A}, ${p.relB}=${B}); produced output does not report it`, deterministic: true, completion_shapes: [] };
+    }
+  }
+  return null;
+}
+
 // ── DETERMINISTIC GAP-CATEGORY AGGREGATE (most/fewest by category) ────────────────────
 // Same interpolation principle: ONE parse feeds the curl+jq builder AND the oracle.
 function parseGapCategoryAggregate(goal: string): { status: "open" | "closed"; n: number; dir: "most" | "fewest" } | null {
+  if (parseGapRatio(goal)) return null;                   // group-then-ratio owns this goal
   if (isCompositionalGoal(goal)) return null;             // percentage / comparison-of-two / etc -> LLM, never hollow-green
   if (!/\b(gaps?|substrate\s?gaps?)\b/i.test(goal)) return null;
   if (!/\bcategor(?:y|ies)\b/i.test(goal)) return null;
@@ -1366,6 +1447,52 @@ async function fetchGapCategoryCounts(status: "open" | "closed"): Promise<Map<st
     for (const g of gaps) { const c = String(g?.category ?? "?"); m.set(c, (m.get(c) ?? 0) + 1); }
     return m;
   } catch { return null; }
+}
+
+// ── THREADED TWO-OP: GROUP-THEN-RATIO (what percentage of gaps are in the most common category) ──
+// op1 = group_by(category) -> pick max; op2 = 100 * max / total. Shared parse; jq round == Math.round.
+function parseGapRatio(goal: string): { status: "open" | "closed"; kind: "percent" | "fraction" } | null {
+  if (!/\b(gaps?|substrate\s?gaps?)\b/i.test(goal)) return null;
+  if (!/\b(percent|percentage|fraction|proportion|what\s+portion)\b/i.test(goal)) return null;
+  // must be the single most-common category (top-N ratio is a later extension)
+  if (!/\b(most\s+common|largest|biggest|top|highest|most\s+gaps)\b/i.test(goal)) return null;
+  if (!/\bcategor(?:y|ies)\b/i.test(goal)) return null;
+  const kind: "percent" | "fraction" = /\bfraction|proportion|what\s+portion\b/i.test(goal) ? "fraction" : "percent";
+  return { status: /\bclosed\b/i.test(goal) ? "closed" : "open", kind };
+}
+function buildGapRatioCommand(goal: string): string | null {
+  const p = parseGapRatio(goal);
+  if (!p) return null;
+  const post = `curl -s -X POST ${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve -H 'Content-Type: application/json' -d '{"impulse":{"pointer":{"type":"substrateGap","status":"${p.status}","limit":2000}}}'`;
+  // max group length / total; percent = rounded 100*max/total, fraction = 2-dp
+  const jq = p.kind === "percent"
+    ? `jq -r '.body.gaps as $g | ($g | group_by(.category) | map(length) | max) as $m | (($m * 100.0 / ($g|length)) | round | tostring)'`
+    : `jq -r '.body.gaps as $g | ($g | group_by(.category) | map(length) | max) as $m | (($m / ($g|length)) | (.*100|round)/100 | tostring)'`;
+  return `${post} | ${jq}`;
+}
+async function verifyGapRatioReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseGapRatio(goal);
+  if (!p) return null;
+  const counts = await fetchGapCategoryCounts(p.status);
+  if (!counts) return null;
+  const vals = [...counts.values()]; const total = vals.reduce((a, b) => a + b, 0);
+  if (total === 0) return null;
+  const maxg = Math.max(...vals);
+  const truthPct = Math.round(100 * maxg / total);
+  const nums = [...new Set((dig.match(/\b\d{1,3}(?:\.\d{1,2})?\b/g) ?? []).map(Number))];
+  // accept the percent (±1 for live-store drift) or the fraction form
+  const truthFrac = Math.round(maxg / total * 100) / 100;
+  const ok = p.kind === "percent"
+    ? nums.some((x) => Math.abs(x - truthPct) <= 1)
+    : nums.some((x) => Math.abs(x - truthFrac) <= 0.01);
+  const shown = p.kind === "percent" ? `${truthPct}%` : `${truthFrac}`;
+  if (ok) {
+    return { reached: true, reason: `deterministic:verified-gap-ratio \u2014 the most-common ${p.status}-gap category holds ${maxg} of ${total} gaps = ${shown}; the produced output reports the same (\u00b1 live-drift)`, deterministic: true, completion_shapes: [] };
+  }
+  if (nums.length > 0) {
+    return { reached: false, reason: `deterministic:gap-ratio-mismatch \u2014 authoritative ratio is ${shown} (${maxg}/${total}); the produced output does not report it`, deterministic: true, completion_shapes: [] };
+  }
+  return null;
 }
 
 async function verifyGapAggregateReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
@@ -1590,6 +1717,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // correct 2597 line-count rejected as deterministic:wrong-registry-count vs 15), and
   // verifyCountFilesReach would compute a FILE-count truth for a lines/contains goal.
   {
+    const twoSrcV = await verifyTwoSourceCompareReach(goal, dig);
+    if (twoSrcV) return twoSrcV;
+  }
+  {
     const rankV = await verifyRankAggregateReach(goal, dig);
     if (rankV) return rankV;
   }
@@ -1602,6 +1733,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const prodV = await verifyShapeProducersReach(goal, dig);
     if (prodV) return prodV;
+  }
+  {
+    const gapRatioV = await verifyGapRatioReach(goal, dig);
+    if (gapRatioV) return gapRatioV;
   }
   {
     const gapV = await verifyGapAggregateReach(goal, dig);
@@ -3665,7 +3800,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
-    const _aggCmd = shape === "shellResult" ? (buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
+    const _aggCmd = shape === "shellResult" ? (buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
       tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
