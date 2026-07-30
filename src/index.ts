@@ -805,6 +805,7 @@ class BoundedBusSink implements EventSink {
 // Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Default port 8210; overridable via PORT environment variable
 const PORT = parseInt(process.env.PORT ?? "8210", 10);
 const VESSEL_ID = process.env.GOAL_HOST_VESSEL_ID ?? process.env.VESSEL_ID ?? "goal-host-vessel";
 // Location-independent trace store (2026-07-05, gap trace-persistence-loss-2026-07-05):
