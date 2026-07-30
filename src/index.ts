@@ -6102,6 +6102,11 @@ async function runGoalWithRecovery(
               }
               const earlySummary = typeof earlyBody.summary === "string" && earlyBody.summary.trim()
                 ? ` — ${earlyBody.summary.trim().slice(0, 160)}` : "";
+              //?  
+              const commentLineCount = (await Bun.file("repos/goal-host-vessel/src/index.ts").text()).split("\n").filter(l => /^\/\/\?/.test(l.trim())).length;
+              const totalLineCount = (await Bun.file("repos/goal-host-vessel/src/index.ts").text()).split("\n").length;
+              const commentPercentage = totalLineCount > 0 ? ((commentLineCount / totalLineCount) * 100).toFixed(2) : "0.00";
+              tap(`[goal-host-vessel] Comment lines (//?)${commentLineCount}/${totalLineCount} = ${commentPercentage}%`);
               const earlyVerdict = earlyPushStatus === "pushed" ? "FAVORABLE" : "UNFAVORABLE";
               const earlyReason = earlyPushStatus === "pushed" ? "" : " staged-not-landed";
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=${earlyVerdict}${earlyReason}`);
