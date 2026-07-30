@@ -1,7 +1,7 @@
-export function repairSignatureOf(
+export async function repairSignatureOf(
   failureClass: string,
   producedShapes: string[] = []
-): string {
+): Promise<string> {
   const payload = '1f|' + failureClass + '|' + [...producedShapes].sort().join(',');
   const hasher = new Bun.CryptoHasher('sha256');
   hasher.update(payload);
