@@ -1187,6 +1187,7 @@ function isCompositionalGoal(goal: string): boolean {
 }
 
 function parseAggregateGoal(goal: string): AggParse | null {
+  if (parseRankAggregate(goal)) return null;              // rank-then-aggregate owns this goal
   if (isCompositionalGoal(goal)) return null;             // compositional -> LLM/honest-miss, never hollow-green
   const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
@@ -1255,6 +1256,75 @@ async function verifyAggregateReach(goal: string, dig: string): Promise<GoalReac
     return { reached: false, reason: `deterministic:${agg.op}-mismatch \u2014 authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
   }
   return null;                                       // no command output -> LLM / honest miss
+}
+
+// ── THREADED TWO-OP: RANK-THEN-AGGREGATE (sum|avg of the N largest files) ──────────────
+// The operator's "interpolation of variables through functions": op1 (rank files by line
+// count, take top-N) feeds op2 (sum|avg). ONE parse feeds the piped command AND the oracle;
+// identical enumeration (find -type f ≡ recursive readdir) and identical integer arithmetic
+// (avg = (S + floor(K/2)) / K, K = min(N, matched)) make emitted == truth by construction.
+interface RankParse { op: "sum" | "avg"; rel: string; ext: string | null; n: number }
+function parseRankAggregate(goal: string): RankParse | null {
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                  // FILE path -> not a dir aggregate
+  if (!/\blines?\b/i.test(goal)) return null;               // must be a LINE aggregate
+  const nM = goal.match(/\b(\d{1,3})\s+(?:largest|biggest|longest)\b/i) ?? goal.match(/\btop\s+(\d{1,3})\b/i);
+  const n = nM ? Math.max(1, Math.min(999, parseInt(nM[1]!, 10))) : (/\b(largest|biggest|longest)\b/i.test(goal) ? 1 : 0);
+  if (n === 0) return null;                                  // no rank selector -> not rank-aggregate
+  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+files?\b/i);
+  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  const op: "sum" | "avg" = /\b(average|mean)\b/i.test(goal) ? "avg" : "sum";
+  return { op, rel, ext, n };
+}
+
+function buildRankAggregateCommand(goal: string): string | null {
+  const p = parseRankAggregate(goal);
+  if (!p) return null;
+  const root = `/workspace/git/super-repo/${p.rel}`;
+  const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
+  const rank = `find ${root} -type f${nameSel} -exec wc -l {} + | grep -v ' total$' | sort -rn | head -${p.n}`;
+  return p.op === "sum"
+    ? `${rank} | awk '{s+=$1}END{print s+0}'`
+    : `${rank} | awk '{s+=$1;c++}END{if(c>0)printf "%d\\n",(s+int(c/2))/c; else print 0}'`;
+}
+
+async function verifyRankAggregateReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseRankAggregate(goal);                 // SAME parse as the command builder
+  if (!p) return null;
+  let files: string[];
+  try {
+    const entries = await readdir(`/workspace/git/super-repo/${p.rel}`, { recursive: true, withFileTypes: true });
+    files = entries.filter((e) => e.isFile())
+      .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
+      .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? `/workspace/git/super-repo/${p.rel}`}/${e.name}`);
+  } catch { return null; }                            // unreadable root -> fail open
+  const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; };
+  let counts: number[];
+  try { counts = []; for (const fp of files) counts.push(countNl(await Bun.file(fp).text())); }
+  catch { return null; }                              // unreadable file -> fail open
+  if (counts.length === 0) return null;
+  counts.sort((a, b) => b - a);
+  const K = Math.min(p.n, counts.length);             // head -N takes min(N, matched)
+  const S = counts.slice(0, K).reduce((a, b) => a + b, 0);
+  const truth = p.op === "sum" ? S : Math.floor((S + Math.floor(K / 2)) / K);  // IDENTICAL to the awk
+  const unit = p.op === "sum" ? `total line(s) in the ${K} largest` : `average line(s) across the ${K} largest`;
+  const rankLines = dig.split("\n").map((l) => l.trim()).filter((t) => {
+    if (t.length === 0 || t.length > 160) return false;
+    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
+    return /^-\s+shellResult:/.test(t) || /\blines?\b|\btotal\b|\baverage\b|\blargest\b|there (?:are|is)|^\d+$/i.test(t);
+  });
+  const emitted = [...new Set(rankLines.flatMap((l) => (l.match(/\b\d{1,9}\b/g) ?? []).map(Number)))];
+  const what = `${truth} ${p.ext ? "." + p.ext + " " : ""}${unit} .ts file(s) under ${p.rel} (git clone, authoritative)`;
+  if (emitted.includes(truth)) {
+    return { reached: true, reason: `deterministic:verified-rank-${p.op} \u2014 independently computed ${what}; a threaded rank-then-${p.op} command output reports the same value`, deterministic: true, completion_shapes: [] };
+  }
+  if (emitted.length > 0) {
+    return { reached: false, reason: `deterministic:rank-${p.op}-mismatch \u2014 authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                        // no command output -> LLM / honest miss
 }
 
 // ── DETERMINISTIC GAP-CATEGORY AGGREGATE (most/fewest by category) ────────────────────
@@ -1519,6 +1589,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // ..." phrasing and would grade a file aggregate against totalVessels (observed live: the
   // correct 2597 line-count rejected as deterministic:wrong-registry-count vs 15), and
   // verifyCountFilesReach would compute a FILE-count truth for a lines/contains goal.
+  {
+    const rankV = await verifyRankAggregateReach(goal, dig);
+    if (rankV) return rankV;
+  }
   {
     const aggV = await verifyAggregateReach(goal, dig);
     if (aggV) return aggV;
@@ -3591,7 +3665,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
-    const _aggCmd = shape === "shellResult" ? (buildAggregateCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
+    const _aggCmd = shape === "shellResult" ? (buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
       tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
