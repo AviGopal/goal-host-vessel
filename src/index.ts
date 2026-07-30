@@ -6020,7 +6020,8 @@ async function runGoalWithRecovery(
       // Also treat as an edit intent when the goal names exactly one repos source file with NO edit
       // verb AND NO read-only verb (aligns with the late 0-step detector's file-path-only test, but
       // never hijacks a read-only goal into an edit).
-      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb && !earlyReadOnlyVerb
+      const earlyInterrogative = earlyFileMatch ? (/\?\s*$/.test(goalForRouting.trim()) || /^\s*(what|how many|how much|how long|how big|which|whose|whether|count|list|show me|tell me|is there|are there|does |do |can )/i.test(goalForRouting) || /\b(percentage|fraction|proportion|ratio|average|mean|median|number of|how many)\b/i.test(goalForRouting)) : false;
+      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb && !earlyReadOnlyVerb && !earlyInterrogative
         ? (goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? []).length === 1
         : false;
       if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
