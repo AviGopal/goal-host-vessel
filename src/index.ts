@@ -2328,6 +2328,29 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
   if (canonicalShape === null) {
     return null;
   }
+
+  // FAIL CLOSED: empty served-vocabulary means registry lookup is broken
+  if (knownShapes.length === 0) {
+    console.warn(`[fileCapabilityGap] FAIL CLOSED: empty knownShapes; registry lookup broken`);
+    return null;
+  }
+
+  // Helper to normalize shapes for comparison
+  const _norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/_+/g,"_").replace(/^_|_$/g,"");
+
+  // RECONCILE: check if any known shape normalizes equal to canonicalShape
+  const normalizedCanonical = _norm(canonicalShape);
+  if (knownShapes.some(known => _norm(known) === normalizedCanonical)) {
+    console.warn(`[fileCapabilityGap] already served: ${canonicalShape} normalizes to ${normalizedCanonical}`);
+    return null;
+  }
+
+  // REJECT PHANTOM: filter out abstract/phantom shapes by pattern
+  if (/^(gap_|.*_analysis$|.*_plan$|remediation_|code_(patch|modification)|.*_result$|investigation_|reconciled_|capability_gap|resolver_registration|featurecompose_ops|.*cutover)/i.test(normalizedCanonical)) {
+    console.warn(`[fileCapabilityGap] phantom/abstract shape: ${canonicalShape} (normalized: ${normalizedCanonical})`);
+    return null;
+  }
+
   const slug = canonicalShape
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
