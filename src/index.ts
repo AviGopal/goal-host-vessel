@@ -1037,6 +1037,7 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
  */
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
+  if (isCompositionalGoal(goal)) return null;             // compositional file-count -> not a single-op verdict
   // Mirror buildAggregateCommand's exclusions: a lines/words/contains goal is NOT a pure
   // file-count — this oracle would compute a FILE-count truth and hard-reject the (possibly
   // correct) lines/contains answer as a "mismatch". verifyAggregateReach owns those ops.
@@ -1167,7 +1168,26 @@ const LANG_EXT: Record<string, string> = {
   json: "json", rust: "rs", go: "go", shell: "sh", bash: "sh",
 };
 
+// A single deterministic aggregate CANNOT honor a goal that also requires SELECTING then
+// re-aggregating (sum of the N largest), thresholding on a computed value (files above the
+// average), comparing two named operands (does X or Y have more), or a ratio (what percentage).
+// Greening the simpler sub-question is a HOLLOW GREEN (observed live: "total lines in the 3
+// LARGEST files" alpha-credited as total-of-all = 8708 vs the real top-3 sum 7767). Refuse these
+// (-> null -> LLM / honest-miss) until the walk can THREAD two ops; honesty > a wrong reach.
+function isCompositionalGoal(goal: string): boolean {
+  if (/\b(percent|percentage|fraction|proportion|ratio|what\s+portion)\b/i.test(goal)) return true;
+  if (/\b(more|above|below|greater|less|larger|smaller|fewer|higher|lower)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean|median)\b/i.test(goal)) return true;
+  if (/\bwhich(?:ever)?\b[\s\S]{0,60}\bor\b/i.test(goal)) return true;
+  if (/\bdoes\b[\s\S]{0,80}\bor\b[\s\S]{0,40}\bhave\b/i.test(goal)) return true;
+  if (/\bor\b[\s\S]{0,25}\b(has|have)\s+(more|fewer|less|larger|greater)\b/i.test(goal)) return true;
+  // rank-selector combined with a sum/total/avg aggregate = "aggregate of the top-N" (compositional)
+  if (/\b(largest|smallest|biggest|longest|shortest|top\s+\d+|most|fewest)\b/i.test(goal)
+      && /\b(total|sum|combined|average|mean|altogether)\b/i.test(goal)) return true;
+  return false;
+}
+
 function parseAggregateGoal(goal: string): AggParse | null {
+  if (isCompositionalGoal(goal)) return null;             // compositional -> LLM/honest-miss, never hollow-green
   const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
@@ -1240,6 +1260,7 @@ async function verifyAggregateReach(goal: string, dig: string): Promise<GoalReac
 // ── DETERMINISTIC GAP-CATEGORY AGGREGATE (most/fewest by category) ────────────────────
 // Same interpolation principle: ONE parse feeds the curl+jq builder AND the oracle.
 function parseGapCategoryAggregate(goal: string): { status: "open" | "closed"; n: number; dir: "most" | "fewest" } | null {
+  if (isCompositionalGoal(goal)) return null;             // percentage / comparison-of-two / etc -> LLM, never hollow-green
   if (!/\b(gaps?|substrate\s?gaps?)\b/i.test(goal)) return null;
   if (!/\bcategor(?:y|ies)\b/i.test(goal)) return null;
   const most = /\b(most|highest|largest|top)\b/i.test(goal);
