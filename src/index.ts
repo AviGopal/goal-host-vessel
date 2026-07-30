@@ -2187,7 +2187,7 @@ async function mintGovernorAllows(shape: string): Promise<boolean> {
     return true;
   }
 }
-async function penaliseHollowTemplate(activityId: string, reason: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
+async function penaliseHollowTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
@@ -2215,7 +2215,14 @@ async function penaliseHollowTemplate(activityId: string, reason: string): Promi
       body: JSON.stringify({
         source_type: "reach_gate_lesson",
         shape: "reach_gate_lesson",
-        content: `reach-gate hollow class ${cls}: ${desc[cls] ?? "hollow completion of this class; prefer content-bearing goal-shaped producers"}`,
+        // class_token: coarse goal class (first verb + first object noun) so hollow
+        // lessons CLUSTER by goal class — a downstream goal generator reads these
+        // clusters and mints repair goals per class. Deterministic + stable content
+        // (no ids/dates) so exact-content dedup holds per (class, token) pair.
+        content: `reach-gate hollow class ${cls}: ${desc[cls] ?? "hollow completion of this class; prefer content-bearing goal-shaped producers"}${(() => {
+          const gw = String(goalText ?? "").toLowerCase().match(/\b([a-z]{3,12})\b[^a-z]*(?:the\s+|all\s+|every\s+)?([a-z_][a-z0-9_:.-]{2,24})?/);
+          return gw && gw[1] ? ` class_token=${gw[1]}${gw[2] ? "-" + gw[2] : ""}` : "";
+        })()}`,
         summary: `reach-gate lesson: ${cls}`,
       }),
       signal: AbortSignal.timeout(10_000),
@@ -5024,7 +5031,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
-        const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached");
+        const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
         opts.learningSink?.alphaBetaDelta.push(_abDelta);
         tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
@@ -6553,7 +6560,7 @@ async function runGoalWithRecovery(
         if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
-          await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached");
+          await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached", goal);
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
