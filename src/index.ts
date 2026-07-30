@@ -1331,6 +1331,69 @@ async function verifyRankAggregateReach(goal: string, dig: string): Promise<Goal
   return null;                                        // no command output -> LLM / honest miss
 }
 
+// ── THREADED TWO-OP: AVG-THRESHOLD (count files whose line count exceeds the mean) ──────
+// op1 = the arithmetic mean line count over the enumerated files; op2 = count files strictly
+// ABOVE it. The SAME single find|wc enumeration feeds BOTH the awk (mean in END, then a
+// second pass counting c[i]>avg) AND the oracle (readdir+countNl, mean=S/n, filter c>mean).
+// The threshold tested and the threshold computed are the same IEEE-double by construction —
+// emitted == truth, with no second directory read that could drift. Sibling of parseAggregateGoal.
+interface AvgThresholdParse { rel: string; ext: string | null }
+function parseAvgThreshold(goal: string): AvgThresholdParse | null {
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                  // FILE path -> not a dir aggregate
+  if (!/\bhow\s+many\b/i.test(goal)) return null;           // must be a COUNT question
+  if (!/\b(more|above|greater|higher)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean)\b/i.test(goal)) return null;
+  if (parseRankAggregate(goal)) return null;                // rank owns "N largest" goals
+  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
+  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  return { rel, ext };
+}
+
+function buildAvgThresholdCommand(goal: string): string | null {
+  const p = parseAvgThreshold(goal);
+  if (!p) return null;
+  const root = `/workspace/git/super-repo/${p.rel}`;
+  const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
+  return `find ${root} -type f${nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]>avg)k++;print k}'`;
+}
+
+async function verifyAvgThresholdReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseAvgThreshold(goal);                  // SAME parse as the command builder
+  if (!p) return null;
+  let files: string[];
+  try {
+    const entries = await readdir(`/workspace/git/super-repo/${p.rel}`, { recursive: true, withFileTypes: true });
+    files = entries.filter((e) => e.isFile())
+      .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
+      .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? `/workspace/git/super-repo/${p.rel}`}/${e.name}`);
+  } catch { return null; }                            // unreadable root -> fail open
+  const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; };
+  let counts: number[];
+  try { counts = []; for (const fp of files) counts.push(countNl(await Bun.file(fp).text())); }
+  catch { return null; }                              // unreadable file -> fail open
+  const n = counts.length;
+  if (n === 0) return null;
+  const S = counts.reduce((a, b) => a + b, 0);
+  const mean = S / n;                                 // IDENTICAL to the awk avg=s/n (IEEE double)
+  const truth = counts.filter((c) => c > mean).length;  // strict >, mirrors awk c[i]>avg
+  const emitted = [...new Set(dig.split("\n").map((l) => l.trim()).filter((t) => {
+    if (t.length === 0 || t.length > 160) return false;
+    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
+    return /^-\s+shellResult:/.test(t) || /\bfiles?\b|\bhow many\b|there (?:are|is)|^\d+$/i.test(t);
+  }).flatMap((l) => (l.match(/\b\d{1,9}\b/g) ?? []).map(Number)))];
+  const what = `${truth} ${p.ext ? "." + p.ext + " " : ""}file(s) under ${p.rel} with more lines than the mean (${mean.toFixed(2)} over ${n} file(s), git clone authoritative)`;
+  if (emitted.includes(truth)) {
+    return { reached: true, reason: `deterministic:verified-avg-threshold — independently computed ${what}; a threaded mean-then-count command output reports the same value`, deterministic: true, completion_shapes: [] };
+  }
+  if (emitted.length > 0) {
+    return { reached: false, reason: `deterministic:avg-threshold-mismatch — authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                        // no command output -> LLM / honest miss
+}
+
 // ── THREADED TWO-OP: TWO-SOURCE-COMPARE (which of repos/X or repos/Y has more; by how much) ──
 // op1 = an aggregate over EACH of two named sources; op2 = compare -> (winner, diff) or winner value.
 // Existence-guarded so a missing root never fabricates a 0-vs-N compare; oracle recomputes both.
@@ -1717,6 +1780,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // ..." phrasing and would grade a file aggregate against totalVessels (observed live: the
   // correct 2597 line-count rejected as deterministic:wrong-registry-count vs 15), and
   // verifyCountFilesReach would compute a FILE-count truth for a lines/contains goal.
+  {
+    const avgThrV = await verifyAvgThresholdReach(goal, dig);
+    if (avgThrV) return avgThrV;
+  }
   {
     const twoSrcV = await verifyTwoSourceCompareReach(goal, dig);
     if (twoSrcV) return twoSrcV;
@@ -3826,7 +3893,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
-    const _aggCmd = shape === "shellResult" ? (buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
+    const _aggCmd = shape === "shellResult" ? (buildAvgThresholdCommand(goal) ?? buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
       tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
