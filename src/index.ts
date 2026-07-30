@@ -3311,7 +3311,8 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
-  // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): step-0's satisfier
+  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
+  // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): ste
   // does satisfierTried.add(shape) BEFORE resolving, so a single TRANSIENT null (LLM
   // lane cooldown, transport blip) permanently blacklists the shape and the last-chance
   // direct-resolve scan is skipped — the walk declares "no producer" after ONE flake.
