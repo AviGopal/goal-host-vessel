@@ -3296,8 +3296,6 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
-let walkTerminationReason: string | undefined; // remove duplicate declaration
-  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
   // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): step-0's satisfier
   // does satisfierTried.add(shape) BEFORE resolving, so a single TRANSIENT null (LLM
   // lane cooldown, transport blip) permanently blacklists the shape and the last-chance
@@ -6920,7 +6918,7 @@ async function runGoalWithRecovery(
     if (selId) excluded.push(selId);
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
-      const repairKey = repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
+      const repairKey = await repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
         const alt = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
       if (!alt) {
         // WS5 solicitation-on-recovery: before declaring honest failure, ask a
