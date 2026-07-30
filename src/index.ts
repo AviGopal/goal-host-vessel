@@ -2419,6 +2419,23 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     return null;
   }
 
+  // REJECT WALK-ARTIFACT (2026-07-30): a _write / action / parameter-rooted shape is not an
+  // atomic producer to author — same cold-unreachable-by-design logic fileReachabilityGap uses
+  // (e.g. solicitationHeartbeat_write). And a literal placeholder ("X"/"Y") or bare generic
+  // decomposition noun (activity, trace, dispatch_id, human_judgment, root_causes, ...) is a
+  // walk-decomposition artifact, NOT real capability demand — filing it mints a phantom
+  // missing_capability gap that hollows every dispatch (no producer can or should exist).
+  // Genuine unmet demand is template-demanded (e.g. discoverByShapesQuery, required by N templates)
+  // and survives this filter; these bare artifacts do not.
+  if (canonicalShape.endsWith("_write") || canonicalShape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(canonicalShape)) {
+    console.warn(`[fileCapabilityGap] action/parameter-rooted shape ${canonicalShape} — cold-unreachable by design, not an atomic producer`);
+    return null;
+  }
+  if (/^(x|y|z|foo|bar|baz|activity|trace|dispatch_id|human_judgment|root_causes|diagnosis_summary|diagnosis_report|capability_invocation_record|result|data|value|item|thing|output|input|record)$/i.test(normalizedCanonical)) {
+    console.warn(`[fileCapabilityGap] generic walk-artifact shape ${canonicalShape} (normalized: ${normalizedCanonical}) — decomposition artifact, not real capability demand`);
+    return null;
+  }
+
   const slug = canonicalShape
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -2442,8 +2459,6 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
 }
 async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
   if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
-  if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
-if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
   if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
   let producerId = ""; let producerInputs: string[] = [];
   try { const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ required_shapes: [shape], mode: "forward" }), signal: AbortSignal.timeout(8_000) }); if (pr.ok) { const pj = await pr.json() as { activities?: any[] }; if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null; const a0 = pj.activities[0] || {}; producerId = String(a0.variant_id || a0.id || ""); producerInputs = Array.isArray(a0.input_schema?.required_shapes) ? a0.input_schema.required_shapes.map(String) : []; } } catch { /* fail-open */ }
