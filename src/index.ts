@@ -2375,6 +2375,7 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
 }
 async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
   if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
+  if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
 if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
   if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
   let producerId = ""; let producerInputs: string[] = [];
@@ -3228,6 +3229,7 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
+let walkTerminationReason: string | undefined; // remove duplicate declaration
   for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
   // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): step-0's satisfier
   // does satisfierTried.add(shape) BEFORE resolving, so a single TRANSIENT null (LLM
@@ -4915,7 +4917,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (!_vrCandidateInjected) {
       walkTerminationReason = missingNow.length > 0 ? `no producer or constructible payload for missing shapes [${missingNow.join(",")}]` : "opportunistic walk found no applicable pick (empty inferred target)";
       }
-      if (filedGap) opts.learningSink?.gapsFiled.push(filedGap);
+      if (filedGap) opts.learningSink?.gapsFiled.push(filedGap); walkTerminationReason = missingNow.length > 0 ? `no producer or constructible payload for missing shapes [${missingNow.join(',')}]` : 'opportunistic walk found no applicable pick (empty inferred target)';
       console.log(`[goal-host-vessel] walk(${opts.surface}): no shape-feasible step at chain.length=${chain.length} (producedShapes=${producedShapes.size}, missingTargets=${missingNow.length}) — ${filedGap ? `filed capability gap '${filedGap}' for "${missingNow[0]}" (authoring escalation)` : "escalating (stop)"}`);
       if (missingNow.length > 0) {
         tap(`[goal-host-vessel] ${opts.surface}: walk: no pick — missing shapes [${missingNow.join(",")}] have no producer or constructible payload; terminating walk`);
