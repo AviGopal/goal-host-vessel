@@ -5843,7 +5843,7 @@ async function runGoalWithRecovery(
       // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
-      const earlyFileMatch = earlyEditIntentEnabled ? goal.match(/repos\/([\ w.-]+)\/[\w.\/-]+\.\w+/) : null;
+      const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\ w.-]+)\/[\w.\/-]+\.\w+/) : null;
       // EDIT-VERB predicate — RESTORED to the same clean edit-verb set as the late 0-step
       // detector (goalIsEditIntent / _reEditIntent, lines ~5203/~5282) after two substrate-authored
       // "compose-report" mitosis cutovers POLLUTED it with READ verbs (report/read/count/list/show/
