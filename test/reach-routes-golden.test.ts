@@ -29,6 +29,7 @@ const {
   parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare, parseBelowMean,
   SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
   resolveClassRow, buildFromClassRow, enumerate, selectorOf, thresholdSelector, parseThreshold,
+  verifyEditPostState, parseAddSymbol,
 } = idx;
 
 // The dispatch chain exactly as wired in index.ts (_aggCmd, ~line 3909): avg-threshold, then
@@ -561,5 +562,41 @@ describe("selector primitive factories (compose-a-class from vetted blocks)", ()
       "find /workspace/git/super-repo/repos/x/src -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk -v n=100 '{if($1>n)k++}END{print k+0}'",
     );
     expect(row.owns("how many .ts files under repos/x/src have more than 100 lines")).toEqual({ rel: "repos/x/src", ext: "ts", n: 100 });
+  });
+});
+
+// ── EDIT-FAMILY POST-STATE ORACLE: the edit analogue of the counting recompute oracles. An
+// "add <symbol>" edit goal reaches only if the landed file OBSERVABLY contains the symbol — reach
+// = f(post-state), not the drafter's self-verdict or the mere fact a sha landed. Closes the
+// edit-family hollow-green hole (a commit that lands but lacks the asked-for change greens today).
+describe("edit-family post-state reach oracle (parseAddSymbol + verifyEditPostState)", () => {
+  it("parseAddSymbol extracts the identifier from ADD-family goals", () => {
+    expect(parseAddSymbol("add a field named maxRetries to interface Config in repos/x/src/y.ts")).toBe("maxRetries");
+    expect(parseAddSymbol("introduce a function `computeRatio` in repos/x/src/z.ts")).toBe("computeRatio");
+    expect(parseAddSymbol("define a const DEFAULT_TIMEOUT in repos/x/src/consts.ts")).toBe("DEFAULT_TIMEOUT");
+    expect(parseAddSymbol("add a case Pending to the Status enum in repos/x/src/s.ts")).toBe("Pending");
+    expect(parseAddSymbol("add a handler named reconnect in repos/x/src/fsm.ts")).toBe("reconnect");
+  });
+  it("parseAddSymbol ABSTAINS (null) on non-add / rename / counting phrasings — no false negatives", () => {
+    expect(parseAddSymbol("rename the function foo to bar in repos/x/src/y.ts")).toBeNull();
+    expect(parseAddSymbol("fix the typed error in repos/x/src/y.ts")).toBeNull();
+    expect(parseAddSymbol("remove the field baz from repos/x/src/y.ts")).toBeNull();
+    expect(parseAddSymbol("how many .ts files under repos/x/src have more than 100 lines")).toBeNull();
+    expect(parseAddSymbol("summarize what repos/x/src/y.ts does")).toBeNull();
+  });
+  it("verifyEditPostState abstains (null) when the goal is not an add-symbol edit", async () => {
+    expect(await verifyEditPostState("rename foo to bar in repos/x/src/y.ts", "repos/x/src/y.ts")).toBeNull();
+  });
+  it("verifyEditPostState abstains (null) when the target file cannot be read (can't prove absence)", async () => {
+    // add-symbol goal, but the hardcoded clone/vessels candidates don't exist in the test env → null
+    expect(await verifyEditPostState("add a const NOPE_XYZ in repos/x/src/does-not-exist.ts", "repos/x/src/does-not-exist.ts")).toBeNull();
+  });
+  it("token presence semantics: word-boundary identifier match (locks the hollow-vs-real distinction)", () => {
+    // The oracle's presence test: symbol present as a whole identifier token ⇒ real; absent ⇒ hollow.
+    const tokenRe = (sym: string) => new RegExp(`\\b${sym.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+    expect(tokenRe("maxRetries").test("  maxRetries: number;")).toBe(true);     // real add
+    expect(tokenRe("maxRetries").test("  timeout: number;")).toBe(false);       // hollow landing
+    expect(tokenRe("Pending").test("enum Status { Active, Pending }")).toBe(true);
+    expect(tokenRe("cat").test("concatenate()")).toBe(false);                   // no substring false-positive
   });
 });

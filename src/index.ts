@@ -6137,6 +6137,39 @@ async function verbatimExcerptBlock(editFile: string, editLine: string | undefin
   } catch { return ""; }
 }
 
+// ── Deterministic POST-STATE edit oracle (edit-family analogue of the counting recompute oracles).
+// An "add <symbol>" edit goal REACHES only if the landed target file OBSERVABLY contains the
+// requested symbol — reach = f(post-edit file), independent of the drafter's self-verdict or the
+// mere fact that a sha landed. This closes the edit-family's hollow-green hole: today an edit is
+// graded `reached: !!landedSha`, so a commit that lands but does NOT contain the asked-for change
+// (e.g. dead/orphan code, or a stub) greens anyway. Grading:
+//   • goal is not a parseable "add <symbol>" edit  → null  (don't regress: a landed sha stays a reach)
+//   • target file unreadable                        → null  (can't prove absence → don't fail)
+//   • symbol present as an identifier token         → true  (observably added)
+//   • symbol definitively absent from a readable file→ false (a hollow edit landing, NOT a reach)
+// Deliberately covers only the ADD family (add/introduce/define/create a field/function/const/type/
+// case/import named X); "fix/rename/change" verbs return null (no false negatives). Reads the same
+// clone/vessels candidates verbatimExcerptBlock uses so it sees the post-cutover file.
+// Pure parse: extract the identifier an "add <symbol>" edit goal asks for, or null when the goal is
+// not an add-a-named-thing edit. Exported so the parse (the load-bearing decision) is unit-testable
+// without the container FS. "fix/rename/change/remove" verbs and mean-relative/counting phrasings
+// deliberately do NOT match (they return null → the oracle abstains, no false negatives).
+function parseAddSymbol(goal: string): string | null {
+  const m = goal.match(/\b(?:add|introduce|define|create|append|insert|implement)\b[\s\S]{0,80}?\b(?:field|property|method|function|const|constant|variable|type|interface|enum|member|parameter|argument|import|export|case|branch|key|entry|handler|route|endpoint)\b\s+(?:named\s+|called\s+|for\s+)?[`'"]?([A-Za-z_$][\w$]*)[`'"]?/i);
+  return m ? m[1]! : null;
+}
+
+async function verifyEditPostState(goal: string, editFile: string): Promise<boolean | null> {
+  const symbol = parseAddSymbol(goal);
+  if (symbol === null) return null;                        // not a parseable add-symbol edit
+  const candidates = [`/workspace/git/super-repo/${editFile}`, `/vessels/${editFile.replace(/^repos\//, "")}`];
+  let raw: string | null = null;
+  for (const c of candidates) { try { raw = await Bun.file(c).text(); break; } catch { /* next candidate */ } }
+  if (raw === null) return null;                           // can't read → can't prove absence
+  const tokenRe = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  return tokenRe.test(raw);                                // present ⇒ reach; absent ⇒ hollow landing
+}
+
 // SINGLE goal-seeking-with-recovery implementation shared by BOTH dispatch
 // surfaces (async /run-goal + sync /resolve) — there must be exactly one copy of
 // this logic, not a duplicate per surface that can drift. Recovery is part of
@@ -6615,27 +6648,35 @@ async function runGoalWithRecovery(
               }
               const earlySummary = typeof earlyBody.summary === "string" && earlyBody.summary.trim()
                 ? ` — ${earlyBody.summary.trim().slice(0, 160)}` : "";
-              //?  
-              const commentLineCount = (await Bun.file("repos/goal-host-vessel/src/index.ts").text()).split("\n").filter(l => /^\/\/\?/.test(l.trim())).length;
-              const totalLineCount = (await Bun.file("repos/goal-host-vessel/src/index.ts").text()).split("\n").length;
-              const commentPercentage = totalLineCount > 0 ? ((commentLineCount / totalLineCount) * 100).toFixed(2) : "0.00";
-              tap(`[goal-host-vessel] Comment lines (//?)${commentLineCount}/${totalLineCount} = ${commentPercentage}%`);
               const earlyVerdict = earlyPushStatus === "pushed" ? "FAVORABLE" : "UNFAVORABLE";
               const earlyReason = earlyPushStatus === "pushed" ? "" : " staged-not-landed";
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=${earlyVerdict}${earlyReason}`);
               tap(`[goal-host-vessel] ${opts.surface}: landed SHA ${earlyLandedSha ?? "(staged)"}${earlySummary}`);
-              // SUBSTANCE GRADE: reached iff a real landing occurred (feature_compose set
-              // earlyLandedSha only on push_status==="pushed" + new_git_sha). A "staged FAVORABLE"
-              // (typecheck-clean but not committed/pushed) is not a reach.
+              // SUBSTANCE GRADE: reached iff a real landing occurred (earlyLandedSha only on
+              // push_status==="pushed" + new_git_sha) AND — for an "add <symbol>" edit — the landed
+              // file OBSERVABLY contains the requested symbol (deterministic post-state oracle). A
+              // staged-not-landed edit, OR a landed edit that does not contain the asked-for change
+              // (hollow landing / orphan code), is NOT a reach. editPostOk is null for non-add /
+              // unreadable goals, so those keep grading on the landing sha alone (no regression).
+              const editPostOk = earlyLandedSha ? await verifyEditPostState(goal ?? "", earlyEditFile) : null;
+              const editHollow = editPostOk === false;      // landed, but the symbol is not there
+              const earlyReached = !!earlyLandedSha && !editHollow;
               if (!earlyLandedSha) { await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed"); }
+              else if (editHollow) { await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol"); }
               return {
                 result: null,
-                status: earlyLandedSha ? ("completed" as const) : ("failed" as const),
+                status: earlyReached ? ("completed" as const) : ("failed" as const),
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `early edit-intent routed to feature_compose; ${earlyLandedSha ? `landed ${earlyLandedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${earlySummary}`,
-                reached: !!earlyLandedSha,
+                goalReachReason: `early edit-intent routed to feature_compose; ${
+                  !earlyLandedSha
+                    ? "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"
+                    : editHollow
+                      ? `landed ${earlyLandedSha} but the requested symbol is NOT observably present in ${earlyEditFile} — a hollow edit landing, not a reach`
+                      : `landed ${earlyLandedSha}${editPostOk === true ? " (post-state confirms the requested symbol is present)" : ""}`
+                }${earlySummary}`,
+                reached: earlyReached,
                 executionId: earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined,
               };
             }
@@ -10123,6 +10164,6 @@ export {
   isCompositionalGoal, parseBelowMean,
   SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
-  thresholdSelector, parseThreshold,
+  thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
