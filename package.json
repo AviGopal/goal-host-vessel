@@ -7,7 +7,8 @@
     "start": "bun src/index.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit --strict",
-    "update-lessons": "bun run --filter goal-host-vessel src/lessons-updater.ts"
+    "update-lessons": "bun run --filter goal-host-vessel src/lessons-updater.ts",
+    "lint": "bun run typecheck && bun test test/reach-routes-golden.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
