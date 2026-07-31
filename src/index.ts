@@ -3294,7 +3294,7 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
     }
     const lifecycle = {
       executionId,
-      status: trace.status === "failed" ? "failed" : "success",
+      status: trace.status === "failed" ? "failed" : "completed",
       taskCount: tasks.length,
       durationMs: trace.durationMs ?? 0,
       costUsd: trace.costUsd ?? 0,
