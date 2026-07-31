@@ -6302,7 +6302,18 @@ async function symbolOnAddedLine(symbol: string, editFile: string, landedSha: st
 //   • diff uninspectable (no sha / sync lag)                        → presence is the best signal (true)
 async function verifyEditPostState(goal: string, editFile: string, landedSha?: string | null): Promise<boolean | null> {
   const symbol = parseAddSymbol(goal);
-  if (symbol === null) return null;                        // not a parseable add-symbol edit
+  if (symbol === null) {
+    const parseReplaceTargetSymbol = (g: string): string | null => {
+      const m = /\b(?:convert|replace|rename|change|switch|migrate|swap)\b[\s\S]{0,80}?\b(?:to|with|into|for)\b\s+[`'"]?([A-Za-z_$][\w$.]*)[`'"]?/i.exec(g);
+      if (!m) return null;
+      const tok = m[1];
+      if (/[A-Z]/.test(tok) || tok.includes("_") || tok.includes("$") || tok.includes(".") || tok.length >= 10) return tok;
+      return null;
+    };
+    const newSym = parseReplaceTargetSymbol(goal);
+    if (newSym === null || !landedSha) return null;
+    return await symbolOnAddedLine(newSym, editFile, landedSha);
+  }
   const candidates = [`/workspace/git/super-repo/${editFile}`, `/vessels/${editFile.replace(/^repos\//, "")}`];
   let raw: string | null = null;
   for (const c of candidates) { try { raw = await Bun.file(c).text(); break; } catch { /* next candidate */ } }
