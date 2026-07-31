@@ -2208,10 +2208,18 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // (names a repos/<vessel> source file + mutation language) is reached ONLY by a produced
   // edit-result shape; a bare fileContent READ is not an edit. Placed AFTER the favorable-
   // compose positive so genuine landed edits already returned reached:true above.
+  // TIGHTENED (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the walk's output-merge
+  // fallback adds any DECLARED output shape as a bare {producedBy,executionId} STUB when it cannot
+  // recover real content, so an edit-result shape NAME can be present with nothing on disk/origin.
+  // Require LANDING EVIDENCE (push_status:pushed / new_git_sha — same conjunct the favorable-compose
+  // positive above trusts; NOT featureComposeReport, which is set on typecheck BEFORE landing). Fires
+  // when the edit shape is ABSENT (old behavior) OR present-but-STUB (the bug). Fail-toward-honest.
+  const landedEdit = meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))
+    && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
   if (goal && /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal)
       && /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove)\b/i.test(goal)
-      && !meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))) {
-    return { reached: false, reason: "deterministic:edit-intent-no-edit-result — a fileContent read is not an edit", completion_shapes: [] };
+      && !landedEdit) {
+    return { reached: false, reason: "deterministic:edit-intent-no-landed-edit — an edit goal is reached only by an edit-result shape WITH landing evidence (push_status:pushed / new_git_sha); an advertised/stub edit-result with no landing is not an applied edit", completion_shapes: [] };
   }
 
   // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
