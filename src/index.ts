@@ -926,6 +926,24 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
     const fm = g.match(/\bfactorial\b[^\d]{0,16}(\d{1,4})\b/) || g.match(/\b(\d{1,4})\s*!/);
     if (fm) { const n = BigInt(fm[1]); if (n >= 8n && n <= 2000n) { expected = new Set([dcFactorialStr(n)]); claimed = dcNumericCandidates(dig, 5); label = `${n}!`; } }
   }
+  // 4) Self-contained everyday ARITHMETIC (Residual 4, honest-grade). The goal carries its
+  //    own operands + one named op ('P% of N', 'A times B'), so recompute in-process and
+  //    reject a provably-wrong DISTINCTIVE integer answer before the meaning-graded LLM
+  //    greens the model's OWN asserted number (hollow-green value-blindness). Distinctive
+  //    gate |result|>=1000 keeps it off ubiquitous small numbers; a repos/ path hands the
+  //    goal to the FS-aggregate family instead. Same fail-open tail: absent/truth-present => null.
+  if (!expected && computeVerb && !/repos\/[\w.-]+/.test(goal)) {
+    const num = (s: string) => Number(s.replace(/[,_]/g, ""));
+    let val: number | null = null; let lab = "";
+    const pm = goal.match(/(\d[\d,_.]*)\s*(?:%|percent(?:age)?)\s+of\s+(\d[\d,_.]*)/i);
+    const mm = goal.match(/(\d[\d,_.]*)\s*(?:\*|×|times|multiplied\s+by)\s+(\d[\d,_.]*)/i)
+            || goal.match(/\bproduct\s+of\s+(\d[\d,_.]*)\s+and\s+(\d[\d,_.]*)/i);
+    if (pm) { const p = num(pm[1]), n = num(pm[2]); if (Number.isFinite(p) && Number.isFinite(n)) { val = (p * n) / 100; lab = `${pm[1]}% of ${pm[2]}`; } }
+    else if (mm) { const a = num(mm[1]), b = num(mm[2]); if (Number.isFinite(a) && Number.isFinite(b)) { val = a * b; lab = `${mm[1]} × ${mm[2]}`; } }
+    if (val !== null && Number.isInteger(val) && Math.abs(val) >= 1000) {
+      const exp = String(val); expected = new Set([exp]); claimed = dcNumericCandidates(dig, exp.length - 1); label = lab;
+    }
+  }
   if (!expected) return null;                          // unclassified => LLM fallthrough
   if (claimed.length === 0) return null;                // no answer of this form present => cannot verify => fall through
   if (claimed.some((c) => expected!.has(c))) return null; // TRUTH PRESENT => not a deterministic green; hand to the LLM
