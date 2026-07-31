@@ -1202,7 +1202,14 @@ interface ClassRow {
   owns(goal: string): OwnMatch | null; // ownership + parse (delegates to the legacy parseX)
   pathArity: 1 | 2;                    // 1 root (aggregate/rank/threshold) or 2 (two-source compare)
   scope: "files" | "lines";            // what the counts array measures / what agg() reduces
-  selector: SelectorId;                // which SELECTORS cell projects command + oracle
+  // Which cell projects command + oracle. A SelectorId names an entry in the frozen SELECTORS
+  // table; a SelectorDef INLINES the cell into the row literal itself. The inline form is what
+  // makes adding a genuinely-NEW compositional class a SINGLE-POINT append: one self-contained
+  // ClassRow literal (inline owns + inline selector) rather than a ~5-site edit storm across the
+  // SelectorId union, the SELECTORS table, a parse fn, a ROW const, and CLASS_ROWS. An inline cell
+  // colocates shell+js exactly like a table cell, so it CANNOT drift — and the drift gate executes
+  // it shell-vs-js exactly like a named cell (the gate iterates CLASS_ROWS' inline selectors too).
+  selector: SelectorId | SelectorDef;
   extPolicy: "parse" | "none";         // whether an extension filter is honored
   scrapeWidth: 6 | 8 | 9;              // digest number-scrape width: \d{1,N}
   scrapeKeywords: RegExp;              // NON-global keyword filter for count-context digest lines
@@ -1215,7 +1222,10 @@ interface ClassRow {
 interface ShellCtx { root: string; rootB?: string; nameSel: string; n?: number; needle?: string; relA?: string; relB?: string; dir?: "more" | "fewer"; scope?: "files" | "lines" }
 interface Enumerated { files: string[]; counts: number[]; texts?: string[] }
 interface SelParams { n?: number; needle?: string; b?: Enumerated; dir?: "more" | "fewer"; scope?: "files" | "lines" }
-interface SelectorDef { shell: (ctx: ShellCtx) => string; js: (en: Enumerated, params: SelParams) => number }
+// needsTexts declares that js reads en.texts (grep-like) so the enumerator loads file bodies. It
+// is a PROPERTY of the cell, not of a string id — so an INLINE selector can request texts too
+// (verifyFromClassRow reads selectorOf(row).needsTexts, never the string "grepCount").
+interface SelectorDef { shell: (ctx: ShellCtx) => string; js: (en: Enumerated, params: SelParams) => number; needsTexts?: boolean }
 
 // shared shell sub-fragments (copied verbatim from the legacy command builders)
 const _rankShell = (ctx: ShellCtx): string =>
@@ -1243,6 +1253,7 @@ const SELECTORS: Record<SelectorId, SelectorDef> = Object.freeze({
   grepCount: {
     shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec grep -lF '${ctx.needle}' {} + | wc -l`,
     js: (en, p) => (en.texts ?? []).filter((t) => t.includes(p.needle!)).length,
+    needsTexts: true,                                    // reads en.texts -> enumerate must load bodies
   },
   // avg-threshold: count of files strictly above the arithmetic mean   (verifyAvgThresholdReach)
   countAboveMean: {
@@ -1392,6 +1403,14 @@ function resolveClassRow(goal: string): { row: ClassRow; params: OwnMatch } | nu
   return null;
 }
 
+// The ONE place a row's selector is materialized into a concrete cell: a string names a frozen
+// SELECTORS entry, an object IS the inline cell. Every build/verify path goes through this, so an
+// inline (drafter-authored) selector is served identically to a table one — same shell projection,
+// same js oracle, same drift gate. No call site branches on `typeof selector` itself.
+function selectorOf(row: ClassRow): SelectorDef {
+  return typeof row.selector === "string" ? SELECTORS[row.selector] : row.selector;
+}
+
 function buildFromClassRow(goal: string): string | null {
   const hit = resolveClassRow(goal);
   if (!hit) return null;                                 // no data-row owns this goal -> next in chain
@@ -1400,20 +1419,21 @@ function buildFromClassRow(goal: string): string | null {
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
   const ctx: ShellCtx = { root, nameSel, n: p.n, needle: p.needle, dir: p.dir, relA: p.rel, relB: p.relB, scope: row.scope };
   if (row.pathArity === 2 && p.relB) ctx.rootB = `/workspace/git/super-repo/${p.relB}`;
-  return SELECTORS[row.selector].shell(ctx);             // the SHELL projection of the row's cell
+  return selectorOf(row).shell(ctx);                     // the SHELL projection of the row's cell
 }
 
 async function verifyFromClassRow(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   const hit = resolveClassRow(goal);
   if (!hit) return null;                                 // no data-row owns this goal -> next oracle
   const { row, params: p } = hit;
-  const en = await enumerate(`/workspace/git/super-repo/${p.rel}`, p.ext ?? null, row.selector === "grepCount");
+  const cell = selectorOf(row);
+  const en = await enumerate(`/workspace/git/super-repo/${p.rel}`, p.ext ?? null, cell.needsTexts === true);
   if (en === null) return null;                          // unreadable root/file -> fail open
   const n = en.counts.length;
   if (n === 0) return null;                              // mean of nothing -> fail open (legacy parity)
   const S = en.counts.reduce((a, b) => a + b, 0);
   const mean = S / n;                                    // op1 = the arithmetic mean (IEEE double)
-  const truth = SELECTORS[row.selector].js(en, { n: p.n, needle: p.needle, dir: p.dir, scope: row.scope });
+  const truth = cell.js(en, { n: p.n, needle: p.needle, dir: p.dir, scope: row.scope });
   return emitVerdict(row, { rel: p.rel, ext: p.ext, truth, mean, n }, dig);  // JS == shell by construction
 }
 // ═══ END ROUTE-AS-DATA SCAFFOLD ════════════════════════════════════════════════════════
@@ -9943,6 +9963,6 @@ export {
   parseTwoSourceCompare, buildTwoSourceCompareCommand, verifyTwoSourceCompareReach,
   isCompositionalGoal, parseBelowMean,
   SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
-  resolveClassRow, buildFromClassRow, verifyFromClassRow,
+  resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };

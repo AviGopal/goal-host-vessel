@@ -28,7 +28,7 @@ const {
   buildAggregateCommand, buildRankAggregateCommand, buildAvgThresholdCommand, buildTwoSourceCompareCommand,
   parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare, parseBelowMean,
   SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
-  resolveClassRow, buildFromClassRow, enumerate,
+  resolveClassRow, buildFromClassRow, enumerate, selectorOf,
 } = idx;
 
 // The dispatch chain exactly as wired in index.ts (_aggCmd, ~line 3909): avg-threshold, then
@@ -344,17 +344,23 @@ describe("dispatcher (d): countBelowMean selector self-test (js == independent r
 });
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
-// ENUMERATE-ALL DRIFT GATE: for EVERY SELECTORS cell, EXECUTE the shell fragment over a real
-// fixture dir AND run the JS oracle over the SAME fixture via the production `enumerate`, then
-// assert the two projections AGREE. This makes "command and oracle cannot disagree" EXECUTABLE:
-// a newly appended cell is covered automatically (no hand-written per-cell assertion), and a cell
-// whose shell and js DISAGREE on real data FAILS here. One universal fixture (rootA + a second
-// rootB for the two-source cells) and one universal ctx/params bundle drive every selector,
-// present and future — each cell reads only the fields it needs. The rootA fixture carries a file
-// of EXACTLY N (=3) lines so an absolute-threshold cell (>N vs >=N) exercises the boundary: this
-// is what turns a shell-vs-oracle boundary drift into a hard test failure at the landing gate.
+// ENUMERATE-ALL DRIFT GATE: for EVERY cell — every named SELECTORS entry AND every INLINE cell
+// reachable through CLASS_ROWS (a drafter-authored `selector: {shell,js}` literal) — EXECUTE the
+// shell fragment over a real fixture dir AND run the JS oracle over the SAME fixture via the
+// production `enumerate`, then assert the two projections AGREE. This makes "command and oracle
+// cannot disagree" EXECUTABLE: a newly appended cell is covered automatically (no hand-written
+// per-cell assertion), and a cell whose shell and js DISAGREE on real data FAILS here. Covering
+// the INLINE cells is the load-bearing safety property behind single-point class authoring: when
+// the drafter appends a ClassRow with an inline selector, THIS loop reaches it through CLASS_ROWS
+// and drift-checks it exactly like a table cell — so an autonomously-authored drifted selector is
+// refused at the mitosis gate (which runs this test against the staged src), never served green.
+// One universal fixture (rootA + a second rootB for the two-source cells) and one universal
+// ctx/params bundle drive every selector, present and future — each cell reads only the fields it
+// needs. The rootA fixture carries a file of EXACTLY N (=3) lines so an absolute-threshold cell
+// (>N vs >=N) exercises the boundary: this is what turns a shell-vs-oracle boundary drift into a
+// hard test failure at the landing gate.
 // ════════════════════════════════════════════════════════════════════════════════════════════
-describe("enumerate-all drift gate: executed shell(fixture) === js(fixture) for every SELECTORS cell", () => {
+describe("enumerate-all drift gate: executed shell(fixture) === js(fixture) for every cell (named + inline)", () => {
   const mk = (counts: number[], texts?: string[]): string => {
     const dir = mkdtempSync(join(tmpdir(), "sel-fix-"));
     counts.forEach((c, i) => writeFileSync(join(dir, `f${i}.ts`), (texts?.[i] ?? "") + "\n".repeat(c)));
@@ -370,10 +376,20 @@ describe("enumerate-all drift gate: executed shell(fixture) === js(fixture) for 
   const rootA = mk(A_COUNTS, A_TEXTS);
   const rootB = mk(B_COUNTS);
 
-  for (const id of Object.keys(SELECTORS)) {
-    it(`${id}: executed shell output == js oracle over the SAME fixture`, async () => {
+  // Every cell that can serve a request: the named table entries PLUS the inline cells a ClassRow
+  // may carry. selectorOf() is the same materializer the dispatcher uses, so this iterates exactly
+  // the cells production can reach. Inline cells are labelled by their owning row id for a readable
+  // failure; the enumerate-ALL guarantee means a future inline selector needs no test edit.
+  const namedCells = Object.keys(SELECTORS).map((id: string) => ({ label: id, cell: SELECTORS[id] }));
+  const inlineCells = (CLASS_ROWS as any[])
+    .filter((r) => typeof r.selector !== "string")
+    .map((r) => ({ label: `inline:${r.id}`, cell: selectorOf(r) }));
+  const allCells = [...namedCells, ...inlineCells];
+
+  for (const { label, cell } of allCells) {
+    it(`${label}: executed shell output == js oracle over the SAME fixture`, async () => {
       const shellCtx: any = { root: rootA, rootB, nameSel, n: N, needle: NEEDLE, relA: "A", relB: "B", dir: "more", scope: "lines" };
-      const shellStr = SELECTORS[id].shell(shellCtx);
+      const shellStr = cell.shell(shellCtx);
       const proc = Bun.spawn(["bash", "-c", shellStr], { stdout: "pipe", stderr: "pipe" });
       const out = await new Response(proc.stdout).text();
       await proc.exited;
@@ -385,10 +401,72 @@ describe("enumerate-all drift gate: executed shell(fixture) === js(fixture) for 
       expect(enA).not.toBeNull();
       expect(enB).not.toBeNull();
       const params: any = { n: N, needle: NEEDLE, b: enB, dir: "more", scope: "lines" };
-      const jsVal = SELECTORS[id].js(enA, params);
+      const jsVal = cell.js(enA, params);
 
       // THE INVARIANT: the two projections of one cell agree on real data.
       expect(shellVal).toBe(jsVal);
     });
   }
+
+  it("every inline ClassRow selector is reached by this gate (no inline cell escapes drift-checking)", () => {
+    // Guards the guard: if a row carries an inline selector, allCells MUST include it. This is the
+    // property the single-point-authoring safety rests on — an inline cell that this loop skipped
+    // could drift and land green.
+    const inlineRowIds = (CLASS_ROWS as any[]).filter((r) => typeof r.selector !== "string").map((r) => `inline:${r.id}`);
+    for (const id of inlineRowIds) expect(allCells.map((c) => c.label)).toContain(id);
+  });
+});
+
+// ── INLINE-SELECTOR PATH PROOF: exercise the inline form end-to-end at the cell level NOW, before
+// any drafter-authored inline ClassRow exists in CLASS_ROWS. Proves (1) selectorOf materializes a
+// string id to the table cell and an object to itself, and (2) an inline cell is drift-checkable by
+// the exact shell(fixture)==js(fixture) mechanism the gate uses — a CLEAN inline cell agrees, a
+// DRIFTED one disagrees. This is the capability the single-point-authoring climax depends on.
+describe("inline selector path (single-point class authoring)", () => {
+  const mk = (counts: number[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "inl-fix-"));
+    counts.forEach((c, i) => writeFileSync(join(dir, `f${i}.ts`), "\n".repeat(c)));
+    return dir;
+  };
+  const lastInt = (s: string): number | null => { const m = s.trim().match(/-?\d+/g); return m ? Number(m[m.length - 1]) : null; };
+  const runShellVsJs = async (cell: any, root: string, n: number): Promise<{ shellVal: number | null; jsVal: number }> => {
+    const shellStr = cell.shell({ root, nameSel: " -name '*.ts'", n, scope: "lines" });
+    const proc = Bun.spawn(["bash", "-c", shellStr], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    await proc.exited;
+    const en = await enumerate(root, "ts", false);
+    return { shellVal: lastInt(out), jsVal: cell.js(en, { n, scope: "lines" }) };
+  };
+
+  // A genuinely-new compositional class the table does not have: "count files with MORE than N
+  // lines" (absolute threshold on params.n), colocated shell+js — a plausible drafter authoring.
+  const inlineOverN = {
+    shell: (ctx: any) => `find ${ctx.root} -type f${ctx.nameSel} -exec wc -l {} + | grep -v ' total$' | awk -v n=${ctx.n} '{if($1>n)k++}END{print k+0}'`,
+    js: (en: any, p: any) => en.counts.filter((c: number) => c > p.n).length,
+  };
+
+  it("selectorOf: string id -> the frozen table cell; object -> itself", () => {
+    expect(selectorOf({ selector: "countAboveMean" } as any)).toBe(SELECTORS.countAboveMean);
+    expect(selectorOf({ selector: inlineOverN } as any)).toBe(inlineOverN);
+  });
+
+  it("a CLEAN inline cell: executed shell(fixture) == js(fixture) (drift-checkable, agrees)", async () => {
+    const root = mk([1, 3, 5, 5, 9]);                    // N=3 -> files with >3 lines: [5,5,9] => 3
+    const { shellVal, jsVal } = await runShellVsJs(inlineOverN, root, 3);
+    expect(shellVal).not.toBeNull();
+    expect(jsVal).toBe(3);
+    expect(shellVal).toBe(jsVal);                        // the two projections of the inline cell agree
+  });
+
+  it("a DRIFTED inline cell (shell `>` vs js `>=`) is CAUGHT: shell(fixture) != js(fixture)", async () => {
+    // Same shell as inlineOverN but the js reducer uses >= — the boundary file (==N) makes them
+    // disagree. This is exactly the failure the mitosis drift gate must reject for an autonomously
+    // authored cell; here we prove the mechanism detects it.
+    const driftedOverN = { shell: inlineOverN.shell, js: (en: any, p: any) => en.counts.filter((c: number) => c >= p.n).length };
+    const root = mk([1, 3, 5, 5, 9]);                    // N=3 -> shell(>3)=3, js(>=3)=4 (the ==3 file)
+    const { shellVal, jsVal } = await runShellVsJs(driftedOverN, root, 3);
+    expect(shellVal).toBe(3);
+    expect(jsVal).toBe(4);
+    expect(shellVal).not.toBe(jsVal);                    // DRIFT DETECTED — the gate would refuse this
+  });
 });
