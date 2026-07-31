@@ -1186,7 +1186,7 @@ const LANG_EXT: Record<string, string> = {
 // behavior (locked by the golden test). Later steps migrate the remaining routes. Every
 // arithmetic fragment below is copied VERBATIM from the existing oracles/commands.
 type SelectorId =
-  | "sum" | "avgInt" | "grepCount" | "countAboveMean"
+  | "sum" | "avgInt" | "grepCount" | "countAboveMean" | "countBelowMean"
   | "topKSum" | "topKAvgInt" | "compareWinnerDiff" | "compareWinnerValue";
 
 // The parse a ClassRow.owns() returns: the (path[, path2], ext) plus class-specific params
@@ -1248,6 +1248,12 @@ const SELECTORS: Record<SelectorId, SelectorDef> = Object.freeze({
   countAboveMean: {
     shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]>avg)k++;print k}'`,
     js: (en) => { const n = en.counts.length; if (n === 0) return 0; const S = en.counts.reduce((a, b) => a + b, 0); const mean = S / n; return en.counts.filter((c) => c > mean).length; },
+  },
+  // below-mean: count of files strictly below the arithmetic mean (complement of countAboveMean; a
+  // file EQUAL to the mean is neither above nor below). Mirror of countAboveMean but the `<` branch.
+  countBelowMean: {
+    shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]<avg)k++;print k}'`,
+    js: (en) => { const n = en.counts.length; if (n === 0) return 0; const S = en.counts.reduce((a, b) => a + b, 0); const mean = S / n; return en.counts.filter((c) => c < mean).length; },
   },
   // rank-then-sum: total lines in the K largest   (buildRankAggregateCommand sum / verifyRankAggregateReach)
   topKSum: {
@@ -1352,9 +1358,64 @@ const ROW_AVG_THRESHOLD: ClassRow = {
   label: (p) => `${p.truth} ${p.ext ? "." + p.ext + " " : ""}file(s) under ${p.rel} with more lines than the mean (${p.mean!.toFixed(2)} over ${p.n} file(s), git clone authoritative)`,
 };
 
-// STEP-1 anti-fossil: the scaffold is referenced by the golden test only. Keep the row and the
-// data-as-row registry reachable so an unused-symbol sweep does not prune them before STEP 3.
-const CLASS_ROWS: readonly ClassRow[] = [ROW_AVG_THRESHOLD];
+// ── the below-mean ClassRow (STEP 3): count files strictly BELOW the mean — the complement of
+// avg-threshold and a class the system previously could not do. Served ONLY by the dispatcher
+// (no legacy wrapper), proving that adding a compositional reach class is a single DATA-ROW
+// append. owns() delegates to parseBelowMean (the "fewer/less/below" mirror of parseAvgThreshold),
+// which is disjoint from avg-threshold's "more/above/greater" — so the two rows never collide.
+const ROW_BELOW_MEAN: ClassRow = {
+  id: "below-mean",
+  owns: (g) => { const p = parseBelowMean(g); return p ? { rel: p.rel, ext: p.ext } : null; },
+  pathArity: 1,
+  scope: "lines",
+  selector: "countBelowMean",
+  extPolicy: "parse",
+  scrapeWidth: 9,
+  scrapeKeywords: /\bfiles?\b|\bhow many\b|there (?:are|is)|^\d+$/i,
+  verifiedVerb: "a threaded mean-then-count command output reports the same value",
+  label: (p) => `${p.truth} ${p.ext ? "." + p.ext + " " : ""}file(s) under ${p.rel} with fewer lines than the mean (${p.mean!.toFixed(2)} over ${p.n} file(s), git clone authoritative)`,
+};
+
+// The data-as-row registry: adding a compositional reach class is appending one ClassRow here.
+// resolveClassRow iterates IN ORDER; each owns() is specific, so ordering only breaks a genuine
+// tie (none exists — avg-threshold and below-mean parse disjoint comparator words).
+const CLASS_ROWS: readonly ClassRow[] = [ROW_AVG_THRESHOLD, ROW_BELOW_MEAN];
+
+// ── THE DISPATCHER: resolve → build → verify, all driven off CLASS_ROWS. This is the single
+// point through which every data-row class is served; a new class needs no new function, only a
+// new row above. Wired FIRST in both the command chain and the verdict chain.
+function resolveClassRow(goal: string): { row: ClassRow; params: OwnMatch } | null {
+  for (const row of CLASS_ROWS) {
+    const params = row.owns(goal);
+    if (params) return { row, params };                 // first specific match wins
+  }
+  return null;
+}
+
+function buildFromClassRow(goal: string): string | null {
+  const hit = resolveClassRow(goal);
+  if (!hit) return null;                                 // no data-row owns this goal -> next in chain
+  const { row, params: p } = hit;
+  const root = `/workspace/git/super-repo/${p.rel}`;
+  const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
+  const ctx: ShellCtx = { root, nameSel, n: p.n, needle: p.needle, dir: p.dir, relA: p.rel, relB: p.relB, scope: row.scope };
+  if (row.pathArity === 2 && p.relB) ctx.rootB = `/workspace/git/super-repo/${p.relB}`;
+  return SELECTORS[row.selector].shell(ctx);             // the SHELL projection of the row's cell
+}
+
+async function verifyFromClassRow(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const hit = resolveClassRow(goal);
+  if (!hit) return null;                                 // no data-row owns this goal -> next oracle
+  const { row, params: p } = hit;
+  const en = await enumerate(`/workspace/git/super-repo/${p.rel}`, p.ext ?? null, row.selector === "grepCount");
+  if (en === null) return null;                          // unreadable root/file -> fail open
+  const n = en.counts.length;
+  if (n === 0) return null;                              // mean of nothing -> fail open (legacy parity)
+  const S = en.counts.reduce((a, b) => a + b, 0);
+  const mean = S / n;                                    // op1 = the arithmetic mean (IEEE double)
+  const truth = SELECTORS[row.selector].js(en, { n: p.n, needle: p.needle, dir: p.dir, scope: row.scope });
+  return emitVerdict(row, { rel: p.rel, ext: p.ext, truth, mean, n }, dig);  // JS == shell by construction
+}
 // ═══ END ROUTE-AS-DATA SCAFFOLD ════════════════════════════════════════════════════════
 
 // A single deterministic aggregate CANNOT honor a goal that also requires SELECTING then
@@ -1532,6 +1593,24 @@ function parseAvgThreshold(goal: string): AvgThresholdParse | null {
   if (!/\bhow\s+many\b/i.test(goal)) return null;           // must be a COUNT question
   if (!/\b(more|above|greater|higher)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean)\b/i.test(goal)) return null;
   if (parseRankAggregate(goal)) return null;                // rank owns "N largest" goals
+  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
+  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  return { rel, ext };
+}
+
+// ── BELOW-MEAN parse (STEP 3): the complement of parseAvgThreshold. Same repos/ dir + ext + "how
+// many" preamble, but the comparator is "fewer/less/below/lower/smaller" than the (average|mean).
+// DISJOINT from parseAvgThreshold's "more/above/greater/higher" so the two ClassRows never both
+// own a goal. This class is served ONLY through the dispatcher (no build/verify wrapper).
+function parseBelowMean(goal: string): AvgThresholdParse | null {
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                  // FILE path -> not a dir aggregate
+  if (!/\bhow\s+many\b/i.test(goal)) return null;           // must be a COUNT question
+  if (!/\b(fewer|less|below|lower|smaller)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean)\b/i.test(goal)) return null;
+  if (parseRankAggregate(goal)) return null;                // rank owns "N smallest" goals
   const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
   const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
@@ -1955,8 +2034,11 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // correct 2597 line-count rejected as deterministic:wrong-registry-count vs 15), and
   // verifyCountFilesReach would compute a FILE-count truth for a lines/contains goal.
   {
-    const avgThrV = await verifyAvgThresholdReach(goal, dig);
-    if (avgThrV) return avgThrV;
+    // Route-as-data dispatcher FIRST: serves every CLASS_ROWS class (avg-threshold, below-mean, …)
+    // off SELECTORS + emitVerdict. Its owns() are specific comparator-word matches, so it never
+    // steals rank/total/two-source goals (locked by the golden test's dispatcher-null collisions).
+    const classV = await verifyFromClassRow(goal, dig);
+    if (classV) return classV;
   }
   {
     const twoSrcV = await verifyTwoSourceCompareReach(goal, dig);
@@ -4081,7 +4163,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
-    const _aggCmd = shape === "shellResult" ? (buildAvgThresholdCommand(goal) ?? buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
+    const _aggCmd = shape === "shellResult" ? (buildFromClassRow(goal) ?? buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
       tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
@@ -9859,7 +9941,8 @@ export {
   parseRankAggregate, buildRankAggregateCommand, verifyRankAggregateReach,
   parseAvgThreshold, buildAvgThresholdCommand, verifyAvgThresholdReach,
   parseTwoSourceCompare, buildTwoSourceCompareCommand, verifyTwoSourceCompareReach,
-  isCompositionalGoal,
-  SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, CLASS_ROWS,
+  isCompositionalGoal, parseBelowMean,
+  SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
+  resolveClassRow, buildFromClassRow, verifyFromClassRow,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };

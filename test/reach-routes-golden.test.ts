@@ -23,8 +23,9 @@ process.env.LLM_VESSEL_ENDPOINT ??= "http://127.0.0.1:65535";
 const idx: any = await import("../src/index.ts");
 const {
   buildAggregateCommand, buildRankAggregateCommand, buildAvgThresholdCommand, buildTwoSourceCompareCommand,
-  parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare,
-  SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, CLASS_ROWS,
+  parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare, parseBelowMean,
+  SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
+  resolveClassRow, buildFromClassRow,
 } = idx;
 
 // The dispatch chain exactly as wired in index.ts (_aggCmd, ~line 3909): avg-threshold, then
@@ -175,6 +176,7 @@ describe("selector self-test: js reducer arithmetic (shell-vs-js parity)", () =>
     avgInt: { en: { files: ["a", "b", "c"], counts: [10, 20, 30] }, params: {}, expected: refAvgInt([10, 20, 30]) /* =20 */ },
     grepCount: { en: { files: ["a", "b", "c"], counts: [1, 1, 1], texts: ["has TODO here", "none", "TODO again"] }, params: { needle: "TODO" }, expected: 2 },
     countAboveMean: { en: { files: ["a", "b", "c"], counts: [10, 20, 30] }, params: {}, expected: 1 /* mean 20, strictly > => [30] */ },
+    countBelowMean: { en: { files: ["a", "b", "c"], counts: [10, 20, 30] }, params: {}, expected: 1 /* mean 20, strictly < => [10] */ },
     topKSum: { en: { files: ["a", "b", "c", "d"], counts: [5, 50, 30, 20] }, params: { n: 2 }, expected: 80 /* 50+30 */ },
     topKAvgInt: { en: { files: ["a", "b", "c", "d"], counts: [5, 50, 30, 20] }, params: { n: 3 }, expected: refTopKAvgInt([5, 50, 30, 20], 3) /* =33 */ },
     compareWinnerDiff: { en: { files: ["a", "b"], counts: [10, 20] }, params: { b: { files: ["x"], counts: [100] }, scope: "lines", dir: "more" }, expected: 70 /* |30-100| */ },
@@ -224,5 +226,115 @@ describe("scaffold registry", () => {
     expect(row.scope).toBe("lines");
     expect(row.pathArity).toBe(1);
     expect(row.scrapeWidth).toBe(9);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// STEP 1–3: the DISPATCHER (route-as-data). These lock that (a) avg-threshold served via the
+// dispatcher is byte-identical to the legacy builder, (b) the NEW below-mean class routes purely
+// off a data row, (c) the dispatcher does NOT steal the known-collision goals (rank/total/two-
+// source), and (d) the countBelowMean selector arithmetic matches an independent reference.
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+// The PRODUCTION command chain now leads with buildFromClassRow (index.ts _aggCmd). Mirror it:
+const dispatchChain = (g: string): string | null =>
+  buildFromClassRow(g) ?? buildTwoSourceCompareCommand(g) ?? buildRankAggregateCommand(g) ?? buildAggregateCommand(g);
+
+const BELOW_MEAN_GOAL = "How many TypeScript files under repos/development-vessel/src/resolvers have FEWER lines than the average?";
+const BELOW_MEAN_CMD = "find /workspace/git/super-repo/repos/development-vessel/src/resolvers -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]<avg)k++;print k}'";
+
+describe("dispatcher (a): avg-threshold served via buildFromClassRow == legacy builder (byte-identical)", () => {
+  it("buildFromClassRow == buildAvgThresholdCommand == golden string", () => {
+    const g = CORPUS.AVG_THRESH.goal;
+    expect(buildFromClassRow(g)).toBe(CORPUS.AVG_THRESH.cmd);
+    expect(buildFromClassRow(g)).toBe(buildAvgThresholdCommand(g));
+  });
+  it("resolveClassRow routes avg-threshold to ROW_AVG_THRESHOLD", () => {
+    const hit = resolveClassRow(CORPUS.AVG_THRESH.goal);
+    expect(hit).not.toBeNull();
+    expect(hit.row.id).toBe("avg-threshold");
+    expect(hit.params).toEqual({ rel: "repos/development-vessel/src/resolvers", ext: "ts" });
+  });
+  it("the production chain leads with the dispatcher and still yields the avg-threshold string", () => {
+    expect(dispatchChain(CORPUS.AVG_THRESH.goal)).toBe(CORPUS.AVG_THRESH.cmd);
+  });
+});
+
+describe("dispatcher (b): the NEW below-mean class routes purely off a data row", () => {
+  it("resolveClassRow routes below-mean to ROW_BELOW_MEAN", () => {
+    const hit = resolveClassRow(BELOW_MEAN_GOAL);
+    expect(hit).not.toBeNull();
+    expect(hit.row.id).toBe("below-mean");
+    expect(hit.row.selector).toBe("countBelowMean");
+    expect(hit.params).toEqual({ rel: "repos/development-vessel/src/resolvers", ext: "ts" });
+  });
+  it("buildFromClassRow emits the expected awk (`<avg`) command string", () => {
+    expect(buildFromClassRow(BELOW_MEAN_GOAL)).toBe(BELOW_MEAN_CMD);
+    expect(dispatchChain(BELOW_MEAN_GOAL)).toBe(BELOW_MEAN_CMD);
+  });
+  it("parseBelowMean owns the goal; parseAvgThreshold does NOT (disjoint comparators)", () => {
+    expect(!!parseBelowMean(BELOW_MEAN_GOAL)).toBe(true);
+    expect(!!parseAvgThreshold(BELOW_MEAN_GOAL)).toBe(false);
+  });
+  it("below-mean row is a single-point append with the mirrored below-direction label", () => {
+    expect(CLASS_ROWS.map((r: any) => r.id)).toEqual(["avg-threshold", "below-mean"]);
+    const what = ROW_BELOW_MEAN.label({ rel: "repos/development-vessel/src/resolvers", ext: "ts", truth: 174, mean: 100.5, n: 253 });
+    expect(what).toBe("174 .ts file(s) under repos/development-vessel/src/resolvers with fewer lines than the mean (100.50 over 253 file(s), git clone authoritative)");
+  });
+});
+
+describe("dispatcher (c): ownership — collision goals still route to their LEGACY routes, NOT the dispatcher", () => {
+  // rank / plain total / two-source must NOT be owned by any CLASS_ROW (dispatcher returns null),
+  // so the legacy route downstream in the `??` chain owns them exactly as before.
+  const collisions: Record<string, string> = {
+    RANK_SUM: CORPUS.RANK_SUM.goal,      // "total lines in the 3 largest …" -> rank
+    RANK_AVG: CORPUS.RANK_AVG.goal,      // "average lines across the top 5 …" -> rank
+    TOTAL: CORPUS.TOTAL.goal,            // plain total_lines -> aggregate
+    AVG: CORPUS.AVG.goal,                // plain avg_lines -> aggregate
+    TWO_SRC: CORPUS.TWO_SRC.goal,        // two-source compare -> twoSource
+    GREP: CORPUS.GREP.goal,              // grep_files -> aggregate
+    COUNT_FILES: CORPUS.COUNT_FILES.goal,// plain file-count -> aggregate fallback
+  };
+  for (const [name, goal] of Object.entries(collisions)) {
+    it(`${name}: dispatcher does NOT own it (resolveClassRow + buildFromClassRow both null)`, () => {
+      expect(resolveClassRow(goal)).toBeNull();
+      expect(buildFromClassRow(goal)).toBeNull();
+    });
+    it(`${name}: the dispatcher-led chain yields the SAME command as the legacy chain`, () => {
+      const legacy = buildAvgThresholdCommand(goal) ?? buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal);
+      expect(dispatchChain(goal)).toBe(legacy);
+    });
+  }
+});
+
+describe("dispatcher (d): countBelowMean selector self-test (js == independent reference)", () => {
+  // independent reference mirroring the awk `c[i]<avg` arithmetic
+  const refBelow = (cs: number[]): number => { const n = cs.length; if (!n) return 0; const mean = cs.reduce((a, b) => a + b, 0) / n; return cs.filter((c) => c < mean).length; };
+  it("countBelowMean is in the SELECTORS table", () => {
+    expect(Object.keys(SELECTORS)).toContain("countBelowMean");
+  });
+  it("strict below: mean is neither above nor below (a count EQUAL to the mean is excluded)", () => {
+    // counts [10,20,30] -> mean 20; below = [10] => 1; equal (20) excluded; above (30) excluded.
+    expect(SELECTORS.countBelowMean.js({ files: ["a", "b", "c"], counts: [10, 20, 30] }, {})).toBe(1);
+    expect(SELECTORS.countBelowMean.js({ files: ["a", "b", "c"], counts: [10, 20, 30] }, {})).toBe(refBelow([10, 20, 30]));
+  });
+  it("complement identity on a fixture with an exact-mean element: above + below + equal == n", () => {
+    const counts = [10, 20, 30, 40, 25]; // mean 25 -> below [10,20] =2, above [30,40] =2, equal [25] =1
+    const below = SELECTORS.countBelowMean.js({ files: counts.map(String), counts }, {});
+    const above = SELECTORS.countAboveMean.js({ files: counts.map(String), counts }, {});
+    const equal = counts.filter((c) => c === counts.reduce((a, b) => a + b, 0) / counts.length).length;
+    expect(below).toBe(2);
+    expect(above).toBe(2);
+    expect(equal).toBe(1);
+    expect(below + above + equal).toBe(counts.length);
+    expect(below).toBe(refBelow(counts));
+  });
+  it("empty fixture -> 0 (no mean of nothing)", () => {
+    expect(SELECTORS.countBelowMean.js({ files: [], counts: [] }, {})).toBe(0);
+  });
+  it("shell fragment is the exact `<avg` projection (FS-free)", () => {
+    const root = "/workspace/git/super-repo/repos/x/src";
+    const nameSel = " -name '*.ts'";
+    expect(SELECTORS.countBelowMean.shell({ root, nameSel })).toBe(`find ${root} -type f${nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]<avg)k++;print k}'`);
   });
 });
