@@ -492,7 +492,7 @@ async function gracefulShutdown(sig: string): Promise<void> {
     if (Date.now() >= deadline) { console.log(`[goal-host-vessel] ${sig}: drain deadline with ${inFlight} in-flight`); break; }
     await new Promise((r) => setTimeout(r, 500));
   }
-  try { server.stop(true); } catch { /* best-effort */ }
+  try { server?.stop(true); } catch { /* best-effort */ }
   console.log("[goal-host-vessel] stopped");
   process.exit(0);
 }
@@ -1171,6 +1171,192 @@ const LANG_EXT: Record<string, string> = {
   json: "json", rust: "rs", go: "go", shell: "sh", bash: "sh",
 };
 
+// ═══ ROUTE-AS-DATA SCAFFOLD (2026-07-30, oracle-drift elimination) ══════════════════════
+// Today each compositional reach class is a parseX + buildXCommand + verifyXReach triad with
+// ~30 lines of copy-pasted boilerplate (repos-path regex, find|wc enumeration, recursive
+// readdir+countNl charCode-10 oracle, digest number-scrape, three-verdict shape) wrapping ~3
+// lines of real per-class difference. Deriving the shell command and the JS oracle
+// INDEPENDENTLY is the ORACLE-DRIFT hazard: they can enumerate/round differently and disagree.
+// This block makes command and oracle two PROJECTIONS of ONE table cell (a SELECTORS entry that
+// colocates the shell fragment AND the JS reducer), so they cannot disagree by construction.
+//
+// STEP-1 STATUS: PURE ADDITION. Nothing on the request path calls anything below yet (only the
+// golden characterization test exercises it). STEP 3 migrates verifyAvgThresholdReach /
+// buildAvgThresholdCommand onto SELECTORS.countAboveMean + emitVerdict, keeping byte-identical
+// behavior (locked by the golden test). Later steps migrate the remaining routes. Every
+// arithmetic fragment below is copied VERBATIM from the existing oracles/commands.
+type SelectorId =
+  | "sum" | "avgInt" | "grepCount" | "countAboveMean"
+  | "topKSum" | "topKAvgInt" | "compareWinnerDiff" | "compareWinnerValue";
+
+// The parse a ClassRow.owns() returns: the (path[, path2], ext) plus class-specific params
+// (top-N, grep needle, comparator direction). A superset so one shape serves every class.
+interface OwnMatch { rel: string; relB?: string; ext: string | null; n?: number; needle?: string; dir?: "more" | "fewer" }
+
+// The label context handed to row.label(): the parse plus the values the oracle computed, so a
+// row can render the exact human "what" clause (mean/n for avg-threshold, K for rank, ...).
+interface LabelCtx extends OwnMatch { truth: number; mean?: number; n?: number; K?: number; aggA?: number; aggB?: number }
+
+interface ClassRow {
+  id: string;                          // verdict tag: deterministic:verified-<id> / <id>-mismatch
+  owns(goal: string): OwnMatch | null; // ownership + parse (delegates to the legacy parseX)
+  pathArity: 1 | 2;                    // 1 root (aggregate/rank/threshold) or 2 (two-source compare)
+  scope: "files" | "lines";            // what the counts array measures / what agg() reduces
+  selector: SelectorId;                // which SELECTORS cell projects command + oracle
+  extPolicy: "parse" | "none";         // whether an extension filter is honored
+  scrapeWidth: 6 | 8 | 9;              // digest number-scrape width: \d{1,N}
+  scrapeKeywords: RegExp;              // NON-global keyword filter for count-context digest lines
+  verifiedVerb: string;                // trailing clause on a verified reason string
+  label(p: LabelCtx): string;          // the "what" clause (independently computed ...)
+}
+
+// ── SELECTORS: the ONE table. Each entry colocates the shell fragment and the JS reducer as a
+// single object literal so command and oracle are two projections of the same cell. FROZEN.
+interface ShellCtx { root: string; rootB?: string; nameSel: string; n?: number; needle?: string; relA?: string; relB?: string; dir?: "more" | "fewer"; scope?: "files" | "lines" }
+interface Enumerated { files: string[]; counts: number[]; texts?: string[] }
+interface SelParams { n?: number; needle?: string; b?: Enumerated; dir?: "more" | "fewer"; scope?: "files" | "lines" }
+interface SelectorDef { shell: (ctx: ShellCtx) => string; js: (en: Enumerated, params: SelParams) => number }
+
+// shared shell sub-fragments (copied verbatim from the legacy command builders)
+const _rankShell = (ctx: ShellCtx): string =>
+  `find ${ctx.root} -type f${ctx.nameSel} -exec wc -l {} + | grep -v ' total$' | sort -rn | head -${ctx.n}`;
+const _cmpAgg = (root: string, nameSel: string, scope: "files" | "lines"): string =>
+  scope === "lines"
+    ? `find ${root} -type f${nameSel} -exec cat {} + | wc -l`
+    : `find ${root} -type f${nameSel} | wc -l`;
+// shared JS reducer over an enumerated array (copied verbatim from the legacy oracles)
+const _aggScope = (en: Enumerated, scope: "files" | "lines"): number =>
+  scope === "lines" ? en.counts.reduce((a, b) => a + b, 0) : en.files.length;
+
+const SELECTORS: Record<SelectorId, SelectorDef> = Object.freeze({
+  // total-lines: sum of per-file line counts   (buildAggregateCommand total_lines / verifyAggregateReach)
+  sum: {
+    shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec cat {} + | wc -l`,
+    js: (en) => en.counts.reduce((a, b) => a + b, 0),
+  },
+  // avg-lines: integer mean == awk $(( (T + N/2) / N ))   (buildAggregateCommand avg_lines)
+  avgInt: {
+    shell: (ctx) => `T=$(find ${ctx.root} -type f${ctx.nameSel} -exec cat {} + | wc -l); N=$(find ${ctx.root} -type f${ctx.nameSel} | wc -l); if [ "$N" -gt 0 ]; then echo $(( (T + N/2) / N )); else echo "no matching files"; fi`,
+    js: (en) => { const N = en.counts.length; if (N === 0) return 0; const T = en.counts.reduce((a, b) => a + b, 0); return Math.floor((T + Math.floor(N / 2)) / N); },
+  },
+  // grep-files: count of files containing the needle   (buildAggregateCommand grep_files / verifyAggregateReach)
+  grepCount: {
+    shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec grep -lF '${ctx.needle}' {} + | wc -l`,
+    js: (en, p) => (en.texts ?? []).filter((t) => t.includes(p.needle!)).length,
+  },
+  // avg-threshold: count of files strictly above the arithmetic mean   (verifyAvgThresholdReach)
+  countAboveMean: {
+    shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]>avg)k++;print k}'`,
+    js: (en) => { const n = en.counts.length; if (n === 0) return 0; const S = en.counts.reduce((a, b) => a + b, 0); const mean = S / n; return en.counts.filter((c) => c > mean).length; },
+  },
+  // rank-then-sum: total lines in the K largest   (buildRankAggregateCommand sum / verifyRankAggregateReach)
+  topKSum: {
+    shell: (ctx) => `${_rankShell(ctx)} | awk '{s+=$1}END{print s+0}'`,
+    js: (en, p) => { const s = [...en.counts].sort((a, b) => b - a); const K = Math.min(p.n!, s.length); return s.slice(0, K).reduce((a, b) => a + b, 0); },
+  },
+  // rank-then-avg: integer mean over the K largest == awk (s+int(c/2))/c   (buildRankAggregateCommand avg)
+  topKAvgInt: {
+    shell: (ctx) => `${_rankShell(ctx)} | awk '{s+=$1;c++}END{if(c>0)printf "%d\\n",(s+int(c/2))/c; else print 0}'`,
+    js: (en, p) => { const s = [...en.counts].sort((a, b) => b - a); const K = Math.min(p.n!, s.length); if (K === 0) return 0; const S = s.slice(0, K).reduce((a, b) => a + b, 0); return Math.floor((S + Math.floor(K / 2)) / K); },
+  },
+  // two-source compare, winner difference   (buildTwoSourceCompareCommand which_diff / verifyTwoSourceCompareReach)
+  compareWinnerDiff: {
+    shell: (ctx) => {
+      const scope = ctx.scope ?? "lines";
+      const [wAlarger, wBlarger] = (ctx.dir ?? "more") === "more" ? [ctx.relA, ctx.relB] : [ctx.relB, ctx.relA];
+      return `[ -d ${ctx.root} ] && [ -d ${ctx.rootB} ] || { echo "missing source"; exit 1; }; A=$(${_cmpAgg(ctx.root, ctx.nameSel, scope)}); B=$(${_cmpAgg(ctx.rootB!, ctx.nameSel, scope)}); D=$(( A>B ? A-B : B-A )); if [ "$A" -eq "$B" ]; then echo "tie: 0"; elif [ "$A" -gt "$B" ]; then echo "${wAlarger}: $D"; else echo "${wBlarger}: $D"; fi`;
+    },
+    js: (en, p) => Math.abs(_aggScope(en, p.scope ?? "lines") - _aggScope(p.b!, p.scope ?? "lines")),
+  },
+  // two-source compare, winner value   (buildTwoSourceCompareCommand winner_value / verifyTwoSourceCompareReach)
+  compareWinnerValue: {
+    shell: (ctx) => {
+      const scope = ctx.scope ?? "lines";
+      const cmp = (ctx.dir ?? "more") === "more" ? '[ "$A" -gt "$B" ]' : '[ "$A" -lt "$B" ]';
+      return `[ -d ${ctx.root} ] && [ -d ${ctx.rootB} ] || { echo "missing source"; exit 1; }; A=$(${_cmpAgg(ctx.root, ctx.nameSel, scope)}); B=$(${_cmpAgg(ctx.rootB!, ctx.nameSel, scope)}); if [ "$A" -eq "$B" ]; then echo "$A"; elif ${cmp}; then echo "$A"; else echo "$B"; fi`;
+    },
+    js: (en, p) => { const A = _aggScope(en, p.scope ?? "lines"), B = _aggScope(p.b!, p.scope ?? "lines"); return (p.dir ?? "more") === "more" ? Math.max(A, B) : Math.min(A, B); },
+  },
+});
+
+// ── shared repos-path + extension parse every single-root class opens with. Mirrors the
+// dirM/rel/ext preamble of parseAggregateGoal/parseAvgThreshold. Returns null when the goal
+// names no repos/<dir> directory (a bare file path or none).
+function parsePathsAndExt(goal: string): { rel: string; ext: string | null } | null {
+  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  if (!dirM) return null;
+  const rel = dirM[0].replace(/[.,;:]+$/, "");
+  if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory
+  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
+  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  return { rel, ext };
+}
+
+// ── the SINGLE enumeration: recursive readdir + isFile + suffix filter, then the SINGLE
+// countNl(charCode 10) loop == wc -l. Memoised per (root, ext, withTexts). Returns null on any
+// unreadable root/file (fail open, exactly as the legacy oracles' try/catch). texts is loaded
+// only for grep classes. NOTE: the memo serves a fixed clone state; a wrong FS snapshot never
+// arises within a single dispatch (each class enumerates its root once).
+async function enumerate(root: string, ext: string | null, withTexts = false): Promise<Enumerated | null> {
+  // Fresh read every call (no memo): the reach oracle must never grade against a stale FS
+  // snapshot across dispatches; enumeration is once-per-class-per-dispatch, so caching is nil-benefit.
+  let out: Enumerated | null;
+  try {
+    const entries = await readdir(root, { recursive: true, withFileTypes: true });
+    const files = entries.filter((e) => e.isFile())
+      .filter((e) => !ext || e.name.toLowerCase().endsWith("." + ext))
+      .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? root}/${e.name}`);
+    const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; }; // == wc -l
+    const counts: number[] = [];
+    const texts: string[] = [];
+    for (const fp of files) { const t = await Bun.file(fp).text(); counts.push(countNl(t)); if (withTexts) texts.push(t); }
+    out = withTexts ? { files, counts, texts } : { files, counts };
+  } catch { out = null; }
+  return out;
+}
+
+// ── the SINGLE digest-scrape (parameterised by row.scrapeWidth \d{1,N} + row.scrapeKeywords)
+// and the SINGLE three-verdict shape (reached / mismatch / null), filling the reason from
+// row.label + row.verifiedVerb + row.id. Byte-identical to each legacy verify*Reach tail.
+function emitVerdict(row: ClassRow, ctx: LabelCtx, dig: string): GoalReachVerdict | null {
+  const widthRe = new RegExp(`\\b\\d{1,${row.scrapeWidth}}\\b`, "g");
+  const emitted = [...new Set(dig.split("\n").map((l) => l.trim()).filter((t) => {
+    if (t.length === 0 || t.length > 160) return false;
+    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
+    return /^-\s+shellResult:/.test(t) || row.scrapeKeywords.test(t);
+  }).flatMap((l) => (l.match(widthRe) ?? []).map(Number)))];
+  const what = row.label(ctx);
+  if (emitted.includes(ctx.truth)) {
+    return { reached: true, reason: `deterministic:verified-${row.id} — independently computed ${what}; ${row.verifiedVerb}`, deterministic: true, completion_shapes: [] };
+  }
+  if (emitted.length > 0) {
+    return { reached: false, reason: `deterministic:${row.id}-mismatch — authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
+  }
+  return null;                                        // no command output -> LLM / honest miss
+}
+
+// ── the avg-threshold ClassRow (STEP 3 wires verifyAvgThresholdReach/buildAvgThresholdCommand
+// onto this). id/scrapeWidth/scrapeKeywords/verifiedVerb/label are copied so emitVerdict
+// reproduces the legacy verifyAvgThresholdReach strings byte-for-byte.
+const ROW_AVG_THRESHOLD: ClassRow = {
+  id: "avg-threshold",
+  owns: (g) => { const p = parseAvgThreshold(g); return p ? { rel: p.rel, ext: p.ext } : null; },
+  pathArity: 1,
+  scope: "lines",
+  selector: "countAboveMean",
+  extPolicy: "parse",
+  scrapeWidth: 9,
+  scrapeKeywords: /\bfiles?\b|\bhow many\b|there (?:are|is)|^\d+$/i,
+  verifiedVerb: "a threaded mean-then-count command output reports the same value",
+  label: (p) => `${p.truth} ${p.ext ? "." + p.ext + " " : ""}file(s) under ${p.rel} with more lines than the mean (${p.mean!.toFixed(2)} over ${p.n} file(s), git clone authoritative)`,
+};
+
+// STEP-1 anti-fossil: the scaffold is referenced by the golden test only. Keep the row and the
+// data-as-row registry reachable so an unused-symbol sweep does not prune them before STEP 3.
+const CLASS_ROWS: readonly ClassRow[] = [ROW_AVG_THRESHOLD];
+// ═══ END ROUTE-AS-DATA SCAFFOLD ════════════════════════════════════════════════════════
+
 // A single deterministic aggregate CANNOT honor a goal that also requires SELECTING then
 // re-aggregating (sum of the N largest), thresholding on a computed value (files above the
 // average), comparing two named operands (does X or Y have more), or a ratio (what percentage).
@@ -1353,45 +1539,33 @@ function parseAvgThreshold(goal: string): AvgThresholdParse | null {
 }
 
 function buildAvgThresholdCommand(goal: string): string | null {
+  // STEP-3 (route-as-data): the command is now the SHELL projection of the SELECTORS.countAboveMean
+  // cell — the same cell whose JS projection verifyAvgThresholdReach reduces below, so command and
+  // oracle cannot drift. Byte-identical to the prior inline template (locked by the golden test).
   const p = parseAvgThreshold(goal);
   if (!p) return null;
   const root = `/workspace/git/super-repo/${p.rel}`;
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
-  return `find ${root} -type f${nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]>avg)k++;print k}'`;
+  return SELECTORS.countAboveMean.shell({ root, nameSel });
 }
 
 async function verifyAvgThresholdReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  // STEP-3 (route-as-data): truth is the JS projection of SELECTORS.countAboveMean over the single
+  // shared enumerate() (readdir+countNl == wc -l), and the verdict is emitted by the shared
+  // emitVerdict scrape+three-verdict shape parameterised by ROW_AVG_THRESHOLD. The command builder
+  // above projects the SAME cell's shell, so emitted == truth by construction. Byte-identical to
+  // the prior inline oracle (enumeration, mean, strict-> filter, scrape width \d{1,9}, keyword
+  // filter, and reason strings are all locked by the golden characterization test).
   const p = parseAvgThreshold(goal);                  // SAME parse as the command builder
   if (!p) return null;
-  let files: string[];
-  try {
-    const entries = await readdir(`/workspace/git/super-repo/${p.rel}`, { recursive: true, withFileTypes: true });
-    files = entries.filter((e) => e.isFile())
-      .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
-      .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? `/workspace/git/super-repo/${p.rel}`}/${e.name}`);
-  } catch { return null; }                            // unreadable root -> fail open
-  const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; };
-  let counts: number[];
-  try { counts = []; for (const fp of files) counts.push(countNl(await Bun.file(fp).text())); }
-  catch { return null; }                              // unreadable file -> fail open
-  const n = counts.length;
+  const en = await enumerate(`/workspace/git/super-repo/${p.rel}`, p.ext); // single readdir+countNl (== wc -l)
+  if (en === null) return null;                       // unreadable root/file -> fail open
+  const n = en.counts.length;
   if (n === 0) return null;
-  const S = counts.reduce((a, b) => a + b, 0);
+  const S = en.counts.reduce((a, b) => a + b, 0);
   const mean = S / n;                                 // IDENTICAL to the awk avg=s/n (IEEE double)
-  const truth = counts.filter((c) => c > mean).length;  // strict >, mirrors awk c[i]>avg
-  const emitted = [...new Set(dig.split("\n").map((l) => l.trim()).filter((t) => {
-    if (t.length === 0 || t.length > 160) return false;
-    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
-    return /^-\s+shellResult:/.test(t) || /\bfiles?\b|\bhow many\b|there (?:are|is)|^\d+$/i.test(t);
-  }).flatMap((l) => (l.match(/\b\d{1,9}\b/g) ?? []).map(Number)))];
-  const what = `${truth} ${p.ext ? "." + p.ext + " " : ""}file(s) under ${p.rel} with more lines than the mean (${mean.toFixed(2)} over ${n} file(s), git clone authoritative)`;
-  if (emitted.includes(truth)) {
-    return { reached: true, reason: `deterministic:verified-avg-threshold — independently computed ${what}; a threaded mean-then-count command output reports the same value`, deterministic: true, completion_shapes: [] };
-  }
-  if (emitted.length > 0) {
-    return { reached: false, reason: `deterministic:avg-threshold-mismatch — authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
-  }
-  return null;                                        // no command output -> LLM / honest miss
+  const truth = SELECTORS.countAboveMean.js(en, {});  // strict >, mirrors awk c[i]>avg — SAME cell as the command
+  return emitVerdict(ROW_AVG_THRESHOLD, { rel: p.rel, ext: p.ext, truth, mean, n }, dig);
 }
 
 // ── THREADED TWO-OP: TWO-SOURCE-COMPARE (which of repos/X or repos/Y has more; by how much) ──
@@ -9539,7 +9713,13 @@ function pruneStore(): void {
 // HTTP server
 // ─────────────────────────────────────────────────────────────────────────────
 
-const server = Bun.serve({
+// STEP-1 (route-as-data refactor): the boot sequence is guarded behind import.meta.main so the
+// reach-route functions can be imported by the golden characterization test WITHOUT binding a
+// port, registering into discovery, or starting the discovery loop (any of which would touch a
+// live substrate). Run directly (`bun src/index.ts`) import.meta.main === true -> boot unchanged.
+let server: ReturnType<typeof Bun.serve> | undefined;
+if (import.meta.main) {
+server = Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
@@ -9663,9 +9843,23 @@ if (WS_SUBSCRIBER_ENABLED) {
   }, 60_000).unref();
 }
 await discoveryLoop.start();
+}
 
 // Graceful shutdown on SIGTERM/SIGINT is handled by gracefulShutdown() near the top
 // of this file: it drains in-flight walks BEFORE discoveryLoop.stop() + server.stop()
 // + exit. A second exit-immediately handler here previously RACED that drain and
 // process.exit(0)'d before the loop could iterate — killing in-flight dispatches on
 // every cutover. Removed; gracefulShutdown is now the single shutdown path.
+
+// ── STEP-1 (route-as-data refactor): additive exports so the golden characterization test can
+// import the pure reach-route functions + the route-as-data scaffold. Export-only, no runtime
+// behavior change (these names are unchanged; call sites inside this module are unaffected).
+export {
+  parseAggregateGoal, buildAggregateCommand, verifyAggregateReach,
+  parseRankAggregate, buildRankAggregateCommand, verifyRankAggregateReach,
+  parseAvgThreshold, buildAvgThresholdCommand, verifyAvgThresholdReach,
+  parseTwoSourceCompare, buildTwoSourceCompareCommand, verifyTwoSourceCompareReach,
+  isCompositionalGoal,
+  SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, CLASS_ROWS,
+};
+export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
