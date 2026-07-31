@@ -1934,7 +1934,7 @@ async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReach
 /**
  * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
  */
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<GoalReachVerdict | null> {
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
   const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
@@ -2134,6 +2134,27 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     return { reached: false, reason: "deterministic:edit-intent-no-edit-result — a fileContent read is not an edit", completion_shapes: [] };
   }
 
+  // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
+  // judge below sees only the goal + digest, never the walk's OWN step verdicts — so it can
+  // green a walk whose every logged step produced nothing, or that filed capability gaps
+  // mid-execution (the walk itself already testified it could not do the work). Deterministic
+  // pre-verdict from evidence already in scope (mirror of stagedNotLanded above): when the
+  // walk filed gaps OR every logged step reports new_shapes=0, cap at reached:false and SKIP
+  // the LLM call. Ordered AFTER the deterministic oracles above: a ground-truth-verified
+  // reach has already returned, so this suppresses only the rubber-stamp path, never a
+  // recomputed truth. Fail-open: callers that pass no walkEvidence are unaffected.
+  if (walkEvidence) {
+    const stepLines = walkEvidence.walkLog.filter((l) => /\bstep \d+ ran /.test(l));
+    const allStepsHollow = stepLines.length > 0 && stepLines.every((l) => /\bnew_shapes=0\b/.test(l));
+    if (walkEvidence.gapsFiled > 0 || allStepsHollow) {
+      return {
+        reached: false,
+        reason: `deterministic:hollow_walklog_capped — ${walkEvidence.gapsFiled > 0 ? `the walk filed ${walkEvidence.gapsFiled} capability gap(s) mid-execution` : `all ${stepLines.length} logged walk step(s) produced 0 new shapes`}; LLM judge SKIPPED (it cannot out-testify the walk's own log)`,
+        completion_shapes: [],
+      };
+    }
+  }
+
   if (!LLM_VESSEL_ENDPOINT) return null;
   const cmdSection = commandEvidence
     ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. ALSO grade HOLLOW when the command merely ECHOES or PRINTS a literal answer (e.g. echo or printf of a constant) instead of MEASURING it — a self-emitted answer is the model asserting, not evidence. Apply this skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
@@ -2170,7 +2191,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
     // (favorable-compose :876). Credit thus never fires on a bare LLM-yes (the reach judge
     // rubber-stamps some trivial/impossible goals: negative_control reached 3/3).
     const negationPhrases = ["did not provide", "does not contain", "did not contain", "not provided", "but the output", "no output", "lacks", "failing to"];
-    const reason = p.reason as string;
+    const reason = String(p.reason ?? "").replace(/^\s*deterministic:/i, "llm-claimed:");
     const hasNegation = negationPhrases.some((phrase) => reason.includes(phrase));
     return {
       reached: !!(p.reached && !hasNegation),
@@ -2180,6 +2201,26 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
       deterministic: false,
     };
   } catch { return null; }
+}
+
+// ── Deterministic-oracle label feed (goal_verification_labels corpus) ────────
+// The honest-label corpus in activity-api was 100% human-written, so every
+// deterministic ground-truth verdict issued by the oracle families above (recompute
+// vs emitted — NEVER the LLM judge, whose deterministic flag is forced false and
+// whose reasons are stripped of the deterministic: prefix at sanitize time) was
+// invisible to it. Mirror each oracle verdict into the corpus as a
+// goal_verification_label_write. Fire-and-forget (.catch swallow+log): verification
+// latency is unchanged and an activity-api outage is non-fatal.
+function recordDeterministicLabel(goal: string, executionId: string | undefined, activityId: string | undefined, verdict: GoalReachVerdict): void {
+  if (!executionId) return;
+  const det = verdict.deterministic === true || /^deterministic:/.test(verdict.reason ?? "");
+  if (!det) return;
+  fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+    body: JSON.stringify({ pointer: { type: "goal_verification_label_write", goal: goal.slice(0, 600), execution_id: executionId, activity_id: activityId ?? null, verdict: verdict.reached === true ? "achieved" : "not_achieved", confidence: 0.98, labeler: "deterministic", notes: (verdict.reason ?? "").slice(0, 600) } }),
+    signal: AbortSignal.timeout(10_000),
+  }).catch((e) => console.warn(`[oracle-label] deterministic label write failed (non-fatal): ${(e as Error).message}`));
 }
 
 // ── Goal→target-shape inference (lever 4, 2026-06-25) ───────────────────────
@@ -2494,6 +2535,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
   const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
+  if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
   // Reach when the reach gate passes on a SUBSTANTIVE answer — grounded either by CLIENT-executed
   // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
   if (verdict?.reached && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
@@ -5516,14 +5558,15 @@ If one of those sibling shapes is the action that would create what the goal ask
         .filter(([sh]) => producedShapes.has(sh))
         .map(([sh, cmd]) => `- ${sh} was produced by RUNNING: \`${String(cmd).slice(0, 1000)}\``)
         .join("\n");
+      const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [] };
       let verdict = earlyReachVerdict
-        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined);
+        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv);
       // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
       // before failing closed, so a correct/grounded answer is not lost to a momentary verifier outage.
       // (The prior loop only re-read the same null verdict without ever re-invoking the verifier — a no-op.)
       for (let _r = 0; verdict == null && _r < 2; _r++) {
         await new Promise((res) => setTimeout(res, 400 * (_r + 1)));
-        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined);
+        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv);
       }
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict == null ? false : verdict.reached === true;
@@ -5641,6 +5684,9 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch { /* fail-toward-honest: any error leaves the reach verdict unchanged */ }
       }
+      // Deterministic-oracle label feed: after every post-hoc correction above, so the
+      // corpus records the FINAL ground-truth verdict (incl. wrong-derived-value flips).
+      if (verdict) recordDeterministicLabel(goal, lastExecId, lastPick || undefined, verdict);
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
@@ -5983,6 +6029,53 @@ If one of those sibling shapes is the action that would create what the goal ask
     reached,
     answerBody,
   };
+}
+
+// ── Verbatim-excerpt spec anchor (gap edit-intent-spec-builder-emits-schematic-anchors-not-file-text) ──
+// Both edit-intent spec builders below forwarded ONLY file path + goal prose, so the
+// drafter reconstructed its edit-op anchors schematically (paraphrased/re-indented
+// "remembered" code) and the ops missed the real file. Port of development-vessel's
+// specFromGap grounding (gap-to-feature.ts): read the CURRENT target file from the
+// clone roots this file already uses, center a ~40-line window on the edit line when
+// the goal names one, else on a symbol the goal names, else head of file, and append
+// it as a clearly-delimited VERBATIM EXCERPT the drafter must copy anchors from
+// byte-exact. Fail-open: unreadable file (e.g. create-intent net-new path) => "".
+async function verbatimExcerptBlock(editFile: string, editLine: string | undefined, goalText: string): Promise<string> {
+  try {
+    const candidates = [`/workspace/git/super-repo/${editFile}`, `/vessels/${editFile.replace(/^repos\//, "")}`];
+    let raw: string | null = null;
+    for (const c of candidates) { try { raw = await Bun.file(c).text(); break; } catch { /* next candidate */ } }
+    if (raw === null || raw.length === 0) return "";
+    const lines = raw.split("\n");
+    let start = 0;                       // 0-based first line of the window
+    let label = "top of file";
+    const ln = editLine ? parseInt(editLine, 10) : NaN;
+    if (Number.isFinite(ln) && ln > 0) {
+      start = Math.max(0, ln - 15);
+      label = `near line ${ln}`;
+    } else {
+      // No line reference: try a SYMBOL the goal names — first goal identifier that
+      // appears in a declaration-ish position in the file. Word-char-only idents so
+      // the constructed RegExp needs no escaping.
+      const idents = [...new Set(goalText.match(/\b[A-Za-z_][A-Za-z0-9_]{4,}\b/g) ?? [])]
+        .filter((w) => !/^(repos|src|index|goal|line|file|edit|add|insert|append|change|modify|replace|remove|delete|update|rename|refactor|wire|guard|create|scaffold|vessel|resolver|shape|endpoint|module|should|which|where|there|these|those)$/i.test(w));
+      for (const id of idents) {
+        const declRe = new RegExp(`\\b(?:function|const|let|var|class|interface|type|case)\\s+${id}\\b|\\b${id}\\s*[(:=]`);
+        const idx = lines.findIndex((l) => declRe.test(l));
+        if (idx >= 0) { start = Math.max(0, idx - 5); label = `around symbol ${id}`; break; }
+      }
+    }
+    const excerpt = lines.slice(start, start + 40).join("\n");
+    if (excerpt.trim().length === 0) return "";
+    return [
+      "",
+      `VERBATIM EXCERPT of ${editFile} (${label}; lines ${start + 1}-${Math.min(lines.length, start + 40)} of ${lines.length}) — the REAL current file text:`,
+      "\u0060\u0060\u0060",
+      excerpt,
+      "\u0060\u0060\u0060",
+      "All edit-op anchors (old/existing text, context lines) MUST be copied BYTE-EXACT from this excerpt or from the current file content — never paraphrased, re-indented, or reconstructed from memory.",
+    ].join("\n");
+  } catch { return ""; }
 }
 
 // SINGLE goal-seeking-with-recovery implementation shared by BOTH dispatch
@@ -6407,7 +6500,7 @@ async function runGoalWithRecovery(
             "The change MUST typecheck.",
             "",
             `GOAL: ${goalForRouting}`,
-          ].join("\n");
+          ].join("\n") + await verbatimExcerptBlock(earlyEditFile, earlyEditLine, goalForRouting);
           const earlyGapId = `route-edit-${goalHashOf(goal)}`;
           let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
           try {
@@ -6688,7 +6781,7 @@ async function runGoalWithRecovery(
             // sibling wiring a new resolver needs (three-place rule), so the drafter
             // authors a REAL implementation. Verify (tsc + shape-dispatch) still gates.
             const createIntent = /\b(create|scaffold|net-new)\b/i.test(goal) || /\bnew\s+(resolver|file|vessel|shape|endpoint|module)\b/i.test(goal);
-            const spec = createIntent
+            const specBase = createIntent
               ? [
                   "Author the smallest, verifiable code change that satisfies this development goal, drafting a REAL working implementation — never a TODO/stub body.",
                   allEditFiles.length > 1
@@ -6708,6 +6801,10 @@ async function runGoalWithRecovery(
                   "",
                   `GOAL: ${goal}`,
                 ].join("\n");
+            // Anchored spec: append the real-file excerpt so every consumer below
+            // (feature_compose AND the patch_with_tools escalations) drafts against
+            // verbatim current file text, not a schematic reconstruction.
+            const spec = specBase + await verbatimExcerptBlock(editFile, editLine, goal);
             const gapId = `route-edit-${goalHashOf(goal)}`;
             // Resolve the feature_compose producer via DISCOVERY first (impulse-contract
             // compliance: no hardcoded vessel endpoint). Same inline vesselCapability
@@ -7211,6 +7308,7 @@ async function runGoalWithRecovery(
             .slice(0, 4000);
         }
         const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined);
+        if (verdict) recordDeterministicLabel(String(goal), execId, selId, verdict);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;
         if (verdict && verdict.reached === false) {
@@ -8642,7 +8740,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
     // verbatim (future rhythm-due / learning-mode senders would land here).
     const dr = pref("dispatcher_reason:");
     if (dr) return dr.slice("dispatcher_reason:".length) || undefined;
-    return undefined;
+    // Attributability floor: no signal matched — default to the ROUTE the dispatch
+    // arrived on rather than serializing trigger:null (an unattributable dispatch).
+    return "run-goal";
   })();
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
   executionStore.set(dispatchId, record);
