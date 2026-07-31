@@ -1449,7 +1449,7 @@ const ROW_BELOW_MEAN: ClassRow = {
 // The data-as-row registry: adding a compositional reach class is appending one ClassRow here.
 // resolveClassRow iterates IN ORDER; each owns() is specific, so ordering only breaks a genuine
 // tie (none exists — avg-threshold and below-mean parse disjoint comparator words).
-const CLASS_ROWS: readonly ClassRow[] = [ROW_AVG_THRESHOLD, ROW_BELOW_MEAN];
+const CLASS_ROWS: readonly ClassRow[] = [ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, { id: "above-count", owns: parseThreshold("more than"), selector: thresholdSelector(">") }];
 
 // ── THE DISPATCHER: resolve → build → verify, all driven off CLASS_ROWS. This is the single
 // point through which every data-row class is served; a new class needs no new function, only a
