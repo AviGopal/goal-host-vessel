@@ -6180,7 +6180,47 @@ function parseAddSymbol(goal: string): string | null {
   return m ? m[1]! : null;
 }
 
-async function verifyEditPostState(goal: string, editFile: string): Promise<boolean | null> {
+// Pure: does `symbol` appear on an ADDED (+) line of a unified diff? Excludes the `+++` file header.
+// Extracted so the load-bearing "added, not merely present" decision is unit-testable without git.
+function symbolInAddedLines(diffText: string, symbol: string): boolean {
+  const tokenRe = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  return diffText.split("\n").some((l) => l.startsWith("+") && !l.startsWith("+++") && tokenRe.test(l));
+}
+
+// True iff `symbol` is on an added line of the diff `landedSha` introduces for `editFile`; false iff
+// the commit touched the file but the symbol is on no added line (pre-existing / unrelated landing);
+// null iff no clone can show the commit (sync lag / bad sha) → caller falls back to presence. Probes
+// the grading clone AND the vessel's cutover clone (which holds the sha immediately post-commit).
+async function symbolOnAddedLine(symbol: string, editFile: string, landedSha: string): Promise<boolean | null> {
+  const vessel = editFile.match(/^repos\/([^/]+)\//)?.[1];
+  const relPath = editFile.replace(/^repos\/[^/]+\//, "");
+  const probes: Array<[string, string]> = [
+    ["/workspace/git/super-repo", editFile],
+    ...(vessel ? [[`/workspace/git/vessels/${vessel}`, relPath] as [string, string]] : []),
+  ];
+  for (const [dir, path] of probes) {
+    try {
+      const proc = Bun.spawn(["git", "-C", dir, "show", "--format=", "--unified=0", landedSha, "--", path], { stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      const code = await proc.exited;
+      if (code !== 0) continue;                            // this clone lacks the sha → try the next
+      return symbolInAddedLines(out, symbol);              // exit 0 + no added match ⇒ pre-existing ⇒ false
+    } catch { /* try next probe */ }
+  }
+  return null;                                             // no clone could show the commit
+}
+
+// Deterministic post-state edit oracle. An "add <symbol>" edit REACHES only if the landed file
+// OBSERVABLY contains the symbol AND this landing ADDED it (present on an added diff line) — not
+// merely that the symbol pre-existed. Presence-without-addition is the false-green
+// (gap edit-postoracle-greens-preexisting-symbol): a landing that only touched something else, on a
+// file where the requested symbol already existed, must NOT green. Grading:
+//   • not a parseable add-symbol edit / file unreadable            → null  (abstain, no regression)
+//   • symbol ABSENT from the landed file                            → false (definitely hollow)
+//   • symbol present AND on an added line of the landed diff        → true  (observably added)
+//   • symbol present but NOT added by this landing (pre-existing)   → false (hollow — this is the fix)
+//   • diff uninspectable (no sha / sync lag)                        → presence is the best signal (true)
+async function verifyEditPostState(goal: string, editFile: string, landedSha?: string | null): Promise<boolean | null> {
   const symbol = parseAddSymbol(goal);
   if (symbol === null) return null;                        // not a parseable add-symbol edit
   const candidates = [`/workspace/git/super-repo/${editFile}`, `/vessels/${editFile.replace(/^repos\//, "")}`];
@@ -6188,7 +6228,11 @@ async function verifyEditPostState(goal: string, editFile: string): Promise<bool
   for (const c of candidates) { try { raw = await Bun.file(c).text(); break; } catch { /* next candidate */ } }
   if (raw === null) return null;                           // can't read → can't prove absence
   const tokenRe = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
-  return tokenRe.test(raw);                                // present ⇒ reach; absent ⇒ hollow landing
+  if (!tokenRe.test(raw)) return false;                    // symbol absent from the file → hollow
+  // Presence is necessary but NOT sufficient — require THIS landing to have added the symbol.
+  const added = landedSha ? await symbolOnAddedLine(symbol, editFile, landedSha) : null;
+  if (added === null) return true;                         // can't inspect the diff → presence fallback
+  return added;                                            // added ⇒ reach; present-but-not-added ⇒ hollow
 }
 
 // SINGLE goal-seeking-with-recovery implementation shared by BOTH dispatch
@@ -6679,7 +6723,7 @@ async function runGoalWithRecovery(
               // staged-not-landed edit, OR a landed edit that does not contain the asked-for change
               // (hollow landing / orphan code), is NOT a reach. editPostOk is null for non-add /
               // unreadable goals, so those keep grading on the landing sha alone (no regression).
-              const editPostOk = earlyLandedSha ? await verifyEditPostState(goal ?? "", earlyEditFile) : null;
+              const editPostOk = earlyLandedSha ? await verifyEditPostState(goal ?? "", earlyEditFile, earlyLandedSha) : null;
               const editHollow = editPostOk === false;      // landed, but the symbol is not there
               const earlyReached = !!earlyLandedSha && !editHollow;
               if (!earlyLandedSha) { await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed"); }
@@ -10187,6 +10231,6 @@ export {
   isCompositionalGoal, parseBelowMean,
   SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
-  thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol,
+  thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };

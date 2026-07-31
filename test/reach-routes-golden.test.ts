@@ -29,7 +29,7 @@ const {
   parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare, parseBelowMean,
   SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
   resolveClassRow, buildFromClassRow, enumerate, selectorOf, thresholdSelector, parseThreshold,
-  verifyEditPostState, parseAddSymbol,
+  verifyEditPostState, parseAddSymbol, symbolInAddedLines,
 } = idx;
 
 // The dispatch chain exactly as wired in index.ts (_aggCmd, ~line 3909): avg-threshold, then
@@ -598,5 +598,36 @@ describe("edit-family post-state reach oracle (parseAddSymbol + verifyEditPostSt
     expect(tokenRe("maxRetries").test("  timeout: number;")).toBe(false);       // hollow landing
     expect(tokenRe("Pending").test("enum Status { Active, Pending }")).toBe(true);
     expect(tokenRe("cat").test("concatenate()")).toBe(false);                   // no substring false-positive
+  });
+
+  // THE FIX (gap edit-postoracle-greens-preexisting-symbol): presence is necessary but NOT
+  // sufficient — the symbol must be ADDED by the landing, not merely pre-existing. symbolInAddedLines
+  // is the load-bearing decision: it greens only when the symbol is on a `+` line of the landed diff.
+  it("symbolInAddedLines: symbol on an ADDED line ⇒ true (a real add)", () => {
+    const diff = ["@@ -10,0 +11,1 @@", "+  maxRetries: number;"].join("\n");
+    expect(symbolInAddedLines(diff, "maxRetries")).toBe(true);
+  });
+  it("symbolInAddedLines: symbol PRE-EXISTING (only on context lines, none added) ⇒ false — the false-green this closes", () => {
+    // The exact repro: the landing only touched an export elsewhere; maxRetries already existed and
+    // appears only as UNCHANGED context. Presence-only greened this; added-line grading rejects it.
+    const diff = [
+      "@@ -40,3 +40,3 @@",
+      "   maxRetries: number;",          // context (space prefix) — pre-existing, NOT added
+      "-export { foo }",
+      "+export { foo, bar }",            // the only real change — unrelated to maxRetries
+    ].join("\n");
+    expect(symbolInAddedLines(diff, "maxRetries")).toBe(false);
+  });
+  it("symbolInAddedLines: symbol only on a REMOVED line ⇒ false", () => {
+    const diff = ["@@ -5,1 +5,0 @@", "-  legacyField: string;"].join("\n");
+    expect(symbolInAddedLines(diff, "legacyField")).toBe(false);
+  });
+  it("symbolInAddedLines: symbol only in the +++ file header ⇒ false (header excluded)", () => {
+    const diff = ["--- a/src/maxRetries.ts", "+++ b/src/maxRetries.ts", "@@ -1,1 +1,1 @@", " unchanged"].join("\n");
+    expect(symbolInAddedLines(diff, "maxRetries")).toBe(false);
+  });
+  it("verifyEditPostState with no landedSha falls back to presence (null-safe, no false negative)", async () => {
+    // add-symbol goal, unreadable file (no clone in test env) ⇒ null regardless — locks abstention.
+    expect(await verifyEditPostState("add a const NOPE_XYZ in repos/x/src/none.ts", "repos/x/src/none.ts")).toBeNull();
   });
 });
