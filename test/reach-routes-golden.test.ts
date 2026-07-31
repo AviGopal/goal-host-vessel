@@ -28,7 +28,7 @@ const {
   buildAggregateCommand, buildRankAggregateCommand, buildAvgThresholdCommand, buildTwoSourceCompareCommand,
   parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare, parseBelowMean,
   SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
-  resolveClassRow, buildFromClassRow, enumerate, selectorOf,
+  resolveClassRow, buildFromClassRow, enumerate, selectorOf, thresholdSelector, parseThreshold,
 } = idx;
 
 // The dispatch chain exactly as wired in index.ts (_aggCmd, ~line 3909): avg-threshold, then
@@ -502,5 +502,64 @@ describe("minimal inline ClassRow (only id/owns/selector) verifies via defaults"
   });
   it("selectorOf materializes the minimal row's INLINE cell (served identically)", () => {
     expect(selectorOf(minimalRow)).toBe(minimalRow.selector);
+  });
+});
+
+// ── SELECTOR PRIMITIVE FACTORIES: the drafter composes a new class from vetted, drift-safe
+// building blocks (thresholdSelector / parseThreshold) instead of authoring raw awk + a regex
+// string. These lock (1) each comparator's factory selector is shell==js on real data incl. the
+// ==N boundary (drift-safe by construction), (2) parseThreshold parses path+N and is disjoint
+// from avg/below-mean, (3) a whole ClassRow COMPOSED from primitives + defaults routes end-to-end.
+describe("selector primitive factories (compose-a-class from vetted blocks)", () => {
+  const mk = (counts: number[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "prim-fix-"));
+    counts.forEach((c, i) => writeFileSync(join(dir, `f${i}.ts`), "\n".repeat(c)));
+    return dir;
+  };
+  const lastInt = (s: string): number | null => { const m = s.trim().match(/-?\d+/g); return m ? Number(m[m.length - 1]) : null; };
+  const COUNTS = [3, 10, 20, 30, 40];                   // one file == N (=3): exercises the boundary
+
+  for (const cmp of [">", ">=", "<", "<="] as const) {
+    it(`thresholdSelector("${cmp}"): executed shell == js oracle over the SAME fixture (boundary at N=3)`, async () => {
+      const cell = thresholdSelector(cmp);
+      const root = mk(COUNTS);
+      const shellStr = cell.shell({ root, nameSel: " -name '*.ts'", n: 3 } as any);
+      const proc = Bun.spawn(["bash", "-c", shellStr], { stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      await proc.exited;
+      const shellVal = lastInt(out);
+      const en = await enumerate(root, "ts", false);
+      const jsVal = cell.js(en, { n: 3 } as any);
+      expect(shellVal).not.toBeNull();
+      expect(shellVal).toBe(jsVal);                     // one cmp arg drives both → cannot drift
+    });
+  }
+
+  it("the four comparators partition the fixture correctly at N=3", () => {
+    const en = { files: COUNTS.map(String), counts: COUNTS };
+    expect(thresholdSelector(">").js(en as any, { n: 3 } as any)).toBe(4);   // 10,20,30,40
+    expect(thresholdSelector(">=").js(en as any, { n: 3 } as any)).toBe(5);  // +the ==3 file
+    expect(thresholdSelector("<").js(en as any, { n: 3 } as any)).toBe(0);   // none below 3
+    expect(thresholdSelector("<=").js(en as any, { n: 3 } as any)).toBe(1);  // the ==3 file
+  });
+
+  it('parseThreshold("more than") parses path + N; disjoint from avg/below-mean', () => {
+    const owns = parseThreshold("more than");
+    const g = "how many .ts files under repos/development-vessel/src have more than 100 lines";
+    expect(owns(g)).toEqual({ rel: "repos/development-vessel/src", ext: "ts", n: 100 });
+    expect(owns("total lines in .ts files under repos/x/src")).toBeNull();     // no threshold clause
+    expect(owns("more than 100 lines")).toBeNull();                            // no repos/<dir> path
+    // must not steal the mean-relative goals owned by avg-threshold / below-mean
+    expect(owns("how many files under repos/x/src have more lines than the average")).toBeNull();
+  });
+
+  it("a ClassRow COMPOSED from primitives + defaults builds the expected command (single-point authoring)", () => {
+    const row: any = { id: "above-count", owns: parseThreshold("more than"), selector: thresholdSelector(">") };
+    // selectorOf resolves the inline factory cell; its shell is the vetted awk (no hand-authored string)
+    const ctx = { root: "/workspace/git/super-repo/repos/x/src", nameSel: " -name '*.ts'", n: 100 };
+    expect(selectorOf(row).shell(ctx as any)).toBe(
+      "find /workspace/git/super-repo/repos/x/src -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk -v n=100 '{if($1>n)k++}END{print k+0}'",
+    );
+    expect(row.owns("how many .ts files under repos/x/src have more than 100 lines")).toEqual({ rel: "repos/x/src", ext: "ts", n: 100 });
   });
 });

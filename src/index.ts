@@ -1310,6 +1310,46 @@ const SELECTORS: Record<SelectorId, SelectorDef> = Object.freeze({
   },
 });
 
+// ══ SELECTOR PRIMITIVE FACTORIES ═══════════════════════════════════════════════════════════
+// The selector's shell fragment (raw awk) and owns()'s regex are the parts an LLM most often
+// mis-authors (unbalanced quotes, `$1`/backtick escaping, wrong operator) — a broken literal
+// that fails typecheck. These factories let a drafter COMPOSE a new compositional class from
+// VETTED, drift-safe building blocks by NAMING them, authoring ZERO raw awk and ZERO regex
+// string: `{ id, owns: parseThreshold("more than"), selector: thresholdSelector(">") }`. This is
+// the directive's thesis made concrete — the resolver is an interpolation of variables through a
+// series of functions, and the drafter's job collapses to CHOOSING the right primitives. Because
+// each factory derives BOTH shell and js from the SAME argument, its two projections cannot drift
+// (the enumerate-all gate still executes any registered row's cell shell-vs-js to prove it).
+
+// Absolute line-count threshold: count files whose line count compares (cmp) to the literal N in
+// params.n. awk and JS use the SAME comparator string, so they cannot disagree by construction.
+type ThresholdCmp = ">" | ">=" | "<" | "<=";
+const _THRESH_JS: Record<ThresholdCmp, (c: number, n: number) => boolean> = {
+  ">": (c, n) => c > n, ">=": (c, n) => c >= n, "<": (c, n) => c < n, "<=": (c, n) => c <= n,
+};
+function thresholdSelector(cmp: ThresholdCmp): SelectorDef {
+  return {
+    // awk's relational operators are the same tokens as `cmp`, so one argument drives both sides.
+    shell: (ctx) => `find ${ctx.root} -type f${ctx.nameSel} -exec wc -l {} + | grep -v ' total$' | awk -v n=${ctx.n} '{if($1${cmp}n)k++}END{print k+0}'`,
+    js: (en, p) => en.counts.filter((c) => _THRESH_JS[cmp](c, p.n!)).length,
+  };
+}
+
+// owns() builder for an absolute-threshold goal: parses the repos/<dir> path (via parsePathsAndExt)
+// plus the literal N following a comparator phrase ("more than 100 lines"). Returns null (fail
+// open → next class) when the goal names no directory or no "<phrase> <N> lines" clause. The
+// phrase is embedded literally, so a drafter passes a plain string, never a RegExp source.
+function parseThreshold(comparatorPhrase: string): (goal: string) => OwnMatch | null {
+  const phraseRe = new RegExp(`${comparatorPhrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\d+)\\s+lines?\\b`, "i");
+  return (goal: string): OwnMatch | null => {
+    const p = parsePathsAndExt(goal);
+    if (!p) return null;
+    const m = goal.match(phraseRe);
+    if (!m) return null;
+    return { rel: p.rel, ext: p.ext, n: parseInt(m[1]!, 10) };
+  };
+}
+
 // ── shared repos-path + extension parse every single-root class opens with. Mirrors the
 // dirM/rel/ext preamble of parseAggregateGoal/parseAvgThreshold. Returns null when the goal
 // names no repos/<dir> directory (a bare file path or none).
@@ -10083,5 +10123,6 @@ export {
   isCompositionalGoal, parseBelowMean,
   SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
+  thresholdSelector, parseThreshold,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
