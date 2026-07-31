@@ -332,6 +332,9 @@ async function routeThroughEgress(cand: string, egress: string): Promise<EgressR
 async function endpointForShape(
   v: Record<string, unknown>,
 ): Promise<{ endpoint: string; resolvedByVesselId?: string }> {
+  if (v.discoveredVia === 'peer') {
+    // Add logic to prefer routing through peerEndpoint
+  }
   if (v.discoveredVia === "peer" && typeof v.peerEndpoint === "string" && v.peerEndpoint) {
     return {
       endpoint: v.peerEndpoint,
