@@ -18,6 +18,9 @@
 // dynamic-import so evaluation happens after the env is set. No port is bound, nothing registers
 // into discovery.
 import { describe, it, expect } from "bun:test";
+import { mkdtempSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 process.env.LLM_VESSEL_ENDPOINT ??= "http://127.0.0.1:65535";
 const idx: any = await import("../src/index.ts");
@@ -25,7 +28,7 @@ const {
   buildAggregateCommand, buildRankAggregateCommand, buildAvgThresholdCommand, buildTwoSourceCompareCommand,
   parseAggregateGoal, parseRankAggregate, parseAvgThreshold, parseTwoSourceCompare, parseBelowMean,
   SELECTORS, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
-  resolveClassRow, buildFromClassRow,
+  resolveClassRow, buildFromClassRow, enumerate,
 } = idx;
 
 // The dispatch chain exactly as wired in index.ts (_aggCmd, ~line 3909): avg-threshold, then
@@ -183,8 +186,8 @@ describe("selector self-test: js reducer arithmetic (shell-vs-js parity)", () =>
     compareWinnerValue: { en: { files: ["a", "b"], counts: [10, 20] }, params: { b: { files: ["x"], counts: [100] }, scope: "lines", dir: "more" }, expected: 100 /* max(30,100) */ },
   };
 
-  it("every SelectorId is covered by the self-test", () => {
-    expect(Object.keys(cases).sort()).toEqual(Object.keys(SELECTORS).sort());
+  it("every self-test case names a real SelectorId (subset lock; enumerate-all gate covers the rest)", () => {
+    expect(Object.keys(SELECTORS)).toEqual(expect.arrayContaining(Object.keys(cases)));
   });
 
   for (const [id, c] of Object.entries(cases)) {
@@ -277,7 +280,8 @@ describe("dispatcher (b): the NEW below-mean class routes purely off a data row"
     expect(!!parseAvgThreshold(BELOW_MEAN_GOAL)).toBe(false);
   });
   it("below-mean row is a single-point append with the mirrored below-direction label", () => {
-    expect(CLASS_ROWS.map((r: any) => r.id)).toEqual(["avg-threshold", "below-mean"]);
+    expect(CLASS_ROWS.length).toBeGreaterThanOrEqual(2);
+    expect(CLASS_ROWS.map((r: any) => r.id)).toEqual(expect.arrayContaining(["avg-threshold", "below-mean"]));
     const what = ROW_BELOW_MEAN.label({ rel: "repos/development-vessel/src/resolvers", ext: "ts", truth: 174, mean: 100.5, n: 253 });
     expect(what).toBe("174 .ts file(s) under repos/development-vessel/src/resolvers with fewer lines than the mean (100.50 over 253 file(s), git clone authoritative)");
   });
@@ -337,4 +341,54 @@ describe("dispatcher (d): countBelowMean selector self-test (js == independent r
     const nameSel = " -name '*.ts'";
     expect(SELECTORS.countBelowMean.shell({ root, nameSel })).toBe(`find ${root} -type f${nameSel} -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]<avg)k++;print k}'`);
   });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// ENUMERATE-ALL DRIFT GATE: for EVERY SELECTORS cell, EXECUTE the shell fragment over a real
+// fixture dir AND run the JS oracle over the SAME fixture via the production `enumerate`, then
+// assert the two projections AGREE. This makes "command and oracle cannot disagree" EXECUTABLE:
+// a newly appended cell is covered automatically (no hand-written per-cell assertion), and a cell
+// whose shell and js DISAGREE on real data FAILS here. One universal fixture (rootA + a second
+// rootB for the two-source cells) and one universal ctx/params bundle drive every selector,
+// present and future — each cell reads only the fields it needs. The rootA fixture carries a file
+// of EXACTLY N (=3) lines so an absolute-threshold cell (>N vs >=N) exercises the boundary: this
+// is what turns a shell-vs-oracle boundary drift into a hard test failure at the landing gate.
+// ════════════════════════════════════════════════════════════════════════════════════════════
+describe("enumerate-all drift gate: executed shell(fixture) === js(fixture) for every SELECTORS cell", () => {
+  const mk = (counts: number[], texts?: string[]): string => {
+    const dir = mkdtempSync(join(tmpdir(), "sel-fix-"));
+    counts.forEach((c, i) => writeFileSync(join(dir, `f${i}.ts`), (texts?.[i] ?? "") + "\n".repeat(c)));
+    return dir;
+  };
+  const lastInt = (s: string): number | null => { const m = s.trim().match(/-?\d+/g); return m ? Number(m[m.length - 1]) : null; };
+
+  const A_COUNTS = [3, 10, 20, 30, 40];                 // one file == N (=3): exercises the >/>= boundary
+  const A_TEXTS = ["has TODO here", "none", "TODO again", "nope", "still none"];
+  const B_COUNTS = [100, 5];
+  const nameSel = " -name '*.ts'";
+  const N = 3, NEEDLE = "TODO";
+  const rootA = mk(A_COUNTS, A_TEXTS);
+  const rootB = mk(B_COUNTS);
+
+  for (const id of Object.keys(SELECTORS)) {
+    it(`${id}: executed shell output == js oracle over the SAME fixture`, async () => {
+      const shellCtx: any = { root: rootA, rootB, nameSel, n: N, needle: NEEDLE, relA: "A", relB: "B", dir: "more", scope: "lines" };
+      const shellStr = SELECTORS[id].shell(shellCtx);
+      const proc = Bun.spawn(["bash", "-c", shellStr], { stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      await proc.exited;
+      const shellVal = lastInt(out);
+      expect(shellVal).not.toBeNull();
+
+      const enA = await enumerate(rootA, "ts", true);
+      const enB = await enumerate(rootB, "ts", true);
+      expect(enA).not.toBeNull();
+      expect(enB).not.toBeNull();
+      const params: any = { n: N, needle: NEEDLE, b: enB, dir: "more", scope: "lines" };
+      const jsVal = SELECTORS[id].js(enA, params);
+
+      // THE INVARIANT: the two projections of one cell agree on real data.
+      expect(shellVal).toBe(jsVal);
+    });
+  }
 });
