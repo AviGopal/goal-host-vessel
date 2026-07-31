@@ -470,3 +470,37 @@ describe("inline selector path (single-point class authoring)", () => {
     expect(shellVal).not.toBe(jsVal);                    // DRIFT DETECTED — the gate would refuse this
   });
 });
+
+// ── MINIMAL-ROW DEFAULTS: a drafter-authored inline ClassRow that OMITS every ancillary field
+// (only { id, owns, selector }) must still verify correctly — emitVerdict fills scrapeWidth,
+// scrapeKeywords, verifiedVerb, and label from defaults. This is what shrinks the authoring
+// surface: the smaller the required literal, the more reliably the drafter lands it single-point.
+describe("minimal inline ClassRow (only id/owns/selector) verifies via defaults", () => {
+  const minimalRow: any = {
+    id: "above-count",
+    owns: (g: string) => (/more than \d+ lines/i.test(g) ? { rel: "repos/x/src", ext: "ts", n: 100 } : null),
+    selector: { shell: (ctx: any) => `echo ${ctx.n}`, js: (en: any, p: any) => en.counts.filter((c: number) => c > p.n).length },
+    // NO scope, pathArity, extPolicy, scrapeWidth, scrapeKeywords, verifiedVerb, label
+  };
+  const ctx = { rel: "repos/x/src", ext: "ts", truth: 7, n: 100 };
+
+  it("emitVerdict reached=true with the DEFAULT label + DEFAULT verified verb", () => {
+    const v = emitVerdict(minimalRow, ctx, "- shellResult: 7");
+    expect(v).not.toBeNull();
+    expect(v.reached).toBe(true);
+    // default label: "<truth> .<ext> file(s) under <rel> (threshold <n>) (git clone authoritative)"
+    expect(v.reason).toContain("7 .ts file(s) under repos/x/src (threshold 100) (git clone authoritative)");
+    expect(v.reason).toContain("a threaded deterministic command output reports the same value");
+    expect(v.reason).toContain("deterministic:verified-above-count");
+  });
+  it("emitVerdict mismatch uses default scrapeWidth (9) to scrape the wrong value", () => {
+    const v = emitVerdict(minimalRow, ctx, "- shellResult: 8");
+    expect(v).not.toBeNull();
+    expect(v.reached).toBe(false);
+    expect(v.reason).toContain("above-count-mismatch");
+    expect(v.reason).toContain("reports 8");
+  });
+  it("selectorOf materializes the minimal row's INLINE cell (served identically)", () => {
+    expect(selectorOf(minimalRow)).toBe(minimalRow.selector);
+  });
+});

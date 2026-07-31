@@ -1200,8 +1200,6 @@ interface LabelCtx extends OwnMatch { truth: number; mean?: number; n?: number; 
 interface ClassRow {
   id: string;                          // verdict tag: deterministic:verified-<id> / <id>-mismatch
   owns(goal: string): OwnMatch | null; // ownership + parse (delegates to the legacy parseX)
-  pathArity: 1 | 2;                    // 1 root (aggregate/rank/threshold) or 2 (two-source compare)
-  scope: "files" | "lines";            // what the counts array measures / what agg() reduces
   // Which cell projects command + oracle. A SelectorId names an entry in the frozen SELECTORS
   // table; a SelectorDef INLINES the cell into the row literal itself. The inline form is what
   // makes adding a genuinely-NEW compositional class a SINGLE-POINT append: one self-contained
@@ -1210,12 +1208,28 @@ interface ClassRow {
   // colocates shell+js exactly like a table cell, so it CANNOT drift — and the drift gate executes
   // it shell-vs-js exactly like a named cell (the gate iterates CLASS_ROWS' inline selectors too).
   selector: SelectorId | SelectorDef;
-  extPolicy: "parse" | "none";         // whether an extension filter is honored
-  scrapeWidth: 6 | 8 | 9;              // digest number-scrape width: \d{1,N}
-  scrapeKeywords: RegExp;              // NON-global keyword filter for count-context digest lines
-  verifiedVerb: string;                // trailing clause on a verified reason string
-  label(p: LabelCtx): string;          // the "what" clause (independently computed ...)
+  // ── EVERYTHING BELOW IS OPTIONAL (defaults applied at read time). A drafter-authored inline
+  // class needs only { id, owns, selector } (+ scope when it isn't line-counting) — the ancillary
+  // presentation fields fall back to sensible defaults (ROW_DEFAULT_* / defaultRowLabel), so the
+  // authored literal is SMALL. The two built-in rows still set them explicitly to preserve their
+  // byte-identical legacy verdict strings (golden-locked). pathArity omitted ⇒ single-root;
+  // scope omitted ⇒ "lines" (selectors already `?? "lines"`); extPolicy is vestigial in the hot
+  // path (the ext filter comes from owns()/parsePathsAndExt).
+  pathArity?: 1 | 2;                   // 1 root (default) or 2 (two-source compare)
+  scope?: "files" | "lines";           // what the counts array measures (default "lines")
+  extPolicy?: "parse" | "none";        // whether an extension filter is honored (unused in hot path)
+  scrapeWidth?: 6 | 8 | 9;             // digest number-scrape width \d{1,N} (default 9)
+  scrapeKeywords?: RegExp;             // NON-global keyword filter (default ROW_DEFAULT_SCRAPE_KEYWORDS)
+  verifiedVerb?: string;               // trailing clause on a verified reason (default ROW_DEFAULT_VERIFIED_VERB)
+  label?: (p: LabelCtx) => string;     // the "what" clause (default defaultRowLabel)
 }
+
+// Defaults an omitted ClassRow presentation field falls back to. Kept identical to what the
+// built-in rows use so a defaulted inline row reads consistently with the hand-written ones.
+const ROW_DEFAULT_SCRAPE_KEYWORDS = /\bfiles?\b|\bhow many\b|there (?:are|is)|^\d+$/i;
+const ROW_DEFAULT_VERIFIED_VERB = "a threaded deterministic command output reports the same value";
+const defaultRowLabel = (p: LabelCtx): string =>
+  `${p.truth} ${p.ext ? "." + p.ext + " " : ""}file(s) under ${p.rel}${p.n != null ? ` (threshold ${p.n})` : ""} (git clone authoritative)`;
 
 // ── SELECTORS: the ONE table. Each entry colocates the shell fragment and the JS reducer as a
 // single object literal so command and oracle are two projections of the same cell. FROZEN.
@@ -1337,15 +1351,20 @@ async function enumerate(root: string, ext: string | null, withTexts = false): P
 // and the SINGLE three-verdict shape (reached / mismatch / null), filling the reason from
 // row.label + row.verifiedVerb + row.id. Byte-identical to each legacy verify*Reach tail.
 function emitVerdict(row: ClassRow, ctx: LabelCtx, dig: string): GoalReachVerdict | null {
-  const widthRe = new RegExp(`\\b\\d{1,${row.scrapeWidth}}\\b`, "g");
+  // Defaults for omitted (optional) presentation fields — a defaulted inline row verifies
+  // identically to an explicit one; the built-in rows set these so their strings are unchanged.
+  const scrapeWidth = row.scrapeWidth ?? 9;
+  const scrapeKeywords = row.scrapeKeywords ?? ROW_DEFAULT_SCRAPE_KEYWORDS;
+  const verifiedVerb = row.verifiedVerb ?? ROW_DEFAULT_VERIFIED_VERB;
+  const widthRe = new RegExp(`\\b\\d{1,${scrapeWidth}}\\b`, "g");
   const emitted = [...new Set(dig.split("\n").map((l) => l.trim()).filter((t) => {
     if (t.length === 0 || t.length > 160) return false;
     if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
-    return /^-\s+shellResult:/.test(t) || row.scrapeKeywords.test(t);
+    return /^-\s+shellResult:/.test(t) || scrapeKeywords.test(t);
   }).flatMap((l) => (l.match(widthRe) ?? []).map(Number)))];
-  const what = row.label(ctx);
+  const what = (row.label ?? defaultRowLabel)(ctx);
   if (emitted.includes(ctx.truth)) {
-    return { reached: true, reason: `deterministic:verified-${row.id} — independently computed ${what}; ${row.verifiedVerb}`, deterministic: true, completion_shapes: [] };
+    return { reached: true, reason: `deterministic:verified-${row.id} — independently computed ${what}; ${verifiedVerb}`, deterministic: true, completion_shapes: [] };
   }
   if (emitted.length > 0) {
     return { reached: false, reason: `deterministic:${row.id}-mismatch — authoritative value is ${what}, but the produced command output reports ${emitted.join("/")}; a wrong value is not a reach`, deterministic: true, completion_shapes: [] };
