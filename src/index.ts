@@ -10160,6 +10160,8 @@ await discoveryLoop.start();
 // import the pure reach-route functions + the route-as-data scaffold. Export-only, no runtime
 // behavior change (these names are unchanged; call sites inside this module are unaffected).
 export {
+  verifyDeterministicCompute,
+  dcNumericCandidates,
   parseAggregateGoal, buildAggregateCommand, verifyAggregateReach,
   parseRankAggregate, buildRankAggregateCommand, verifyRankAggregateReach,
   parseAvgThreshold, buildAvgThresholdCommand, verifyAvgThresholdReach,
