@@ -16,17 +16,23 @@ export function makeProducerPickHelpers(normActivityId: (id: string) => string) 
     targetShapes?: Set<string>,
   ): number => {
     if (!isHollowScaffold(c.id)) return 0;
-    if (
+    const coversTarget =
       targetShapes !== undefined &&
       targetShapes.size > 0 &&
       Array.isArray(c.outputShapes) &&
-      c.outputShapes.some((s) => targetShapes.has(s)) &&
-      typeof c.sampledScore === "number" &&
-      c.sampledScore > 0.5
-    ) {
-      return -1;
-    }
-    return 1;
+      c.outputShapes.some((s) => targetShapes.has(s));
+    // A target-covering learned scaffold IS a candidate pathway for THIS goal:
+    //   proven reuse (sampledScore > 0.5) -> rank -1, sorts ahead of fresh derivation;
+    //   cold / unproven / no score yet    -> rank 0, FAIR competition with genuine
+    //     producers (stable sort keeps discovery-ranked genuine producers ahead)
+    //     instead of rank-1 relegation, which the single-pick SKIPS outright for a
+    //     bridgeable target -> a cold composite could never be SELECTED, so never earned
+    //     a posterior, so reuse never bootstrapped. Relevance + feasibility are enforced
+    //     SEPARATELY by feasibleProducer (isIrrelevantLearnedComposite + inputsSatisfied);
+    //     scaffoldRank only ORDERS. Non-target-covering scaffolds stay rank 1 (genuine-first).
+    if (!coversTarget) return 1;
+    if (typeof c.sampledScore === "number" && c.sampledScore > 0.5) return -1;
+    return 0;
   };
   return { isHollowScaffold, scaffoldRank };
 }

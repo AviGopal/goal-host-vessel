@@ -2684,6 +2684,31 @@ async function fetchPeerRegistryShapes(): Promise<string[]> {
   peerShapesCache = { shapes: [...out], fetchedAt: now };
   return peerShapesCache.shapes;
 }
+let learnedDeliverableCache: { shapes: string[]; fetchedAt: number } | null = null;
+// B2 companion caller: fetch the curated set of learned-composite DELIVERABLE shapes
+// (terminal = produced-minus-consumed within a composite, evidence-gated, hygiene- and
+// frequency-filtered, capped) from activity-api. Fail-open: any error yields the cached
+// set or [] so fetchKnownShapes falls back to exactly the registry+peer vocabulary.
+async function fetchLearnedDeliverableShapes(): Promise<string[]> {
+  const now = Date.now();
+  if (learnedDeliverableCache && now - learnedDeliverableCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
+    return learnedDeliverableCache.shapes;
+  }
+  try {
+    const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/deliverable-shapes`, {
+      method: "GET",
+      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return learnedDeliverableCache?.shapes ?? [];
+    const j: any = await r.json();
+    const shapes = (Array.isArray(j?.shapes) ? j.shapes : []).map((x: unknown) => String(x)).filter(Boolean);
+    learnedDeliverableCache = { shapes, fetchedAt: now };
+    return shapes;
+  } catch {
+    return learnedDeliverableCache?.shapes ?? [];
+  }
+}
 async function fetchKnownShapes(): Promise<string[]> {
   const now = Date.now();
   if (knownShapesCache && now - knownShapesCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
@@ -2700,7 +2725,16 @@ async function fetchKnownShapes(): Promise<string[]> {
     const local = (Array.isArray(j?.shapes) ? j.shapes : [])
       .map((s: unknown) => String(s))
       .filter(Boolean);
-    const shapes = [...new Set([...local, ...(await fetchPeerRegistryShapes())])];
+    const shapes = [...new Set([
+      ...local,
+      ...(await fetchPeerRegistryShapes()),
+      // B2 (2026-07-31): learned-composite DELIVERABLE shapes, terminal+evidence+hygiene
+      // filtered server-side by activity-api. Additive + fail-open. Without this a shape
+      // produced ONLY by learned composites (e.g. conceptDescription) is never in the
+      // inference vocabulary, so goal->target inference can never AIM a goal at it and the
+      // learned pathway is unreachable (the reuse ceiling stays dark).
+      ...(await fetchLearnedDeliverableShapes()),
+    ])];
     if (shapes.length > 0) knownShapesCache = { shapes, fetchedAt: now };
     return shapes;
   } catch {
@@ -4935,6 +4969,44 @@ If one of those sibling shapes is the action that would create what the goal ask
             .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
         }
       } catch { /* recommend failed too */ }
+    }
+
+    // (a2) TARGET-PRODUCER MERGE (reuse hop, 2026-07-31). Backward discovery above
+    // surfaces CONSUMERS of the current pool, Thompson-ranked and truncated to the top
+    // 50; a cold-start learned PRODUCER of a still-missing target (e.g. conceptDescription,
+    // produced only by learned composites) is truncated out of that top-50 and never
+    // enters `candidates`, so its scaffoldRank never matters and the walk falls to the
+    // universal-tool floor instead of the learned-pathway ceiling. When no current
+    // candidate already advances a missing target, explicitly discover PRODUCERS of the
+    // missing targets (forward) and union them in. Every existing guard still gates them —
+    // isIrrelevantLearnedComposite + inputsSatisfied (feasibleProducer), scaffoldRank, and
+    // the step-2 `!bridgeableTarget` clause — so this admits a learned scaffold ONLY for a
+    // target with no live resolver (the intended ceiling-reuse case); a bridgeable target
+    // still routes to bridge-authoring. Best-effort: any error leaves `candidates` as-is.
+    if (target.size > 0) {
+      const missingT = [...target].filter((s) => !producedShapes.has(s));
+      const haveTargetProducer = missingT.length > 0 &&
+        candidates.some((c) => c.outputShapes.some((s) => missingT.includes(s)));
+      if (missingT.length > 0 && !haveTargetProducer) {
+        try {
+          const fr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ required_shapes: missingT, mode: "forward", limit: 50 }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (fr.ok) {
+            const fj: any = await fr.json();
+            const frows = fj?.activities ?? fj?.matches ?? fj?.body?.activities ?? fj?.results ?? [];
+            const seen = new Set(candidates.map((c) => normActivityId(c.id)));
+            for (const c of (Array.isArray(frows) ? frows : []).map(readCandidateShapes)) {
+              if (c && !seen.has(normActivityId(c.id)) && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id)) {
+                candidates.push(c); seen.add(normActivityId(c.id));
+              }
+            }
+          }
+        } catch { /* forward target-producer merge is best-effort */ }
+      }
     }
 
     // (b) SELECT BEST — goal-gap weighted. With a target, prefer candidates that
