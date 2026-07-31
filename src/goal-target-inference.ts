@@ -98,7 +98,7 @@ export async function inferGoalTargetShapes(
 
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const model = opts.model ?? "claude-haiku-4-5-20251001";
+  const model = opts.model ?? "auto";
   // shellResult is the UNIVERSAL executor (real bash). Steer imperative / system-
   // inspection goals to it — but ONLY mention it when it is actually producible.
   const shellRule = known.has("shellResult")
