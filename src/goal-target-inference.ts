@@ -290,7 +290,7 @@ export async function inferGoalTargetDecision(
 
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const model = opts.model ?? "claude-haiku-4-5-20251001";
+  const model = opts.model ?? "auto";
   const shellRule = known.has("shellResult")
     ? `\n\nSPECIAL RULE — the "shellResult" shape is the UNIVERSAL EXECUTOR: producing it RUNS a real shell command. If the goal is fundamentally about RUNNING a command or INSPECTING the repo / filesystem / running system — counting, listing, "how many", "report the current", checking, or running some command X — and NO more-specific analysis / write / data-processing shape in the KNOWN list fits, choose "shellResult". Do NOT choose "shellResult" for analysis / review / note-writing / data-processing / code-edit goals that have a specific matching shape (e.g. problem_detection, code_quality, a write shape) — those are not shell jobs.`
     : "";
@@ -484,7 +484,7 @@ export async function inferDerivationSplit(
 
   const known = new Set(inferredTargets);
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const model = opts.model ?? "claude-haiku-4-5-20251001";
+  const model = opts.model ?? "auto";
   const prompt = `A substrate GOAL has been mapped to these output impulse shapes: ${JSON.stringify(inferredTargets)}.
 
 GOAL: ${goal}

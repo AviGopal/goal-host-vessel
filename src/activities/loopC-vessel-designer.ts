@@ -49,7 +49,7 @@ const DEFAULT_SCENARIOS_DIR =
   "/workspace/validation/failure-modes/vessel-scenarios";
 const DEFAULT_LLM_ENDPOINT =
   process.env["LLM_ENDPOINT"] ?? "http://llm-resolver-vessel/v2/impulses/resolve";
-const DEFAULT_LLM_MODEL = process.env["LLM_MODEL"] ?? "gpt-4o";
+const DEFAULT_LLM_MODEL = process.env["LLM_MODEL"] ?? "auto";
 const SCAFFOLD_ENDPOINT =
   process.env["SCAFFOLD_ENDPOINT"] ??
   "http://discovery-vessel/v2/impulses/resolve";
