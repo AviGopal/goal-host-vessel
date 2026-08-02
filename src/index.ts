@@ -7098,7 +7098,7 @@ async function runGoalWithRecovery(
                     land: true,
                     gap: {
                       id: gapId,
-                      summary: goal,
+                      summary: goal.replace(/^(?:Close substrate gap [-\w:.!]+:\s*)+/, '').trim() || goal,
                       category: "edit_intent_route",
                       classification_metadata: { edit_site: editSite },
                     },
