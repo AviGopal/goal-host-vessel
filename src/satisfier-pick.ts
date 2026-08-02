@@ -29,7 +29,7 @@ export function pickSatisfierProducer(
   let best: SatisfierProducer | undefined;
   let bestScore = -Infinity;
   for (const p of pool) {
-    const score = typeof p["priority"] === "number" ? (p["priority"] as number) : 0;
+    const isRemote = String(p["protocol"] ?? "") === "libp2p"; const score = (typeof p["priority"] === "number" ? (p["priority"] as number) : 0) * 2 + (isRemote ? 0 : 1);
     if (score > bestScore) {
       bestScore = score;
       best = p;
