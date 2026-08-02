@@ -3095,7 +3095,7 @@ async function creditReachedTemplate(activityId: string, reason: string): Promis
     if (!res.ok) console.warn(`[goal-host-vessel] alpha-credit REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; credit not applied`);
     return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: 0 };
   } catch { /* non-fatal, symmetric with penaliseHollowTemplate */ }
-  return { templateId: activityId, dAlpha: 2, dBeta: 0 };
+  return { templateId: activityId, dAlpha: 0, dBeta: 0 };
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
 // goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
