@@ -7064,7 +7064,7 @@ async function runGoalWithRecovery(
             // (feature_compose AND the patch_with_tools escalations) drafts against
             // verbatim current file text, not a schematic reconstruction.
             const spec = specBase + await verbatimExcerptBlock(editFile, editLine, goal);
-            const gapId = `route-edit-${goalHashOf(goal)}`;
+            const gapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
             // Resolve the feature_compose producer via DISCOVERY first (impulse-contract
             // compliance: no hardcoded vessel endpoint). Same inline vesselCapability
             // idiom as endpointForShape / the proxy resolver above. dev-vessel does not
