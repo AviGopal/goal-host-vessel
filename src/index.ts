@@ -2966,12 +2966,13 @@ async function mintGovernorAllows(shape: string): Promise<boolean> {
 }
 async function penaliseHollowTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
   try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
+    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ activity_id: activityId, direction: "negative", intensity: 2, reason: `hollow completion (goal not reached): ${reason}`.slice(0, 200) }),
       signal: AbortSignal.timeout(15_000),
     });
+    if (!res.ok) console.warn(`[goal-host-vessel] beta-penalty REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; penalty not applied`);
   } catch { /* non-fatal */ }
   // REACH-GATE FAILURE-CLASS CONCEPT (2026-07-04): mirror each hollow verdict to
   // concept-db at CLASS grain — stable content only (no goal text, execution ids,
