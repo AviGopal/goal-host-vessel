@@ -3086,12 +3086,14 @@ async function producedShapesConsumable(shapes: string[]): Promise<boolean> {
 // Only ever called behind a substance gate (deterministic flag OR producedShapesConsumable).
 async function creditReachedTemplate(activityId: string, reason: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
   try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
+    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ activity_id: activityId, direction: "positive", intensity: 2, reason: `substance-honest reach (landed/consumable): ${reason}`.slice(0, 200) }),
       signal: AbortSignal.timeout(15_000),
     });
+    if (!res.ok) console.warn(`[goal-host-vessel] alpha-credit REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; credit not applied`);
+    return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: 0 };
   } catch { /* non-fatal, symmetric with penaliseHollowTemplate */ }
   return { templateId: activityId, dAlpha: 2, dBeta: 0 };
 }
