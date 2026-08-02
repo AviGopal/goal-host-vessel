@@ -6752,7 +6752,7 @@ async function runGoalWithRecovery(
             "",
             `GOAL: ${goalForRouting}`,
           ].join("\n") + await verbatimExcerptBlock(earlyEditFile, earlyEditLine, goalForRouting);
-          const earlyGapId = `route-edit-${goalHashOf(goal)}`;
+          const earlyGapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
           let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
           try {
             const earlyDr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
