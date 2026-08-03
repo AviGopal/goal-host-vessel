@@ -5913,7 +5913,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const UNRESOLVED_FS_EFFECT = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
         const editEffectReach = (verdict.completion_shapes ?? []).some((s) => UNRESOLVED_FS_EFFECT.has(String(s)))
           || [...producedShapes].some((s) => UNRESOLVED_FS_EFFECT.has(String(s)));
-        if (verdict.deterministic === true || (consumedInChain.size > 0 && !editEffectReach)) {
+        if (verdict.deterministic === true || (!editEffectReach && (consumedInChain.size > 0 || (commandEvidence ?? "").trim().length > 0))) {
           const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
           opts.learningSink?.alphaBetaDelta.push(_abCredit);
           tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
