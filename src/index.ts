@@ -5917,7 +5917,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
           opts.learningSink?.alphaBetaDelta.push(_abCredit);
           tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
-        } else if (consumedInChain.size === 0 && verdict.deterministic === false) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); } else if (consumedInChain.size > 0 && editEffectReach) {
+        } else if (consumedInChain.size === 0) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); } else if (consumedInChain.size > 0 && editEffectReach) {
           tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit for ${lastPick} — edit-effect reach via in-chain edge only (no landed sha); fileEditResult/fileWriteResult is advertised-not-applied, not substance`);
         }
         // ANSWER-DELIVERY (decision-transparency, 2026-07-07): a genuinely-reached
