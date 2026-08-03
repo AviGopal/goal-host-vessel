@@ -1066,7 +1066,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   // correct) lines/contains answer as a "mismatch". verifyAggregateReach owns those ops.
   if (/\blines?\b|\bwords?\b|\bcharacters?\b|\bbytes?\b/i.test(goal)) return null;
   if (/\b(contain|containing|match(?:es|ing)?|with the (?:text|string|word|pattern)|includ(?:e|es|ing))\b/i.test(goal)) return null;
-  const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
+  const dirM = goal.match(/(repos|vessels)\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
   if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory -> not a file-count
