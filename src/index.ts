@@ -2234,7 +2234,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   if (walkEvidence) {
     const stepLines = walkEvidence.walkLog.filter((l) => /\bstep \d+ ran /.test(l));
     const allStepsHollow = stepLines.length > 0 && stepLines.every((l) => /\bnew_shapes=0\b/.test(l));
-    if (walkEvidence.gapsFiled > 0 || allStepsHollow) {
+    if ((walkEvidence.gapsFiled > 0 && producedShapes.length <= 2) || allStepsHollow) {
       return {
         reached: false,
         reason: `deterministic:hollow_walklog_capped — ${walkEvidence.gapsFiled > 0 ? `the walk filed ${walkEvidence.gapsFiled} capability gap(s) mid-execution` : `all ${stepLines.length} logged walk step(s) produced 0 new shapes`}; LLM judge SKIPPED (it cannot out-testify the walk's own log)`,
