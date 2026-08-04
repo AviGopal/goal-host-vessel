@@ -6168,7 +6168,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
 
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
-    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...producedShapes]);
+    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced]);
     {
       const _wid = opts.variables.dispatch_id;
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
