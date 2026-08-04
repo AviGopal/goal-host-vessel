@@ -2616,7 +2616,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // wrapper's SUBSTANTIVE answer and let the reach gate (verifyGoalReached — rejects degenerate/
   // echo/empty/error/placeholder) be the honesty backstop. Hard-fail ONLY when the loop produced
   // NOTHING usable: no client-side grounding AND no answer text AND no observations.
-  if (groundedOk === 0 && !finalText.trim() && observations.length === 0) return null;
+  if (groundedOk === 0 && !finalText.trim() && observations.length === 0) { console.log(`[goal-host-vessel] floor: exit=empty_loop goalHash=${goalHashOf(goal)}`); return null; }
   if (!finalText) { finalText = observations.join("\n\n").slice(0, 6000); console.log(`[goal-host-vessel] universal ReAct fallback: cap/deadline hit before a final answer — judging on ${groundedOk} grounded tool output(s)`); }
   const produced = [...new Set([...targetShapes, ...calledWriteShapes])];
   if (produced.length === 0) produced.push("universal_fallback_result");
