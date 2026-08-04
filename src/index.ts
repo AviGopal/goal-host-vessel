@@ -2600,7 +2600,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
   const loop = await runGroundedToolLoop(prompt, tools, writeShapes);
-  if (!loop) return null;
+  if (!loop) { console.log(`[goal-host-vessel] floor: exit=no_dispatch_url goalHash=${goalHashOf(goal)}`); return null; }
   const { groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence } = loop;
   let finalText = loop.finalText;
   // GROUNDING GATE — a reach must rest on real gathered DATA (read/shell), never on a
