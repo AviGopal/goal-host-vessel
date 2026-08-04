@@ -2302,7 +2302,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 function recordDeterministicLabel(goal: string, executionId: string | undefined, activityId: string | undefined, verdict: GoalReachVerdict): void {
   if (!executionId) return;
   const det = verdict.deterministic === true || /^deterministic:/.test(verdict.reason ?? "");
-  if (!det) return;
+  // if (!det) return;
   fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
