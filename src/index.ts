@@ -2584,6 +2584,7 @@ async function runGroundedToolLoop(
   return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
 }
 async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
+  console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
   // the entire ReAct parity FLOOR because LLM_VESSEL_ENDPOINT is unset in the running container —
   // yet the grounded loop resolves llm_completion_dispatch via DISCOVERY (ufResolveUrl), not that
