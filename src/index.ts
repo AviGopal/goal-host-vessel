@@ -2306,7 +2306,7 @@ function recordDeterministicLabel(goal: string, executionId: string | undefined,
   fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-    body: JSON.stringify({ pointer: { type: "goal_verification_label_write", goal: goal.slice(0, 600), execution_id: executionId, activity_id: activityId ?? "unattributed", verdict: verdict.reached === true ? "achieved" : "not_achieved", confidence: 0.98, labeler: det ? "deterministic" : "automated", notes: (verdict.reason ?? "").slice(0, 600) } }),
+    body: JSON.stringify({ pointer: { type: "goal_verification_label_write", goal: goal.slice(0, 600), execution_id: executionId, activity_id: activityId ?? "unattributed", verdict: verdict.reached === true ? "achieved" : "not_achieved", confidence: det ? 0.98 : 0.6, labeler: det ? "deterministic" : "automated", notes: (verdict.reason ?? "").slice(0, 600) } }),
     signal: AbortSignal.timeout(10_000),
   }).catch((e) => console.warn(`[oracle-label] deterministic label write failed (non-fatal): ${(e as Error).message}`));
 }
