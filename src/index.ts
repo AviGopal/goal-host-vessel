@@ -3123,7 +3123,7 @@ function tierFromChain(chainIds: string[]): WalkTier {
   if (chainIds.some((id) => id.includes("learned-") || id.includes("composed-cap"))) return "learned_pathway";
   return tierOf(chainIds[chainIds.length - 1]);
 }
-async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation"): Promise<void> {
+async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = []): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
