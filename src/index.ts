@@ -3133,6 +3133,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         goal_text: goalText,
         goal_category: "meta",
         path_activities: pathActivities,
+        endpoint_output_shapes: producedOutputShapes,
         success: reached,
         duration_ms: Math.round(durationMs) || 0,
         cost_usd: costUsd || 0,
