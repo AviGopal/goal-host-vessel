@@ -2624,7 +2624,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
   const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
-  if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
+  console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`); if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
   // Reach when the reach gate passes on a SUBSTANTIVE answer — grounded either by CLIENT-executed
   // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
   if (verdict?.reached && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
