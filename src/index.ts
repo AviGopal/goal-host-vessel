@@ -2545,7 +2545,7 @@ async function runGroundedToolLoop(
     let text = ""; let toolCalls: any[] = [];
     try {
       const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(ITER_TIMEOUT_MS) });
-      if (!r.ok) break;
+      if (!r.ok) { console.log(`[goal-host-vessel] floor: dispatch FAILED http=${r.status} iter=${iter} — loop aborts with no observations`); break; }
       const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
     } catch { break; }
     if (Array.isArray(toolCalls) && toolCalls.length > 0) {
