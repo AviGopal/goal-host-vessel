@@ -3182,10 +3182,27 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
       deterministic_placeholder: "execution output was an unfilled placeholder passed through as content; bind slots before emitting",
       llm_judged_hollow: "the reach judge found the produced output does not substantively fulfill the goal intent; hollow wrappers that only emit shape names get beta-penalised",
     };
-    void fetch(`${CONCEPT_DB_ENDPOINT}/concepts`, {
+    // ROUTE THROUGH DISCOVERY, never a pinned port. CONCEPT_DB_ENDPOINT defaults to
+    // http://127.0.0.1:8260, and concept-db is MASKED on this spoke because it lives on the
+    // hub where its data lives (law 11) — nothing serves that port here. Measured 2026-08-05:
+    // 26 "[reach-gate-lesson] concept mirror failed: Unable to connect" in two hours, and not
+    // one reach-gate lesson has ever been recorded. Per the project's teaching law, concept-db
+    // is the ONLY read-at-use-time lesson channel, so the system has been unable to record
+    // anything it learns about its own hollow completions — it can be taught, but cannot learn.
+    //
+    // development-vessel already solved this and is the pattern to copy, not re-invent
+    // (feature-compose.ts ~:1710): POST the concept_create_write SHAPE to
+    // DISCOVERY_ENDPOINT/resolve and let discovery federate to whichever substrate actually
+    // hosts concept-db. That route works today — its sibling read lands 6-7 lessons into every
+    // compose (`[compose-lessons] source=concept-db n=7`) while this write path was failing
+    // against a masked port in the same container. Same wire, same auth, one working route.
+    void fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({
+        pointer: {
+          type: "concept_create_write",
+          conceptData: {
         source_type: "reach_gate_lesson",
         shape: "reach_gate_lesson",
         // class_token: coarse goal class (first verb + first object noun) so hollow
@@ -3197,6 +3214,8 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
           return gw && gw[1] ? ` class_token=${gw[1]}${gw[2] ? "-" + gw[2] : ""}` : "";
         })()}`,
         summary: `reach-gate lesson: ${cls}`,
+          },
+        },
       }),
       signal: AbortSignal.timeout(10_000),
     }).then((r) => {
