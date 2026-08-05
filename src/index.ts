@@ -2711,7 +2711,15 @@ async function runGroundedToolLoop(
           observations.push(`TOOL ${nm} ERROR: ${res.error}`);
         }
       }
-      if (!progressed) break;                    // nothing new executed (all dup/unauthorized/failed) — stop spinning
+      // A turn where EVERY call failed is the one turn whose error observations the
+   // model never gets to see: they are appended just above, then this break exits
+   // before the next dispatch can show them. Give it exactly ONE more turn so it
+   // can read those errors and change approach — that is the reason-act-observe
+   // step this loop otherwise skips. Bounded deliberately: a SECOND consecutive
+   // dead turn still breaks, so a permanently broken tool cannot burn the whole
+   // MAX_ITERS budget, which is what the original unconditional break protected
+   // against. `iter` is the existing loop counter; no new state is needed.
+   if (!progressed) { if (iter > 0) break; continue; }
       continue;                                  // feed real observations into the next turn
     }
     // No tool_calls => the model returned a (hopefully grounded) final answer.
