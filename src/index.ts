@@ -1057,6 +1057,11 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
  * (deterministic:verified-file-count); never false-rejects (unreadable/dir-mismatch/absent-number all
  * fail open -> LLM). Non-recursive by construction, matching `ls DIR/*.ext` ground truth.
  */
+// Shared by the file-count ORACLE (verifyCountFilesReach) and the file-count COMMAND
+// BUILDER (buildAggregateCommand). Only an explicit immediate-directory phrasing narrows a
+// file count to depth 1; everything else means "under this directory", recursively.
+const TOP_LEVEL_FILE_SCOPE = /\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:in|under|inside)|non[-\s]?recursive|not\s+recursive|shallow|at\s+the\s+root\s+of)\b/i;
+
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
   if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
@@ -1072,16 +1077,39 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory -> not a file-count
   const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const ext = extM ? extM[1].toLowerCase() : null;         // null -> count all files
+  // RECURSIVE unless the goal explicitly scopes to the immediate directory. "the .ts files
+  // in repos/<v>/src" means every .ts under src, not just the ones that happen to sit at its
+  // root — src has subdirectories, and the sibling aggregate ops (total_lines / avg_lines /
+  // grep_files in buildAggregateCommand) have always been recursive, so a top-level file
+  // count was inconsistent with its own family. Sharing this rule with the command builder is
+  // fine and intended for a deterministic filesystem question; what was NOT fine is that the
+  // shared rule answered a DIFFERENT question than the goal asked. Observed live: "count the
+  // TypeScript files in repos/goal-host-vessel/src" answered 10 (top-level) when the true
+  // answer is 17, and because generator and grader shared -maxdepth 1 they agreed "by
+  // construction", the walk logged "independently counted", and the arm was ALPHA-CREDITED —
+  // a wrong answer promoted to positive learning signal.
+  const topLevelOnly = TOP_LEVEL_FILE_SCOPE.test(goal);
   const countAt = async (root: string): Promise<number | null> => {
-    try {
-      const entries = await readdir(root, { withFileTypes: true });
+    const matches = (name: string) => !ext || name.toLowerCase().endsWith("." + ext);
+    const walk = async (dir: string): Promise<number> => {
+      const entries = await readdir(dir, { withFileTypes: true });
       let n = 0;
       for (const e of entries) {
+        if (e.isDirectory()) {
+          // Prune exactly what the emitted find prunes, or the two disagree on any tree
+          // carrying dependencies or git internals.
+          if (topLevelOnly || e.name === "node_modules" || e.name === ".git") continue;
+          n += await walk(`${dir}/${e.name}`);
+          continue;
+        }
         if (!e.isFile()) continue;
-        if (ext && !e.name.toLowerCase().endsWith("." + ext)) continue;
+        if (!matches(e.name)) continue;
         n++;
       }
       return n;
+    };
+    try {
+      return await walk(root);
     } catch { return null; }                                // root missing / not a dir
   };
   // The goal names a REPOS-relative path, so the GIT CLONE (/workspace/git/super-repo) is the
@@ -1175,7 +1203,13 @@ function buildAggregateCommand(goal: string): string | null {
   if (/\.\w{1,6}$/.test(rel)) return null;                 // a FILE path, not a directory
   const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const nameSel = extM ? ` -name '*.${extM[1].toLowerCase()}'` : "";
-  return `find /workspace/git/super-repo/${rel} -maxdepth 1 -type f${nameSel} | wc -l`;
+  // Recursive by default, matching verifyCountFilesReach's countAt (same TOP_LEVEL_FILE_SCOPE
+  // rule, same node_modules/.git pruning) and the recursive aggregate ops above. -maxdepth 1
+  // only when the goal explicitly asks for the immediate directory.
+  const root = `/workspace/git/super-repo/${rel}`;
+  return TOP_LEVEL_FILE_SCOPE.test(goal)
+    ? `find ${root} -maxdepth 1 -type f${nameSel} | wc -l`
+    : `find ${root} \\( -name node_modules -o -name .git \\) -prune -o -type f${nameSel} -print | wc -l`;
 }
 
 // ── DETERMINISTIC AGGREGATE FAMILY (total-lines / avg-lines / grep-files) ─────────────
@@ -4356,7 +4390,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     const _aggCmd = shape === "shellResult" ? (buildFromClassRow(goal) ?? buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
-      tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, -maxdepth 1) \u2014 matches verifyCountFilesReach truth by construction; SKIPPED reuse-cache + pointer_arg synthesis`);
+      // Say which SCOPE was chosen rather than asserting agreement "by construction". The
+      // oracle and this command deliberately share one parse, so they will always agree \u2014
+      // that is only sound when the shared rule answers the question the GOAL asked, and
+      // stating the scope is what makes a wrong shared assumption visible in the log.
+      tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, scope=${TOP_LEVEL_FILE_SCOPE.test(goal) ? "top-level" : "recursive"}) \u2014 shares verifyCountFilesReach's parse and scope rule; SKIPPED reuse-cache + pointer_arg synthesis`);
     } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);

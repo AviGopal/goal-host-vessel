@@ -84,11 +84,21 @@ const CORPUS: Record<string, GoldenCase> = {
     parse: { avgThr: false, rank: false, agg: true, two: false },
   },
   // plain file-count => aggregate's file-count fallback (parseAggregateGoal is null here; the
-  // maxdepth-1 count branch fires). Locks the non-recursive `-maxdepth 1` file-count semantics.
+  // count branch fires). Locks RECURSIVE file-count semantics with node_modules/.git pruned.
+  //
+  // This golden previously locked `-maxdepth 1` and described it as the intended
+  // "non-recursive file-count semantics" — for a goal that says "files UNDER
+  // repos/goal-host-vessel/src". It was pinning the defect: the oracle
+  // (verifyCountFilesReach) shares this parse, so both sides answered the top-level
+  // question and agreed "by construction". Live consequence: the count came back 10 when
+  // the true recursive answer is 17, the walk logged "independently counted", judged the
+  // goal REACHED, and alpha-credited the arm. Recursive is also what the sibling aggregate
+  // ops (TOTAL/AVG/GREP above) have always used. The depth-1 reading is still reachable —
+  // see test/file-count-scope.test.ts for the explicit top-level phrasings.
   COUNT_FILES: {
     goal: "how many .ts files under repos/goal-host-vessel/src",
     owner: "aggregate",
-    cmd: "find /workspace/git/super-repo/repos/goal-host-vessel/src -maxdepth 1 -type f -name '*.ts' | wc -l",
+    cmd: "find /workspace/git/super-repo/repos/goal-host-vessel/src \\( -name node_modules -o -name .git \\) -prune -o -type f -name '*.ts' -print | wc -l",
     parse: { avgThr: false, rank: false, agg: false, two: false },
   },
   // two-source compare (which + diff) => twoSource. Locks the existence-guarded A/B compare emit.
