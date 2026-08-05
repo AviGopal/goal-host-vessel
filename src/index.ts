@@ -222,7 +222,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   return { generated_at, members, gaps, boredom, rhythms };
 }
 
-import { appendFile, readFile, readdir } from "node:fs/promises";
+import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { decideContinuation } from "./walk-continuation.js";
@@ -1099,6 +1099,58 @@ function parseFileExtension(goal: string): string | null {
   return null;
 }
 
+/**
+ * The tree a `repos/<vessel>/…` path actually DENOTES, in preference order.
+ *
+ * `repos/*` are git SUBMODULES. The super-repo working tree only advances when a gitlink
+ * bump is committed, so it lags origin/dev by however long since the last bump — it is NOT
+ * "what the pull-sync tracks", which is what the previous comment here claimed. What
+ * host-pull-sync.sh fast-forwards against origin/dev is `/workspace/git/vessels/<vessel>`,
+ * and feature_compose refreshes that same clone before drafting ("refreshed mirror <v> to
+ * origin/dev"). So the per-vessel clone is what "the current code" means.
+ *
+ * Measured 2026-08-05: 9 of 18 vessels drifted between the two trees, and they were exactly
+ * the actively-developed ones — development-vessel super-repo ff04a17 (Jul 30) vs clone
+ * 40ac04c (origin/dev), 150 commits behind; goal-host 42547b2 vs a9742a9. A live count goal
+ * answered 392 against the stale submodule where origin/dev holds 377, and the walk credited
+ * it as `deterministic:verified-file-count`. Staleness is therefore the COMMON case for
+ * self-development goals, not an edge case. Gap: reach-oracle-counts-stale-super-repo-submodule.
+ *
+ * Falls back to the super-repo path so a vessel with no clone (or a non-`repos/` path such as
+ * `vessels/<v>/…`) behaves exactly as before — this is strictly a re-ordering, never a removal.
+ */
+function authoritativeRoots(rel: string): [string, ...string[]] {
+  const superRepo = `/workspace/git/super-repo/${rel}`;
+  const m = rel.match(/^repos\/([^/]+)(?:\/(.*))?$/);
+  if (!m?.[1]) return [superRepo];
+  return [`/workspace/git/vessels/${m[1]}${m[2] ? `/${m[2]}` : ""}`, superRepo];
+}
+
+/**
+ * First existing root from authoritativeRoots, else the super-repo path (so a missing tree
+ * fails downstream exactly where it did before, rather than here).
+ */
+/**
+ * Shell expression selecting the same root resolveAuthoritativeRoot would, for the SYNC command
+ * builders. The choice has to happen in the shell there because those builders return a string.
+ * Command builder and oracle must resolve the SAME tree or every goal in the family becomes a
+ * deterministic mismatch.
+ */
+function shellRootExpr(rel: string): string {
+  const [clone, superRepo] = authoritativeRoots(rel);
+  return superRepo ? `"$([ -d ${clone} ] && echo ${clone} || echo ${superRepo})"` : clone;
+}
+
+async function resolveAuthoritativeRoot(rel: string): Promise<string> {
+  const cands = authoritativeRoots(rel);
+  for (const c of cands) {
+    try {
+      if ((await stat(c)).isDirectory()) return c;
+    } catch { /* try the next candidate */ }
+  }
+  return cands[cands.length - 1] as string;
+}
+
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
   if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
@@ -1148,18 +1200,22 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
       return await walk(root);
     } catch { return null; }                                // root missing / not a dir
   };
-  // The goal names a REPOS-relative path, so the GIT CLONE (/workspace/git/super-repo) is the
-  // AUTHORITATIVE source: it is what "repos/<...>" denotes and what the pull-sync tracks against
-  // origin/dev. The deployed /vessels mirror is a runtime artifact that drifts from the clone in
-  // BOTH directions (observed: goal-host/src clone=9 vs mirror=10 un-pruned; dev-vessel/resolvers
-  // clone=269 vs mirror=244 behind), so it is a DRIFT CROSS-CHECK only, never a co-equal that
-  // forces abstention. Count the clone; verify the output carries that count; note drift when the
-  // mirror disagrees (mirror-to-live non-convergence is a filed gap, not a reason to fail closed).
-  const truth = await countAt(`/workspace/git/super-repo/${rel}`);
+  // The goal names a REPOS-relative path, so count the tree that path DENOTES — the per-vessel
+  // pull-sync clone at origin/dev (see authoritativeRoots). The deployed /vessels mirror is a
+  // runtime artifact that drifts from the clone in BOTH directions (observed: goal-host/src
+  // clone=9 vs mirror=10 un-pruned; dev-vessel/resolvers clone=269 vs mirror=244 behind), so it
+  // is a DRIFT CROSS-CHECK only, never a co-equal that forces abstention. Count the clone; verify
+  // the output carries that count; note drift when the mirror disagrees (mirror-to-live
+  // non-convergence is a filed gap, not a reason to fail closed).
+  const truthRoot = await resolveAuthoritativeRoot(rel);
+  const truth = await countAt(truthRoot);
   if (truth === null) return null;                          // clone path unreadable -> LLM
   const deployed = await countAt(`/vessels/${rel.replace(/^repos\//, "")}`);
+  // Name the tree that was counted. A verdict that cannot say WHICH tree it measured cannot be
+  // told apart from a stale one — the defect that let a 392 from a 6-day-old submodule be
+  // credited as verified while the mirror correctly reported 377.
   const drift = deployed !== null && deployed !== truth
-    ? ` (deploy-drift noted: mirror /vessels reports ${deployed}; the git clone is authoritative)` : "";
+    ? ` (deploy-drift noted: counted ${truthRoot}; the /vessels runtime mirror reports ${deployed})` : "";
   // SOUNDNESS: the true count must appear in the output of a GENUINE COUNTING COMMAND, not
   // anywhere in the (pollution-heavy) digest. A digest packed with unrelated numeric content
   // (activity_metrics rates, template ids) trivially contains any small integer, so a bare
@@ -1219,7 +1275,7 @@ function buildAggregateCommand(goal: string): string | null {
   if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
   const agg = parseAggregateGoal(goal);
   if (agg) {
-    const aggRoot = `/workspace/git/super-repo/${agg.rel}`;
+    const aggRoot = shellRootExpr(agg.rel);
     const aggSel = agg.ext ? ` -name '*.${agg.ext}'` : "";
     switch (agg.op) {
       case "total_lines":
@@ -1248,7 +1304,10 @@ function buildAggregateCommand(goal: string): string | null {
   // Recursive by default, matching verifyCountFilesReach's countAt (same TOP_LEVEL_FILE_SCOPE
   // rule, same node_modules/.git pruning) and the recursive aggregate ops above. -maxdepth 1
   // only when the goal explicitly asks for the immediate directory.
-  const root = `/workspace/git/super-repo/${rel}`;
+  // Same root the oracle counts (authoritativeRoots): the builder and verifyCountFilesReach
+  // MUST agree on the tree or every count goal turns into a deterministic mismatch. Resolved
+  // in the shell rather than in TS because this builder is sync.
+  const root = shellRootExpr(rel);
   return TOP_LEVEL_FILE_SCOPE.test(goal)
     ? `find ${root} -maxdepth 1 -type f${nameSel} | wc -l`
     : `find ${root} \\( -name node_modules -o -name .git \\) -prune -o -type f${nameSel} -print | wc -l`;
@@ -1571,10 +1630,10 @@ function buildFromClassRow(goal: string): string | null {
   const hit = resolveClassRow(goal);
   if (!hit) return null;                                 // no data-row owns this goal -> next in chain
   const { row, params: p } = hit;
-  const root = `/workspace/git/super-repo/${p.rel}`;
+  const root = shellRootExpr(p.rel);
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
   const ctx: ShellCtx = { root, nameSel, n: p.n, needle: p.needle, dir: p.dir, relA: p.rel, relB: p.relB, scope: row.scope };
-  if (row.pathArity === 2 && p.relB) ctx.rootB = `/workspace/git/super-repo/${p.relB}`;
+  if (row.pathArity === 2 && p.relB) ctx.rootB = shellRootExpr(p.relB);
   return selectorOf(row).shell(ctx);                     // the SHELL projection of the row's cell
 }
 
@@ -1583,7 +1642,7 @@ async function verifyFromClassRow(goal: string, dig: string): Promise<GoalReachV
   if (!hit) return null;                                 // no data-row owns this goal -> next oracle
   const { row, params: p } = hit;
   const cell = selectorOf(row);
-  const en = await enumerate(`/workspace/git/super-repo/${p.rel}`, p.ext ?? null, cell.needsTexts === true);
+  const en = await enumerate(await resolveAuthoritativeRoot(p.rel), p.ext ?? null, cell.needsTexts === true);
   if (en === null) return null;                          // unreadable root/file -> fail open
   const n = en.counts.length;
   if (n === 0) return null;                              // mean of nothing -> fail open (legacy parity)
@@ -1647,7 +1706,7 @@ async function verifyAggregateReach(goal: string, dig: string): Promise<GoalReac
         .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? root}/${e.name}`);
     } catch { return null; }                         // root unreadable -> fail open
   };
-  const files = await listFiles(`/workspace/git/super-repo/${agg.rel}`);
+  const files = await listFiles(await resolveAuthoritativeRoot(agg.rel));
   if (files === null) return null;
   const countNl = (s2: string): number => { let n = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) n++; return n; }; // == wc -l
   let truth: number; let unit: string;
@@ -1710,7 +1769,7 @@ function parseRankAggregate(goal: string): RankParse | null {
 function buildRankAggregateCommand(goal: string): string | null {
   const p = parseRankAggregate(goal);
   if (!p) return null;
-  const root = `/workspace/git/super-repo/${p.rel}`;
+  const root = shellRootExpr(p.rel);
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
   const rank = `find ${root} -type f${nameSel} -exec wc -l {} + | grep -v ' total$' | sort -rn | head -${p.n}`;
   return p.op === "sum"
@@ -1723,10 +1782,11 @@ async function verifyRankAggregateReach(goal: string, dig: string): Promise<Goal
   if (!p) return null;
   let files: string[];
   try {
-    const entries = await readdir(`/workspace/git/super-repo/${p.rel}`, { recursive: true, withFileTypes: true });
+    const rootDir = await resolveAuthoritativeRoot(p.rel);
+    const entries = await readdir(rootDir, { recursive: true, withFileTypes: true });
     files = entries.filter((e) => e.isFile())
       .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
-      .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? `/workspace/git/super-repo/${p.rel}`}/${e.name}`);
+      .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? rootDir}/${e.name}`);
   } catch { return null; }                            // unreadable root -> fail open
   const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; };
   let counts: number[];
@@ -1799,7 +1859,7 @@ function buildAvgThresholdCommand(goal: string): string | null {
   // oracle cannot drift. Byte-identical to the prior inline template (locked by the golden test).
   const p = parseAvgThreshold(goal);
   if (!p) return null;
-  const root = `/workspace/git/super-repo/${p.rel}`;
+  const root = shellRootExpr(p.rel);
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
   return SELECTORS.countAboveMean.shell({ root, nameSel });
 }
@@ -1813,7 +1873,7 @@ async function verifyAvgThresholdReach(goal: string, dig: string): Promise<GoalR
   // filter, and reason strings are all locked by the golden characterization test).
   const p = parseAvgThreshold(goal);                  // SAME parse as the command builder
   if (!p) return null;
-  const en = await enumerate(`/workspace/git/super-repo/${p.rel}`, p.ext); // single readdir+countNl (== wc -l)
+  const en = await enumerate(await resolveAuthoritativeRoot(p.rel), p.ext); // single readdir+countNl (== wc -l)
   if (en === null) return null;                       // unreadable root/file -> fail open
   const n = en.counts.length;
   if (n === 0) return null;
@@ -1845,7 +1905,7 @@ function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
 function buildTwoSourceCompareCommand(goal: string): string | null {
   const p = parseTwoSourceCompare(goal);
   if (!p) return null;
-  const rootA = `/workspace/git/super-repo/${p.relA}`, rootB = `/workspace/git/super-repo/${p.relB}`;
+  const rootA = shellRootExpr(p.relA), rootB = shellRootExpr(p.relB);
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
   const agg = (root: string) => p.op === "total_lines"
     ? `find ${root} -type f${nameSel} -exec cat {} + | wc -l`
@@ -1863,10 +1923,11 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
   const countNl = (s2: string): number => { let m = 0; for (let i = 0; i < s2.length; i++) if (s2.charCodeAt(i) === 10) m++; return m; };
   const aggregate = async (rel: string): Promise<number | null> => {
     try {
-      const entries = await readdir(`/workspace/git/super-repo/${rel}`, { recursive: true, withFileTypes: true });
+      const rootDir = await resolveAuthoritativeRoot(rel);
+      const entries = await readdir(rootDir, { recursive: true, withFileTypes: true });
       const files = entries.filter((e) => e.isFile())
         .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
-        .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? `/workspace/git/super-repo/${rel}`}/${e.name}`);
+        .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? rootDir}/${e.name}`);
       if (p.op === "file_count") return files.length;
       let T = 0; for (const fp of files) T += countNl(await Bun.file(fp).text()); return T;
     } catch { return null; }                                   // missing root -> fail open (never a fabricated 0)

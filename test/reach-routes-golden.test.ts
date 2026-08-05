@@ -18,6 +18,22 @@
 // dynamic-import so evaluation happens after the env is set. No port is bound, nothing registers
 // into discovery.
 import { describe, it, expect } from "bun:test";
+
+// The tree a `repos/<vessel>/…` path DENOTES: the per-vessel pull-sync clone (kept at
+// origin/dev by host-pull-sync.sh and refreshed by feature_compose), falling back to the
+// super-repo submodule only when that clone is absent. See authoritativeRoots in src/index.ts.
+//
+// These goldens previously pinned the bare `/workspace/git/super-repo/...` path. That literal
+// was not neutral — it LOCKED THE DEFECT: repos/* are submodules, so the super-repo tree only
+// advances on a gitlink bump and lagged origin/dev by 150 commits for development-vessel. A
+// live count goal answered 392 against that stale tree where origin/dev held 377, and the walk
+// credited it as `deterministic:verified-file-count`. A characterization test pinning a root is
+// pinning an assumption about WHICH CODE is being measured, which is exactly the assumption
+// that was wrong. Gap: reach-oracle-counts-stale-super-repo-submodule.
+const R = (rel: string): string => {
+  const clone = `/workspace/git/vessels/${rel.replace(/^repos\//, "")}`;
+  return `"$([ -d ${clone} ] && echo ${clone} || echo /workspace/git/super-repo/${rel})"`;
+};
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -50,7 +66,7 @@ const CORPUS: Record<string, GoldenCase> = {
   RANK_SUM: {
     goal: "total lines in the 3 largest .ts files under repos/goal-host-vessel/src",
     owner: "rank",
-    cmd: "find /workspace/git/super-repo/repos/goal-host-vessel/src -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | sort -rn | head -3 | awk '{s+=$1}END{print s+0}'",
+    cmd: `find ${R("repos/goal-host-vessel/src")} -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | sort -rn | head -3 | awk '{s+=$1}END{print s+0}'`,
     parse: { avgThr: false, rank: true, agg: false, two: false },
   },
   // COLLISION: "how many .ts files ... more lines than the average" => AVG-THRESHOLD (79), NOT a
@@ -58,7 +74,7 @@ const CORPUS: Record<string, GoldenCase> = {
   AVG_THRESH: {
     goal: "how many .ts files under repos/development-vessel/src/resolvers have more lines than the average",
     owner: "avgThreshold",
-    cmd: "find /workspace/git/super-repo/repos/development-vessel/src/resolvers -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]>avg)k++;print k}'",
+    cmd: `find ${R("repos/development-vessel/src/resolvers")} -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]>avg)k++;print k}'`,
     parse: { avgThr: true, rank: false, agg: false, two: false },
   },
   // COLLISION: "average lines across the top 5 .ts files" => RANK-AVG (1870). Locks rank owns the
@@ -66,21 +82,21 @@ const CORPUS: Record<string, GoldenCase> = {
   RANK_AVG: {
     goal: "average lines across the top 5 .ts files under repos/development-vessel/src/resolvers",
     owner: "rank",
-    cmd: "find /workspace/git/super-repo/repos/development-vessel/src/resolvers -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | sort -rn | head -5 | awk '{s+=$1;c++}END{if(c>0)printf \"%d\\n\",(s+int(c/2))/c; else print 0}'",
+    cmd: `find ${R("repos/development-vessel/src/resolvers")} -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | sort -rn | head -5 | awk '{s+=$1;c++}END{if(c>0)printf \"%d\\n\",(s+int(c/2))/c; else print 0}'`,
     parse: { avgThr: false, rank: true, agg: false, two: false },
   },
   // plain total_lines => aggregate
   TOTAL: {
     goal: "total lines in .ts files under repos/goal-host-vessel/src",
     owner: "aggregate",
-    cmd: "find /workspace/git/super-repo/repos/goal-host-vessel/src -type f -name '*.ts' -exec cat {} + | wc -l",
+    cmd: `find ${R("repos/goal-host-vessel/src")} -type f -name '*.ts' -exec cat {} + | wc -l`,
     parse: { avgThr: false, rank: false, agg: true, two: false },
   },
   // plain avg_lines => aggregate
   AVG: {
     goal: "average lines per .ts file under repos/goal-host-vessel/src",
     owner: "aggregate",
-    cmd: "T=$(find /workspace/git/super-repo/repos/goal-host-vessel/src -type f -name '*.ts' -exec cat {} + | wc -l); N=$(find /workspace/git/super-repo/repos/goal-host-vessel/src -type f -name '*.ts' | wc -l); if [ \"$N\" -gt 0 ]; then echo $(( (T + N/2) / N )); else echo \"no matching files\"; fi",
+    cmd: `T=$(find ${R("repos/goal-host-vessel/src")} -type f -name '*.ts' -exec cat {} + | wc -l); N=$(find ${R("repos/goal-host-vessel/src")} -type f -name '*.ts' | wc -l); if [ \"$N\" -gt 0 ]; then echo $(( (T + N/2) / N )); else echo \"no matching files\"; fi`,
     parse: { avgThr: false, rank: false, agg: true, two: false },
   },
   // plain file-count => aggregate's file-count fallback (parseAggregateGoal is null here; the
@@ -98,21 +114,21 @@ const CORPUS: Record<string, GoldenCase> = {
   COUNT_FILES: {
     goal: "how many .ts files under repos/goal-host-vessel/src",
     owner: "aggregate",
-    cmd: "find /workspace/git/super-repo/repos/goal-host-vessel/src \\( -name node_modules -o -name .git \\) -prune -o -type f -name '*.ts' -print | wc -l",
+    cmd: `find ${R("repos/goal-host-vessel/src")} \\( -name node_modules -o -name .git \\) -prune -o -type f -name '*.ts' -print | wc -l`,
     parse: { avgThr: false, rank: false, agg: false, two: false },
   },
   // two-source compare (which + diff) => twoSource. Locks the existence-guarded A/B compare emit.
   TWO_SRC: {
     goal: "does repos/goal-host-vessel/src or repos/development-vessel/src have more lines",
     owner: "twoSource",
-    cmd: "[ -d /workspace/git/super-repo/repos/goal-host-vessel/src ] && [ -d /workspace/git/super-repo/repos/development-vessel/src ] || { echo \"missing source\"; exit 1; }; A=$(find /workspace/git/super-repo/repos/goal-host-vessel/src -type f -exec cat {} + | wc -l); B=$(find /workspace/git/super-repo/repos/development-vessel/src -type f -exec cat {} + | wc -l); D=$(( A>B ? A-B : B-A )); if [ \"$A\" -eq \"$B\" ]; then echo \"tie: 0\"; elif [ \"$A\" -gt \"$B\" ]; then echo \"repos/goal-host-vessel/src: $D\"; else echo \"repos/development-vessel/src: $D\"; fi",
+    cmd: `[ -d ${R("repos/goal-host-vessel/src")} ] && [ -d ${R("repos/development-vessel/src")} ] || { echo \"missing source\"; exit 1; }; A=$(find ${R("repos/goal-host-vessel/src")} -type f -exec cat {} + | wc -l); B=$(find ${R("repos/development-vessel/src")} -type f -exec cat {} + | wc -l); D=$(( A>B ? A-B : B-A )); if [ \"$A\" -eq \"$B\" ]; then echo \"tie: 0\"; elif [ \"$A\" -gt \"$B\" ]; then echo \"repos/goal-host-vessel/src: $D\"; else echo \"repos/development-vessel/src: $D\"; fi`,
     parse: { avgThr: false, rank: false, agg: false, two: true },
   },
   // grep-files => aggregate grep_files branch
   GREP: {
     goal: "how many .ts files in repos/goal-host-vessel/src contain the text TODO",
     owner: "aggregate",
-    cmd: "find /workspace/git/super-repo/repos/goal-host-vessel/src -type f -name '*.ts' -exec grep -lF 'TODO' {} + | wc -l",
+    cmd: `find ${R("repos/goal-host-vessel/src")} -type f -name '*.ts' -exec grep -lF 'TODO' {} + | wc -l`,
     parse: { avgThr: false, rank: false, agg: true, two: false },
   },
 };
@@ -137,7 +153,9 @@ describe("reach-routes golden: command strings + ownership order", () => {
 describe("avg-threshold command == SELECTORS projection == legacy golden", () => {
   it("byte-identical", () => {
     const g = CORPUS.AVG_THRESH.goal;
-    const root = "/workspace/git/super-repo/repos/development-vessel/src/resolvers";
+    // Same root the builder resolves (R) — this fixture asserts builder == selector projection,
+    // so feeding it a different tree would make the two agree only by accident.
+    const root = R("repos/development-vessel/src/resolvers");
     const viaSelector = SELECTORS.countAboveMean.shell({ root, nameSel: " -name '*.ts'" });
     expect(buildAvgThresholdCommand(g)).toBe(CORPUS.AVG_THRESH.cmd);
     expect(viaSelector).toBe(CORPUS.AVG_THRESH.cmd);
@@ -255,7 +273,7 @@ const dispatchChain = (g: string): string | null =>
   buildFromClassRow(g) ?? buildTwoSourceCompareCommand(g) ?? buildRankAggregateCommand(g) ?? buildAggregateCommand(g);
 
 const BELOW_MEAN_GOAL = "How many TypeScript files under repos/development-vessel/src/resolvers have FEWER lines than the average?";
-const BELOW_MEAN_CMD = "find /workspace/git/super-repo/repos/development-vessel/src/resolvers -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]<avg)k++;print k}'";
+const BELOW_MEAN_CMD = `find ${R("repos/development-vessel/src/resolvers")} -type f -name '*.ts' -exec wc -l {} + | grep -v ' total$' | awk '{s+=$1;c[NR]=$1;n++}END{if(n==0){print 0;exit}avg=s/n;k=0;for(i=1;i<=n;i++)if(c[i]<avg)k++;print k}'`;
 
 describe("dispatcher (a): avg-threshold served via buildFromClassRow == legacy builder (byte-identical)", () => {
   it("buildFromClassRow == buildAvgThresholdCommand == golden string", () => {
