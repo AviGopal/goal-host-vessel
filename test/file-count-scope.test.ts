@@ -61,3 +61,35 @@ describe("buildAggregateCommand — file-count scope", () => {
     if (cmd) expect(cmd).not.toContain("-maxdepth 1");
   });
 });
+
+// Extension-FILTER regression (2026-08-05, observed live immediately after the scope fix).
+// Fixing the depth did not fix the class. "How many TypeScript files are under
+// repos/goal-host-vessel/src?" still answered 18 for a tree holding 17 .ts files plus one
+// .js, because the extension parse only matched a dotted literal (".ts files") and the word
+// "TypeScript" left ext=null => count EVERY file. The oracle shares the parse, so it agreed
+// on 18 and alpha-credited the wrong answer again — the same self-confirming shape in a
+// second dimension. While generator and grader share a parse, ANY parse error is invisible.
+describe("buildAggregateCommand — extension filter from language names", () => {
+  it("maps 'TypeScript files' to *.ts (the live 18-vs-17 defect)", () => {
+    const cmd = buildAggregateCommand("how many TypeScript files are under repos/goal-host-vessel/src");
+    expect(cmd).toBeTruthy();
+    expect(cmd).toContain("-name '*.ts'");
+  });
+
+  it("still honours the dotted literal form", () => {
+    const cmd = buildAggregateCommand("how many .ts files are under repos/goal-host-vessel/src");
+    expect(cmd).toContain("-name '*.ts'");
+  });
+
+  it("does not confuse JavaScript with TypeScript", () => {
+    const cmd = buildAggregateCommand("how many JavaScript files are under repos/goal-host-vessel/src");
+    expect(cmd).toContain("-name '*.js'");
+    expect(cmd).not.toContain("-name '*.ts'");
+  });
+
+  it("counts ALL files when the goal names no file type", () => {
+    const cmd = buildAggregateCommand("how many files are under repos/goal-host-vessel/src");
+    expect(cmd).toBeTruthy();
+    expect(cmd).not.toContain("-name '*.");
+  });
+});

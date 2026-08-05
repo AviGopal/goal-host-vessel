@@ -1062,6 +1062,43 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
 // file count to depth 1; everything else means "under this directory", recursively.
 const TOP_LEVEL_FILE_SCOPE = /\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:in|under|inside)|non[-\s]?recursive|not\s+recursive|shallow|at\s+the\s+root\s+of)\b/i;
 
+// LANGUAGE NAME -> file extension. People say "TypeScript files", not ".ts files", and the
+// literal `\.(\w{1,6})\s+files?` parse below only matches the dotted form — so "how many
+// TypeScript files are under repos/<v>/src" parsed ext=null and counted EVERY file.
+// Observed live: answered 18 for a tree holding 17 .ts files plus one .js. As with the
+// scope defect, the oracle shares this parse, so it agreed on 18 and alpha-credited the
+// wrong answer. Same self-confirming class, different dimension: fixing the depth did not
+// fix the parse, because ANY parse error is invisible while generator and grader share it.
+const LANGUAGE_EXT: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\btype[-\s]?script\b/i, "ts"],
+  [/\bjava[-\s]?script\b/i, "js"],
+  [/\bpython\b/i, "py"],
+  [/\bmarkdown\b/i, "md"],
+  [/\bjson\b/i, "json"],
+  [/\bya?ml\b/i, "yaml"],
+  [/\bshell|\bbash\b/i, "sh"],
+  [/\bsql\b/i, "sql"],
+  [/\brust\b/i, "rs"],
+  [/\bgo(?:lang)?\s+files?\b/i, "go"],
+];
+
+/**
+ * The file-extension filter a count/aggregate goal asks for, or null for "all files".
+ * Accepts BOTH the dotted literal (".ts files") and the language name ("TypeScript files").
+ * Shared by the command builders and their reach oracles so the two cannot disagree — the
+ * point is not that they agree (they always will) but that they agree on the RIGHT filter.
+ */
+function parseFileExtension(goal: string): string | null {
+  const lit = goal.match(/\.(\w{1,6})\s+files?\b/i);
+  if (lit && lit[1]) return lit[1].toLowerCase();
+  for (const [re, ext] of LANGUAGE_EXT) {
+    // Require the language name to actually qualify "files", so "count the files that
+    // mention TypeScript" is not silently narrowed to *.ts.
+    if (re.test(goal) && /\bfiles?\b/i.test(goal)) return ext;
+  }
+  return null;
+}
+
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
   if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
@@ -1075,8 +1112,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
   if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory -> not a file-count
-  const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const ext = extM ? extM[1].toLowerCase() : null;         // null -> count all files
+  const ext = parseFileExtension(goal);                    // null -> count all files
   // RECURSIVE unless the goal explicitly scopes to the immediate directory. "the .ts files
   // in repos/<v>/src" means every .ts under src, not just the ones that happen to sit at its
   // root — src has subdirectories, and the sibling aggregate ops (total_lines / avg_lines /
@@ -1201,8 +1237,8 @@ function buildAggregateCommand(goal: string): string | null {
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
   if (/\.\w{1,6}$/.test(rel)) return null;                 // a FILE path, not a directory
-  const extM = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const nameSel = extM ? ` -name '*.${extM[1].toLowerCase()}'` : "";
+  const cntExt = parseFileExtension(goal);
+  const nameSel = cntExt ? ` -name '*.${cntExt}'` : "";
   // Recursive by default, matching verifyCountFilesReach's countAt (same TOP_LEVEL_FILE_SCOPE
   // rule, same node_modules/.git pruning) and the recursive aggregate ops above. -maxdepth 1
   // only when the goal explicitly asks for the immediate directory.
@@ -4394,7 +4430,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // oracle and this command deliberately share one parse, so they will always agree \u2014
       // that is only sound when the shared rule answers the question the GOAL asked, and
       // stating the scope is what makes a wrong shared assumption visible in the log.
-      tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, scope=${TOP_LEVEL_FILE_SCOPE.test(goal) ? "top-level" : "recursive"}) \u2014 shares verifyCountFilesReach's parse and scope rule; SKIPPED reuse-cache + pointer_arg synthesis`);
+      tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, scope=${TOP_LEVEL_FILE_SCOPE.test(goal) ? "top-level" : "recursive"}, filter=${parseFileExtension(goal) ? "*." + parseFileExtension(goal) : "ALL FILES"}) \u2014 shares verifyCountFilesReach's parse; SKIPPED reuse-cache + pointer_arg synthesis`);
     } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
