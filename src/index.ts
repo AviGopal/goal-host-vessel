@@ -9606,6 +9606,17 @@ async function handleRunGoal(req: Request): Promise<Response> {
       }
     } catch (err) {
       // A thrown dispatch never produced a reach verdict — the goal was not reached.
+      // status MUST be set here too. Setting only `reached` leaves the record at status
+      // "running" FOREVER: nothing else in the async path transitions it (the only other
+      // writers are the boot reconciler at :10270/:10321/:10324), so a thrown walk becomes
+      // an immortal in-flight record. Measured 2026-08-05: 14 such records for the
+      // rhythm-fired goal "deliver obsidian active-note assist" — whose walk throws because
+      // the obsidian conduit is unreachable — aged 71-464 min, against walks that complete
+      // in 8-12 ms. Two mechanisms read this field and both were defeated by it:
+      // gracefulShutdown()'s drain breaks only when in-flight reaches zero (so it could
+      // never exit early and always burned its full budget), and /health's in_flight grew
+      // monotonically as a zombie count.
+      record.status = "failed";
       record.reached = false;
       record.error = (err as Error).message;
       if (walkStepSink.length) record.walkLog = walkStepSink;
