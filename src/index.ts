@@ -3035,9 +3035,42 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     return r.ok ? id : null;
   } catch { return null; }
 }
+/**
+ * Shapes whose producer is a live resolver that cannot run until a payload has been synthesized
+ * for it (a command, a script, a query, a prompt). They are unreachable "from cold" BY DESIGN —
+ * the same property the `_write` / `obsidian:` / `fs_` skip above encodes — so failing to reach
+ * one says nothing about whether the capability exists.
+ */
+const EXECUTOR_ROOTED_SHAPES = new Set([
+  "shellResult",
+  "llm_completion",
+  "llm_completion_dispatch",
+  "codeSearchResult",
+  "sqlResult",
+  "http_fetch",
+  "httpResponse",
+]);
+
 async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
   if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
   if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
+  // EXECUTOR shapes are parameter-rooted in exactly the same way as the action shapes above:
+  // their producer is a live vessel resolver that cannot run until a payload (command / script /
+  // sql / prompt) has been SYNTHESIZED for it. "Not reachable from cold" is their defining
+  // property, not a defect, so a failure to reach one is never evidence of a missing capability.
+  //
+  // Measured 2026-08-05: `reach-gap-shellresult` was filed while shellResult resolved perfectly
+  // on demand (`{"stdout":"alive\n","exit_code":0}`) — the walk had simply failed to synthesize a
+  // command because the LLM plane was timing out. The gap store held 105 `reach-gap-*` rows whose
+  // own summaries begin "shape X is advertised by a producer, but…", i.e. the system recorded
+  // that the capability EXISTS and filed a missing-capability gap anyway.
+  //
+  // This is not merely noise. Those gaps become "Close substrate gap reach-gap-…" goals, which is
+  // the largest and worst-performing goal family in the store (3,090 executions at 4% reach) — so
+  // a transient LLM outage was minting durable work items that describe a problem that does not
+  // exist, and the loop then failed to close them because there was nothing to close. Filing a
+  // gap for an unavailable dependency turns an outage into permanent backlog.
+  if (EXECUTOR_ROOTED_SHAPES.has(shape)) { console.log("[reach-gap] skip " + shape + ": executor shape, payload must be synthesized — cold-unreachable by design"); return null; }
   let producerId = ""; let producerInputs: string[] = [];
   try { const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ required_shapes: [shape], mode: "forward" }), signal: AbortSignal.timeout(8_000) }); if (pr.ok) { const pj = await pr.json() as { activities?: any[] }; if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null; const a0 = pj.activities[0] || {}; producerId = String(a0.variant_id || a0.id || ""); producerInputs = Array.isArray(a0.input_schema?.required_shapes) ? a0.input_schema.required_shapes.map(String) : []; } } catch { /* fail-open */ }
   const slug = shape.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
