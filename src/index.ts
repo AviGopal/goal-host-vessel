@@ -7531,7 +7531,13 @@ async function runGoalWithRecovery(
     }
     // Per-goal learning: record this attempt's goal -> path -> reach outcome.
     const tr = result.trace as { durationMs?: number; costUsd?: number };
-    if (opts.learningMode !== "observe" && goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId));
+    // Pass the OBSERVED (producedShapes) and PLANNED (seededOutputShapes — the
+    // effective target, explicit-or-inferred) sets, exactly as the walk path does.
+    // Omitting them here let both arguments fall to their `[]` defaults, so every
+    // single-template attempt wrote a row with empty endpoint_output_shapes AND empty
+    // expected_output_shapes — silently un-reconcilable, and indistinguishable from a
+    // walk that genuinely planned and produced nothing.
+    if (opts.learningMode !== "observe" && goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId), producedShapes, seededOutputShapes ?? []);
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
     if (selId) excluded.push(selId);
     // Alter the approach for the next attempt (engine-selected approaches only).
