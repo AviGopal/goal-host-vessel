@@ -205,6 +205,51 @@ export async function inferGoalTargetDecision(
   const WRITE_CLAUSE = /\b(?:write|writes|writing|save|saves|saving|record|records|recording|store|stores|storing|persist|persists|persisting|append|appends|appending|capture|captures|capturing|file)\b[^.]{0,48}?\b(?:note|notes|memory|memories|concept|concepts|document|documents|gap|gaps|journal|entry|entries|obsidian|vault)\b/i;
   const isCompositionAsk = WRITE_CLAUSE.test(goal);
 
+  // EXPLICITLY-NAMED SHAPE ROUTE (2026-08-05). The deterministic shortcuts below return
+  // shellResult and RETURN EARLY — before the LLM inferrer, and therefore before the advertised
+  // shape vocabulary is consulted at all. That is right for confabulation-prone aggregates, but
+  // it also means a purpose-built shape can be correct, deployed, advertised, and never once
+  // considered.
+  //
+  // EVIDENCE: "Run the test suite for repos/goal-host-vessel and report how many tests passed and
+  // how many failed" inferred ["shellResult"] @0.6 with no alternatives — it matched the
+  // FILE-SYSTEM AGGREGATE shortcut on "how many" + "repos/…". `test_suite` is advertised by
+  // development-vessel, resolves correctly, is keyed to a landed sha, and appeared ZERO times in
+  // 15 minutes of walk logs. Advertised and returning 200 proves a shape is REACHABLE, not
+  // SELECTABLE. Left alone this silently caps every future purpose-built shape whose goals read
+  // as imperative ("run", "execute", "trigger").
+  //
+  // The rule is driven by the SHAPE SET, not by a per-shape branch: derive each known shape's
+  // English phrase from its name and honour it when the goal names it as the direct object of an
+  // ACTION verb. Deliberately narrow — `run|execute|invoke|perform|trigger` immediately
+  // governing the phrase. An AGGREGATE over a shape ("count open substrate gaps by category") is
+  // fetch-then-transform and must KEEP its shellResult route, which this rule leaves untouched
+  // because "count" is not an action verb here. shellResult is offered as the alternative, so a
+  // named shape that cannot produce still falls back to the universal executor.
+  const _namedShape = ((): string | null => {
+    const ACTION = /\b(run|runs|execute|executes|invoke|invokes|perform|performs|trigger|triggers)\b\s+(?:the\s+|a\s+|an\s+)?([\w\s-]{3,40})/i;
+    const m = ACTION.exec(goal);
+    if (!m?.[2]) return null;
+    const obj = m[2].toLowerCase();
+    for (const s of knownShapes) {
+      if (s === "shellResult") continue;                 // never let the executor match itself
+      // shape name -> phrase: test_suite -> "test suite", memoryNote_write -> "memory note write"
+      const phrase = s.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().trim();
+      if (phrase.length < 4) continue;                   // too short to be named unambiguously
+      // Allow space/hyphen/underscore between the words as the goal happens to write them.
+      const re = new RegExp(`\\b${phrase.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s_-]+")}\\b`, "i");
+      if (re.test(obj)) return s;
+    }
+    return null;
+  })();
+  if (_namedShape) {
+    return {
+      shapes: [_namedShape],
+      confidence: 0.8,
+      alternatives: knownShapes.includes("shellResult") ? [["shellResult"]] : [],
+    };
+  }
+
   // EXPLANATORY / CONCEPTUAL PROSE-ANSWER ROUTE (D1 floor, 2026-07-26). A plain
   // "explain / what is / define / describe / how does X work / why does" question
   // has NO bespoke producer, so the LLM target-inference below COLLIDES the goal's

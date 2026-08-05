@@ -3931,7 +3931,18 @@ async function runGoalAsPoolWalk(
            const req = cc.fields.filter((f: any) => f.required).map((f: any) => f.name);
            const opt = cc.fields.filter((f: any) => !f.required).map((f: any) => f.name);
            if (!execField) execField = req.find((r: string) => EXEC_FIELDS.includes(r)) ?? "";
-           schemaContract = `AUTHORITATIVE PAYLOAD CONTRACT for shape "${shape}" (from the owning vessel — this is the exact structure to emit, prefer it over any prose guidance): put the pointer args UNDER the key "${cc.envelope}" as a nested object. REQUIRED fields, all must be present with real values from the goal: ${req.join(", ") || "(none)"}. Optional fields: ${opt.join(", ") || "(none)"}. Your JSON output must have the form { "${cc.envelope}": { ${req.map((r: string) => `"${r}": <value>`).join(", ")} } } (add optional fields when the goal specifies them).\n\n`;
+           // A contract may describe a FLAT-pointer resolver, in which case it carries no
+           // envelope. Interpolating an absent envelope produced the literal key "undefined",
+           // which is worse than no contract: it sends a confidently-shaped payload to a
+           // structure no resolver reads. Branch on presence, and pass through the vessel's
+           // own `notes` — the field list cannot express things like "summary must be real
+           // prose" or "status is one of open|closed|rejected", which is exactly the
+           // load-bearing detail a synthesizer gets wrong.
+           const notes = typeof cc.notes === "string" && cc.notes.length > 0 ? ` NOTES from the owning vessel: ${cc.notes}` : "";
+           const common = `AUTHORITATIVE PAYLOAD CONTRACT for shape "${shape}" (from the owning vessel — this is the exact structure to emit, prefer it over any prose guidance): REQUIRED fields, all must be present with real values from the goal: ${req.join(", ") || "(none)"}. Optional fields: ${opt.join(", ") || "(none)"}.`;
+           schemaContract = cc.envelope
+             ? `${common} Put the pointer args UNDER the key "${cc.envelope}" as a nested object. Your JSON output must have the form { "${cc.envelope}": { ${req.map((r: string) => `"${r}": <value>`).join(", ")} } } (add optional fields when the goal specifies them).${notes}\n\n`
+             : `${common} This resolver takes a FLAT pointer — do NOT nest the args under any key. Your JSON output must have the form { ${req.map((r: string) => `"${r}": <value>`).join(", ")} } (add optional fields when the goal specifies them).${notes}\n\n`;
          }
        }
      }
