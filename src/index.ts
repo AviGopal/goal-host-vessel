@@ -9764,7 +9764,11 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
         try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string; notes?: string; labeler?: string }>) : []; } catch { labels = []; }
         const label = labels[0];
         const labelVerdict = label?.verdict;
-        if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") return;
+        if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") {
+          const reason = labels.length === 0 ? "no_labels" : (labelVerdict === undefined ? "verdict_field_missing" : "verdict_unrecognised");
+          console.warn(`[oracle-label] NOT consumed exec=${labelExecId} reason=${reason} n_labels=${labels.length} verdict=${String(labelVerdict)} labeler=${label?.labeler ?? "<none>"}`);
+          return;
+        }
         // SOURCE-AWARE LATCH: only a HUMAN verdict burns the consumption latch.
         // recordDeterministicLabel (:2439) mirrors EVERY oracle verdict into the
         // corpus as a deterministic/automated row at verdict time, so a machine
