@@ -85,9 +85,11 @@ export async function inferGoalTargetShapes(
   // If caller did not provide expectedOutputShapes and no firstTarget is pinned,
   // infer the goal-satisfying output shapes from the known producible vocabulary
   // to seed the walk with goal-relevant targets instead of running opportunistically.
-  if (opts.expectedOutputShapes === undefined && !opts.firstTarget) {
-    return [];
-  }
+  // (A substrate-authored edit, 53e4267, once added an early `return []` for exactly
+  // this case — the INVERSE of what this comment specifies — which turned the whole
+  // function into a permanent no-op and left 5 tests red for 10 days. Typecheck
+  // passed, so the autonomous verify gate never saw it. Do not reintroduce it: the
+  // no-target case is the one this function exists to serve.)
 
   const cache = opts.cache;
   const cacheKey = goalHashOf(goal);
