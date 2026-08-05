@@ -1188,7 +1188,13 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   });
   const emitted = [...new Set(countLines.flatMap((l) => (l.match(/\b\d{1,6}\b/g) ?? []).map(Number)))];
   if (emitted.includes(truth)) {
-    return { reached: true, reason: `deterministic:verified-file-count \u2014 independently counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) top-level in ${rel} from the git clone (authoritative); a counting-command (shellResult) output reports the same count${drift}`, deterministic: true, completion_shapes: [] };
+    // Say the SCOPE that was actually counted, and do not call this "independent": the
+    // command builder and this oracle share one parse, so they agree by construction. The
+    // honest claim is that a real counting command emitted the same number the authoritative
+    // clone holds UNDER THE SAME ASSUMPTIONS \u2014 stating those assumptions is what lets a wrong
+    // one be spotted. Claiming independence is how a 10 (top-level) and an 18 (unfiltered)
+    // were both credited as verified before the scope and filter defects were found.
+    return { reason: `deterministic:verified-file-count \u2014 counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) ${topLevelOnly ? "top-level" : "recursively"} in ${rel} from the git clone (authoritative), filter=${ext ? "*." + ext : "ALL FILES"}; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)${drift}`, reached: true, deterministic: true, completion_shapes: [] };
   }
   if (emitted.length > 0) {
     // A counting command RAN and produced a number, but NOT the authoritative count. A wrong
