@@ -490,8 +490,24 @@ async function gracefulShutdown(sig: string): Promise<void> {
   try { await discoveryLoop.stop(); } catch { /* best-effort */ }
   const deadline = Date.now() + Number(process.env["GOAL_HOST_DRAIN_MS"] ?? "80000");
   for (;;) {
-    const inFlight = [...executionStore.values()].filter((r) => r.status === "running").length;
-    if (inFlight === 0) { console.log(`[goal-host-vessel] ${sig}: drained (0 in-flight)`); break; }
+    // Count only FRESH in-flight work. A record that has been "running" for longer
+    // than the drain could ever wait for is not work this drain can protect, and
+    // letting it into the count makes the `inFlight === 0` exit below unreachable —
+    // which is exactly how a leak of immortal records defeated this drain before
+    // (see the async /run-goal catch block). The bound sits well above
+    // GOAL_HOST_DRAIN_MS so it can only ever discard records older than the drain
+    // would have waited for anyway. Same precedent as development-vessel's
+    // DEV_VESSEL_DRAIN_FRESH_MS. Env rather than a shaped impulse because the
+    // shutdown path cannot resolve impulses while the network is draining, exactly
+    // as GOAL_HOST_DRAIN_MS already is.
+    const freshMs = Number(process.env["GOAL_HOST_DRAIN_FRESH_MS"] ?? "600000");
+    const running = [...executionStore.values()].filter((r) => r.status === "running");
+    const inFlight = running.filter((r) => Date.now() - r.startedAt < freshMs).length;
+    const stale = running.length - inFlight;
+    // Report the stale count rather than swallowing it: a clean drain that silently
+    // ignored N immortal records would read as "nothing was in flight", hiding the
+    // very leak this bound exists to tolerate.
+    if (inFlight === 0) { console.log(`[goal-host-vessel] ${sig}: drained (0 in-flight${stale ? `, ${stale} stale running record(s) skipped` : ""})`); break; }
     if (Date.now() >= deadline) { console.log(`[goal-host-vessel] ${sig}: drain deadline with ${inFlight} in-flight`); break; }
     await new Promise((r) => setTimeout(r, 500));
   }
