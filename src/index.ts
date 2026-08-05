@@ -9513,6 +9513,22 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
+      // Thread the reach verdict onto the DURABLE trace. activity-api already
+      // serves POST /v2/activities/execution-traces/reach, which sets `reached`
+      // + `completion_shapes` on the trace row, mirrors them onto the
+      // authoritative `execution` row, and refreshes successor-features — but
+      // NOTHING in the fleet was calling it, so ~100% of traces stayed
+      // `ungraded` and Thompson learned from almost nothing. The verdict existed
+      // and was never delivered. Skip synthetic ids (no trace row to patch).
+      if (typeof record.executionId === "string" && !record.executionId.startsWith("goal-seek:no-trace:") && typeof record.reached === "boolean") {
+        void fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify({ "execution_id": record.executionId, "reached": record.reached, "completion_shapes": seek.completionShapes ?? [] }),
+          signal: AbortSignal.timeout(10_000),
+        }).then((r) => { if (!r.ok) console.warn(`[goal-host-vessel] reach-patch rejected: HTTP ${r.status} for ${record.executionId}`); })
+          .catch((e) => console.warn(`[goal-host-vessel] reach-patch failed (non-fatal): ${(e as Error).message}`));
+      }
       record.learning = learningSink;
       if (seek.answerBody) record.answerBody = seek.answerBody;
       persistDispatchStore();
