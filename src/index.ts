@@ -10350,6 +10350,25 @@ try {
               } else {
                 r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + landedSha; r.selectedTemplateId = "feature_compose"; r.error = undefined;
               }
+              // Feed the oracle corpus, exactly as the primary path does at :6048 and
+              // :7695. Those call recordDeterministicLabel unconditionally on polarity;
+              // this reconciliation path graded `reached` in BOTH branches above and
+              // fed nothing, so every reconciled outcome was invisible to the corpus.
+              // Interruptions land hardest on long feature_compose dispatches — exactly
+              // the ones that land commits — so the omission removed successes while
+              // failures on the primary path were still recorded faithfully. The corpus
+              // was therefore a biased failure SAMPLE, not a record of outcomes: over
+              // the newest 100 labels, 98 were not_achieved and all 83 deterministic
+              // ones were, while commit 4a49e46 landed inside that window carrying no
+              // label at all. Any reach rate computed from it read far too low.
+              // Same class as the hollow-green this branch was fixed for: a
+              // reconciliation path not held to the primary path's obligations.
+              recordDeterministicLabel(
+                String(r.goal ?? ""),
+                r.executionId,
+                "feature_compose",
+                { reached: r.reached === true, reason: r.goalReachReason ?? ("deterministic:interrupted-landed — cutover reported new_git_sha " + landedSha), deterministic: true },
+              );
               sha = landedSha || "NOTHING — staged, not landed";
               console.log("[goal-host-vessel] reconciled interrupted edit-intent dispatch " + r.dispatchId + " -> landed " + sha);
               reconciled = true;
