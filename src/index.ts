@@ -10297,7 +10297,21 @@ try {
               const cs = Array.isArray(report.cutovers) ? report.cutovers as Array<Record<string, unknown>> : [];
               let sha = "reconciled";
               for (const c of cs) { const res = (c?.result ?? {}) as Record<string, unknown>; if (typeof res.new_git_sha === "string" && res.new_git_sha) { sha = res.new_git_sha; break; } }
-              r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + sha; r.selectedTemplateId = "feature_compose"; r.error = undefined;
+              // A FAVORABLE compose report means DRAFTED + TYPECHECKED, not LANDED.
+              // `sha` above defaults to the literal "reconciled" when NO cutover
+              // reported a new_git_sha — the staged-not-landed case this file grades
+              // as honest-not-reached everywhere else (:7021, :7387: "a staged clone
+              // is not a reach"). Declaring reached:true there manufactures a hollow
+              // green for an edit that is not on origin/dev, and feeds it to the
+              // learning loop as a success.
+              const landedSha = sha === "reconciled" ? "" : sha;
+              if (!landedSha) {
+                r.status = "failed"; r.reached = false; r.selectedTemplateId = "feature_compose";
+                r.goalReachReason = "deterministic:interrupted-staged-not-landed — the compose report was FAVORABLE but no cutover reported a new_git_sha, so the edit is not on origin/dev; a staged clone is not a reach";
+              } else {
+                r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + landedSha; r.selectedTemplateId = "feature_compose"; r.error = undefined;
+              }
+              sha = landedSha || "NOTHING — staged, not landed";
               console.log("[goal-host-vessel] reconciled interrupted edit-intent dispatch " + r.dispatchId + " -> landed " + sha);
               reconciled = true;
             }
