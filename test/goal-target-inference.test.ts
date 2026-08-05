@@ -221,3 +221,49 @@ describe("inferGoalTargetDecision — registry/inventory count route", () => {
     expect(out.shapes).not.toEqual(["shellResult"]);
   });
 });
+
+// REGRESSION (2026-08-04, observed live): a compute-then-emit COMPOSITION must not be
+// truncated to its compute half by a deterministic pre-LLM shortcut. Live evidence:
+// "Write a memory note recording the count of TypeScript files in repos/goal-host-vessel/src"
+// hit the FILE-SYSTEM AGGREGATE shortcut, planned ["shellResult"], produced ["shellResult"],
+// was judged REACHED — and no memory note was ever written. Each shortcut's ad-hoc write
+// excluder (`write\s+(?:a\s+)?(?:note|file|concept)`) was defeated by one qualifier:
+// "write a MEMORY note" slipped through while "write a note" was caught. Plan-vs-observed
+// reconciliation is blind to this because BOTH sides derive from the same truncated plan.
+describe("inferGoalTargetDecision — compute-then-emit composition guard", () => {
+  const KC = ["shellResult", "memoryNote_write", "concept_write", "source_code", "substrateGap_write"];
+  const throwLLM = (async () => { throw new Error("shortcut fired on a COMPOSITION — the write clause was dropped"); }) as unknown as typeof fetch;
+
+  // Each of these both computes AND asks to persist, so the deterministic shortcuts must
+  // stand down and let the LLM (whose COMPOSITION RULE returns both shapes) decide.
+  const COMPOSITIONS = [
+    "Write a memory note recording the current count of TypeScript files in repos/goal-host-vessel/src.",
+    "Count the lines in repos/activity-api/src/index.ts and write the number to a memory note",
+    "count open substrateGaps by category and save the result as a concept",
+    "how many vessels are registered? store the answer in an obsidian note",
+    "sum failed_attempts for missing_capability gaps and record it in a note",
+  ];
+  for (const goal of COMPOSITIONS) {
+    it(`does NOT truncate to a single compute shape: ${goal.slice(0, 52)}…`, async () => {
+      // A shortcut firing would return synchronously without touching the LLM; throwLLM
+      // makes that failure loud instead of silently yielding ["shellResult"].
+      const out = await inferGoalTargetDecision(goal, KC, { llmEndpoint: "http://llm.test", fetchImpl: throwLLM })
+        .catch(() => ({ shapes: ["__llm_was_called__"], confidence: 0, alternatives: [] }));
+      expect(out.shapes).not.toEqual(["shellResult"]);
+    });
+  }
+
+  // The shortcuts exist to stop confabulation on pure computes — guard against
+  // over-suppression, which would regress that.
+  const PURE_COMPUTES = [
+    "Count the number of TypeScript files under repos/goal-host-vessel/src and report the number.",
+    "How many vessels are currently registered in the discovery registry? Report the number.",
+    "count open substrateGaps by category top 3",
+  ];
+  for (const goal of PURE_COMPUTES) {
+    it(`still routes deterministically (no over-suppression): ${goal.slice(0, 52)}…`, async () => {
+      const out = await inferGoalTargetDecision(goal, KC, { llmEndpoint: "http://llm.test", fetchImpl: throwLLM });
+      expect(out.shapes).toEqual(["shellResult"]);
+    });
+  }
+});

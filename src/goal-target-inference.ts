@@ -178,6 +178,31 @@ export async function inferGoalTargetDecision(
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
 
+  // COMPOSITION GUARD for every deterministic pre-LLM shortcut below.
+  //
+  // A goal that BOTH computes a value AND asks to PERSIST it is a compute-then-emit
+  // COMPOSITION, and only the LLM inferrer handles it — its COMPOSITION RULE returns
+  // BOTH the producing shape and the matching write shape. Every shortcut below
+  // returns a SINGLE shape, so letting one fire on a composition silently DROPS the
+  // write clause. That is not a cosmetic loss: the plan becomes the truncated set,
+  // the walk produces exactly it, and the reach gate — which grades against the plan
+  // — declares the goal REACHED while the write never happened. Observed live: "Write
+  // a memory note recording the count of TypeScript files in repos/goal-host-vessel/src"
+  // planned ["shellResult"], produced ["shellResult"], reached:true, and NO note exists.
+  // Plan-vs-observed reconciliation cannot catch this, because both sides agree — they
+  // are both downstream of the same truncated plan.
+  //
+  // Each shortcut previously carried its own ad-hoc excluder (e.g.
+  // `write\s+(?:a\s+)?(?:note|file|concept)`) which a single qualifier defeats:
+  // "write a MEMORY note" slips through while "write a note" is caught — and the first
+  // shortcut had no write exclusion at all. One shared, qualifier-tolerant detector
+  // closes the class instead of patching the instance. Deliberately requires BOTH a
+  // persist verb AND a persist target within a short window, so pure computes that
+  // merely mention a file or report a number are NOT suppressed (the shortcuts exist
+  // to stop confabulation, so over-suppressing them would regress that).
+  const WRITE_CLAUSE = /\b(?:write|writes|writing|save|saves|saving|record|records|recording|store|stores|storing|persist|persists|persisting|append|appends|appending|capture|captures|capturing|file)\b[^.]{0,48}?\b(?:note|notes|memory|memories|concept|concepts|document|documents|gap|gaps|journal|entry|entries|obsidian|vault)\b/i;
+  const isCompositionAsk = WRITE_CLAUSE.test(goal);
+
   // EXPLANATORY / CONCEPTUAL PROSE-ANSWER ROUTE (D1 floor, 2026-07-26). A plain
   // "explain / what is / define / describe / how does X work / why does" question
   // has NO bespoke producer, so the LLM target-inference below COLLIDES the goal's
@@ -222,7 +247,7 @@ export async function inferGoalTargetDecision(
     const VALUE_NOUN = /\b(value|field|key|version|name|entry|entries|property|properties|attribute|setting|settings|dependenc(?:y|ies)|devdependenc\w*|script|scripts|main|license|author|homepage|repository|url|port|endpoint)\b/i;
     const FILE_OPERAND = /repos\/[\w.-]+\/[\w./-]+\.\w+|\b[\w-]+\.(?:json|ts|tsx|js|jsx|md|txt|ya?ml|toml|lock|cfg|ini|sh|py|sql|env)\b/i;
     const NOT_EXTRACT = /\b(summar|explain|describe|overview|analy[sz]e|review|audit|refactor|rewrite|gist|understand|two\s+sentences?|what\s+is\s+.*\s+about|quality|problem|complexity|coverage|security|performance|architecture|conformance)\b/i;
-    if (EXTRACT_VERB.test(goal) && VALUE_NOUN.test(goal) && FILE_OPERAND.test(goal) && !NOT_EXTRACT.test(goal)) {
+    if (!isCompositionAsk && EXTRACT_VERB.test(goal) && VALUE_NOUN.test(goal) && FILE_OPERAND.test(goal) && !NOT_EXTRACT.test(goal)) {
       return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
     }
   }
@@ -241,7 +266,7 @@ export async function inferGoalTargetDecision(
     const COUNT_ASK = /\b(how many|how much|number of|count|list|are there|report the (?:number|count))\b/i;
     const INVENTORY_NOUN = /\b(registr(?:y|ies|ed)|vessels?|discovery|services?|systemd|units?|containers?|processes|fleet|shapes?|resolvers?|endpoints?|ports?|advertis)\w*/i;
     const NOT_INVENTORY = /\b(analy[sz]e|review|summar|audit|refactor|edit|implement|\bfix\b|quality|problem|complexity|security|write|persist|propose|\bnote\b|concept)\b/i;
-    if (COUNT_ASK.test(goal) && INVENTORY_NOUN.test(goal) && !NOT_INVENTORY.test(goal)) {
+    if (!isCompositionAsk && COUNT_ASK.test(goal) && INVENTORY_NOUN.test(goal) && !NOT_INVENTORY.test(goal)) {
       return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
     }
   }
@@ -256,7 +281,7 @@ export async function inferGoalTargetDecision(
     const FS_AGG_VERB = /\b(how many|number of|count|sum|total|average|mean|largest|biggest|smallest|longest|list|contain|containing)\b/i;
     const FS_NOUN = /\b(files?|source\s+files?|lines?|\.ts|\.js|repos\/[\w.-]+|src\/|director(?:y|ies)|folders?|codebase)\b/i;
     const NOT_FS_EDIT = /\b(implement|fix|edit|refactor|rewrite|explain|summar\w*|analy[sz]e|review|audit|propose|persist|write\s+(?:a\s+)?(?:note|file|concept))\b/i;
-    if (FS_AGG_VERB.test(goal) && FS_NOUN.test(goal) && !NOT_FS_EDIT.test(goal)) {
+    if (!isCompositionAsk && FS_AGG_VERB.test(goal) && FS_NOUN.test(goal) && !NOT_FS_EDIT.test(goal)) {
       return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
     }
   }
@@ -276,7 +301,7 @@ export async function inferGoalTargetDecision(
     const AGG_VERB = /\b(count|how many|number of|sum|total|group(?:ed)? by|by category|per\s|top\s+\d|rank(?:ed)?|most\s+(?:common|frequent)|distribution|tally|average|mean)\b/i;
     const SUBSTRATE_NOUN = /\b(gaps?|substrate\s?gaps?|activity\s?templates?|activities|executions?|traces?|failed_attempts?|failure\s?modes?)\b/i;
     const NOT_AGG = /\b(implement|\bfix\b|edit|refactor|rewrite|explain|summar|analy[sz]e|review|audit|propose|persist|write\s+(?:a|the)?\s*(?:note|file|concept))\b/i;
-    if (AGG_VERB.test(goal) && SUBSTRATE_NOUN.test(goal) && !NOT_AGG.test(goal)) {
+    if (!isCompositionAsk && AGG_VERB.test(goal) && SUBSTRATE_NOUN.test(goal) && !NOT_AGG.test(goal)) {
       return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
     }
   }
