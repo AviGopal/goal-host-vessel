@@ -6400,7 +6400,7 @@ async function verifyEditPostState(goal: string, editFile: string, landedSha?: s
     if (newSym === null || !landedSha) return null;
     return await symbolOnAddedLine(newSym, editFile, landedSha);
   }
-  const candidates = [`/workspace/git/super-repo/${editFile}`, `/vessels/${editFile.replace(/^repos\//, "")}`];
+  const candidates = [ `/workspace/git/vessels/${editFile.replace(/^repos\//, "")}`, `/workspace/git/super-repo/${editFile}` ];
   let raw: string | null = null;
   for (const c of candidates) { try { raw = await Bun.file(c).text(); break; } catch { /* next candidate */ } }
   if (raw === null) return null;                           // can't read → can't prove absence
