@@ -9762,7 +9762,17 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
         const label = labels[0];
         const labelVerdict = label?.verdict;
         if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") return;
-        learn.oracleLabelWritten = true;
+        // SOURCE-AWARE LATCH: only a HUMAN verdict burns the consumption latch.
+        // recordDeterministicLabel (:2439) mirrors EVERY oracle verdict into the
+        // corpus as a deterministic/automated row at verdict time, so a machine
+        // label is always present before the operator can speak. Burning the
+        // latch on it made the human branch below structurally unreachable —
+        // 0 "HUMAN reach override" lines in 48h against 81 machine consumptions.
+        // Leaving the latch unburned for machine labels is sufficient: the corpus
+        // read is ORDER BY created_at DESC LIMIT 1 (activity-api
+        // src/routes/impulses.ts:2764), so a later human row is already labels[0]
+        // on the next poll. No limit change is needed.
+        if (label?.labeler === "human") learn.oracleLabelWritten = true;
         if (label?.labeler === "human") {
           record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
           (record as { humanGraded?: boolean }).humanGraded = true;
