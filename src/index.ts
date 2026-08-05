@@ -9755,7 +9755,10 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
           body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: 1 } }),
           signal: AbortSignal.timeout(15_000),
         });
-        if (!labelRes.ok) return;
+        if (!labelRes.ok) {
+          console.warn(`[oracle-label] NOT consumed exec=${labelExecId} reason=fetch_not_ok status=${labelRes.status}`);
+          return;
+        }
         const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
         let labels: Array<{ verdict?: string; notes?: string; labeler?: string }> = [];
         try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string; notes?: string; labeler?: string }>) : []; } catch { labels = []; }
