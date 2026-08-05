@@ -6999,7 +6999,20 @@ async function runGoalWithRecovery(
                 },
               },
             }),
-            signal: AbortSignal.timeout(240_000),
+            // 240s was BELOW THE FLOOR of the work this call waits on. Measured 2026-08-05 on a
+            // single goal-host MainPID: three EARLY EDIT-INTENT dispatches aborted at EXACTLY
+            // 240s (20:49:27→20:53:27, 21:09:15→21:13:15, 21:30:54→21:34:55), each logging
+            // "routing failed (The operation timed out.) — falling through to walk" and
+            // orphaning a live compose the caller can no longer cancel. This vessel's own drain
+            // drop-in (scripts/substrate/units/goal-host-vessel.service.d/drain-timeout.conf)
+            // already records that "a feature_compose edit runs 5-8 MINUTES". A ceiling under
+            // the callee's floor makes this route unable to succeed regardless of LLM health —
+            // the same by-construction defect as a drain budget set above its stop timeout.
+            //
+            // NOTE 540s now exceeds GOAL_HOST_DRAIN_MS (240s under TimeoutStopUSec=5min), so a
+            // restart landing mid-compose still SIGKILLs the request. That hazard predates this
+            // change and is why you must never dispatch while a goal-host edit is landing.
+            signal: AbortSignal.timeout(540_000),
           });
           if (earlyComposeResp.ok) {
             const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
