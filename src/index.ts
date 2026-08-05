@@ -9526,7 +9526,19 @@ async function handleRunGoal(req: Request): Promise<Response> {
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify({ "execution_id": record.executionId, "reached": record.reached, "completion_shapes": seek.completionShapes ?? [] }),
           signal: AbortSignal.timeout(10_000),
-        }).then((r) => { if (!r.ok) console.warn(`[goal-host-vessel] reach-patch rejected: HTTP ${r.status} for ${record.executionId}`); })
+        }).then(async (r) => {
+          // HTTP status is NOT the question. POST /reach answers 200
+          // {"success":true,"updated":0} when its WHERE matched no row — e.g.
+          // satisfier-only reaches, which persist no execution row at all. An
+          // `r.ok` check therefore reports a successful grading that graded
+          // nothing: the same swallow-the-failure class this whole reach-patch
+          // exists to fix. Read `updated` and say so when it is zero.
+          if (!r.ok) { console.warn(`[goal-host-vessel] reach-patch rejected: HTTP ${r.status} for ${record.executionId}`); return; }
+          const j = await r.json().catch(() => null) as { updated?: number } | null;
+          if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response for ${record.executionId}`); return; }
+          if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW for ${record.executionId} (reached=${record.reached}) — verdict NOT persisted; this execution stays ungraded`); return; }
+          console.log(`[goal-host-vessel] reach-patch ok: ${record.executionId} reached=${record.reached} rows=${j.updated}`);
+        })
           .catch((e) => console.warn(`[goal-host-vessel] reach-patch failed (non-fatal): ${(e as Error).message}`));
       }
       record.learning = learningSink;
