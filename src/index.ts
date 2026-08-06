@@ -4010,8 +4010,21 @@ async function runGoalAsPoolWalk(
          signal: AbortSignal.timeout(4000),
        });
        if (sr.ok) {
-         const sj = await sr.json() as { content?: any };
-         const cc = sj?.content;
+         // ENVELOPE DIVERGENCE, same defect as the write-tool schema fetch above. Vessels answer
+         // a resolve under DIFFERENT top-level keys: concept-db returns `content`
+         // (concept-db/src/routes/impulses.ts:1055) while development-vessel — which serves
+         // resolver_schema — returns `body`. Reading only `content` left cc undefined for every
+         // shape, so the AUTHORITATIVE PAYLOAD CONTRACT block was never attached to a prompt.
+         // Measured 2026-08-06: `grep -c "AUTHORITATIVE PAYLOAD CONTRACT"` over the WHOLE journal
+         // returns ZERO — the mechanism has never once run.
+         //
+         // That block is what tells the model a resolver's REQUIRED FIELDS and whether the
+         // pointer is flat or enveloped. Without it the walk guesses a payload for a shape it has
+         // never used, fails on missing_required_field, and the failure is attributed to the
+         // resolver rather than to the missing contract — so attempting an unfamiliar resolver
+         // teaches the loop the wrong lesson. rawResolve already unwraps both keys.
+         const sj = await sr.json() as { content?: any; body?: any };
+         const cc = sj?.content ?? sj?.body;
          if (cc && cc.known === true && Array.isArray(cc.fields)) {
            const req = cc.fields.filter((f: any) => f.required).map((f: any) => f.name);
            const opt = cc.fields.filter((f: any) => !f.required).map((f: any) => f.name);
