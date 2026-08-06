@@ -2855,7 +2855,15 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
   if (verdict?.reached && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
     console.log(`[goal-host-vessel] universal ReAct fallback REACHED goal (${groundedOk} grounded read(s), ${executedOk}/${executed.length} tool(s) OK)`);
-    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
+    // Carry the answer the floor actually produced. This return used to drop
+    // `finalText` on the floor: the ReAct loop reasoned over real tool output,
+    // composed a grounded answer, passed the reach gate on it — and then
+    // returned reached:true with the answer deleted. Every consumer, the
+    // Obsidian panel included, saw a goal marked reached with nothing to show
+    // for it, which is indistinguishable from a hollow pass. The plumbing for
+    // this already existed end to end (GoalSeekResult.answerBody -> record ->
+    // the goalWalkState body); only this one return omitted it.
+    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: finalText.trim() || undefined, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
   }
   return null;
 }
