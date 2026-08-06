@@ -239,6 +239,11 @@ import {
   ActivityApiAdapter,
 } from "@avigopal/ias-executor-ts";
 import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-executor-ts/adapters";
+// ONE definition, imported by both the command builders and their reach oracles. It lives
+// in its own module so it can be tested against real source — index.ts boots a server on
+// import, so anything defined here is untestable and this parse has now produced both a
+// false green and a false red. See file-extension.ts for both incidents.
+import { parseFileExtension } from "./file-extension";
 import type {
   EventSink,
   Impulse,
@@ -1078,43 +1083,6 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
 // BUILDER (buildAggregateCommand). Only an explicit immediate-directory phrasing narrows a
 // file count to depth 1; everything else means "under this directory", recursively.
 const TOP_LEVEL_FILE_SCOPE = /\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:in|under|inside)|non[-\s]?recursive|not\s+recursive|shallow|at\s+the\s+root\s+of)\b/i;
-
-// LANGUAGE NAME -> file extension. People say "TypeScript files", not ".ts files", and the
-// literal `\.(\w{1,6})\s+files?` parse below only matches the dotted form — so "how many
-// TypeScript files are under repos/<v>/src" parsed ext=null and counted EVERY file.
-// Observed live: answered 18 for a tree holding 17 .ts files plus one .js. As with the
-// scope defect, the oracle shares this parse, so it agreed on 18 and alpha-credited the
-// wrong answer. Same self-confirming class, different dimension: fixing the depth did not
-// fix the parse, because ANY parse error is invisible while generator and grader share it.
-const LANGUAGE_EXT: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\btype[-\s]?script\b/i, "ts"],
-  [/\bjava[-\s]?script\b/i, "js"],
-  [/\bpython\b/i, "py"],
-  [/\bmarkdown\b/i, "md"],
-  [/\bjson\b/i, "json"],
-  [/\bya?ml\b/i, "yaml"],
-  [/\bshell|\bbash\b/i, "sh"],
-  [/\bsql\b/i, "sql"],
-  [/\brust\b/i, "rs"],
-  [/\bgo(?:lang)?\s+files?\b/i, "go"],
-];
-
-/**
- * The file-extension filter a count/aggregate goal asks for, or null for "all files".
- * Accepts BOTH the dotted literal (".ts files") and the language name ("TypeScript files").
- * Shared by the command builders and their reach oracles so the two cannot disagree — the
- * point is not that they agree (they always will) but that they agree on the RIGHT filter.
- */
-function parseFileExtension(goal: string): string | null {
-  const lit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  if (lit && lit[1]) return lit[1].toLowerCase();
-  for (const [re, ext] of LANGUAGE_EXT) {
-    // Require the language name to actually qualify "files", so "count the files that
-    // mention TypeScript" is not silently narrowed to *.ts.
-    if (re.test(goal) && /\bfiles?\b/i.test(goal)) return ext;
-  }
-  return null;
-}
 
 /**
  * The tree a `repos/<vessel>/…` path actually DENOTES, in preference order.
