@@ -2678,10 +2678,39 @@ async function runGroundedToolLoop(
 ): Promise<{ finalText: string; groundedOk: number; executedOk: number; executed: Array<{ tool: string; ok: boolean }>; observations: string[]; calledWriteShapes: Set<string>; commandEvidence: string } | null> {
   const url = await ufResolveUrl("llm_completion_dispatch"); if (!url) return null;
   const allowlist = new Set<string>(tools.map((t: any) => String(t?.name)).filter(Boolean));
-  const MAX_ITERS = 4;
-  const MAX_CALLS_PER_ITER = 8;
-  const ITER_TIMEOUT_MS = Math.min(PROXY_TIMEOUT_MS, 90_000);
-  const deadline = Date.now() + Math.min(PROXY_TIMEOUT_MS, 210_000);
+  // (law 1) The four numbers that govern ReAct DEPTH used to be in-process constants: invisible to
+  // the walk, ungradable by the learner, and identical for a one-line lookup and a ten-hop
+  // investigation. They are now resolved AT LOOP ENTRY from the shaped `walkBudget` impulse, through
+  // the SAME discovery path every tool on this loop already uses — ufExecuteTool, which is
+  // ufResolveUrl + the rawResolve envelope + the content/body unwrap. No second resolution path is
+  // introduced. The literals below remain the ONLY fallback, and TAKING the fallback is LOGGED, so
+  // "the budget was never shaped" is an observable fact instead of a silent constant. Until a
+  // producer for `walkBudget` exists, ufResolveUrl returns null and the fallback line is the
+  // standing demand signal for minting one.
+  let MAX_ITERS = 4;
+  let MAX_CALLS_PER_ITER = 8;
+  let ITER_TIMEOUT_MS = Math.min(PROXY_TIMEOUT_MS, 90_000);
+  let WALL_CLOCK_MS = Math.min(PROXY_TIMEOUT_MS, 210_000);
+  try {
+    const budget = await ufExecuteTool("walkBudget", {}, new Set<string>(["walkBudget"]));
+    if (budget.ok) {
+      const b = JSON.parse(budget.result) as Record<string, unknown>;
+      const num = (v: unknown, cur: number, lo: number, hi: number): number => {
+        const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+        return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : cur;
+      };
+      MAX_ITERS = num(b["max_iters"], MAX_ITERS, 1, 20);
+      MAX_CALLS_PER_ITER = num(b["max_calls_per_iter"], MAX_CALLS_PER_ITER, 1, 32);
+      ITER_TIMEOUT_MS = num(b["iter_timeout_ms"], ITER_TIMEOUT_MS, 5_000, PROXY_TIMEOUT_MS);
+      WALL_CLOCK_MS = num(b["wall_clock_ms"], WALL_CLOCK_MS, 10_000, PROXY_TIMEOUT_MS);
+      console.log(`[goal-host-vessel] floor: walkBudget SHAPED iters=${MAX_ITERS} calls=${MAX_CALLS_PER_ITER} iterMs=${ITER_TIMEOUT_MS} wallMs=${WALL_CLOCK_MS}`);
+    } else {
+      console.log(`[goal-host-vessel] floor: walkBudget resolve failed (${budget.error}) — FALLING BACK to literal budget iters=${MAX_ITERS} calls=${MAX_CALLS_PER_ITER} iterMs=${ITER_TIMEOUT_MS} wallMs=${WALL_CLOCK_MS}`);
+    }
+  } catch (e) {
+    console.log(`[goal-host-vessel] floor: walkBudget unusable (${String((e as Error)?.message ?? e).slice(0, 140)}) — FALLING BACK to literal budget iters=${MAX_ITERS} calls=${MAX_CALLS_PER_ITER} iterMs=${ITER_TIMEOUT_MS} wallMs=${WALL_CLOCK_MS}`);
+  }
+  const deadline = Date.now() + WALL_CLOCK_MS;
   const executed: Array<{ tool: string; ok: boolean }> = [];
   const observations: string[] = [];
   const doneKeys = new Set<string>();          // (tool,args) already executed OK — never re-run
@@ -2705,11 +2734,37 @@ async function runGroundedToolLoop(
       ? `${basePrompt}\n\nTOOL OBSERVATIONS SO FAR (real results you MUST reason over — do not contradict or invent beyond them):\n${observations.join("\n\n").slice(0, 12000)}\n\nUsing ONLY these real results, either call MORE tools to gather what is still missing, or give your FINAL answer grounded strictly in them.`
       : basePrompt;
     let text = ""; let toolCalls: any[] = [];
+    // Never let one iteration's timeout outlive the wall clock: the for-condition only checks the
+    // deadline BETWEEN turns, so an un-clamped per-iteration signal could overshoot it by a whole
+    // ITER_TIMEOUT_MS and blow the caller's proxy timeout.
+    const iterBudgetMs = Math.max(5_000, Math.min(ITER_TIMEOUT_MS, deadline - Date.now()));
     try {
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(ITER_TIMEOUT_MS) });
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(iterBudgetMs) });
       if (!r.ok) { console.log(`[goal-host-vessel] floor: dispatch FAILED http=${r.status} iter=${iter} — loop aborts with no observations`); break; }
       const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
-    } catch { break; }
+    } catch (e) {
+      // This was a bare `catch { break; }`. A per-iteration TIMEOUT killed the floor with ZERO log
+      // and ZERO observations, the caller returned null, and the walk proceeded as though no floor
+      // existed — measured at 41/74 invocations with zero act-observe cycles, 19/35 pairable windows
+      // lasting EXACTLY ITER_TIMEOUT_MS. A timeout is evidence about the ACTION, not about the
+      // channel, so it is now the OBSERVE step of reason-act-observe: it is appended to the existing
+      // `observations` array (which the iterPrompt above already feeds back) and the loop CONTINUES.
+      // Only the wall-clock deadline and MAX_ITERS terminate it. A NON-timeout throw is different in
+      // kind — connection refused, DNS failure, malformed JSON from the dispatch endpoint — it is a
+      // fault of the channel that will recur identically on the next turn and can produce no
+      // observation, so it still breaks, symmetric with the `!r.ok` break directly above.
+      const err = e as Error;
+      const msg = String(err?.message ?? e);
+      const cls = String(err?.name ?? "Error");
+      const isTimeout = cls === "TimeoutError" || cls === "AbortError" || /timed?\s*out|aborted|the operation was aborted/i.test(msg);
+      if (isTimeout) {
+        console.log(`[goal-host-vessel] floor: dispatch TIMEOUT iter=${iter} class=${cls} after ${iterBudgetMs}ms — recorded as an OBSERVATION, loop CONTINUES (only the wall clock ends it); observations=${observations.length + 1}`);
+        observations.push(`ITERATION ${iter} TIMED OUT after ${iterBudgetMs}ms with no model response. That attempt produced nothing. Do not repeat the same expensive request: ask for FEWER and CHEAPER tool calls, or give your final answer from what is already observed.`);
+        continue;
+      }
+      console.log(`[goal-host-vessel] floor: dispatch ERROR iter=${iter} class=${cls} msg=${msg.slice(0, 160)} — channel fault, loop ends with ${observations.length} observation(s)`);
+      break;
+    }
     if (Array.isArray(toolCalls) && toolCalls.length > 0) {
       let progressed = false;
       const calls = (toolCalls as any[]).slice(0, MAX_CALLS_PER_ITER);
