@@ -2621,7 +2621,16 @@ async function ufBuildWriteTool(shape: string): Promise<any | null> {
   let envelope = ""; let fields: string[] = []; let required: string[] = [];
   try {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }), signal: AbortSignal.timeout(4000) });
-    if (r.ok) { const c = ((await r.json()) as any)?.content; if (c && c.known === true) { envelope = String(c.envelope ?? ""); fields = Array.isArray(c.fields) ? c.fields.map((f: any) => String(f.name)) : []; required = Array.isArray(c.required) ? c.required.map(String) : fields; } }
+    if (r.ok) { // ENVELOPE DIVERGENCE. Vessels answer a resolve under DIFFERENT top-level keys: concept-db
+// returns `content` (concept-db/src/routes/impulses.ts:1055) while development-vessel returns
+// `body`. Reading only `content` meant every write-tool schema fetched from dev-vessel came back
+// undefined, so ufBuildWriteTool fell through to its fail-open `{content: string}` stub and
+// advertised a GENERIC one-field contract in place of the resolver's real required fields.
+// The LLM then had no way to know a shape wanted `title`+`body`, and the walk's write attempts
+// failed on missing_required_field for reasons the tool schema had actively concealed.
+// rawResolve elsewhere in this file already unwraps both; this call site did not.
+const _sj = (await r.json()) as any;
+const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = String(c.envelope ?? ""); fields = Array.isArray(c.fields) ? c.fields.map((f: any) => String(f.name)) : []; required = Array.isArray(c.required) ? c.required.map(String) : fields; } }
   } catch { /* fail-open: generic content field */ }
   const names = fields.length ? fields : ["content"];
   const req = required.length ? required : ["content"];
