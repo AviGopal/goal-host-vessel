@@ -1644,6 +1644,19 @@ function selectorOf(row: ClassRow): SelectorDef {
 }
 
 function buildFromClassRow(goal: string): string | null {
+  // YIELD TO THE COMPARISON BUILDER. This runs FIRST in the deterministic chain (:4447), so a
+  // two-source comparative goal is claimed here and answered as a single-source count before
+  // buildTwoSourceCompareCommand is ever consulted. Measured 2026-08-06 against a precomputed
+  // oracle: "How many more TypeScript files are under repos/concept-db/src than under
+  // repos/boredom-vessel/src?" (true answer 25) was answered 31 — the count of the first
+  // directory alone — and graded REACHED, because verifyCountFilesReach shares this builder's
+  // parse and so confirms any answer of the right shape.
+  //
+  // That is the failure mode to guard against, not the arity: a builder must decline a goal it
+  // cannot actually satisfy, or its self-consistent oracle will certify the wrong answer.
+  // parseTwoSourceCompare is reused as the discriminator rather than a second regex, so the two
+  // builders cannot drift apart about what "a comparison" is.
+  if (parseTwoSourceCompare(goal)) return null;          // comparative -> buildTwoSourceCompareCommand owns it
   const hit = resolveClassRow(goal);
   if (!hit) return null;                                 // no data-row owns this goal -> next in chain
   const { row, params: p } = hit;
@@ -1908,7 +1921,17 @@ function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   const paths = [...goal.matchAll(/repos\/[\w.-]+\/[\w./-]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ""));
   const uniq = [...new Set(paths)].filter((p) => !/\.\w{1,6}$/.test(p));
   if (uniq.length !== 2) return null;                         // needs EXACTLY two distinct dir roots
-  if (!/\bor\b/i.test(goal)) return null;
+  // Accept "than" as well as "or". The comparative arrives in two common phrasings —
+  // "which has more, A or B?" and "how many more ... in A than in B?" — and requiring "or"
+  // silently rejected the second. Measured 2026-08-06 with a precomputed oracle: the goal
+  // "How many more TypeScript files are under repos/concept-db/src than under
+  // repos/boredom-vessel/src?" (true answer 25 = 31 - 6) was declined here, fell through to
+  // buildFromClassRow — which runs FIRST in the chain at :4447 — and was answered as a plain
+  // single-directory count of 31. The walk then graded it REACHED, because
+  // verifyCountFilesReach shares that builder's parse, so a wrong answer of the right SHAPE is
+  // confirmed by construction. A phrasing gap in this predicate became a confidently wrong
+  // answer to a harder goal.
+  if (!/\bor\b|\bthan\b/i.test(goal)) return null;
   const more = /\bmore\b|\bmost\b|\blarger\b|\bbigger\b|\bgreater\b/i.test(goal);
   const fewer = /\bfewer\b|\bfewest\b|\bless\b|\bsmaller\b|\bsmallest\b/i.test(goal);
   if (more === fewer) return null;                            // ambiguous comparator
