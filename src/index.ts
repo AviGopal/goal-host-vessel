@@ -6701,24 +6701,58 @@ If one of those sibling shapes is the action that would create what the goal ask
                 ? `\n\n## Concepts\n\n- [[Substrate/Concepts/${findingSlug}|${conceptTitle}]]`
                 : "";
               const noteBody = bridgeBody + conceptLink;
-              let ok = false; let detail = "";
-              try {
-                const ep = await endpointForShape("obsidian:write_note");
-                if (ep) {
-                  const res = await rawResolve("obsidian:write_note", ep.endpoint, ep.resolvePath, { path: notePath, content: noteBody, dispatch_id: dispatchId, goal, reached: true });
-                  ok = noteWroteOk(res); detail = ok ? `wrote ${notePath}` : (lastRawResolveReason ?? "write refused");
-                } else { detail = "no vessel advertises obsidian:write_note"; }
-              } catch (e) { detail = `note write error: ${(e as Error).message}`.slice(0, 200); }
-              if (ok) addToPool("obsidian:write_note", { path: notePath, conceptId }, "bridged finding note");
+              // SINK RESOLUTION — the goal's OWN terminal write shape comes FIRST, with
+              // obsidian:write_note only as the tail fallback.
+              //
+              // This branch used to hardcode obsidian:write_note, which made it
+              // structurally unable to deliver anywhere the obsidian vessel is dark (any
+              // spoke without a connected vault). Observed live: a goal that asked for a
+              // durable memory note computed the CORRECT answer into shellResult
+              // ("...has more TypeScript modules (7 vs 6). Combined total: 13"), the
+              // terminal memoryNote_write fired ~6s BEFORE that compute and stored a
+              // title-restating placeholder, and this bridge — the one mechanism that
+              // exists to repair exactly that — logged `note=failed` because it was
+              // pointed at a shape no vessel here advertises. The walk graded `reached`
+              // off the COMPUTE while the artifact the goal named held none of it.
+              //
+              // Ordering (the placeholder write racing its own input) is the separate
+              // half of that gap and is NOT fixed here; this makes the repair reachable.
+              const sinkShapes = [
+                ...[...target].map(String).filter((s) => /(?:_write|:write_note)$/.test(s)),
+                "obsidian:write_note",
+              ].filter((s, i, a) => a.indexOf(s) === i);
+              // Flat pointer args per sink family. memoryNote_write aliases content->body
+              // and derives its id from the title; obsidian:write_note is path-addressed.
+              const sinkArgs = (shape: string): Record<string, unknown> =>
+                /:write_note$/.test(shape)
+                  ? { path: notePath, content: noteBody, dispatch_id: dispatchId, goal, reached: true }
+                  : { title: titleText, content: noteBody, note_type: "reference", dispatch_id: dispatchId, goal, reached: true };
+              let ok = false; let detail = ""; let usedSink = "";
+              const sinkAttempts: string[] = [];
+              for (const shape of sinkShapes) {
+                try {
+                  const ep = await endpointForShape(shape);
+                  if (!ep) { sinkAttempts.push(`${shape}: unadvertised`); continue; }
+                  const res = await rawResolve(shape, ep.endpoint, ep.resolvePath, sinkArgs(shape));
+                  if (noteWroteOk(res)) {
+                    ok = true; usedSink = shape;
+                    detail = `wrote ${/:write_note$/.test(shape) ? notePath : titleText} via ${shape}`;
+                    break;
+                  }
+                  sinkAttempts.push(`${shape}: ${lastRawResolveReason ?? "write refused"}`);
+                } catch (e) { sinkAttempts.push(`${shape}: ${(e as Error).message}`.slice(0, 120)); }
+              }
+              if (!ok) detail = `no sink accepted the write [${sinkAttempts.join("; ")}]`.slice(0, 400);
+              if (ok) addToPool(usedSink, { path: notePath, title: titleText, conceptId }, "bridged finding note");
               recordStep({
-                selected: { templateId: "bridge:obsidian:write_note:finding", source: "bridge" },
+                selected: { templateId: `bridge:${usedSink || "sink"}:finding`, source: "bridge" },
                 candidates: [], excluded: [],
                 status: ok ? "reached" : "failed",
-                newShapes: ok ? ["obsidian:write_note"] : [],
-                rationale: `[bridge] ${bridgeReason} — finding note (provenance dispatch=${shortDispatch}${conceptId ? `, concept=${conceptId}` : ""}): ${detail}`,
+                newShapes: ok ? [usedSink] : [],
+                rationale: `[bridge] ${bridgeReason} — finding note (provenance dispatch=${shortDispatch}${conceptId ? `, concept=${conceptId}` : ""}; sinks tried ${sinkShapes.join(",")}): ${detail}`,
                 poolBefore: before, poolAfter: shapeArr(), shadow: false,
               });
-              tap(`[goal-host-vessel] walk(${opts.surface}): BRIDGE materialized terminal output → sinks (concept=${conceptId ?? "none"}, note=${ok ? notePath : "failed"})`);
+              tap(`[goal-host-vessel] walk(${opts.surface}): BRIDGE materialized terminal output → sinks (concept=${conceptId ?? "none"}, note=${ok ? `${usedSink} ${notePath}` : `failed after ${sinkShapes.length} sink(s)`})`);
             }
           }
         } catch (e) {
