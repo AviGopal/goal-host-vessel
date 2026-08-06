@@ -3423,7 +3423,10 @@ async function producedShapesConsumable(shapes: string[]): Promise<boolean> {
 // Symmetric credit — the exact inverse of penaliseHollowTemplate. Same /v2/activities/feedback
 // channel (direction:"positive" intensity:2 mirrors the penalty's negative/2). The engine
 // template trace this walk emits carries dispatcher_used:goal-host + no reach tag ⇒
-// classifyReach 'ungraded' ⇒ SKIP, so this POST is the SOLE α source (no double-count).
+// classifyReach 'ungraded' ⇒ POST /reach GRADES (2b4e18b inverted the old SKIP premise).
+// This POST therefore moves impulse_shape_activity_score ONLY; variant_performance_metrics
+// is graded exclusively by /reach, which alone sees failure_mode, tasks/cost_usd, signature
+// and composition_chain. Do not re-add a posterior write here.
 // Only ever called behind a substance gate (deterministic flag OR producedShapesConsumable).
 async function creditReachedTemplate(activityId: string, reason: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
   try {
@@ -6497,7 +6500,10 @@ If one of those sibling shapes is the action that would create what the goal ask
         // never registry capability and never the lossy consumer_productivity_audit (which
         // under-reports truly_covered ~0 from a biased 100-trace window ⇒ a blanket clamp).
         // Leaf attribution = lastPick, symmetric with the penalty. The engine trace is
-        // ungraded/SKIPped ⇒ this feedback POST is the sole synchronous α source (no double-count).
+        // ungraded ⇒ /reach GRADES the engine trace. This POST is NOT an α source for
+        // variant_performance_metrics: lastPick here is almost always a `satisfier:*` id
+        // (57/57 credits over 72h), which classifyReach zeroes as a hollow satellite. It
+        // moves impulse_shape_activity_score only. VPM credit comes from /reach.
         // producedShapesConsumable stays defined for the OUT-OF-BAND retroactive/active path.
         // An fs-write EFFECT shape (fileEditResult/fileWriteResult/fs_edit/fs_write) is one
         // local-tools ADVERTISES but never applies (see UNRESOLVABLE_FS_WRITE below): the
