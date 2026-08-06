@@ -3465,7 +3465,79 @@ async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
 // reached it via a known path, prefer that path (improvement over subsequent
 // attempts). Returns a template id to target, or null to fall through to the
 // global template recommender.
-async function recommendReachingPath(goalText: string): Promise<string | null> {
+// The MIDDLE and CEILING tiers of the execution contract both terminate here, and
+// two defects in this function foreclosed them.
+//
+// 1. THE CANDIDATE FILTER HAD A DEAD OPERAND. It read
+//    `(p.success_rate ?? p.goal_achieved)`. `goal_achieved` occurs ZERO times in
+//    activity-api's entire source; `RecommendedPathSchema` declares `success_rate`
+//    required and non-nullable and both emit sites coerce it with `|| 0`. So `??`
+//    could never fall through and the guard was unconditionally `if (p.success_rate)`
+//    — meaning every pathway that genuinely REACHED but stores a rate of 0 was
+//    permanently unselectable. That included the 438 templates the integer-division
+//    bug truncated to 0, i.e. the filter was hardest on exactly the paths with the
+//    most execution history. Acceptance is now a real test over the counters
+//    /recommend already returns, read at use time from a shaped `pathwayReusePolicy`
+//    impulse (law 1) so the thresholds are learnable rather than guessed.
+//
+// 2. IT TRUNCATED THE PATHWAY TO ITS FIRST STEP. The signature was
+//    `Promise<string | null>` returning `best?.path_activities?.[0]`. 47.4% of
+//    recorded paths compose more than one activity, and every one of them was
+//    reduced to its head. There was no pathway object in existence, so first-mile
+//    binding (same body, different inputs), last-mile carry (same body, different
+//    target shape) and composition replay had nowhere to go — the MIDDLE tier was
+//    foreclosed by a RETURN TYPE, not by a missing algorithm. The full ordered
+//    pathway is now returned so the walk can adapt it.
+interface ReachingPathway {
+  activities: string[];
+  goalHash: string | null;
+  pathSignature: string | null;
+  successfulExecutions: number;
+  totalExecutions: number;
+}
+interface PathwayReusePolicy {
+  minSuccessfulExecutions: number;
+  minTotalExecutions: number;
+}
+const PATHWAY_REUSE_FALLBACK: PathwayReusePolicy = { minSuccessfulExecutions: 1, minTotalExecutions: 1 };
+async function resolvePathwayReusePolicy(): Promise<PathwayReusePolicy> {
+  try {
+    // Resolve through DISCOVERY's universal proxy, which forwards any non-discovery
+    // shape to its registered producer and takes a FLAT { pointer } body. Not through
+    // activity-api: its /v2/impulses/resolve switches on pointer.type and the default
+    // branch answers 404 use_vessel_discovery for any shape it does not itself store,
+    // so a policy read there could never resolve and law-1 compliance would be
+    // decorative.
+    const res = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "pathwayReusePolicy" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) {
+      console.log(`[goal-host-vessel] pathwayReusePolicy unresolved (http ${res.status}) — FALLING BACK to literal acceptance (minSuccessful=${PATHWAY_REUSE_FALLBACK.minSuccessfulExecutions} minTotal=${PATHWAY_REUSE_FALLBACK.minTotalExecutions}) (law-1 fallback, logged)`);
+      return PATHWAY_REUSE_FALLBACK;
+    }
+    const o = await res.json() as Record<string, unknown>;
+    const c = o["content"] as Record<string, unknown> | undefined;
+    const bv = o["body"] ?? (c && typeof c === "object" ? (c["body"] ?? c["value"] ?? c) : undefined) ?? o;
+    const b = (typeof bv === "object" && bv !== null && !Array.isArray(bv)) ? (bv as Record<string, unknown>) : null;
+    if (!b) return PATHWAY_REUSE_FALLBACK;
+    const num = (k: string, d: number): number => {
+      const v = b[k];
+      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : d;
+    };
+    return {
+      minSuccessfulExecutions: num("minSuccessfulExecutions", PATHWAY_REUSE_FALLBACK.minSuccessfulExecutions),
+      minTotalExecutions: num("minTotalExecutions", PATHWAY_REUSE_FALLBACK.minTotalExecutions),
+    };
+  } catch (e) {
+    console.log(`[goal-host-vessel] pathwayReusePolicy resolve FAILED (${String((e as Error)?.message ?? e).slice(0, 120)}) — FALLING BACK to literal acceptance (law-1 fallback, logged)`);
+    return PATHWAY_REUSE_FALLBACK;
+  }
+}
+async function recommendReachingPath(goalText: string): Promise<ReachingPathway | null> {
   if (!goalText) return null;
   try {
     const _sig = (await getCachedStateSignature())?.signature_hash;
@@ -3477,10 +3549,32 @@ async function recommendReachingPath(goalText: string): Promise<string | null> {
     });
     if (!r.ok) return null;
     const j: any = await r.json();
-    const paths = j?.recommended_paths ?? j?.body?.recommended_paths ?? [];
-    // prefer a path that has genuinely reached this goal (success_rate>0) and is single-activity
-    const best = paths.find((p: any) => (p.success_rate ?? p.goal_achieved) && Array.isArray(p.path_activities) && p.path_activities.length >= 1);
-    return best?.path_activities?.[0] ?? null;
+    const paths: any[] = j?.recommended_paths ?? j?.body?.recommended_paths ?? [];
+    const pol = await resolvePathwayReusePolicy();
+    const countOf = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    // Accept on the COUNTERS, not on the derived rate. The counters are written
+    // atomically and were never truncated; the rate was.
+    const eligible = paths.filter((p) =>
+      Array.isArray(p?.path_activities) && p.path_activities.length >= 1 &&
+      countOf(p?.successful_executions) >= pol.minSuccessfulExecutions &&
+      countOf(p?.total_executions) >= pol.minTotalExecutions);
+    if (eligible.length === 0) {
+      if (paths.length > 0) console.log(`[goal-host-vessel] pathway reuse: ${paths.length} recommended, 0 accepted (minSuccessful=${pol.minSuccessfulExecutions} minTotal=${pol.minTotalExecutions}) — no reusable pathway`);
+      return null;
+    }
+    // Most-proven first: successes, then total experience.
+    eligible.sort((a, b) => (countOf(b.successful_executions) - countOf(a.successful_executions)) || (countOf(b.total_executions) - countOf(a.total_executions)));
+    const best = eligible[0];
+    const activities: string[] = best.path_activities.map((x: unknown) => String(x)).filter((s: string) => s.length > 0);
+    if (activities.length === 0) return null;
+    console.log(`[goal-host-vessel] pathway reuse: accepted ${activities.length}-step pathway (${countOf(best.successful_executions)}/${countOf(best.total_executions)} reached) of ${paths.length} recommended, dropped ${paths.length - eligible.length}`);
+    return {
+      activities,
+      goalHash: typeof best.goal_hash === "string" ? best.goal_hash : null,
+      pathSignature: typeof best.path_signature === "string" ? best.path_signature : null,
+      successfulExecutions: countOf(best.successful_executions),
+      totalExecutions: countOf(best.total_executions),
+    };
   } catch { return null; }
 }
 // In-flight approach-alteration (self-recovery DURING goal-seeking): recommend a
@@ -7888,7 +7982,14 @@ async function runGoalWithRecovery(
   let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
   if (!nextTarget && goal) {
     const reaching = await recommendReachingPath(goal);
-    if (reaching) { nextTarget = reaching; console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${reaching}`); }
+    if (reaching) {
+      // The walk still SEEDS on the head of the pathway, but the whole ordered
+      // pathway is now logged and available rather than discarded at the call
+      // boundary. `pathway_steps` is what a first/last-mile adaptation reads: the
+      // rest of the composition this goal's family already proved out.
+      nextTarget = reaching.activities[0];
+      console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${nextTarget} (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"}${reaching.activities.length > 1 ? ` remaining=[${reaching.activities.slice(1).join(",")}]` : ""})`);
+    }
   }
   if (!nextTarget && goal && seededOutputShapes && seededOutputShapes.length > 0) {
     nextTarget = (await recommendExcluding(goal, [], null, seededOutputShapes)) ?? undefined;
