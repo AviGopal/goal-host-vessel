@@ -4060,11 +4060,26 @@ async function runGoalAsPoolWalk(
     ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
     /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
     learningMode?: "observe" | "learn";
+    /**
+     * REUSE BEFORE DERIVE. The activity ids of a composition already proven to
+     * reach this goal (exact goal-hash match) or a goal that terminates in the
+     * same shapes (nearby shape-signature match), from
+     * /v2/goal-paths/recommend. Used ONLY as a preference at pick time among
+     * candidates that are already feasible and already advance the target — it
+     * never introduces a candidate the walk would not otherwise consider, and
+     * never overrides feasibility. Absent/empty ⇒ behaviour unchanged.
+     */
+    preferPathway?: string[];
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
   // stepSink (if provided). Additive — never alters control flow.
   const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
+
+  // REUSE BEFORE DERIVE — the proven composition for this goal, normalised to the
+  // same id form the walk's candidates carry so the two are comparable.
+  const pathwaySet = new Set<string>((opts.preferPathway ?? []).map((s) => normActivityId(String(s))).filter((s) => s.length > 0));
+  let pathwayReusePicks = 0;
 
   // SECRET-EXTRACTION REFUSAL (2026-07-27, falsifiability + security). A goal asking to REPORT/
   // PRINT/REVEAL a SECRET VALUE — an API key, password, token, private key, credential, or the
@@ -5881,8 +5896,34 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (target.size > 0) {
       const feasibleProducer = (c: WalkCandidate): boolean =>
         notScaffold(c) && !isIrrelevantLearnedComposite(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
+      // 0. REUSE BEFORE DERIVE. If a composition already proven to reach this
+      //    goal (or a goal terminating in the same shapes) names a candidate that
+      //    is ALREADY feasible and ALREADY advances the target, take it. This is
+      //    a tie-break inside the existing feasible set, not a new candidate and
+      //    not an override: `feasibleProducer` still gates it, so a proven-but-
+      //    unusable step can never be forced.
+      //
+      //    Without this the walk could not reuse a composition at all. The only
+      //    call site of the pathway lookup was in the RECOVERY loop, reached only
+      //    after "pool-walk took 0 shape-feasible steps" — so any walk that took
+      //    a step derived from scratch even when the whole composition was
+      //    recorded and proven. Measured 2026-08-06: a dispatch of a novel goal
+      //    ran a 10-activity chain and never consulted reuse, while the store,
+      //    asked with that goal's target shapes, returned the 2-step composition
+      //    ['satisfier:shellResult','satisfier:memoryNote_write'] at cover 1.0
+      //    with 6/6 reached. The composition was there; the walk could not see it.
+      if (pathwaySet.size > 0) {
+        const reusePick = [...candidates]
+          .sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target))
+          .find((c) => pathwaySet.has(normActivityId(c.id)) && feasibleProducer(c) && scaffoldRank(c, target) <= 0);
+        if (reusePick) {
+          pathwayReusePicks++;
+          tap(`[goal-host-vessel] walk(${opts.surface}): REUSE-BEFORE-DERIVE — picked ${normActivityId(reusePick.id)} because it is a step of a composition already proven to reach this goal family (pathway_steps=${pathwaySet.size}, reuse_picks=${pathwayReusePicks})`);
+          pick = reusePick;
+        }
+      }
       // 1. A GENUINE (non-hollow-scaffold) feasible producer of a target shape.
-      pick = [...candidates].sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target)).find((c) => feasibleProducer(c) && scaffoldRank(c, target) <= 0)
+      pick = pick ?? [...candidates].sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target)).find((c) => feasibleProducer(c) && scaffoldRank(c, target) <= 0)
         // 2. A scaffold producer is acceptable ONLY for a target with no live
         //    resolver (not bridge-authorable) — otherwise prefer bridge-authoring.
         ?? candidates.find((c) => feasibleProducer(c) && !bridgeableTarget(c));
@@ -7041,6 +7082,11 @@ async function runGoalWithRecovery(
   // Holds an id authored by opts.authorFallback when the walk takes 0 steps, so
   // the single-template recovery loop below runs the freshly-authored template.
   let authoredFallbackTarget: string | undefined;
+  // Consulted ONCE per dispatch and shared by the pool walk (as a pick-time
+  // preference) and the recovery loop (as a seed target), so reuse costs one
+  // lookup rather than one per path — and so both planes agree about which
+  // composition this dispatch is reusing.
+  let reachingPathway: ReachingPathway | null = null;
   let seededOutputShapes = opts.expectedOutputShapes;
   let terminalOutputShapes: string[] | undefined;
   let goalTargetDecision: GoalTargetDecision | null = null;
@@ -7518,6 +7564,12 @@ async function runGoalWithRecovery(
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
         }
       }
+      // REUSE BEFORE DERIVE: consult the proven-composition store BEFORE the walk,
+      // not only in the recovery loop it used to be confined to. `ablation.disableReuse`
+      // suppresses it so a cold-derivation counterfactual arm stays cold.
+      if (!reachingPathway && goal && !opts.ablation?.disableReuse) {
+        reachingPathway = await recommendReachingPath(goal, seededOutputShapes ?? null);
+      }
       let walk = await runGoalAsPoolWalk(goal, {
         variables: opts.variables,
         tags: opts.tags,
@@ -7530,6 +7582,7 @@ async function runGoalWithRecovery(
         learningSink: opts.learningSink,
         ablation: opts.ablation,
         learningMode: opts.learningMode,
+        preferPathway: reachingPathway?.activities,
       });
       // IN-DISPATCH SATISFIER RETRY: a HOLLOW verdict reached via a vessel-resolve
       // satisfier means the satisfier resolved but produced nothing goal-satisfying —
@@ -7556,6 +7609,7 @@ async function runGoalWithRecovery(
           learningSink: opts.learningSink,
         ablation: opts.ablation,
         learningMode: opts.learningMode,
+          preferPathway: reachingPathway?.activities,
           suppressSatisfierShapes: [suppressedShape],
         });
         if (retryWalk.reached) {
@@ -8088,7 +8142,9 @@ async function runGoalWithRecovery(
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
   if (!nextTarget && goal) {
-    const reaching = await recommendReachingPath(goal, seededOutputShapes ?? null);
+    // Already consulted before the pool walk — reuse that result rather than
+    // re-querying, so one dispatch means one lookup and both planes agree.
+    const reaching = reachingPathway ?? (opts.ablation?.disableReuse ? null : await recommendReachingPath(goal, seededOutputShapes ?? null));
     if (reaching) {
       // The walk still SEEDS on the head of the pathway, but the whole ordered
       // pathway is now logged and available rather than discarded at the call
