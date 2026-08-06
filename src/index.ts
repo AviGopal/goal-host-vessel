@@ -244,6 +244,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // import, so anything defined here is untestable and this parse has now produced both a
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
+import { parseGoalNoteTitle } from "./goal-note-title";
 import type {
   EventSink,
   Impulse,
@@ -4848,9 +4849,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     // intended title (the id falls back to the body value). Deterministic extraction from
     // the goal; never overrides a title the arg-synthesis already produced.
     if ((/_write$/.test(shape) || shape === "write_note") && !("title" in directArgsRaw)) {
-      const _tm = goal.match(/\btitled?\s+["'\u201c\u201d]([^"'\u201c\u201d]{1,80})["'\u201c\u201d]/i)
-        || goal.match(/\btitle[d]?\s*[:=]\s*["'\u201c\u201d]?([^"'\u201c\u201d\n]{1,80})["'\u201c\u201d]?/i);
-      if (_tm && _tm[1] && _tm[1].trim()) { directArgsRaw = { ...directArgsRaw, title: _tm[1].trim() }; }
+      const _t = parseGoalNoteTitle(goal);
+      if (_t) { directArgsRaw = { ...directArgsRaw, title: _t }; }
     }
 
     // FLOOR-RELIABILITY (gap-cold-floor-command-synthesis-unreliable-cache-masks):
@@ -6717,6 +6717,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               //
               // Ordering (the placeholder write racing its own input) is the separate
               // half of that gap and is NOT fixed here; this makes the repair reachable.
+              const goalNoteTitle = parseGoalNoteTitle(goal);
               const sinkShapes = [
                 ...[...target].map(String).filter((s) => /(?:_write|:write_note)$/.test(s)),
                 "obsidian:write_note",
@@ -6726,7 +6727,11 @@ If one of those sibling shapes is the action that would create what the goal ask
               const sinkArgs = (shape: string): Record<string, unknown> =>
                 /:write_note$/.test(shape)
                   ? { path: notePath, content: noteBody, dispatch_id: dispatchId, goal, reached: true }
-                  : { title: titleText, content: noteBody, note_type: "reference", dispatch_id: dispatchId, goal, reached: true };
+                  // ADDRESS THE NOTE THE GOAL NAMED. Slugifying the goal text instead
+                  // writes a SECOND note beside the real one: the bridge reports success,
+                  // the named artifact keeps whatever placeholder the racing terminal
+                  // write left in it, and nothing reads the duplicate.
+                  : { title: goalNoteTitle ?? titleText, content: noteBody, note_type: "reference", dispatch_id: dispatchId, goal, reached: true };
               let ok = false; let detail = ""; let usedSink = "";
               const sinkAttempts: string[] = [];
               for (const shape of sinkShapes) {
