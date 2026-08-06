@@ -227,6 +227,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
+import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
 import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent } from "./llm-router";
 import { createHash } from "node:crypto";
@@ -3383,7 +3384,9 @@ async function creditReachedTemplate(activityId: string, reason: string): Promis
 // path_activities is the attribution unit (the composition that ran). reached is
 // the goal-reach verdict (NOT execution-status), so the per-goal posterior tracks
 // genuine goal achievement, not hollow completion.
-type WalkTier = "learned_pathway" | "satisfier" | "universal_tool_fallback" | "feature_compose" | "fresh_derivation";
+// WalkTier + classifyExecutionPath live in ./execution-path (pure, unit-testable).
+
+
 // Ratchet legibility (2026-07-24): classify HOW a walk reached, so goal_execution_paths
 // records fresh-derivation -> learned-reuse transitions instead of a null tier.
 function tierOf(id: string | undefined | null): WalkTier {
@@ -9654,19 +9657,26 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
-      const usedKnownPath = typeof seek.selectedTemplateId === "string" && seek.selectedTemplateId.length > 0 && seek.attempts === 1 && seek.reached === true;
-      const satisfierOnly = typeof seek.selectedTemplateId === "string" && seek.selectedTemplateId.startsWith("satisfier:");
-      const execution_path: string = (() => {
-        if (usedKnownPath) return "learned_pathway";
-        if (satisfierOnly) return "satisfier";
-        if (seek.executionId && String(seek.executionId).startsWith("universal-tool-fallback:")) return "universal_tool_fallback";
-        return "fresh_derivation";
-      })();
+      const execution_path: WalkTier = classifyExecutionPath(seek);
+      // NOTE: this tag's value is an ATTEMPT COUNT, not the WalkTier enum that
+      // `walkTier` means everywhere else in this file. The name is wrong and is
+      // left in place only because existing trace consumers key on it; read
+      // `attempt_count` for the same number under an honest name, and
+      // `execution_path` for the classification.
       const walk_tier: string = seek.attempts != null ? String(seek.attempts) : "0";
-      effectiveTags.push(`execution_path:${execution_path}`, `walk_tier:${walk_tier}`);
+      effectiveTags.push(`execution_path:${execution_path}`, `walk_tier:${walk_tier}`, `attempt_count:${walk_tier}`);
       if (learningMode) effectiveTags.push(`learning_mode:${learningMode}`);
       if (ablation) effectiveTags.push(`ablation:${[ablation.disableReuse ? "disableReuse" : "", ablation.forceFloor ? "forceFloor" : "", ablation.pinnedPriors ? "pinnedPriors" : ""].filter(Boolean).join("+") || "set"}`);
-      record.walkLog = [...(record.walkLog ?? []), `[dispatch] execution_path=${execution_path} walk_tier=${walk_tier}`];
+      // How this dispatch was resolved, stored on the RECORD so it survives to
+      // every reader. Appending it to record.walkLog (as this line used to do)
+      // wrote it into a throwaway copy that `record.walkLog = walkStepSink`
+      // six lines below discarded on every single dispatch — the
+      // classification existed only as a trace tag and never reached the
+      // panel. Push the human-readable line into the sink that actually
+      // survives, and keep the value itself as a typed field.
+      record.executionPath = execution_path;
+      (record as { attemptCount?: number }).attemptCount = seek.attempts ?? 0;
+      walkStepSink.push(`[dispatch] execution_path=${execution_path} attempt_count=${walk_tier}`);
       record.inferenceConfidence = typeof goal === "string" ? (inferredTargetDecisionCache.get(goalHashOf(goal))?.confidence ?? null) : null;
       // Reward the LLM router: attribute every routed selection this dispatch made
       // (buffered under the goal hash) to the final reach verdict — α on reach, β on
@@ -10014,7 +10024,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? (rec as { walkTier?: string }).walkTier ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
   if (type === "poolImpulse_write") {
@@ -10171,6 +10181,16 @@ interface DispatchRecord {
    * on legacy records and on the synchronous /resolve path.
    */
   walkLog?: string[];
+  /**
+   * HOW this dispatch was resolved, over the full 5-value WalkTier vocabulary,
+   * classified once at terminalization. Distinct from `walkTier`, which is set
+   * only inside runGoalAsPoolWalk and is therefore null for dispatches that
+   * never enter the walk at all (a direct edit routed pre-walk to
+   * feature_compose is the common case). Readers that want "what kind of run
+   * was this" want THIS field; `walkTier` answers the narrower "how did the
+   * walk resolve, if there was one".
+   */
+  executionPath?: WalkTier;
   /**
    * The honest goal-reach verdict (true=REACHED, false=HOLLOW/not-reached,
    * null=running/unknown) — distinct from `status`, which is only the template
