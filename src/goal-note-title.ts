@@ -12,6 +12,28 @@
  * produced a false green AND a false red from one unexercised branch.
  */
 
+/**
+ * Order the durable-write sinks a walk may deliver into, by how the GOAL addresses its
+ * artifact rather than by Set iteration order.
+ *
+ * A re-framed walk can carry both a title-addressed store shape (`memoryNote_write`) and a
+ * path-addressed vault shape (`obsidian:write_note`) in its target set, and whichever came
+ * first won. Observed live: a goal naming "a durable note titled boredom-vessel-purpose"
+ * had its content written to a vault note while the note it named kept its placeholder —
+ * and the bridge logged that as a success.
+ *
+ * `obsidian:write_note` is always appended as the tail fallback, deduplicated.
+ */
+export function orderWriteSinks(targetShapes: Iterable<string>, goalNamesATitle: boolean): string[] {
+  const isTitleAddressed = (s: string): boolean => !/:write_note$/.test(s);
+  const declared = [...targetShapes]
+    .map(String)
+    .filter((s) => /(?:_write|:write_note)$/.test(s))
+    // Stable unless the goal named a title, in which case title-addressed sinks lead.
+    .sort((a, b) => (goalNamesATitle ? (isTitleAddressed(b) ? 1 : 0) - (isTitleAddressed(a) ? 1 : 0) : 0));
+  return [...declared, 'obsidian:write_note'].filter((s, i, a) => a.indexOf(s) === i);
+}
+
 /** The title a goal names for a durable note, or null when it names none. */
 export function parseGoalNoteTitle(goal: string): string | null {
   const m =

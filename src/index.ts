@@ -244,7 +244,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // import, so anything defined here is untestable and this parse has now produced both a
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
-import { parseGoalNoteTitle } from "./goal-note-title";
+import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { isEditIntentGoal } from "./goal-intent";
 import type {
   EventSink,
@@ -6847,10 +6847,18 @@ If one of those sibling shapes is the action that would create what the goal ask
               // Ordering (the placeholder write racing its own input) is the separate
               // half of that gap and is NOT fixed here; this makes the repair reachable.
               const goalNoteTitle = parseGoalNoteTitle(goal);
-              const sinkShapes = [
-                ...[...target].map(String).filter((s) => /(?:_write|:write_note)$/.test(s)),
-                "obsidian:write_note",
-              ].filter((s, i, a) => a.indexOf(s) === i);
+              // ORDER BY HOW THE GOAL ADDRESSES ITS ARTIFACT, not by Set iteration order.
+              // When a walk re-frames it can carry BOTH a title-addressed store shape
+              // (memoryNote_write) and a path-addressed vault shape (obsidian:write_note)
+              // in `target`, and whichever happened to come first won. Observed: a goal
+              // that named "a durable note titled boredom-vessel-purpose" had its content
+              // written to a vault note while the note it named kept its placeholder, and
+              // the bridge logged a success.
+              //
+              // A goal that names a TITLE wants a title-addressed sink; a goal that names
+              // a path or vault wants the path-addressed one. goalNoteTitle is the same
+              // parse that binds the write args, so the two cannot disagree.
+              const sinkShapes = orderWriteSinks([...target].map(String), goalNoteTitle !== null);
               // Flat pointer args per sink family. memoryNote_write aliases content->body
               // and derives its id from the title; obsidian:write_note is path-addressed.
               const sinkArgs = (shape: string): Record<string, unknown> =>

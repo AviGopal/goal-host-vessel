@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { parseGoalNoteTitle } from "./goal-note-title";
+import { orderWriteSinks, parseGoalNoteTitle } from "./goal-note-title";
 
 /**
  * Two call sites bind a durable write from this parse — the composed-write title binding
@@ -51,5 +51,27 @@ describe("parseGoalNoteTitle", () => {
   it("keeps a slug's punctuation, since the id is derived from it", () => {
     expect(parseGoalNoteTitle("note titled reference-audit-2026-08-06")).toBe("reference-audit-2026-08-06");
     expect(parseGoalNoteTitle("note titled docs/SUBSTRATE.md")).toBe("docs/SUBSTRATE.md");
+  });
+});
+
+describe('orderWriteSinks', () => {
+  it('OBSERVED LIVE: a titled goal must not lose to a vault sink that sorted first', () => {
+    // dispatch 00a97dc6 — target carried both after a re-frame, obsidian won on Set order,
+    // and the note the goal named kept its placeholder while the bridge logged success.
+    expect(orderWriteSinks(['obsidian:write_note', 'memoryNote_write'], true)[0]).toBe('memoryNote_write');
+  });
+
+  it('leaves the declared order alone when the goal names no title', () => {
+    expect(orderWriteSinks(['obsidian:write_note', 'memoryNote_write'], false)).toEqual(['obsidian:write_note', 'memoryNote_write']);
+  });
+
+  it('always appends obsidian:write_note as the tail fallback, without duplicating it', () => {
+    expect(orderWriteSinks(['memoryNote_write'], true)).toEqual(['memoryNote_write', 'obsidian:write_note']);
+    expect(orderWriteSinks(['obsidian:write_note'], true)).toEqual(['obsidian:write_note']);
+    expect(orderWriteSinks([], false)).toEqual(['obsidian:write_note']);
+  });
+
+  it('ignores target shapes that are not durable writes', () => {
+    expect(orderWriteSinks(['shellResult', 'goal', 'memoryNote_write'], true)).toEqual(['memoryNote_write', 'obsidian:write_note']);
   });
 });
