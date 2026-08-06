@@ -2843,6 +2843,13 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // echo/empty/error/placeholder) be the honesty backstop. Hard-fail ONLY when the loop produced
   // NOTHING usable: no client-side grounding AND no answer text AND no observations.
   if (groundedOk === 0 && !finalText.trim() && observations.length === 0) { console.log(`[goal-host-vessel] floor: exit=empty_loop goalHash=${goalHashOf(goal)}`); return null; }
+  // Track whether the model actually AUTHORED an answer, or whether we are
+  // about to synthesise one from raw tool output because the loop ran out of
+  // iterations. Both are legitimate inputs to the reach judge, but only the
+  // first is an answer — surfacing a truncated observation dump to an operator
+  // under the heading "Answer" would be a new falsehood in place of the old
+  // missing one.
+  const authoredFinalAnswer = finalText.trim().length > 0;
   if (!finalText) { finalText = observations.join("\n\n").slice(0, 6000); console.log(`[goal-host-vessel] universal ReAct fallback: cap/deadline hit before a final answer — judging on ${groundedOk} grounded tool output(s)`); }
   const produced = [...new Set([...targetShapes, ...calledWriteShapes])];
   if (produced.length === 0) produced.push("universal_fallback_result");
@@ -2863,7 +2870,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     // for it, which is indistinguishable from a hollow pass. The plumbing for
     // this already existed end to end (GoalSeekResult.answerBody -> record ->
     // the goalWalkState body); only this one return omitted it.
-    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: finalText.trim() || undefined, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
+    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: authoredFinalAnswer ? finalText.trim() : undefined, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
   }
   return null;
 }
@@ -9836,25 +9843,55 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // `ungraded` and Thompson learned from almost nothing. The verdict existed
       // and was never delivered. Skip synthetic ids (no trace row to patch).
       if (typeof record.executionId === "string" && !record.executionId.startsWith("goal-seek:no-trace:") && typeof record.reached === "boolean") {
-        void fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: JSON.stringify({ "execution_id": record.executionId, "reached": record.reached, "completion_shapes": seek.completionShapes ?? [] }),
-          signal: AbortSignal.timeout(10_000),
-        }).then(async (r) => {
-          // HTTP status is NOT the question. POST /reach answers 200
-          // {"success":true,"updated":0} when its WHERE matched no row — e.g.
-          // satisfier-only reaches, which persist no execution row at all. An
-          // `r.ok` check therefore reports a successful grading that graded
-          // nothing: the same swallow-the-failure class this whole reach-patch
-          // exists to fix. Read `updated` and say so when it is zero.
-          if (!r.ok) { console.warn(`[goal-host-vessel] reach-patch rejected: HTTP ${r.status} for ${record.executionId}`); return; }
-          const j = await r.json().catch(() => null) as { updated?: number } | null;
-          if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response for ${record.executionId}`); return; }
-          if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW for ${record.executionId} (reached=${record.reached}) — verdict NOT persisted; this execution stays ungraded`); return; }
-          console.log(`[goal-host-vessel] reach-patch ok: ${record.executionId} reached=${record.reached} rows=${j.updated}`);
-        })
-          .catch((e) => console.warn(`[goal-host-vessel] reach-patch failed (non-fatal): ${(e as Error).message}`));
+        // DELIVERY IS THE BOTTLENECK, NOT THE VERDICT. This was a single
+        // fire-and-forget POST with a 10s abort, cross-network to the hub: no retry,
+        // no queue, no record. Measured over 40 minutes of live traffic: 7 delivered,
+        // 11 lost to `The operation timed out`, 5 MATCHED NO ROW. Every timeout is a
+        // verdict the walk computed honestly and then threw away.
+        //
+        // That cost used to be observability only. It is now CREDIT: the reach
+        // endpoint grades the verdict into the Thompson posteriors on arrival, so a
+        // dropped patch is an arm that never learns from an execution it actually ran.
+        // Retry with backoff, and distinguish the three outcomes that are NOT retryable
+        // (a real HTTP rejection, an unreadable body, and MATCHED NO ROW) from the one
+        // that is (a transport timeout / network fault).
+        const _reachBody = JSON.stringify({ "execution_id": record.executionId, "reached": record.reached, "completion_shapes": seek.completionShapes ?? [] });
+        const _reachId = record.executionId;
+        const _reachVerdict = record.reached;
+        void (async () => {
+          const BACKOFF_MS = [1_000, 4_000, 12_000];
+          let lastErr = "";
+          for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
+            if (attempt > 0) await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt - 1]));
+            try {
+              const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+                body: _reachBody,
+                // Raised from 10s: the hub is cross-network and the endpoint now does a
+                // pre-read plus a posterior write, so the old deadline was cutting off
+                // work that was still succeeding on the far side.
+                signal: AbortSignal.timeout(30_000),
+              });
+              // HTTP status is NOT the question. POST /reach answers 200
+              // {"success":true,"updated":0} when its WHERE matched no row — e.g.
+              // satisfier-only reaches, which persist no execution row at all. An
+              // `r.ok` check therefore reports a successful grading that graded
+              // nothing: the same swallow-the-failure class this whole reach-patch
+              // exists to fix. Read `updated` and say so when it is zero.
+              if (!r.ok) { console.warn(`[goal-host-vessel] reach-patch rejected: HTTP ${r.status} for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
+              const j = await r.json().catch(() => null) as { updated?: number } | null;
+              if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
+              if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); return; }
+              console.log(`[goal-host-vessel] reach-patch ok: ${_reachId} reached=${_reachVerdict} rows=${j.updated} attempts=${attempt + 1}`);
+              return;
+            } catch (e) {
+              lastErr = (e as Error)?.message ?? String(e);
+            }
+          }
+          // Only reachable when every attempt threw — i.e. transport, not rejection.
+          console.warn(`[goal-host-vessel] reach-patch LOST after ${BACKOFF_MS.length + 1} attempts for ${_reachId} (reached=${_reachVerdict}): ${lastErr} — verdict computed and never delivered; this execution stays ungraded and its arm learns nothing from it`);
+        })();
       }
       record.learning = learningSink;
       if (seek.answerBody) record.answerBody = seek.answerBody;
