@@ -3586,14 +3586,22 @@ async function resolvePathwayReusePolicy(): Promise<PathwayReusePolicy> {
     return PATHWAY_REUSE_FALLBACK;
   }
 }
-async function recommendReachingPath(goalText: string): Promise<ReachingPathway | null> {
+async function recommendReachingPath(goalText: string, targetShapes?: string[] | null): Promise<ReachingPathway | null> {
   if (!goalText) return null;
   try {
     const _sig = (await getCachedStateSignature())?.signature_hash;
+    // Send the walk's inferred target shapes so the store can offer a NEARBY
+    // match when exact goal-text retrieval finds nothing. Retrieval there is
+    // keyed on md5 of the goal string, so a reworded goal misses a composition
+    // the system already proved out — measured at 78% of fresh goals landing on
+    // an already-known path signature. The shapes are the routing key the walk
+    // already computed; passing them costs nothing and is the only thing that
+    // lets the store recognise "same destination, different words".
+    const _shapes = (targetShapes ?? []).filter((s) => typeof s === "string" && s.length > 0);
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_sig ? { state_signature: _sig } : {}) }),
+      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_sig ? { state_signature: _sig } : {}), ...(_shapes.length ? { target_shapes: _shapes } : {}) }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) return null;
@@ -3611,12 +3619,18 @@ async function recommendReachingPath(goalText: string): Promise<ReachingPathway 
       if (paths.length > 0) console.log(`[goal-host-vessel] pathway reuse: ${paths.length} recommended, 0 accepted (minSuccessful=${pol.minSuccessfulExecutions} minTotal=${pol.minTotalExecutions}) — no reusable pathway`);
       return null;
     }
-    // Most-proven first: successes, then total experience.
-    eligible.sort((a, b) => (countOf(b.successful_executions) - countOf(a.successful_executions)) || (countOf(b.total_executions) - countOf(a.total_executions)));
+    // EXACT BEFORE NEARBY, then most-proven first: successes, then total experience.
+    // A path recorded against this very goal is stronger evidence than one that
+    // merely terminates in the same shapes, so a shape-signature match can only
+    // ever be a fallback — it never displaces an exact match that survived the
+    // acceptance bar.
+    const modeRank = (p: unknown): number => ((p as Record<string, unknown>)?.["match_mode"] === "shape_signature" ? 1 : 0);
+    eligible.sort((a, b) => (modeRank(a) - modeRank(b)) || (countOf(b.successful_executions) - countOf(a.successful_executions)) || (countOf(b.total_executions) - countOf(a.total_executions)));
     const best = eligible[0];
     const activities: string[] = best.path_activities.map((x: unknown) => String(x)).filter((s: string) => s.length > 0);
     if (activities.length === 0) return null;
-    console.log(`[goal-host-vessel] pathway reuse: accepted ${activities.length}-step pathway (${countOf(best.successful_executions)}/${countOf(best.total_executions)} reached) of ${paths.length} recommended, dropped ${paths.length - eligible.length}`);
+    const _mode = best?.match_mode === "shape_signature" ? `shape_signature cover=${typeof best?.shape_cover === "number" ? best.shape_cover.toFixed(2) : "?"} borrowed_from_goal=${typeof best?.goal_hash === "string" ? best.goal_hash : "?"}` : "goal_hash";
+    console.log(`[goal-host-vessel] pathway reuse: accepted ${activities.length}-step pathway via ${_mode} (${countOf(best.successful_executions)}/${countOf(best.total_executions)} reached) of ${paths.length} recommended, dropped ${paths.length - eligible.length}`);
     return {
       activities,
       goalHash: typeof best.goal_hash === "string" ? best.goal_hash : null,
@@ -8074,7 +8088,7 @@ async function runGoalWithRecovery(
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
   if (!nextTarget && goal) {
-    const reaching = await recommendReachingPath(goal);
+    const reaching = await recommendReachingPath(goal, seededOutputShapes ?? null);
     if (reaching) {
       // The walk still SEEDS on the head of the pathway, but the whole ordered
       // pathway is now logged and available rather than discarded at the call
