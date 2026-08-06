@@ -2659,7 +2659,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   }
   return best;
 }
-function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal.slice(0, 400), tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
+function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
 // When the structured shape-walk produces a HOLLOW result (an always-succeeds /
