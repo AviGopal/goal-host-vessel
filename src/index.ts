@@ -245,6 +245,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle } from "./goal-note-title";
+import { isEditIntentGoal } from "./goal-intent";
 import type {
   EventSink,
   Impulse,
@@ -7705,6 +7706,41 @@ async function runGoalWithRecovery(
       if (!reachingPathway && goal && !opts.ablation?.disableReuse) {
         reachingPathway = await recommendReachingPath(goal, seededOutputShapes ?? null);
       }
+      // FLOOR AS A LEARNED PATHWAY. A retrieved pathway whose only activity is the floor
+      // was un-actionable everywhere else: `universal-tool-fallback` is not a pool-walk
+      // candidate, so preferPathway cannot select it, and the floor's own call site sits
+      // BELOW the walk and fires only after the walk has already failed. The store could
+      // therefore recommend the floor, correctly, and nothing could act on it — the goal
+      // still paid for a full derivation first and the reuse was decorative.
+      //
+      // Reuse here means SKIPPING the derivation the store says is unnecessary, which is
+      // the only thing that makes reuse cheaper rather than merely differently-routed.
+      // Guarded on the pathway being EXACTLY the floor (a floor step inside a longer
+      // composition is the walk's business, not a shortcut) and on the goal not being an
+      // edit — the floor reads and reasons, it does not land commits. The reuse gate has
+      // already applied its successful/total thresholds before we get here.
+      const floorIsTheProvenPathway =
+        (reachingPathway?.activities ?? []).length === 1 &&
+        normActivityId(String(reachingPathway?.activities?.[0] ?? "")) === "universal-tool-fallback" &&
+        !isEditIntentGoal(goal);
+      if (floorIsTheProvenPathway) {
+        tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE — the store recommends the floor for this goal (${reachingPathway?.successfulExecutions}/${reachingPathway?.totalExecutions} reached); running it directly and skipping the walk`);
+        try {
+          const reused = await universalToolFallback(goal, seededOutputShapes ?? []);
+          if (reused?.reached) {
+            if (opts.learningMode !== "observe") {
+              void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? []);
+              console.log(`[goal-host-vessel] recordGoalPath (floor REUSE) shapes=${JSON.stringify(reused.completionShapes ?? [])} goal="${goal.slice(0, 60)}"`);
+            }
+            return reused;
+          }
+          // Not reached: fall through to the ordinary walk. A recommendation that does not
+          // pan out must cost a walk, never the goal.
+          tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway did NOT reach — falling through to the full walk`);
+        } catch (e) {
+          tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway threw (${(e as Error).message.slice(0, 120)}) — falling through to the full walk`);
+        }
+      }
       let walk = await runGoalAsPoolWalk(goal, {
         variables: opts.variables,
         tags: opts.tags,
@@ -7835,7 +7871,7 @@ async function runGoalWithRecovery(
       // hollow-satisfied as a source read, bypassing the edit-intent routing below. When
       // the goal names a repos source file with edit language AND the walk produced only
       // read/analysis shapes, fall through to edit-intent routing instead of returning.
-      const goalIsEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
+      const goalIsEditIntent = isEditIntentGoal(goal);
       const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
       const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
       // PROSE-OVER-SOURCE GROUNDING (2026-07-27). EVIDENCE (live probes): summarize/explain-
