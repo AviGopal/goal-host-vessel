@@ -7858,6 +7858,21 @@ async function runGoalWithRecovery(
           const uf = await universalToolFallback(goal, seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
+            // RECORD THE FLOOR'S PATH. This `return` sits above every recordGoalPath call
+            // site in the function, so a floor reach wrote 0 of 4,768 path rows: the tier
+            // that answers goals no learned pathway covers could never BECOME a learned
+            // pathway. Reuse retrieves from goal_execution_paths, so without this row the
+            // floor re-derives the same answer from scratch every time, forever — which
+            // is the exact "convergent re-derivation looks like learning" trap.
+            //
+            // The tier is `universal_tool_fallback` rather than a generic derivation, so
+            // the floor's contribution stays distinguishable from the walk's in every
+            // downstream measurement. That named tier existed and was UNREACHABLE until
+            // this call site; nothing could produce it.
+            if (opts.learningMode !== "observe") {
+              void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "universal_tool_fallback", uf.completionShapes ?? [], seededOutputShapes ?? []);
+              console.log(`[goal-host-vessel] recordGoalPath (floor reach) shapes=${JSON.stringify(uf.completionShapes ?? [])} goal="${goal.slice(0, 60)}"`);
+            }
             return uf;
           }
         } catch { /* fail-open */ }
