@@ -6779,6 +6779,31 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     }
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
+  } else if (chain.length > 0 && opts.learningMode !== "observe") {
+    // THE PATH IS THE LEARNING SURFACE, AND IT WAS BEING GATED ON A TRACE IT DOES NOT NEED.
+    // The block above is guarded by `lastTrace && chain.length > 0` because everything else in
+    // it genuinely reads lastTrace. recordGoalPath does not — it needs the CHAIN. A satisfier
+    // resolve never runs through the engine, so it produces no durable trace, and a walk that
+    // reached entirely through satisfiers therefore skipped the whole block and wrote no
+    // goal_execution_paths row. An unrecorded path can never be re-selected, so the composition
+    // was not merely ungraded: it was unlearnable.
+    //
+    // Measured 2026-08-06, reproduced three times (10:47:59, 10:54:52, 11:10:54): "Count the
+    // TypeScript files under repos/ribosome-vessel/src and record the result in a memory note
+    // titled ribosome-src-ts-count" logged "REACHED via 2-step chain", produced shellResult AND
+    // memoryNote_write, persisted the note (confirmed by an independent read-back) and
+    // alpha-credited satisfier:memoryNote_write — while writing ZERO path rows. The identical
+    // payload POSTed by hand returned 200 and created the 2-step row, and the DROPPED
+    // instrumentation added in the same file logged NOTHING on the next run, which is what
+    // proved the recorder was never invoked rather than failing.
+    //
+    // The 1-step git-history goal DID record, so the loss was never blanket — it is specific to
+    // reaches with no engine trace, which is exactly the multi-satisfier composition case that
+    // compounding depends on. Scoped as an `else if` so every path that already records is
+    // untouched: this fires only when the guarded block was skipped, and it cannot double-write.
+    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target]);
+    console.log(`[goal-host-vessel] recordGoalPath (traceless reach) path=${JSON.stringify(chain)} reached=${reached} goal="${goal.slice(0, 80)}"`);
+    if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
 
   // Adapt the last ExecutionTrace into the GoalRunResult shape the callers read.
