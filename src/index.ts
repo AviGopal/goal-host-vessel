@@ -6769,6 +6769,22 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
 
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
+    // UNCONDITIONAL PRECONDITION LOG. A reached 2-step composition records no path row, and
+    // three separate instruments have now come back silent: no goal_execution_paths row, no
+    // `recordGoalPath DROPPED` line (so the write neither threw nor returned non-2xx), and no
+    // `traceless reach` line from the else-branch added in f84a7d9. Silence from all three is
+    // only consistent with this call not being reached, and the two candidates left are
+    // `opts.learningMode === "observe"` on this route or `chain` being empty by the time
+    // control arrives here — the two operands of the guard below.
+    //
+    // Every previous attempt to narrow this used a CONDITIONAL log, which cannot distinguish
+    // "the condition was false" from "the line never ran". f84a7d9 failed for exactly that
+    // reason: its else-branch repeated `chain.length > 0 && opts.learningMode !== "observe"`,
+    // the same predicate it was meant to compensate for, so it could never fire where the
+    // original did not. This line is deliberately outside every guard: it prints on each pass
+    // and names both operands, so one run decides between the candidates instead of another
+    // dispatched guess.
+    console.log(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
     if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target]);
     {
       const _wid = opts.variables.dispatch_id;
