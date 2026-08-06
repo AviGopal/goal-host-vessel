@@ -4716,7 +4716,120 @@ If one of those sibling shapes is the action that would create what the goal ask
     // with the failure fed back, bounded, BEFORE accepting it. Scoped to executor/
     // command shapes that are not terminal writes — good commands never enter the loop.
     const _isExecShape = /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command|(^|[_-])(sql|script|cmd)([_-]|$|result|query))/i.test(shape);
-    const _degenerateReason = (r: unknown): string | null => {
+    type _BodyHonesty = {
+      envelopeKeys: string[];        // {shape, body} / {shape, content} wrappers unwrapped before inspection
+      flagFields: string[];          // field === false  ⇒ denial
+      truthyDenialFields: string[];  // field truthy     ⇒ denial (deferred/unreachable/…)
+      errorFields: string[];         // non-empty string ⇒ denial
+      statusFields: string[];        // number >= 400, or a string matching denialTextPattern ⇒ denial
+      payloadFields: string[];       // a non-empty value here means the body IS content and merely DESCRIBES a failure
+      denialTextPattern: string;
+    };
+    // BODY-HONESTY POLICY (law 1 — read at USE TIME, never a frozen in-process constant):
+    // which fields mark an in-band denial, how a {shape, body} envelope is unwrapped, and what
+    // text reads as a denial are carried by the shaped `bodyHonestyPolicy` impulse, resolved
+    // through discovery on every use so the vocabulary is LEARNABLE — today's literal list is
+    // success/error/ok/status/failure_mode and contains NONE of delivered/wrote/applied/
+    // deferred/unreachable; a policy impulse can add them with no code change. Fails open to
+    // today's literal list, LOGGED, so a missing/broken policy degrades to current behaviour
+    // rather than silently disabling the check.
+    const _honestyFallback: _BodyHonesty = {
+      envelopeKeys: ["body", "content", "result", "data"],
+      flagFields: ["success", "ok"],
+      truthyDenialFields: [],
+      errorFields: ["error", "failure_mode"],
+      statusFields: ["status"],
+      payloadFields: ["content", "text", "value", "stdout", "body", "result", "data", "notes", "items", "results", "rows", "tasks", "files", "matches", "executions", "traces"],
+      denialTextPattern: "(required|missing|not\\s+found|unsupported|unauthoriz|forbidden|invalid|unavailable|refused|denied|cannot|failed|failure)",
+    };
+    const _honestyPolicy = async (): Promise<_BodyHonesty> => {
+      const _prevReason = lastRawResolveReason; // rawResolve clears it; this probe must not eat the caller's reason
+      try {
+        const _pep = await endpointForShape("bodyHonestyPolicy");
+        if (!_pep) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list ${JSON.stringify([..._honestyFallback.flagFields, ..._honestyFallback.errorFields, ..._honestyFallback.statusFields])} (law-1 fallback, logged)`);
+          return _honestyFallback;
+        }
+        const _pol = await rawResolve("bodyHonestyPolicy", _pep.endpoint, _pep.resolvePath, {});
+        const _po = (typeof _pol === "object" && _pol !== null && !Array.isArray(_pol)) ? (_pol as Record<string, unknown>) : null;
+        const _pbv = _po ? _po["body"] : null;
+        const _pb = (typeof _pbv === "object" && _pbv !== null && !Array.isArray(_pbv)) ? (_pbv as Record<string, unknown>) : _po;
+        if (!_pb) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): bodyHonestyPolicy resolved to no usable body — FALLING BACK to the literal denial-field list (law-1 fallback, logged)`);
+          return _honestyFallback;
+        }
+        const _arr = (k: string, d: string[]): string[] => Array.isArray(_pb[k]) ? (_pb[k] as unknown[]).map((x) => String(x)) : d;
+        const _pat = _pb["denialTextPattern"];
+        return {
+          envelopeKeys: _arr("envelopeKeys", _honestyFallback.envelopeKeys),
+          flagFields: _arr("flagFields", _honestyFallback.flagFields),
+          truthyDenialFields: _arr("truthyDenialFields", _honestyFallback.truthyDenialFields),
+          errorFields: _arr("errorFields", _honestyFallback.errorFields),
+          statusFields: _arr("statusFields", _honestyFallback.statusFields),
+          payloadFields: _arr("payloadFields", _honestyFallback.payloadFields),
+          denialTextPattern: typeof _pat === "string" && _pat.length > 0 ? _pat : _honestyFallback.denialTextPattern,
+        };
+      } catch (e) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): bodyHonestyPolicy resolve FAILED (${String((e as Error)?.message ?? e).slice(0, 120)}) — FALLING BACK to the literal denial-field list (law-1 fallback, logged)`);
+        return _honestyFallback;
+      } finally {
+        lastRawResolveReason = _prevReason;
+      }
+    };
+    const _degenerateReason = (r: unknown, pol?: _BodyHonesty): string | null => {
+      // BODY-HONESTY MODE (widened: this checker used to be COMMAND-only, so every non-exec
+      // shape's body went unread and a {"success":true,"error":"path required"} body was pooled
+      // as content). When a policy is supplied, grade the BODY instead: an in-band denial marker
+      // is not content EVEN WHEN the envelope also carries a body/content field — that carve-out
+      // (`!("content" in pObj) && !("body" in pObj)` in rawResolve) is exactly the hole this
+      // closes. Command grading is byte-for-byte unchanged when no policy is supplied.
+      if (pol) {
+        if (r == null) return "the resolver produced no body";
+        let b: unknown = r;
+        for (let _d = 0; _d < 3; _d++) {
+          const _bo = (typeof b === "object" && b !== null && !Array.isArray(b)) ? (b as Record<string, unknown>) : null;
+          if (!_bo || !("shape" in _bo)) break;
+          const _k = pol.envelopeKeys.find((k) => k in _bo);
+          if (!_k) break;
+          b = _bo[_k];
+        }
+        const bo = (typeof b === "object" && b !== null && !Array.isArray(b)) ? (b as Record<string, unknown>) : null;
+        if (!bo) return null; // a bare string/number/array payload is content, not a denial
+        let denialRe: RegExp;
+        try { denialRe = new RegExp(pol.denialTextPattern, "i"); } catch { denialRe = new RegExp(_honestyFallback.denialTextPattern, "i"); }
+        for (const f of pol.flagFields) {
+          if (bo[f] === false) return `the body denies the request: ${f}=false ${JSON.stringify(bo).slice(0, 180)}`;
+        }
+        for (const f of pol.truthyDenialFields) {
+          const v = bo[f];
+          if (v !== undefined && v !== null && v !== false && v !== "" && v !== 0) return `the body denies the request: ${f}=${JSON.stringify(v).slice(0, 80)}`;
+        }
+        // A body that CARRIES real content but also names an error/status is a REPORT about a
+        // failure, not a refusal of THIS request. The substrate's own diagnostic shapes
+        // ({status:"failed"}, {error:"..."} inside a trace) are among its largest goal families,
+        // and denying those would refuse to satisfy exactly the goals that ask about failures.
+        // Only flagFields (an explicit success/ok === false) deny unconditionally.
+        const _hasPayload = pol.payloadFields.some((k) => {
+          const v = bo[k];
+          if (typeof v === "string") return v.trim().length > 0;
+          if (Array.isArray(v)) return v.length > 0;
+          if (typeof v === "number" || typeof v === "boolean") return true;
+          return typeof v === "object" && v !== null;
+        });
+        if (!_hasPayload) {
+          for (const f of pol.errorFields) {
+            const v = bo[f];
+            if (typeof v === "string" && v.trim().length > 0) return `the body carries an in-band ${f} and no payload: ${v.slice(0, 180)}`;
+          }
+          for (const f of pol.statusFields) {
+            const v = bo[f];
+            if (typeof v === "number" && v >= 400) return `the body denies the request: ${f}=${v}`;
+            if (typeof v === "string" && denialRe.test(v)) return `the body denies the request: ${f}="${v.slice(0, 80)}"`;
+          }
+        }
+        if (Object.keys(bo).length === 0) return "the resolver produced an empty body";
+        return null;
+      }
       if (r == null) return "the command produced no result";
       const o = (typeof r === "object" && r !== null) ? (r as Record<string, unknown>) : null;
       const stdout = o && "stdout" in o ? String(o["stdout"] ?? "") : (typeof r === "string" ? String(r) : "");
@@ -4769,6 +4882,24 @@ If one of those sibling shapes is the action that would create what the goal ask
       // chance to correct, per the original design intent.
       if (_deg && !/returned "0"/.test(_deg)) {
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" STILL a command FAILURE after ${_tries} self-correction attempt(s) (${_deg.slice(0, 80)}) — refusing to satisfy with a failed/empty command; grading reach honestly (no hollow green)`);
+        direct = null;
+      }
+    }
+    // SATISFIER HONESTY FOR ALL SHAPES (gap-satisfier-grades-itself): until now ONLY exec
+    // shapes (the block above) and terminal writes (the block below) ever read the resolved
+    // body. Every other shape's body was accepted unread, pooled, and minted a synthetic
+    // status:"completed" / success:true trace at the vessel-resolve satisfier call site — so a
+    // body like {"success":true,"error":"path required"} greened the goal and, because that
+    // synthetic trace pushes onto `chain` (attempts > 0), it also SUPPRESSED the ReAct floor.
+    // Grade EVERY shape's body with the SAME checker in body-honesty mode, using the shaped
+    // policy resolved at use time. A denial is not content: null it out so the shape stays
+    // unsatisfied and control falls through the EXISTING rejection path (arg-correction /
+    // action-then-read / bridge / honest not-reached) — no addToPool, no synthetic trace.
+    if (direct != null && !(_isExecShape && !terminalShapes.has(shape))) {
+      const _dishonest = _degenerateReason(direct, await _honestyPolicy());
+      if (_dishonest) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" resolved a DISHONEST body — ${_dishonest.slice(0, 200)} — refusing to satisfy (no pool entry, no synthetic completed trace); grading reach honestly`);
+        lastRawResolveReason = _dishonest.slice(0, 200);
         direct = null;
       }
     }
