@@ -1932,6 +1932,29 @@ function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   // confirmed by construction. A phrasing gap in this predicate became a confidently wrong
   // answer to a harder goal.
   if (!/\bor\b|\bthan\b/i.test(goal)) return null;
+  // DECLINE A GOAL THIS BUILDER CANNOT FULLY SATISFY. The parse emits exactly two shapes,
+  // which_diff and winner_value; neither carries an aggregate ACROSS the two sources. A goal
+  // that also asks for a combined total therefore gets answered in one conjunct and — because
+  // verifyTwoSourceCompareReach checks only the winner and the difference this same builder
+  // produced — is certified reached with the other conjunct silently missing. Measured
+  // 2026-08-06 against a precomputed oracle: "Which has more TypeScript files,
+  // repos/discovery-vessel/src or repos/llm-resolver-vessel/src, and what is the combined
+  // total across both directories?" (7 and 2, total 9) answered "discovery-vessel: 5" — the
+  // winner and the DIFFERENCE — and was alpha-credited as a substance-honest reach.
+  //
+  // This is the self-confirming oracle on a second axis. The 'or'/'than' gap above was builder
+  // and verifier sharing a PARSE; this is a verifier validating the SUB-GOAL THE BUILDER CHOSE
+  // rather than the goal that was asked, so fixing the parse did not touch it. Declining hands
+  // the goal to a builder that can carry both conjuncts, or to the walk — an honest miss the
+  // learner can grade, which a partial answer wearing a reach verdict is not.
+  //
+  // Deliberately narrow: it requires a marker of an aggregate over BOTH sources, so the
+  // comparative phrasings this predicate exists to serve are untouched. Corpus-checked before
+  // dispatch against live family goals — "…and by how many?", "How many more … than …?",
+  // "Which has more total lines, A or B?" and "How many total lines are under X?" all still
+  // parse. `\band (?:the )?total\b` requires 'and' immediately before 'total', so the
+  // comparator phrase "more total lines" is not a match.
+  if (/\bcombined\b|\baltogether\b|\bacross both\b|\bsum of both\b|\band (?:the )?total\b|\btotal (?:across|of) both\b/i.test(goal)) return null;
   const more = /\bmore\b|\bmost\b|\blarger\b|\bbigger\b|\bgreater\b/i.test(goal);
   const fewer = /\bfewer\b|\bfewest\b|\bless\b|\bsmaller\b|\bsmallest\b/i.test(goal);
   if (more === fewer) return null;                            // ambiguous comparator
