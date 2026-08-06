@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { isEditIntentGoal } from './goal-intent';
+import { goalRequestsDurableArtifact, isEditIntentGoal } from './goal-intent';
 
 /**
  * This predicate now gates two decisions in the same function — edit-intent routing late,
@@ -27,5 +27,24 @@ describe('isEditIntentGoal', () => {
 
   it('requires a file EXTENSION, not just a repos/ prefix', () => {
     expect(isEditIntentGoal('refactor repos/goal-host-vessel/src')).toBe(false);
+  });
+});
+
+describe('goalRequestsDurableArtifact', () => {
+  it('OBSERVED LIVE: the goal that reached and wrote nothing must be recognised', () => {
+    // dispatch cb45905c — the floor shortcut skipped the walk, reached with 6/7 tools,
+    // delivered its verdict, and never created the note the goal named.
+    expect(goalRequestsDurableArtifact('Summarise the purpose of repos/llm-resolver-vessel based on its README and record it as a durable note titled llm-resolver-vessel-purpose.')).toBe(true);
+  });
+
+  it('needs BOTH a verb and a durable noun, so a bare question is not an artifact ask', () => {
+    expect(goalRequestsDurableArtifact('how many TypeScript modules are under repos/x/src')).toBe(false);
+    expect(goalRequestsDurableArtifact('record the count')).toBe(false);      // verb, no durable noun
+    expect(goalRequestsDurableArtifact('what is in the vault')).toBe(false);  // noun, no verb
+  });
+
+  it('matches the writ- stem the bridge relies on', () => {
+    expect(goalRequestsDurableArtifact('write a note about the registry')).toBe(true);
+    expect(goalRequestsDurableArtifact('written findings for the audit')).toBe(true);
   });
 });

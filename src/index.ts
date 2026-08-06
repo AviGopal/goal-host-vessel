@@ -245,7 +245,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
-import { isEditIntentGoal } from "./goal-intent";
+import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
   EventSink,
   Impulse,
@@ -6720,9 +6720,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // durable NOUN). Internal ticks (boredom measurement/probe/health goals)
         // match neither condition, so they never write a vault note.
         try {
-          const durableVerb = /\b(record|save|persist|document|capture|writ|note down|log|jot|archive)\b/i.test(goal);
-          const durableNoun = /\b(notes?|findings?|vault|obsidian|concepts?|report|document|memo|knowledge|journal)\b/i.test(goal);
-          const durableOutputRequested = durableVerb && durableNoun;
+          const durableOutputRequested = goalRequestsDurableArtifact(goal);
           const shouldBridge = reached === true && (isObsidianSurface || durableOutputRequested);
           if (shouldBridge) {
             const dispatchId = typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : "";
@@ -7730,7 +7728,13 @@ async function runGoalWithRecovery(
       const floorIsTheProvenPathway =
         (reachingPathway?.activities ?? []).length === 1 &&
         normActivityId(String(reachingPathway?.activities?.[0] ?? "")) === "universal-tool-fallback" &&
-        !isEditIntentGoal(goal);
+        !isEditIntentGoal(goal) &&
+        // The floor cannot deliver an ARTIFACT. Its reach returns above the terminal-output
+        // bridge, so skipping the walk for a goal that asked for a durable note reaches,
+        // grades itself honestly, and writes nothing — observed once, live, as a clean
+        // green with no note. Artifact goals keep the full walk; the shortcut is for
+        // question goals, where the answer IS the deliverable.
+        !goalRequestsDurableArtifact(goal);
       if (floorIsTheProvenPathway) {
         tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE — the store recommends the floor for this goal (${reachingPathway?.successfulExecutions}/${reachingPathway?.totalExecutions} reached); running it directly and skipping the walk`);
         try {
