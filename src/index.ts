@@ -2943,6 +2943,61 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`); if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
+  // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
+  // execution id (`universal-tool-fallback:<goalHash>`) that named no row anywhere: a
+  // 2,000-row window of the live trace store contained ZERO floor executions, and the
+  // reach-patch that goal-host dutifully sent for each one came back
+  // "MATCHED NO ROW — verdict NOT persisted". The floor is the system's parity floor and
+  // the tier that answers goals no learned pathway covers, and it could not contribute a
+  // single graded outcome: every reach it earned and every failure it suffered was
+  // discarded at the store boundary. Its id looked real to every consumer, which is why
+  // this survived — the failure was one layer below where anyone was reading.
+  //
+  // The verdict is written as a TAG rather than delivered later by POST /reach, because
+  // the floor's own reach gate (verifyGoalReached, the same gate the walk uses) has
+  // already run by this point. Grading at insert makes credit independent of a
+  // cross-network patch that measurably drops verdicts.
+  //
+  // The id carries a timestamp: the old goalHash-only form collided across every re-run
+  // of the same goal, so repeat executions would have overwritten each other's outcome.
+  const floorExecId = `universal-tool-fallback-${goalHashOf(goal)}-${Date.now()}`;
+  const floorReached = verdict?.reached === true && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0);
+  if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
+    await persistSatisfierTrace({
+      id: floorExecId,
+      templateId: "universal-tool-fallback",
+      templateName: "universal ReAct fallback (floor)",
+      status: floorReached ? "completed" : "failed",
+      compositionChain: [],
+      inputImpulseIds: [],
+      outputImpulseIds: [],
+      tasks: executed.map((e, i) => ({
+        taskId: `floor-tool-${i}`,
+        description: `${e.tool}${e.ok ? "" : " (failed)"}`,
+        resolverId: e.tool,
+        resolverTier: "deterministic",
+        inputImpulseIds: [],
+        outputImpulseIds: [],
+        outputShapes: [],
+        success: e.ok,
+      })),
+      costUsd: 0,
+      durationMs: 0,
+      // dispatcher_used:goal-host keeps the row consistent with every other walk trace;
+      // the reach tag is what actually grades it.
+      tags: ["dispatcher_used:goal-host", floorReached ? "reached:true" : "reached:false"],
+      metadata: {
+        floor: true,
+        goal_hash: goalHashOf(goal),
+        grounded_reads: groundedOk,
+        tools_ok: executedOk,
+        tools_total: executed.length,
+        authored_answer: authoredFinalAnswer,
+        reach_reason: verdict?.reason ?? null,
+      },
+    } as ExecutionTrace);
+    console.log(`[goal-host-vessel] floor: persisted execution ${floorExecId} reached=${floorReached} tools=${executedOk}/${executed.length} — this run is now gradable`);
+  }
   // Reach when the reach gate passes on a SUBSTANTIVE answer — grounded either by CLIENT-executed
   // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
   if (verdict?.reached && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
@@ -2955,7 +3010,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     // for it, which is indistinguishable from a hollow pass. The plumbing for
     // this already existed end to end (GoalSeekResult.answerBody -> record ->
     // the goalWalkState body); only this one return omitted it.
-    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: authoredFinalAnswer ? finalText.trim() : undefined, executionId: `universal-tool-fallback:${goalHashOf(goal)}` };
+    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: authoredFinalAnswer ? finalText.trim() : undefined, executionId: floorExecId };
   }
   return null;
 }
@@ -3546,7 +3601,10 @@ async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
   try {
     await satisfierTraceSink.record(trace);
   } catch (e) {
-    console.warn(`[goal-host] satisfier-reach persistence failed (non-fatal): ${(e as Error).message}`);
+    // Not satisfier-specific any more — the floor persists its executions through here
+    // too, and a log that names the wrong caller is how a loss gets attributed to the
+    // wrong mechanism.
+    console.warn(`[goal-host] trace persistence failed for ${trace.id} (non-fatal, this execution stays ungradable): ${(e as Error).message}`);
   }
 }
 // Consult per-goal learning before selection: if a prior attempt at THIS goal
