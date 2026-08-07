@@ -38,6 +38,14 @@ describe("missingVerifierGap — scope-narrowed, and it carries the lesson", () 
     expect(g1.id).toBe(g2.id);
   });
 
+  it("names a CONCRETE FILE — a directory gets REFUSED before authoring starts", () => {
+    // Observed: "author a verifier in repos/goal-host-vessel/src" produced target=(no-target)
+    // and `[fc-grounding] REFUSED ungrounded decompose; targetFiles=[]`. A gap is a goal the
+    // system writes to itself, so the same grounding rule binds as for operator goals.
+    const g = missingVerifierGap("subdirectory-count", "How many subdirectories under repos/a/src?");
+    expect(g.summary).toMatch(/repos\/goal-host-vessel\/src\/index\.ts/);
+  });
+
   it("forbids widening and repeats the decline rule found three times", () => {
     const g = missingVerifierGap("distinct-file-extensions", "How many distinct file extensions under repos/x/src?");
     expect(g.summary).toMatch(/Do NOT expand scope/);

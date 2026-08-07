@@ -248,6 +248,7 @@ import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
+import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, recipeIsLive, type VerifierRecipe } from "./verifier-recipe";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
@@ -2876,6 +2877,33 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
  * fail-open silent: reach grading must never depend on the gap store being up.
  */
 const _filedVerifierGaps = new Set<string>();
+/**
+ * Family verifier recipes: a measurement generalised over its tree path, earned from a
+ * TRIANGULATED truth. Used as ONE of the two derivations, never as an oracle — see
+ * ./verifier-recipe for why a recipe that answers alone would be an ungraded mint with a blank
+ * prior deciding what counts as true.
+ */
+const verifierRecipes = new Map<string, VerifierRecipe>();
+const RECIPE_PATH = `${process.env["SUBSTRATE_STATE_DIR"] ?? "/workspace/state"}/verifier-recipes.jsonl`;
+function persistRecipe(r: VerifierRecipe): void {
+  appendFile(RECIPE_PATH, JSON.stringify(r) + "\n").catch(() => { /* fail-open: in-process map is authoritative */ });
+}
+async function loadVerifierRecipes(): Promise<void> {
+  try {
+    const raw = await readFile(RECIPE_PATH, "utf-8").catch(() => "");
+    if (!raw) return;
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const r = JSON.parse(line) as VerifierRecipe;
+        if (r?.family && r?.template) verifierRecipes.set(r.family, r);   // last write wins: counters accumulate
+      } catch { /* skip malformed */ }
+    }
+    console.log(`[verifier-recipe] loaded ${verifierRecipes.size} family recipe(s) from ${RECIPE_PATH}`);
+  } catch { /* fail-open */ }
+}
+void loadVerifierRecipes();
+
 async function fileMissingVerifierGap(goal: string): Promise<void> {
   try {
     const family = verifierFamilyOf(goal);
@@ -2962,7 +2990,45 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   // TWO derivations, required to agree. See reconcileDerivations for why one is not enough —
   // the first live probe measured commits with `git log | wc -l` (log LINES, ~5 per commit),
   // got 147 against the walk's 16, and β-penalised on the strength of its own wrong number.
-  const [a, b] = await Promise.all([derive("first"), derive("second")]);
+  // DERIVATION FROM A LEARNED RECIPE. A proven family recipe stands in for one authored
+  // derivation: free, deterministic, and — crucially — still CHECKED, because the other
+  // derivation is authored fresh and the two must agree exactly as before. The evidence bar is
+  // unchanged; only the cost of clearing it drops. A recipe that stops agreeing is demoted.
+  const _family = verifierFamilyOf(goal);
+  const _tree = goalTreePath(goal);
+  const _recipe = _family ? verifierRecipes.get(_family) : undefined;
+  const _useRecipe = !!(_recipe && _tree && recipeIsLive(_recipe) && recipeAppliesTo(_recipe, _family!, _tree));
+
+  const deriveFromRecipe = async (): Promise<{ value: number | null; token: string | null; command: string } | null> => {
+    const cmd = instantiateRecipe(_recipe!.template, _tree!);
+    if (!cmd) return null;
+    const gate = isReadOnlyShellCommand(cmd);
+    if (!gate.ok) { console.log(`[verifier-recipe] recipe for "${_family}" REFUSED by the read-only gate (${gate.reason}) — not used`); return null; }
+    const shell = await ufExecuteTool("shellResult", { command: cmd }, new Set<string>(["shellResult"]));
+    if (!shell.ok) return null;
+    let out = shell.result;
+    try { const j = JSON.parse(shell.result); if (j && typeof j === "object" && "stdout" in j) out = String(j.stdout ?? ""); } catch { /* plain */ }
+    const v = parseMeasuredNumber(out);
+    return v === null ? null : { value: v, token: null, command: cmd };
+  };
+
+  const [a, b] = _useRecipe
+    ? await Promise.all([deriveFromRecipe(), derive("second")])
+    : await Promise.all([derive("first"), derive("second")]);
+
+  // GRADE THE VERIFIER ITSELF. The recipe is evidence, not authority: every use is an audit,
+  // and the counters are what let a wrong one be retired instead of quietly poisoning a whole
+  // family's ground truth.
+  if (_useRecipe && _recipe) {
+    const agreed = a?.value != null && b?.value != null && a.value === b.value;
+    const contradicted = a?.value != null && b?.value != null && a.value !== b.value;
+    if (agreed || contradicted) {
+      const updated: VerifierRecipe = { ..._recipe, agreed: _recipe.agreed + (agreed ? 1 : 0), disagreed: _recipe.disagreed + (contradicted ? 1 : 0) };
+      verifierRecipes.set(updated.family, updated);
+      persistRecipe(updated);
+      if (contradicted) console.log(`[verifier-recipe] recipe for "${updated.family}" CONTRADICTED (${a!.value} vs ${b!.value}) — agreed=${updated.agreed} disagreed=${updated.disagreed} live=${recipeIsLive(updated)}`);
+    }
+  }
 
   // TOKEN branch first: when both derivations name the same file, that IS the agreed truth,
   // and no numeric reconciliation applies. Same two-derivation requirement either way — the
@@ -3008,6 +3074,19 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
       reachedCommandCache.set(donorHash, donor);
       persistReachedCommand(donorHash, donor);
       console.log(`[recompute] DONATED verified command for this goal class (truth=${truth}, two agreeing derivations): \`${a!.command}\``);
+    }
+  }
+
+  // MINT — only from a truth two independent derivations already agreed on, and only for a
+  // family with no live recipe. Reuse before mint: an existing recipe is audited and improved
+  // by use, never displaced by a second one that would split the evidence between them.
+  if (!isToken && _family && _tree && !_useRecipe && !verifierRecipes.has(_family)) {
+    const template = generaliseCommand(a!.command, _tree);
+    if (template) {
+      const minted: VerifierRecipe = { family: _family, template, originGoal: goal.slice(0, 200), originValue: truth as number, agreed: 0, disagreed: 0 };
+      verifierRecipes.set(_family, minted);
+      persistRecipe(minted);
+      console.log(`[verifier-recipe] MINTED recipe for family "${_family}" from a triangulated truth (${truth}): \`${template}\``);
     }
   }
 

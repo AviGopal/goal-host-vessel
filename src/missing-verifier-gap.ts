@@ -25,6 +25,19 @@
 /**
  * The FAMILY a countable goal belongs to — vessel names and paths stripped out.
  *
+ * The summary must NAME A CONCRETE FILE, not a directory. Observed live: the first version
+ * said "author a verifier in repos/goal-host-vessel/src" and the composer answered
+ *
+ *     [gap-to-feature] pick {"gap_id":"missing-verifier-distinct-file-extensions",
+ *                           "target":"(no-target)"}
+ *     [fc-grounding] REFUSED ungrounded decompose; targetFiles=[] verify_vessels=[]
+ *
+ * — REFUSED before authoring anything, op_count null, nothing touched. The substrate already
+ * documents this rule for operator-authored goals ("a goal whose lead sentence names a real
+ * repos/<vessel>/src/... FILE routes through the edit-intent path"), and a gap is just a goal
+ * the system writes to itself, so the same rule binds. A gap that cannot be grounded to a file
+ * is a work item nothing can act on — it enters the backlog and stays there.
+ *
  * The gap id must be per-family, never per-goal. "How many subdirectories under
  * repos/activity-api/src" and the same question about repos/concept-db/src need ONE verifier
  * between them, and filing one gap per goal would flood the store with rows describing a
@@ -67,8 +80,9 @@ export function missingVerifierGap(family: string, exampleGoal: string): {
       `and returns not-reached with beta WITHHELD — an honest verdict that can never change, ` +
       `so reach on this family is pinned regardless of how many times it is attempted. ` +
       `Example goal: "${exampleGoal.slice(0, 200)}". ` +
-      `AUTHOR one verifier in repos/goal-host-vessel/src that computes the answer for THIS ` +
-      `family from the authoritative git clone (the readdir/in-process route the sibling ` +
+      `In repos/goal-host-vessel/src/index.ts, add one verifier function that computes the ` +
+      `answer for THIS family ` +
+      `from the authoritative git clone (the readdir/in-process route the sibling ` +
       `verifiers use — NOT by re-running the walk's own command, which would agree with it by ` +
       `construction), and returns a three-verdict result: reached when the produced output ` +
       `states the computed value, not-reached when it states a different one, null when it ` +
