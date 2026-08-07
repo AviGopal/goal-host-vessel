@@ -246,6 +246,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
+import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
   EventSink,
@@ -1380,10 +1381,7 @@ function buildAggregateCommand(goal: string): string | null {
 type AggOp = "total_lines" | "avg_lines" | "grep_files";
 interface AggParse { op: AggOp; rel: string; ext: string | null; needle?: string }
 
-const LANG_EXT: Record<string, string> = {
-  typescript: "ts", javascript: "js", python: "py", markdown: "md",
-  json: "json", rust: "rs", go: "go", shell: "sh", bash: "sh",
-};
+// LANG_EXT lives in ./two-source-parse — one table, imported, never a second copy to drift.
 
 // ═══ ROUTE-AS-DATA SCAFFOLD (2026-07-30, oracle-drift elimination) ══════════════════════
 // Today each compositional reach class is a parseX + buildXCommand + verifyXReach triad with
@@ -1957,55 +1955,6 @@ async function verifyAvgThresholdReach(goal: string, dig: string): Promise<GoalR
 // ── THREADED TWO-OP: TWO-SOURCE-COMPARE (which of repos/X or repos/Y has more; by how much) ──
 // op1 = an aggregate over EACH of two named sources; op2 = compare -> (winner, diff) or winner value.
 // Existence-guarded so a missing root never fabricates a 0-vs-N compare; oracle recomputes both.
-interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value"; dir: "more" | "fewer" }
-function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
-  const paths = [...goal.matchAll(/repos\/[\w.-]+\/[\w./-]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ""));
-  const uniq = [...new Set(paths)].filter((p) => !/\.\w{1,6}$/.test(p));
-  if (uniq.length !== 2) return null;                         // needs EXACTLY two distinct dir roots
-  // Accept "than" as well as "or". The comparative arrives in two common phrasings —
-  // "which has more, A or B?" and "how many more ... in A than in B?" — and requiring "or"
-  // silently rejected the second. Measured 2026-08-06 with a precomputed oracle: the goal
-  // "How many more TypeScript files are under repos/concept-db/src than under
-  // repos/boredom-vessel/src?" (true answer 25 = 31 - 6) was declined here, fell through to
-  // buildFromClassRow — which runs FIRST in the chain at :4447 — and was answered as a plain
-  // single-directory count of 31. The walk then graded it REACHED, because
-  // verifyCountFilesReach shares that builder's parse, so a wrong answer of the right SHAPE is
-  // confirmed by construction. A phrasing gap in this predicate became a confidently wrong
-  // answer to a harder goal.
-  if (!/\bor\b|\bthan\b/i.test(goal)) return null;
-  // DECLINE A GOAL THIS BUILDER CANNOT FULLY SATISFY. The parse emits exactly two shapes,
-  // which_diff and winner_value; neither carries an aggregate ACROSS the two sources. A goal
-  // that also asks for a combined total therefore gets answered in one conjunct and — because
-  // verifyTwoSourceCompareReach checks only the winner and the difference this same builder
-  // produced — is certified reached with the other conjunct silently missing. Measured
-  // 2026-08-06 against a precomputed oracle: "Which has more TypeScript files,
-  // repos/discovery-vessel/src or repos/llm-resolver-vessel/src, and what is the combined
-  // total across both directories?" (7 and 2, total 9) answered "discovery-vessel: 5" — the
-  // winner and the DIFFERENCE — and was alpha-credited as a substance-honest reach.
-  //
-  // This is the self-confirming oracle on a second axis. The 'or'/'than' gap above was builder
-  // and verifier sharing a PARSE; this is a verifier validating the SUB-GOAL THE BUILDER CHOSE
-  // rather than the goal that was asked, so fixing the parse did not touch it. Declining hands
-  // the goal to a builder that can carry both conjuncts, or to the walk — an honest miss the
-  // learner can grade, which a partial answer wearing a reach verdict is not.
-  //
-  // Deliberately narrow: it requires a marker of an aggregate over BOTH sources, so the
-  // comparative phrasings this predicate exists to serve are untouched. Corpus-checked before
-  // dispatch against live family goals — "…and by how many?", "How many more … than …?",
-  // "Which has more total lines, A or B?" and "How many total lines are under X?" all still
-  // parse. `\band (?:the )?total\b` requires 'and' immediately before 'total', so the
-  // comparator phrase "more total lines" is not a match.
-  if (/\bcombined\b|\baltogether\b|\bacross both\b|\bsum of both\b|\band (?:the )?total\b|\btotal (?:across|of) both\b/i.test(goal)) return null;
-  const more = /\bmore\b|\bmost\b|\blarger\b|\bbigger\b|\bgreater\b/i.test(goal);
-  const fewer = /\bfewer\b|\bfewest\b|\bless\b|\bsmaller\b|\bsmallest\b/i.test(goal);
-  if (more === fewer) return null;                            // ambiguous comparator
-  const op: "total_lines" | "file_count" = /\blines?\b/i.test(goal) ? "total_lines" : "file_count";
-  const output: "which_diff" | "winner_value" = /\bwhichever\b|\bhow many\b.*\bhas\b|\bin the\b/i.test(goal) && !/\bhow many more\b|\bby how (?:much|many)\b/i.test(goal) ? "winner_value" : "which_diff";
-  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\b/i);
-  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
-  return { op, relA: uniq[0]!, relB: uniq[1]!, ext, output, dir: more ? "more" : "fewer" };
-}
 function buildTwoSourceCompareCommand(goal: string): string | null {
   const p = parseTwoSourceCompare(goal);
   if (!p) return null;
@@ -2016,6 +1965,11 @@ function buildTwoSourceCompareCommand(goal: string): string | null {
     : `find ${root} -type f${nameSel} | wc -l`;
   // dir=more -> the LARGER side wins; dir=fewer -> the SMALLER side wins.
   const [wAlarger, wBlarger] = p.dir === "more" ? [p.relA, p.relB] : [p.relB, p.relA];
+  // A combination asks for ONE number across both sources, so the command emits the sum
+  // rather than a winner. Without this the builder had no way to express the goal at all.
+  if (p.output === "combined") {
+    return `[ -d ${rootA} ] && [ -d ${rootB} ] || { echo "missing source"; exit 1; }; A=$(${agg(rootA)}); B=$(${agg(rootB)}); echo $((A+B))`;
+  }
   const emit = p.output === "which_diff"
     ? `D=$(( A>B ? A-B : B-A )); if [ "$A" -eq "$B" ]; then echo "tie: 0"; elif [ "$A" -gt "$B" ]; then echo "${wAlarger}: $D"; else echo "${wBlarger}: $D"; fi`
     : `if [ "$A" -eq "$B" ]; then echo "$A"; elif ${p.dir === "more" ? '[ "$A" -gt "$B" ]' : '[ "$A" -lt "$B" ]'}; then echo "$A"; else echo "$B"; fi`;
@@ -2038,6 +1992,17 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
   };
   const A = await aggregate(p.relA), B = await aggregate(p.relB);
   if (A === null || B === null) return null;
+  if (p.output === "combined") {
+    // A COMBINATION IS VALID WHEN THE TWO SIDES ARE EQUAL, so this runs BEFORE the tie
+    // return below — a tie only defeats a comparison.
+    const total = A + B;
+    const cNums = [...new Set((dig.match(/\b\d{1,9}\b/g) ?? []).map(Number))];
+    const cUnit = p.op === "total_lines" ? "total line(s)" : "file(s)";
+    if (cNums.includes(total)) {
+      return { reached: true, reason: `deterministic:verified-two-source-combined — ${p.relA}=${A} + ${p.relB}=${B} = ${total} ${cUnit}; the produced output reports that total`, deterministic: true, completion_shapes: [] };
+    }
+    return { reached: false, reason: `deterministic:two-source-combined-mismatch — authoritative combined total is ${total} (${p.relA}=${A}, ${p.relB}=${B}); the produced output does not report it`, deterministic: true, completion_shapes: [] };
+  }
   if (A === B) return null;                                    // tie -> not a deterministic comparison; LLM
   const winnerRel = (p.dir === "more" ? A > B : A < B) ? p.relA : p.relB;
   const winnerVal = Math.max(A, B) === (winnerRel === p.relA ? A : B) ? (winnerRel === p.relA ? A : B) : (winnerRel === p.relA ? A : B);
