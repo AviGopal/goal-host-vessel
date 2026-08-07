@@ -2064,7 +2064,20 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
   }
   if (p.output === "which_diff") {
     if (winnerNamePresent && nums.includes(diff)) {
-      return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 ${winnerRel} has ${p.dir} ${unit} (${p.relA}=${A} vs ${p.relB}=${B}, difference ${diff}); the produced output reports the same winner and difference`, deterministic: true, completion_shapes: [] };
+      // SAY WHAT WAS ACTUALLY CHECKED. This string is what the operator reads, what the
+      // bridge materializes into the durable artifact, and what the oracle corpus stores
+      // as a grounded label \u2014 so an overclaim here is not cosmetic, it is a fabricated
+      // provenance that a later reader cannot distinguish from a real verification.
+      // "reports the same winner and difference" was asserted unconditionally, including
+      // when the output stated NEITHER and merely happened to contain the integer.
+      const _checked = statedDiff !== null && statedWinner !== null
+        ? "the produced output states the same winner and difference"
+        : statedDiff !== null
+          ? "the produced output states the same difference"
+          : statedWinner !== null
+            ? "the produced output names the same winner; it states no explicit difference"
+            : "the produced output states neither explicitly \u2014 matched only on the value being present, which is WEAK evidence";
+      return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 ${winnerRel} has ${p.dir} ${unit} (${p.relA}=${A} vs ${p.relB}=${B}, difference ${diff}); ${_checked}`, deterministic: true, completion_shapes: [] };
     }
     if (nums.length > 0 || winnerNamePresent) {
       return { reached: false, reason: `deterministic:two-source-compare-mismatch \u2014 authoritative: ${winnerRel} by ${diff} (${p.relA}=${A}, ${p.relB}=${B}); the produced output does not report that winner+difference`, deterministic: true, completion_shapes: [] };
@@ -2072,7 +2085,7 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
   } else {
     const wv = winnerRel === p.relA ? A : B;
     if (nums.includes(wv)) {
-      return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 the ${p.dir === "more" ? "larger" : "smaller"} of ${p.relA}/${p.relB} is ${winnerRel} with ${wv} ${unit}; the produced output reports the same value`, deterministic: true, completion_shapes: [] };
+      return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 the ${p.dir === "more" ? "larger" : "smaller"} of ${p.relA}/${p.relB} is ${winnerRel} with ${wv} ${unit}; ${statedWinner !== null ? "the produced output names the same winner and reports that value" : "the produced output contains that value but names no winner explicitly \u2014 WEAK evidence"}`, deterministic: true, completion_shapes: [] };
     }
     if (nums.length > 0) {
       return { reached: false, reason: `deterministic:two-source-compare-mismatch \u2014 authoritative winner value is ${wv} (${p.relA}=${A}, ${p.relB}=${B}); produced output does not report it`, deterministic: true, completion_shapes: [] };
