@@ -67,7 +67,23 @@ export function generaliseCommand(command: string, treePath: string): string | n
   const first = command.indexOf(treePath);
   if (first < 0) return null;                                       // path never reached the command
   if (command.indexOf(treePath, first + 1) >= 0) return null;       // ambiguous: refuse
-  return command.slice(0, first) + "{{tree}}" + command.slice(first + treePath.length);
+  const template = command.slice(0, first) + "{{tree}}" + command.slice(first + treePath.length);
+
+  // NO VESSEL-SPECIFIC LITERAL MAY SURVIVE. Observed live on the first mint:
+  //
+  //   MINTED recipe for family "largest-module-by-lines" from a triangulated truth (0):
+  //     `find /workspace/git/vessels/cpg-inference-ts/{{tree}} -name "*.ts" ...`
+  //
+  // The command addressed the tree by its DEPLOYED path, so only the trailing segment matched
+  // the goal's `repos/<vessel>/...` span. The slot went in, the vessel name stayed, and the
+  // result would have measured cpg-inference-ts for every member of the family. (The audit
+  // caught it on first use — CONTRADICTED 0 vs 622, retired — which is the design working, but
+  // a mint that can only be corrected after being wrong is a mint worth refusing.)
+  //
+  // A family recipe that still names one vessel is not a family recipe.
+  const vessel = treePath.split("/")[1];
+  if (vessel && template.includes(vessel)) return null;
+  return template;
 }
 
 /** Bind a recipe to a concrete goal. Mirrors generaliseCommand exactly, so a round-trip is identity. */

@@ -3081,7 +3081,11 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   // MINT — only from a truth two independent derivations already agreed on, and only for a
   // family with no live recipe. Reuse before mint: an existing recipe is audited and improved
   // by use, never displaced by a second one that would split the evidence between them.
-  if (!isToken && _family && _tree && !_useRecipe && !verifierRecipes.has(_family)) {
+  // A DEGENERATE TRUTH IS NOT EVIDENCE. The first live mint was seeded from a triangulated
+  // truth of 0 — two derivations agreeing that they measured nothing, which says the commands
+  // failed in the same way, not that the answer is zero. Seeding a family's verifier from that
+  // is how a whole family gets a confidently wrong ground truth.
+  if (!isToken && _family && _tree && !_useRecipe && !verifierRecipes.has(_family) && typeof truth === "number" && truth > 0) {
     const template = generaliseCommand(a!.command, _tree);
     if (template) {
       const minted: VerifierRecipe = { family: _family, template, originGoal: goal.slice(0, 200), originValue: truth as number, agreed: 0, disagreed: 0 };

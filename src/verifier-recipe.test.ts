@@ -73,3 +73,20 @@ describe("recipeIsLive — a verifier is evidence, not authority", () => {
     expect(recipeIsLive(mk({ agreed: 5, disagreed: 2 }))).toBe(true);
   });
 });
+
+describe("generaliseCommand — a family recipe may not name one vessel", () => {
+  it("OBSERVED: the deployed path only matched its trailing segment", () => {
+    // Live first mint: the command addressed the tree as /workspace/git/vessels/<vessel>/src
+    // while the goal said repos/<vessel>/src, so only "src" matched. The slot went in and the
+    // vessel name stayed — a recipe that would measure cpg-inference-ts for the whole family.
+    expect(generaliseCommand(
+      'find /workspace/git/vessels/cpg-inference-ts/src -name "*.ts" | wc -l',
+      "repos/cpg-inference-ts/src",
+    )).toBeNull();
+  });
+
+  it("still accepts a command that addressed the tree the way the goal named it", () => {
+    expect(generaliseCommand("find /w/repos/concept-db/src -type f | wc -l", "repos/concept-db/src"))
+      .toBe("find /w/{{tree}} -type f | wc -l");
+  });
+});
