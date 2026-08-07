@@ -247,6 +247,7 @@ import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
+import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
@@ -2576,6 +2577,12 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     if (rc) return rc;
   }
   if (isQuantitativeRepoQuestion(goal)) {
+    // The refusal is the system's own testimony about which capability is missing, and it was
+    // going nowhere. File it so gap_to_feature -> feature_compose -> mitosis can AUTHOR the
+    // verifier — the only route by which reach can rise over time in a system whose per-class
+    // reach is otherwise deterministic (seven repeated-exposure runs: every class saturated
+    // from round 0 or zero in all four rounds). Fire-and-forget; grading never waits on it.
+    void fileMissingVerifierGap(goal);
     return {
       reached: false,
       reason: `deterministic:no-oracle-for-goal-class — this is a countable question about a repository tree and no deterministic verifier claims it; the LLM judge measured 29% correct at 90% reach on exactly this shape, so its verdict is withheld rather than recorded as a reach`,
@@ -2863,6 +2870,29 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
  * nothing measurable emitted) so the honest no-oracle refusal remains the floor. The only two
  * verdicts it will assert are backed by a number measured from the world.
  */
+/**
+ * File the missing-verifier gap behind the refusal. Per-FAMILY stable id (upsert, never a
+ * flood), deduped in-process so one run does not re-POST the same row on every goal, and
+ * fail-open silent: reach grading must never depend on the gap store being up.
+ */
+const _filedVerifierGaps = new Set<string>();
+async function fileMissingVerifierGap(goal: string): Promise<void> {
+  try {
+    const family = verifierFamilyOf(goal);
+    if (!family || _filedVerifierGaps.has(family)) return;
+    _filedVerifierGaps.add(family);
+    const gap = missingVerifierGap(family, goal);
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { ...gap, detected_at: new Date().toISOString() } } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    console.log(`[missing-verifier] filed gap ${gap.id} for family "${family}" (http ${r.status})`);
+  } catch (e) {
+    console.warn(`[missing-verifier] gap filing failed (non-fatal): ${String((e as Error)?.message ?? e).slice(0, 120)}`);
+  }
+}
 async function recomputeIndependently(
   goal: string,
   digest: string,
