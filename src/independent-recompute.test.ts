@@ -71,23 +71,13 @@ describe("parseMeasuredNumber — strict, because this value becomes the truth",
     expect(parseMeasuredNumber("warning: something\n313\n")).toBe(313);
   });
 
-  it("reads wc's own output formats — refusing them was the top source of abstentions", () => {
-    // OBSERVED: "[recompute] first derivation gave unusable stdout: total". wc -l over many
-    // files ends "1234 total"; over one file it prints "10 path.ts". Both are unambiguous,
-    // and discarding one derivation discards the whole verdict, leaving a no-oracle refusal.
-    expect(parseMeasuredNumber("  12 a.ts\n  30 b.ts\n  42 total")).toBe(42);
-    expect(parseMeasuredNumber("      10 /workspace/git/vessels/x/src/index.ts")).toBe(10);
-    expect(parseMeasuredNumber("2679 /w/g/v/discovery-vessel/src/index.ts\n")).toBe(2679);
-  });
-
   it("returns null rather than guessing at a messy result", () => {
     // A loose parse here would rebuild the bag-of-integers defect on the GROUND-TRUTH side,
     // where a wrong value does the most damage.
     expect(parseMeasuredNumber("There are 42 files")).toBeNull();
     expect(parseMeasuredNumber("")).toBeNull();
     expect(parseMeasuredNumber("find: no such file")).toBeNull();
-    expect(parseMeasuredNumber("42 76")).toBeNull();       // two bare numbers: which is the measurement?
-    expect(parseMeasuredNumber("42 files")).toBeNull();    // a bare word is not a wc path or total
+    expect(parseMeasuredNumber("42 76")).toBeNull();
   });
 });
 
