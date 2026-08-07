@@ -2862,14 +2862,19 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   const derive = async (nth: "first" | "second"): Promise<{ value: number; command: string } | null> => {
     let command = "";
     try {
-      const rr = await routedComplete(goalHashOf(goal), "reach_verification", { prompt: promptFor(nth), model: "auto" });
-      if (!rr.ok) return null;
+      // Distinct buffer keys per derivation. Sharing goalHashOf(goal) for both made the two
+      // authoring calls collide on the routed-completion buffer, and the loser came back
+      // unusable EVERY time — every probe abstained with "only one derivation", with none of
+      // the per-step failure logs below firing, because this branch returned null in silence.
+      // Two derivations that cannot both be requested are not triangulation.
+      const rr = await routedComplete(`${goalHashOf(goal)}:recompute-${nth}`, "reach_verification", { prompt: promptFor(nth), model: "auto" });
+      if (!rr.ok) { console.log(`[recompute] ${nth} authoring call failed (routedComplete not ok)`); return null; }
       const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
       const m = String(text).match(/\{[\s\S]*\}/);
-      if (!m) return null;
+      if (!m) { console.log(`[recompute] ${nth} authoring returned no JSON: ${String(text).slice(0, 160)}`); return null; }
       command = String(JSON.parse(m[0])?.command ?? "");
-    } catch { return null; }
+    } catch (e) { console.log(`[recompute] ${nth} authoring threw: ${String((e as Error)?.message ?? e).slice(0, 160)}`); return null; }
 
     const gate = isReadOnlyShellCommand(command);
     if (!gate.ok) {
