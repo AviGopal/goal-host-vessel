@@ -1766,6 +1766,23 @@ function parseAggregateGoal(goal: string): AggParse | null {
   if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
   if (parseRankAggregate(goal)) return null;              // rank-then-aggregate owns this goal
   if (isCompositionalGoal(goal)) return null;             // compositional -> LLM/honest-miss, never hollow-green
+  // TWO TREES, ONE AGGREGATE = a wrong answer certified by construction.
+  //
+  // The guards above catch the COMPARISON form ("which has more, A or B"). They miss the
+  // CHAIN form — "between repos/A/src and repos/B/src, whichever has more modules, report the
+  // total LINES in that one" — where the answer depends on which tree WON. This parse takes
+  // the FIRST repos/ path it sees, so it is right roughly half the time by coin flip, and
+  // because the command builder shares the parse the oracle agrees with the walk either way.
+  //
+  // Measured: chain_winner_lines graded 12/12 REACHED and 4/12 correct — 8 hollow greens,
+  // 23.5% of all reaches in that run, from `deterministic:verified-total`. An aggregate over
+  // ONE tree cannot answer a goal that names TWO; declining hands it to a path that can.
+  //
+  // Third instance of one pattern, after d7fee60 (this oracle's sibling claiming extension
+  // goals) and 7387072 (the command builder claiming them): AN ORACLE MUST DECLINE A GOAL
+  // WHOSE SCOPE ITS PARSE DOES NOT REPRESENT.
+  const treeCount = new Set((goal.match(/repos\/[\w.-]+/g) ?? [])).size;
+  if (treeCount > 1) return null;
   const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
