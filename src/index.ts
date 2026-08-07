@@ -1748,9 +1748,24 @@ function parseAggregateGoal(goal: string): AggParse | null {
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
   if (/\.\w{1,6}$/.test(rel)) return null;                 // FILE path -> not a dir aggregate
-  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+files?\b/i);
-  const ext = extLit ? extLit[1].toLowerCase() : extLang ? (LANG_EXT[extLang[1].toLowerCase()] ?? null) : null;
+  // ONE EXTENSION PARSE, SHARED. This had its own copy requiring the literal word
+  // "files", so "the total lines in the TypeScript MODULES under repos/X/src" parsed
+  // ext=null and the aggregate counted EVERY file in the tree. The command builder shares
+  // this same parse, so the walk produced the same wrong number and the oracle confirmed
+  // it — a wrong answer certified by construction, invisible on any vessel whose src holds
+  // only .ts files.
+  //
+  // Measured on a 48-goal harness run: repos/activity-api/src answered 313,359 lines
+  // against a true .ts total of 76,325 (all-files = 313,359 exactly), and
+  // repos/concept-db/src answered 9,088 against 8,899 (all-files = 9,088 exactly). Both
+  // graded REACHED. identity-vessel and libp2p passed only because their src is pure .ts,
+  // which is why this looked fine for months.
+  //
+  // parseFileExtension is the same defect already fixed once, in the count family, and it
+  // is tested against both the false-green and false-red it produced there. Sharing it
+  // rather than re-fixing the copy is the point: this is the second parse in this file to
+  // require the noun "files", and the third to drift from a sibling.
+  const ext = parseFileExtension(goal);
   // ORDER MATTERS: grep first (goal also says "how many files"), then avg (also says "line").
   const needleM = goal.match(/\b(?:contain(?:s|ing)?|with|includ(?:e|es|ing))\s+the\s+(?:text|string|word|pattern)\s+["'\u201c]?([\w.$-]{2,64})["'\u201d]?/i)
                ?? goal.match(/\bcontain(?:s|ing)?\s+["'\u201c]([\w.$ -]{2,64})["'\u201d]/i);

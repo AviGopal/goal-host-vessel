@@ -64,3 +64,25 @@ describe("parseFileExtension", () => {
     expect(parseFileExtension("count the .json files that configure TypeScript")).toBe("json");
   });
 });
+
+describe("parseFileExtension — the aggregate (lines/grep) family shares this parse", () => {
+  it("OBSERVED LIVE: a total-lines goal saying 'modules' must still narrow to .ts", () => {
+    // parseAggregateGoal carried its own copy requiring the literal word "files", so this
+    // parsed null and counted EVERY file. repos/activity-api/src answered 313,359 lines
+    // against a true .ts total of 76,325 (all-files is 313,359 exactly), and was graded
+    // REACHED because the command builder shares the same parse.
+    expect(parseFileExtension("How many total lines are in the TypeScript modules under repos/activity-api/src?")).toBe("ts");
+    expect(parseFileExtension("How many total lines are in the TypeScript modules under repos/concept-db/src?")).toBe("ts");
+  });
+
+  it("leaves a genuinely unfiltered aggregate unfiltered", () => {
+    // No language qualifier: the goal really does mean every file, and narrowing would be
+    // the mirror-image error.
+    expect(parseFileExtension("How many total lines are under repos/activity-api/src?")).toBeNull();
+  });
+
+  it("narrows the average and grep phrasings the same way", () => {
+    expect(parseFileExtension("What is the average number of lines per TypeScript module in repos/x/src?")).toBe("ts");
+    expect(parseFileExtension("How many Python scripts under repos/x contain the text TODO?")).toBe("py");
+  });
+});
