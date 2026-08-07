@@ -248,7 +248,7 @@ import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
-import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseMeasuredNumber, reconcileDerivations } from "./independent-recompute";
+import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
@@ -2880,9 +2880,12 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
       if (!rr.ok) { console.log(`[recompute] ${nth} authoring call failed (routedComplete not ok)`); return null; }
       const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
-      const m = String(text).match(/\{[\s\S]*\}/);
-      if (!m) { console.log(`[recompute] ${nth} authoring returned no JSON: ${String(text).slice(0, 160)}`); return null; }
-      command = String(JSON.parse(m[0])?.command ?? "");
+      // Tolerant on purpose — see parseAuthoredCommand. A measuring one-liner is made of
+      // backslashes, and losing a derivation to a single unescaped one turns triangulation
+      // into a guaranteed abstention that reads as healthy caution.
+      const parsed = parseAuthoredCommand(String(text));
+      if (!parsed) { console.log(`[recompute] ${nth} authoring returned no usable command: ${String(text).slice(0, 160)}`); return null; }
+      command = parsed;
     } catch (e) { console.log(`[recompute] ${nth} authoring threw: ${String((e as Error)?.message ?? e).slice(0, 160)}`); return null; }
 
     const gate = isReadOnlyShellCommand(command);

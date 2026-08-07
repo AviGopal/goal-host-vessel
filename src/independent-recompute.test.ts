@@ -4,6 +4,7 @@ import {
   extractEmittedNumbers,
   gradeRecompute,
   isReadOnlyShellCommand,
+  parseAuthoredCommand,
   parseMeasuredNumber,
   reconcileDerivations,
 } from "./independent-recompute";
@@ -139,5 +140,38 @@ describe("reconcileDerivations — one model-authored command is not ground trut
     expect(reconcileDerivations(29, null).truth).toBeNull();
     expect(reconcileDerivations(null, 29).truth).toBeNull();
     expect(reconcileDerivations(null, null).truth).toBeNull();
+  });
+});
+
+/**
+ * OBSERVED LIVE: "[recompute] first authoring threw: JSON Parse error: Invalid escape
+ * character" — while the second derivation returned the correct answer. Triangulation needs
+ * both, so one parse error turns a working verdict into an abstention that looks exactly
+ * like healthy caution.
+ */
+describe("parseAuthoredCommand — a measuring command is full of backslashes", () => {
+  it("reads well-formed JSON", () => {
+    expect(parseAuthoredCommand('{"command":"find /x -type f | wc -l"}')).toBe("find /x -type f | wc -l");
+    expect(parseAuthoredCommand('here you go:\n{"command":"git -C /x rev-list --count HEAD"}\nthanks'))
+      .toBe("git -C /x rev-list --count HEAD");
+  });
+
+  it("repairs the single-backslash escapes a shell one-liner is made of", () => {
+    // find's escaped parens — the exact shape that killed derivation 1.
+    expect(parseAuthoredCommand('{"command":"find /x \\( -name node_modules \\) -prune -o -type f -print | wc -l"}'))
+      .toContain("-prune");
+    expect(parseAuthoredCommand(String.raw`{"command":"awk -F '\.' '{print $(NF)}' | sort -u | wc -l"}`))
+      .toContain("awk -F");
+  });
+
+  it("keeps legal JSON escapes intact rather than doubling them", () => {
+    const out = parseAuthoredCommand('{"command":"grep -c \\"async\\" /x/a.ts"}');
+    expect(out).toBe('grep -c "async" /x/a.ts');
+  });
+
+  it("returns null when there is no command to find", () => {
+    expect(parseAuthoredCommand("I cannot answer that")).toBeNull();
+    expect(parseAuthoredCommand('{"notacommand":"x"}')).toBeNull();
+    expect(parseAuthoredCommand('{"command":"   "}')).toBeNull();
   });
 });

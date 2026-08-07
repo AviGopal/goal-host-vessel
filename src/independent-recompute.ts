@@ -124,6 +124,53 @@ export function extractEmittedNumbers(digest: string): number[] {
   return [...new Set(lines.flatMap((l) => (l.match(/\b\d{1,9}\b/g) ?? []).map(Number)))];
 }
 
+/**
+ * Pull the authored command out of the model's JSON reply.
+ *
+ * `JSON.parse` alone loses derivations to the shell itself. Observed live:
+ *
+ *     [recompute] first authoring threw: JSON Parse error: Invalid escape character
+ *
+ * while the SECOND derivation returned the correct answer via
+ * `awk -F '.' '{print $(NF)}'`. A measuring command is full of backslashes —
+ * `\(`, `\;`, `\.`, `-print0` pipelines — and a model emitting one inside a JSON string
+ * routinely writes a single backslash where JSON demands two. That is invalid JSON by the
+ * letter and completely unambiguous in intent.
+ *
+ * Losing a derivation to it is not a cosmetic failure: triangulation needs BOTH, so one
+ * parse error downgrades a working verdict into an abstention — and the abstention looks
+ * identical to healthy caution from the outside. Repair the invalid escapes and retry;
+ * fall back to a direct extraction of the "command" value when even that fails.
+ */
+export function parseAuthoredCommand(text: string): string | null {
+  const m = String(text ?? "").match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  const raw = m[0];
+
+  const take = (s: string): string | null => {
+    try {
+      const v = JSON.parse(s)?.command;
+      return typeof v === "string" && v.trim().length > 0 ? v : null;
+    } catch { return null; }
+  };
+
+  const direct = take(raw);
+  if (direct) return direct;
+
+  // Double every backslash that is NOT already starting a legal JSON escape. `\"` is
+  // deliberately excluded — repairing it would merge the string with its own terminator.
+  const repaired = raw.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+  const fixed = take(repaired);
+  if (fixed) return fixed;
+
+  // Last resort: read the value directly. Anchored on the key and stopping at the closing
+  // quote that precedes the object's end, so a command containing quotes is not truncated
+  // by the first inner one.
+  const direct2 = raw.match(/"command"\s*:\s*"([\s\S]*)"\s*\}?\s*$/);
+  const v = direct2?.[1]?.replace(/\\"/g, '"').trim();
+  return v && v.length > 0 ? v : null;
+}
+
 export type RecomputeVerdict = "agree" | "disagree" | "no-measurement";
 
 /**
