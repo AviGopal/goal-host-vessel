@@ -6683,7 +6683,24 @@ If one of those sibling shapes is the action that would create what the goal ask
         const UNRESOLVED_FS_EFFECT = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
         const editEffectReach = (verdict.completion_shapes ?? []).some((s) => UNRESOLVED_FS_EFFECT.has(String(s)))
           || [...producedShapes].some((s) => UNRESOLVED_FS_EFFECT.has(String(s)));
-        if (verdict.deterministic === true || (!editEffectReach && (consumedInChain.size > 0 || (commandEvidence ?? "").trim().length > 0))) {
+        // A COMMAND HAVING RUN IS NOT EVIDENCE THE ANSWER IS RIGHT. `commandEvidence` used
+        // to be sufficient substance on its own, which meant any LLM-judged reach that
+        // happened to shell out collected full alpha — and every wrong answer in this family
+        // shells out, because shelling out is how it produces the wrong number.
+        //
+        // Measured over 80 goals in four goal classes with NO deterministic verifier
+        // (subdirectory counts, distinct file extensions, largest-module-by-lines, grep
+        // counts): 72/80 graded REACHED and only 23/80 were correct — **68% of reaches were
+        // hollow**, and the split tracks verifier coverage exactly. grep_count, the one
+        // family a deterministic oracle owns, was 14/20 correct; ext_variety, which nothing
+        // owns, was 20/20 reached and 0/20 correct. Every one of those false reaches ran a
+        // command and was therefore alpha-credited under the old gate.
+        //
+        // Keep the two arms that are real substance — a deterministic verdict, or a genuine
+        // in-chain producer-to-consumer edge — and drop the one that only proves work
+        // occurred. This deliberately REDUCES credit volume; crediting an unverified answer
+        // is what makes the posterior a record of activity rather than of correctness.
+        if (verdict.deterministic === true || (!editEffectReach && consumedInChain.size > 0)) {
           const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
           opts.learningSink?.alphaBetaDelta.push(_abCredit);
           tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
