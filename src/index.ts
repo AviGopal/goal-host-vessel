@@ -2977,8 +2977,21 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // graded. The observations still reach the LLM judge through `commandEvidence`, and when
   // no answer was authored we fall back to the dump exactly as before — an answer that
   // states no number was never an answer, and should be graded on whatever evidence exists.
+  // ...but ONLY when the answer actually makes a numeric claim to grade. Grading on the
+  // answer unconditionally was worse than the problem it fixed: an answer that is correct
+  // but does not restate the number ("counted them all, see above") produced no candidate
+  // value, the oracle returned MISMATCH instead of no-opinion, and a right answer was
+  // beta-penalised. Measured over 60 goals: hollow reaches went to 0, and reach fell
+  // 92%->33% across five batches while CORRECTNESS stayed at 75% — the system was getting
+  // the answers right and being told it had failed, with `reached` (37) below `correct`
+  // (45). A right answer punished is worse than a wrong one credited: the beta lands on the
+  // composition the walk should be reusing.
+  //
+  // So: grade the ANSWER when it states a number (that is the hollow case — a stated value
+  // that contradicts the truth), and fall back to the full evidence when it does not.
   const scratchpad = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
-  const digest = authoredFinalAnswer ? finalText.trim().slice(0, 6000) : scratchpad;
+  const answerStatesAValue = /\d/.test(finalText);
+  const digest = authoredFinalAnswer && answerStatesAValue ? finalText.trim().slice(0, 6000) : scratchpad;
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`); if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
