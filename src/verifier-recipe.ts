@@ -64,33 +64,43 @@ export function goalTreePath(goal: string): string | null {
  */
 export function generaliseCommand(command: string, treePath: string): string | null {
   if (!command || !treePath) return null;
-  const first = command.indexOf(treePath);
-  if (first < 0) return null;                                       // path never reached the command
-  if (command.indexOf(treePath, first + 1) >= 0) return null;       // ambiguous: refuse
-  const template = command.slice(0, first) + "{{tree}}" + command.slice(first + treePath.length);
-
-  // NO VESSEL-SPECIFIC LITERAL MAY SURVIVE. Observed live on the first mint:
-  //
-  //   MINTED recipe for family "largest-module-by-lines" from a triangulated truth (0):
-  //     `find /workspace/git/vessels/cpg-inference-ts/{{tree}} -name "*.ts" ...`
-  //
-  // The command addressed the tree by its DEPLOYED path, so only the trailing segment matched
-  // the goal's `repos/<vessel>/...` span. The slot went in, the vessel name stayed, and the
-  // result would have measured cpg-inference-ts for every member of the family. (The audit
-  // caught it on first use — CONTRADICTED 0 vs 622, retired — which is the design working, but
-  // a mint that can only be corrected after being wrong is a mint worth refusing.)
-  //
-  // A family recipe that still names one vessel is not a family recipe.
   const vessel = treePath.split("/")[1];
-  if (vessel && template.includes(vessel)) return null;
+  if (!vessel || vessel.length < 3) return null;
+
+  // SUBSTITUTE THE VESSEL NAME, NOT THE GOAL'S PATH STRING.
+  //
+  // First attempt replaced the goal's literal `repos/<vessel>/<sub>` span, and minted ZERO
+  // recipes across a 48-goal run: authored commands address the tree by its DEPLOYED path
+  // (/workspace/git/vessels/<vessel>/src), so the goal's span never appears verbatim. The one
+  // mint that did slip through matched only the trailing "src" and left the vessel name in the
+  // template — a "family" recipe hardcoded to one vessel, which the audit caught on first use
+  // (CONTRADICTED 0 vs 622).
+  //
+  // The vessel NAME is the thing that actually varies across a family, and it is what the
+  // command must be parameterised on regardless of which path form the command chose. Same
+  // literal, exactly-once discipline as before: that is the causal proof the name is what
+  // flowed into the measurement, not a similarity guess.
+  const first = command.indexOf(vessel);
+  if (first < 0) return null;                                        // vessel never reached the command
+  if (command.indexOf(vessel, first + 1) >= 0) return null;          // ambiguous: refuse
+  const template = command.slice(0, first) + "{{vessel}}" + command.slice(first + vessel.length);
+
+  // Nothing vessel-specific may survive. A family recipe that still names one vessel is not a
+  // family recipe.
+  if (template.includes(vessel)) return null;
   return template;
 }
 
 /** Bind a recipe to a concrete goal. Mirrors generaliseCommand exactly, so a round-trip is identity. */
 export function instantiateRecipe(template: string, treePath: string): string | null {
-  if (!template.includes("{{tree}}")) return null;
+  if (!template.includes("{{vessel}}")) return null;
   if (!/^repos\/[\w.-]+(?:\/[\w./-]+)?$/.test(treePath)) return null;  // never interpolate an unvetted span
-  return template.split("{{tree}}").join(treePath);
+  const vessel = treePath.split("/")[1];
+  // Must start with an alphanumeric and contain no "..": `repos/../../etc/src` otherwise
+  // yields vessel ".." and interpolates a traversal into a command we then RUN. Caught by its
+  // own test, which is the only reason to write the hostile case down.
+  if (!vessel || vessel.includes("..") || !/^[A-Za-z0-9][\w.-]*$/.test(vessel)) return null;
+  return template.split("{{vessel}}").join(vessel);
 }
 
 export type VerifierRecipe = {
@@ -127,5 +137,5 @@ export function recipeIsLive(r: VerifierRecipe): boolean {
  * Family membership is decided by the caller (verifierFamilyOf); this only guards the binding.
  */
 export function recipeAppliesTo(recipe: VerifierRecipe, family: string, treePath: string | null): boolean {
-  return recipe.family === family && treePath !== null && recipe.template.includes("{{tree}}");
+  return recipe.family === family && treePath !== null && recipe.template.includes("{{vessel}}");
 }
