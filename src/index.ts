@@ -7849,6 +7849,32 @@ async function runGoalWithRecovery(
       );
       goalTargetDecision = decision;
       if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
+      // KEEP THE MEASURABLE SHAPE IN REACH (law 8: the load-bearing fact, available at the
+      // moment of use).
+      //
+      // The shell safety-net above sets shellResult for exactly these goals — and this line
+      // used to be reached immediately after and OVERWRITE it, because inference wins
+      // unconditionally. A countable question then gets aimed at whatever inference returned,
+      // fails to compose a producer for it, and drops to universal-tool-fallback.
+      //
+      // That is the measured blocker. 719 pooled dispatches show repeated exposure does not
+      // improve reach (round 0 51.7% vs later 49.2%, z=-0.58), and 126 of 168 class-runs never
+      // varied at all — because the failing classes never resolve a MEASURABLE shape, so no
+      // verifier, command library or donor can reach them. Their recorded templates are
+      // universal-tool-fallback / auto-bridge-* / observe-orthogonal-patterns.
+      //
+      // UNION, not override: inference keeps whatever it inferred (a count-and-record goal
+      // still needs its note shape), and shellResult is appended so the walk CAN compose the
+      // measurement. Appended last so it never displaces an inferred primary target.
+      if (
+        isCountableQuestion(goal) &&
+        knownShapes && knownShapes.includes("shellResult") &&
+        seededOutputShapes && seededOutputShapes.length > 0 &&
+        !seededOutputShapes.includes("shellResult")
+      ) {
+        seededOutputShapes = [...seededOutputShapes, "shellResult"];
+        tap(`[goal-host-vessel] ${opts.surface}: countable goal — APPENDED shellResult to inferred targets ${JSON.stringify(decision.shapes)} so the measurement is composable`);
+      }
       // SHELL SAFETY NET (FIX B, 2026-07-23): an IMPERATIVE / system-inspection goal
       // ("count the .ts files under …", "how many vessels are running", "list …",
       // "check …", "run …") maps to no bespoke producer, so inference returns nothing
