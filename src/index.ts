@@ -2948,6 +2948,34 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     const reconciled = reconcileDerivations(a?.value ?? null, b?.value ?? null);
     if (reconciled.truth === null) {
       console.log(`[recompute] abstaining — ${reconciled.reason}${a ? ` [a=${a.value} via \`${a.command}\`]` : ""}${b ? ` [b=${b.value} via \`${b.command}\`]` : ""}`);
+      // CANDIDATE DONATION — a hypothesis, not a truth.
+      //
+      // Verification strictness and capability growth are in direct tension here, and both
+      // ends are measured: loosening the ground truth (089aead) produced WRONG truths whose
+      // `disagree` verdicts carry β and poisoned selection (reach 25/48 -> 18/48, reverted);
+      // keeping it strict means truth only exists where the walk ALREADY succeeded, so the
+      // donation path fired ZERO times in a full run and nothing was ever learned.
+      //
+      // The way out is not a threshold. It is to separate the two roles the command was
+      // playing. A single derivation that ran and printed a clean measurement is poor evidence
+      // of TRUTH but decent evidence of a REASONABLE WAY TO MEASURE. Donate it as the walk's
+      // starting command for the next attempt at this class, and let recompute check that
+      // attempt with two FRESH derivations exactly as it does now. Verification does not
+      // loosen by one inch; only the walk's starting point improves, which is the round-over-
+      // round conversion that six runs showed to be entirely absent.
+      //
+      // A wrong candidate is caught by the unchanged gate on the next attempt (`disagree`),
+      // so the failure mode is a wasted round, not a hollow green. The hollow rate is the tell.
+      const cand = a ?? b;
+      if (cand && cand.value !== null) {
+        const donorHash = goalHashOf(goal);
+        if (!reachedCommandCache.has(donorHash)) {
+          const donor = { command: cand.command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: goal };
+          reachedCommandCache.set(donorHash, donor);
+          persistReachedCommand(donorHash, donor);
+          console.log(`[recompute] CANDIDATE donated for next attempt (unverified, one derivation measured ${cand.value}): \`${cand.command}\``);
+        }
+      }
       return null;
     }
     truth = reconciled.truth;
