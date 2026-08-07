@@ -1220,6 +1220,15 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   // correct) lines/contains answer as a "mismatch". verifyAggregateReach owns those ops.
   if (/\blines?\b|\bwords?\b|\bcharacters?\b|\bbytes?\b/i.test(goal)) return null;
   if (/\b(contain|containing|match(?:es|ing)?|with the (?:text|string|word|pattern)|includ(?:e|es|ing))\b/i.test(goal)) return null;
+  // COUNT WHAT THE GOAL COUNTS. This oracle answers "how many FILES"; a goal counting some
+  // OTHER unit over the same tree is not its goal, and claiming it produces a file count
+  // presented as the answer to a different question. Observed live: "How many distinct file
+  // EXTENSIONS appear under repos/concept-db/src?" (true answer 2) was graded REACHED
+  // because the produced text mentioned the file total, which is what this oracle computed.
+  // ext_variety was 20/20 reached and 0/20 correct across two 80-goal runs, and it was the
+  // ONLY family that survived the no-oracle refusal — because this verifier claimed it first.
+  // Declining hands it to that refusal, which says so honestly instead of guessing.
+  if (/\b(extensions?|sub-?directories|sub-?dirs?|directories|folders?|functions?|classes|exports?|imports?|dependencies|packages?|symbols?|endpoints?|routes?)\b/i.test(goal)) return null;
   const dirM = goal.match(/(repos|vessels)\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
