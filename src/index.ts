@@ -9111,7 +9111,25 @@ function buildProxyResolver(shape: string) {
           // of the response. For other shapes, return the body object.
           if (innerBody && typeof innerBody === "object" && !Array.isArray(innerBody)) {
             const body = innerBody as Record<string, unknown>;
-            if (innerShapeName === "llm_completion_result" && typeof body["text"] === "string") {
+            // SHAPE-NAME MISMATCH — the unwrap below was DEAD ON THE REAL ENVELOPE.
+            // development-vessel's llm_completion_dispatch returns
+            //   { shape: "llmTextCompletion", body: { text, model, requested_model, ... } }
+            // and has never returned "llm_completion_result". That literal appears zero
+            // times in this file's producer, so this branch never matched and execution
+            // fell to the generic `impulseContent = innerBody` below — handing the whole
+            // envelope object downstream. Anything that then stringifies a value slot
+            // writes {"text":"...","model":"auto","requested_model":"auto"} into a file.
+            //
+            // Measured consequence, 2026-08-07: that exact JSON was written into
+            // ribosome-vessel/src/index.ts, and 7 files in /workspace/proposals are
+            // ENTIRELY this envelope where a patch_proposal belongs — the artifact sink
+            // that feeds apply_proposal_as_patch. One wrong string literal, two sinks.
+            //
+            // Accept BOTH names rather than swapping one for the other: "llmTextCompletion"
+            // is what the live producer emits, and "llm_completion_result" is retained
+            // because federated peers and older seeds may still use it, and silently
+            // breaking those would trade one dead branch for another.
+            if ((innerShapeName === "llmTextCompletion" || innerShapeName === "llm_completion_result") && typeof body["text"] === "string") {
               // Strip markdown code fences that LLMs commonly wrap JSON in.
               let text = body["text"] as string;
               text = text.replace(/^```(?:json|JSON)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
