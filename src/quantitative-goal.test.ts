@@ -43,3 +43,26 @@ describe("isQuantitativeRepoQuestion — the shape an oracle could check", () =>
     expect(isQuantitativeRepoQuestion("repos/activity-api/src")).toBe(false);
   });
 });
+
+describe("isQuantitativeRepoQuestion — compositional goals are NOT refused", () => {
+  it("OBSERVED LIVE: a count-and-record goal has its own delivery signal", () => {
+    // Shipping the refusal without this exclusion dropped the warm families from ~90%
+    // reached AND correct to 33%/33%: count_single and lines_single kept working while
+    // count_artifact, compare_* and combined all missed, because each ends with
+    // "...record it as a durable note titled X". Several oracles decline compositional
+    // goals by design, so the refusal inherited every one of them.
+    expect(isQuantitativeRepoQuestion("Count the TypeScript modules under repos/obsidian-vessel/src and record the result in a durable note titled harness-b0-g1.")).toBe(false);
+    expect(isQuantitativeRepoQuestion("Which has more TypeScript modules, repos/a/src or repos/b/src, and by how many? Record it as a durable note titled cmp.")).toBe(false);
+    expect(isQuantitativeRepoQuestion("What is the combined number of TypeScript modules across repos/a/src and repos/b/src? Record it as a durable note titled tot.")).toBe(false);
+  });
+
+  it("still refuses the PURE question form of the same families", () => {
+    expect(isQuantitativeRepoQuestion("How many subdirectories are there under repos/activity-api/src?")).toBe(true);
+    expect(isQuantitativeRepoQuestion("How many distinct file extensions appear under repos/concept-db/src?")).toBe(true);
+  });
+
+  it("needs BOTH halves of the artifact ask, so a bare verb does not disable the refusal", () => {
+    // "record" alone with no durable noun is not an artifact request.
+    expect(isQuantitativeRepoQuestion("How many subdirectories are under repos/x/src? Record the number.")).toBe(true);
+  });
+});

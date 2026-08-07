@@ -43,5 +43,23 @@ export function isQuantitativeRepoQuestion(goal: string): boolean {
   if (/\b(summar(?:y|ise|ize)|explain|describe|purpose of|overview|gist|walk me through)\b/i.test(goal)) return false;
   if (/\b(edit|add|insert|append|change|modify|replace|fix|remove|delete|rename|refactor)\b/i.test(goal)) return false;
 
+  // Exclude COMPOSITIONAL goals — the ones that also ask for a durable artifact.
+  //
+  // They have a success signal that does not depend on an oracle owning the question: the
+  // artifact either carries the answer or it does not, and the walk's delivery path grades
+  // that. Several single-source oracles decline compositional goals BY DESIGN
+  // (verifyCountFilesReach bails on isCompositionalGoal), so without this exclusion the
+  // refusal inherits every count-and-record goal and calls it unverifiable.
+  //
+  // Measured immediately after shipping the refusal without it: warm families fell from
+  // ~90% reached AND correct to 33%/33%. count_single and lines_single — pure questions —
+  // kept working, while count_artifact, compare_more, compare_fewer and combined ALL
+  // missed, because every one of them ends "...and record it as a durable note titled X".
+  // Those goals had been reaching CORRECTLY; refusing them traded a hollow-green problem
+  // for a false-negative one, which is the worse of the two.
+  const durableVerb = /\b(record|save|persist|document|capture|writ(?:e|es|ing|ten)?|note down|log|jot|archive)\b/i.test(goal);
+  const durableNoun = /\b(notes?|findings?|vault|obsidian|concepts?|report|document|memo|knowledge|journal)\b/i.test(goal);
+  if (durableVerb && durableNoun) return false;
+
   return true;
 }
