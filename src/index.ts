@@ -2884,6 +2884,26 @@ const _filedVerifierGaps = new Set<string>();
  * ./verifier-recipe for why a recipe that answers alone would be an ungraded mint with a blank
  * prior deciding what counts as true.
  */
+/**
+ * INVARIANT: A RECIPE MAY ANSWER OR IT MAY VERIFY — NEVER BOTH FOR THE SAME GOAL.
+ *
+ * Reach was pinned on the ANSWERING side, not the verification side: a better verifier
+ * confirms answers the walk already produced, it does not make the walk answer a class it
+ * fails. A verified family measurement IS the command the walk lacks, so letting the recipe
+ * answer is the conversion that was missing — one member of a family gets triangulated, and
+ * every other member becomes answerable.
+ *
+ * But if the recipe both produces the answer and serves as a derivation checking it, they
+ * agree by construction. That is the self-confirming oracle this session found in three
+ * separate places (a builder and its verifier sharing a parse; a generator and grader sharing
+ * a `-maxdepth 1`; a reconcile predicate certifying the drafter's own envelope). It is not
+ * hypothetical here — it would be automatic.
+ *
+ * So the goals whose ANSWER came from a recipe are recorded, and for exactly those the
+ * verifier refuses the recipe shortcut and pays for two freshly authored derivations. Answering
+ * gets cheaper; the evidence bar behind a reach verdict does not move.
+ */
+const answeredFromRecipe = new Set<string>();
 const verifierRecipes = new Map<string, VerifierRecipe>();
 const RECIPE_PATH = `${process.env["SUBSTRATE_STATE_DIR"] ?? "/workspace/state"}/verifier-recipes.jsonl`;
 function persistRecipe(r: VerifierRecipe): void {
@@ -2922,6 +2942,18 @@ async function fileMissingVerifierGap(goal: string): Promise<void> {
     console.warn(`[missing-verifier] gap filing failed (non-fatal): ${String((e as Error)?.message ?? e).slice(0, 120)}`);
   }
 }
+/** The live family recipe bound to this goal's tree, if one applies and passes the read-only gate. */
+function recipeCommandFor(goal: string): string | null {
+  const family = verifierFamilyOf(goal);
+  const tree = goalTreePath(goal);
+  if (!family || !tree) return null;
+  const r = verifierRecipes.get(family);
+  if (!r || !recipeIsLive(r) || !recipeAppliesTo(r, family, tree)) return null;
+  const cmd = instantiateRecipe(r.template, tree);
+  if (!cmd) return null;
+  return isReadOnlyShellCommand(cmd).ok ? cmd : null;
+}
+
 async function recomputeIndependently(
   goal: string,
   digest: string,
@@ -2998,7 +3030,11 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   const _family = verifierFamilyOf(goal);
   const _tree = goalTreePath(goal);
   const _recipe = _family ? verifierRecipes.get(_family) : undefined;
-  const _useRecipe = !!(_recipe && _tree && recipeIsLive(_recipe) && recipeAppliesTo(_recipe, _family!, _tree));
+  // THE INVARIANT, ENFORCED. If this goal's ANSWER came from the recipe, the recipe may not
+  // also check it — that would be agreement by construction, not evidence.
+  const _recipeAnswered = answeredFromRecipe.has(goalHashOf(goal));
+  const _useRecipe = !_recipeAnswered && !!(_recipe && _tree && recipeIsLive(_recipe) && recipeAppliesTo(_recipe, _family!, _tree));
+  if (_recipeAnswered) console.log(`[verifier-recipe] goal answered FROM the recipe — verifying with two fresh derivations instead (no self-confirmation)`);
 
   const deriveFromRecipe = async (): Promise<{ value: number | null; token: string | null; command: string } | null> => {
     const cmd = instantiateRecipe(_recipe!.template, _tree!);
@@ -5290,6 +5326,15 @@ If one of those sibling shapes is the action that would create what the goal ask
     } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
+    } else if (!_suppressReuse && shape === "shellResult" && recipeCommandFor(goal) !== null) {
+      // A family recipe is a measurement two independent derivations already agreed on, which
+      // is stronger evidence than the lexical rebind below (a literal-gated guess) and is the
+      // only donor available for a class this walk has never solved.
+      const _rc = recipeCommandFor(goal)!;
+      directArgsRaw = { command: _rc };
+      answeredFromRecipe.add(goalHashOf(goal));       // ... so the verifier will NOT reuse it
+      commandReuseFired = true;
+      tap(`[goal-host-vessel] walk: ANSWERED from learned family recipe for "${shape}" — verification will pay for two FRESH derivations so the answer cannot confirm itself`);
     } else {
       const _rebind = _suppressReuse ? null : tryLexicalRebind(goal, shape);
       if (_rebind) {
