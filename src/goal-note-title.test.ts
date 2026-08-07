@@ -67,11 +67,31 @@ describe('orderWriteSinks', () => {
 
   it('always appends obsidian:write_note as the tail fallback, without duplicating it', () => {
     expect(orderWriteSinks(['memoryNote_write'], true)).toEqual(['memoryNote_write', 'obsidian:write_note']);
-    expect(orderWriteSinks(['obsidian:write_note'], true)).toEqual(['obsidian:write_note']);
+    // A TITLED goal now also gets the note store injected as the lead candidate (see the
+    // titled-goal describe below); the no-title case is the one that stays vault-only.
+    expect(orderWriteSinks(['obsidian:write_note'], false)).toEqual(['obsidian:write_note']);
     expect(orderWriteSinks([], false)).toEqual(['obsidian:write_note']);
   });
 
   it('ignores target shapes that are not durable writes', () => {
     expect(orderWriteSinks(['shellResult', 'goal', 'memoryNote_write'], true)).toEqual(['memoryNote_write', 'obsidian:write_note']);
+  });
+});
+
+describe("orderWriteSinks — titled goal with no note shape in target", () => {
+  it("OBSERVED LIVE: a titled goal gets the note store even when target never named it", () => {
+    // Ordering can only reorder what target holds. A goal ending "...record it as a durable
+    // note titled harness-b0-g4" inferred only vault shapes, so there was nothing to promote
+    // and the named note was never written at all.
+    expect(orderWriteSinks(["obsidian:write_note"], true)).toEqual(["memoryNote_write", "obsidian:write_note"]);
+  });
+
+  it("does not inject the note store when the goal names no title", () => {
+    expect(orderWriteSinks(["obsidian:write_note"], false)).toEqual(["obsidian:write_note"]);
+  });
+
+  it("does not duplicate it when target already declared it", () => {
+    expect(orderWriteSinks(["memoryNote_write", "obsidian:write_note"], true))
+      .toEqual(["memoryNote_write", "obsidian:write_note"]);
   });
 });

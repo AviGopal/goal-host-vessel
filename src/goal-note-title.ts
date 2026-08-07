@@ -31,7 +31,15 @@ export function orderWriteSinks(targetShapes: Iterable<string>, goalNamesATitle:
     .filter((s) => /(?:_write|:write_note)$/.test(s))
     // Stable unless the goal named a title, in which case title-addressed sinks lead.
     .sort((a, b) => (goalNamesATitle ? (isTitleAddressed(b) ? 1 : 0) - (isTitleAddressed(a) ? 1 : 0) : 0));
-  return [...declared, 'obsidian:write_note'].filter((s, i, a) => a.indexOf(s) === i);
+  // A TITLED GOAL GETS THE NOTE STORE AS A CANDIDATE EVEN IF THE WALK NEVER TARGETED IT.
+  // Ordering can only reorder what target already holds, and target comes from shape
+  // inference — which does not always infer memoryNote_write. Observed live: a goal ending
+  // "...record it as a durable note titled harness-b0-g4" inferred only vault shapes, so the
+  // ordering had nothing to promote and the content went to a vault note while the named
+  // note was never written at all. Discovery still decides whether the shape is advertised
+  // here; this only makes it eligible, exactly as obsidian:write_note already is.
+  const titleSink = goalNamesATitle ? ['memoryNote_write'] : [];
+  return [...titleSink, ...declared, 'obsidian:write_note'].filter((s, i, a) => a.indexOf(s) === i);
 }
 
 /** The title a goal names for a durable note, or null when it names none. */
