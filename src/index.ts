@@ -2953,6 +2953,34 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     truth = reconciled.truth;
   }
 
+  // ── EXPERIENCE -> CAPABILITY ────────────────────────────────────────────────────────────
+  // Measured across six repeated-exposure runs (4 rounds each, per-class granularity): every
+  // goal class is either saturated from round 0 or zero in all four rounds. NOT ONE class
+  // starts low and rises. Reach is a deterministic function of capability, and repetition adds
+  // nothing because nothing converts a failed attempt into new capability.
+  //
+  // This is the conversion. When triangulation establishes truth, we are holding a command
+  // that MEASURES this goal class correctly — and until now we discarded it, including in the
+  // case that matters most: the walk answered WRONG (or not at all) while recompute derived
+  // the right answer twice. Donating it to the reached-command library means the next attempt
+  // at this class runs the verified command directly, so a failure becomes capability.
+  //
+  // Gated on TWO AGREEING derivations, which is stronger evidence than the single walk success
+  // that already mints donors here. The self-confirmation risk is real and bounded: recompute
+  // still authors BOTH derivations fresh from the goal text at every future attempt, so a
+  // donated command is checked against new derivations rather than against itself — but they
+  // come from the same authoring process, so a WRONG donor could be re-derived and agree with
+  // itself. Watch the hollow rate; that is the tell, and reverting is one line.
+  if (!isToken) {
+    const donorHash = goalHashOf(goal);
+    if (!reachedCommandCache.has(donorHash)) {
+      const donor = { command: a!.command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: goal };
+      reachedCommandCache.set(donorHash, donor);
+      persistReachedCommand(donorHash, donor);
+      console.log(`[recompute] DONATED verified command for this goal class (truth=${truth}, two agreeing derivations): \`${a!.command}\``);
+    }
+  }
+
   const emitted: Array<number | string> = isToken ? extractEmittedTokens(digest) : extractEmittedNumbers(digest);
   const verdict = isToken
     ? gradeTokenRecompute(truth as string, emitted as string[])
