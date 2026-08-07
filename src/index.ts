@@ -974,7 +974,8 @@ const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1
 // target shape — the operator's point: identify the shapes of the completion
 // STATE, emergently). On not-reached we downgrade status to failed and β-penalise
 // the selected template so Thompson stops reinforcing hollow completions.
-interface GoalReachVerdict { reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; }
+interface GoalReachVerdict {
+  endedAt?: number; reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; }
 
 // ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
 // The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
@@ -11196,6 +11197,7 @@ async function handleResolve(req: Request): Promise<Response> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DispatchRecord {
+  endedAt?: number;
   dispatchId: string;
   startedAt: number;
   status: "running" | "completed" | "failed";
