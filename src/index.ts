@@ -245,6 +245,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
+import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
   EventSink,
@@ -2045,6 +2046,22 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
   const winnerNamePresent = digLc.includes(winnerRel.toLowerCase()) || digLc.includes(winnerRel.split("/").slice(0,2).join("/").toLowerCase());
   const nums = [...new Set((dig.match(/\b\d{1,9}\b/g) ?? []).map(Number))];
   const unit = p.op === "total_lines" ? "total line(s)" : "file(s)";
+  // CHECK THE CLAIM, NOT THE BAG OF NUMBERS. `nums.includes(diff)` passes whenever the
+  // digest contains that integer for ANY reason, and `winnerNamePresent` passes whenever
+  // either source is mentioned — which a comparison always does. Live on 188132ba the
+  // authoritative answer was "llm-resolver by 4" and the output said "1 fewer", yet a
+  // stray 4 (from a WRONG count of 2) satisfied the test and it graded reached, claiming
+  // "the produced output reports the same winner and difference". It had not checked
+  // either. When the output states a difference or names a winner, that STATED value must
+  // match; when it states neither, the weaker checks below still apply.
+  const statedDiff = claimedDifference(dig);
+  const statedWinner = claimedWinner(dig, p.relA, p.relB);
+  if (statedDiff !== null && statedDiff !== diff) {
+    return { reached: false, reason: `deterministic:two-source-compare-mismatch — authoritative difference is ${diff} (${p.relA}=${A}, ${p.relB}=${B}); the produced output states a difference of ${statedDiff}`, deterministic: true, completion_shapes: [] };
+  }
+  if (statedWinner !== null && statedWinner !== winnerRel) {
+    return { reached: false, reason: `deterministic:two-source-compare-mismatch — authoritative winner is ${winnerRel} (${p.relA}=${A}, ${p.relB}=${B}); the produced output names ${statedWinner}`, deterministic: true, completion_shapes: [] };
+  }
   if (p.output === "which_diff") {
     if (winnerNamePresent && nums.includes(diff)) {
       return { reached: true, reason: `deterministic:verified-two-source-compare \u2014 ${winnerRel} has ${p.dir} ${unit} (${p.relA}=${A} vs ${p.relB}=${B}, difference ${diff}); the produced output reports the same winner and difference`, deterministic: true, completion_shapes: [] };
