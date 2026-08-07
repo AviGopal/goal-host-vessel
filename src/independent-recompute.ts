@@ -127,6 +127,31 @@ export function extractEmittedNumbers(digest: string): number[] {
 export type RecomputeVerdict = "agree" | "disagree" | "no-measurement";
 
 /**
+ * TRIANGULATION — two independent derivations must agree before either is treated as truth.
+ *
+ * Observed on the very first live probe, on the git domain this mechanism was built to cover:
+ * the authored command was `git -C … log --since=30.days.ago -- repos/concept-db | wc -l`,
+ * which counts LOG LINES (~5 per commit), not commits. It measured 147, the walk had said 16,
+ * and the gate β-penalised the walk on the strength of a number that was itself wrong.
+ *
+ * That is the worst failure available here, and it is on record as a law: a right answer
+ * punished is worse than a wrong one credited, because the β lands on the composition the
+ * walk should be reusing and feeds back into worse selection. A single model-authored command
+ * has exactly the confidence of a single model-authored answer — which is the thing being
+ * graded. Promoting one to "ground truth" because of where it sits in the pipeline is how an
+ * oracle gets certified by its own position rather than by evidence.
+ *
+ * So: two commands, authored separately and required to use DIFFERENT methods. They agree, or
+ * the gate abstains and the honest refusal remains the floor. Abstention costs a verdict;
+ * asserting a wrong one costs the learner.
+ */
+export function reconcileDerivations(a: number | null, b: number | null): { truth: number } | { truth: null; reason: string } {
+  if (a === null || b === null) return { truth: null, reason: "only one derivation produced a usable measurement" };
+  if (a !== b) return { truth: null, reason: `two independent derivations disagree (${a} vs ${b}) — neither is ground truth` };
+  return { truth: a };
+}
+
+/**
  * Compare the independently measured truth against what the walk emitted.
  *
  * "disagree" is a REAL not-reached — the walk stated a number and the world says otherwise —

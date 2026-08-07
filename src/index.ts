@@ -247,7 +247,7 @@ import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
-import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseMeasuredNumber } from "./independent-recompute";
+import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseMeasuredNumber, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
@@ -2843,11 +2843,12 @@ async function recomputeIndependently(
 ): Promise<{ reached: boolean; reason: string; deterministic: true; completion_shapes: string[] } | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
 
-  const prompt = `Author ONE read-only shell command that MEASURES the answer to the goal below, so its answer can be checked independently.
+  const promptFor = (nth: "first" | "second") => `Author ONE read-only shell command that MEASURES the answer to the goal below, so its answer can be checked independently.
 
 GOAL: ${goal}
 
 Rules:
+${nth === "second" ? "- Use a DIFFERENT method from the most obvious one. If the obvious approach pipes a listing into 'wc -l', use a counting flag, a null-delimited count, an aggregation, or a structured query instead. The point is a genuinely independent derivation, not a rephrasing.\n" : ""}- COUNT THE THING THE GOAL NAMES, not a proxy for it. 'git log | wc -l' counts LOG LINES, roughly five per commit — to count commits use 'git log --oneline | wc -l' or 'git rev-list --count'. Check that your command measures the unit the goal asked for.
 - The repository clones live under /workspace/git/vessels/<vessel>/ — a goal path "repos/<vessel>/src" means /workspace/git/vessels/<vessel>/src. The super-repo is /workspace/git/super-repo.
 - Available interpreters: bash, jq, bun, awk, perl. There is NO python, python3, node, or bc.
 - The command MUST measure by inspecting the system (find, wc, grep, git log, curl+jq, ...). Never echo or printf a literal answer.
@@ -2857,36 +2858,51 @@ Rules:
 
 Respond with ONLY JSON: {"command": "<the command>"}`;
 
-  let command = "";
-  try {
-    const rr = await routedComplete(goalHashOf(goal), "reach_verification", { prompt, model: "auto" });
-    if (!rr.ok) return null;
-    const j: any = rr.json;
-    const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
-    const m = String(text).match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    command = String(JSON.parse(m[0])?.command ?? "");
-  } catch { return null; }
+  // Author and run ONE derivation. Returns null at every failure so the caller can abstain.
+  const derive = async (nth: "first" | "second"): Promise<{ value: number; command: string } | null> => {
+    let command = "";
+    try {
+      const rr = await routedComplete(goalHashOf(goal), "reach_verification", { prompt: promptFor(nth), model: "auto" });
+      if (!rr.ok) return null;
+      const j: any = rr.json;
+      const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+      const m = String(text).match(/\{[\s\S]*\}/);
+      if (!m) return null;
+      command = String(JSON.parse(m[0])?.command ?? "");
+    } catch { return null; }
 
-  const gate = isReadOnlyShellCommand(command);
-  if (!gate.ok) {
-    // Name the refusal. A verifier that declines silently cannot be told apart from one that
-    // never ran, and this branch is exactly where a bad authoring habit would hide.
-    console.log(`[recompute] REFUSED authored command (${gate.reason}): ${command.slice(0, 200)}`);
+    const gate = isReadOnlyShellCommand(command);
+    if (!gate.ok) {
+      // Name the refusal. A verifier that declines silently cannot be told apart from one that
+      // never ran, and this branch is exactly where a bad authoring habit would hide.
+      console.log(`[recompute] REFUSED authored ${nth} command (${gate.reason}): ${command.slice(0, 200)}`);
+      return null;
+    }
+
+    const shell = await ufExecuteTool("shellResult", { command }, new Set<string>(["shellResult"]));
+    if (!shell.ok) { console.log(`[recompute] ${nth} command failed: ${shell.error}`); return null; }
+    let stdout = shell.result;
+    try { const parsed = JSON.parse(shell.result); if (parsed && typeof parsed === "object" && "stdout" in parsed) stdout = String(parsed.stdout ?? ""); } catch { /* plain string result */ }
+
+    const value = parseMeasuredNumber(stdout);
+    if (value === null) { console.log(`[recompute] ${nth} derivation gave unusable stdout: ${String(stdout).slice(0, 160)}`); return null; }
+    return { value, command };
+  };
+
+  // TWO derivations, required to agree. See reconcileDerivations for why one is not enough —
+  // the first live probe measured commits with `git log | wc -l` (log LINES, ~5 per commit),
+  // got 147 against the walk's 16, and β-penalised on the strength of its own wrong number.
+  const [a, b] = await Promise.all([derive("first"), derive("second")]);
+  const reconciled = reconcileDerivations(a?.value ?? null, b?.value ?? null);
+  if (reconciled.truth === null) {
+    console.log(`[recompute] abstaining — ${reconciled.reason}${a ? ` [a=${a.value} via \`${a.command}\`]` : ""}${b ? ` [b=${b.value} via \`${b.command}\`]` : ""}`);
     return null;
   }
-
-  const shell = await ufExecuteTool("shellResult", { command }, new Set<string>(["shellResult"]));
-  if (!shell.ok) { console.log(`[recompute] command failed: ${shell.error}`); return null; }
-  let stdout = shell.result;
-  try { const parsed = JSON.parse(shell.result); if (parsed && typeof parsed === "object" && "stdout" in parsed) stdout = String(parsed.stdout ?? ""); } catch { /* plain string result */ }
-
-  const truth = parseMeasuredNumber(stdout);
-  if (truth === null) { console.log(`[recompute] unusable stdout, abstaining: ${String(stdout).slice(0, 160)}`); return null; }
+  const truth = reconciled.truth;
 
   const emitted = extractEmittedNumbers(digest);
   const verdict = gradeRecompute(truth, emitted);
-  const provenance = `independently recomputed ${truth} via \`${command}\` (authored from the goal text alone — the walk's command and answer were withheld from the author)`;
+  const provenance = `independently recomputed ${truth} by TWO agreeing derivations (\`${a!.command}\` and \`${b!.command}\`), both authored from the goal text alone — the walk's command and answer were withheld from the authors`;
 
   if (verdict === "no-measurement") {
     console.log(`[recompute] measured ${truth} but the walk emitted no measurable value — abstaining`);

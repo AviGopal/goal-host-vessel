@@ -5,6 +5,7 @@ import {
   gradeRecompute,
   isReadOnlyShellCommand,
   parseMeasuredNumber,
+  reconcileDerivations,
 } from "./independent-recompute";
 
 /**
@@ -112,5 +113,31 @@ describe("gradeRecompute — and why disagreement must be learnable", () => {
 
   it("abstains when the walk emitted nothing measurable, rather than inventing a miss", () => {
     expect(gradeRecompute(313, [])).toBe("no-measurement");
+  });
+});
+
+/**
+ * OBSERVED LIVE on the first probe, on the very domain this mechanism exists to cover. The
+ * authored command was `git -C … log --since=30.days.ago -- repos/concept-db | wc -l`, which
+ * counts log LINES (~5 per commit). It measured 147, the walk had said 16, and the gate
+ * β-penalised the walk on the strength of its own wrong number.
+ */
+describe("reconcileDerivations — one model-authored command is not ground truth", () => {
+  it("accepts a value only when two independent derivations land on it", () => {
+    expect(reconcileDerivations(29, 29)).toEqual({ truth: 29 });
+  });
+
+  it("abstains when the derivations disagree, naming both so the miss is diagnosable", () => {
+    // The live case: a line-count and a commit-count cannot both be right, and the gate has no
+    // basis to pick. Abstaining costs a verdict; asserting one costs the learner.
+    const r = reconcileDerivations(147, 29);
+    expect(r.truth).toBeNull();
+    expect((r as { reason: string }).reason).toMatch(/147 vs 29/);
+  });
+
+  it("abstains when only one derivation produced a measurement", () => {
+    expect(reconcileDerivations(29, null).truth).toBeNull();
+    expect(reconcileDerivations(null, 29).truth).toBeNull();
+    expect(reconcileDerivations(null, null).truth).toBeNull();
   });
 });
