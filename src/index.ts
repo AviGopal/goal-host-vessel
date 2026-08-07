@@ -3135,21 +3135,10 @@ async function fetchKnownShapes(): Promise<string[]> {
 // fencing authoring off the goal surface. The gap id is STABLE per missing shape
 // so re-emissions upsert one row (dedup), never flood. feature_compose stays
 // @shape-dispatch:private — the ONLY goal-reachable authoring path is this gap.
-// Module-level cache for known shapes (5-minute TTL)
-let _knownShapesCache: string[] | null = null;
-let _knownShapesCacheTime = 0;
+// Shared 5-minute TTL for the known-shape and learned-deliverable caches above.
+// The dead getCachedKnownShapes() and its two backing vars were removed here; this
+// const is NOT part of that block — it is read by two live cache paths further up.
 const KNOWN_SHAPES_TTL_MS = 5 * 60 * 1000;
-
-async function getCachedKnownShapes(): Promise<string[]> {
-  const now = Date.now();
-  if (_knownShapesCache !== null && now - _knownShapesCacheTime < KNOWN_SHAPES_TTL_MS) {
-    return _knownShapesCache;
-  }
-  const shapes = await fetchKnownShapes();
-  _knownShapesCache = shapes;
-  _knownShapesCacheTime = now;
-  return shapes;
-}
 
 function canonicalizeShapeName(raw: string, known: string[]): string | null {
   function normalize(s: string): string {
@@ -4063,56 +4052,6 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   };
 }
 
-// MINT-AS-YOU-GO (the "Reserve Improvisation" slot at the WALK step level,
-// 2026-06-24). When the shape-graph walk needs a target shape that NO existing
-// activity produces (discover-by-shapes found no producer), but the substrate
-// HAS a live resolver for that shape (advertised by discovery at /registry/shapes),
-// mint a thin wrapper activity whose single task invokes that resolver. This
-// wraps the substrate's orphaned resolvers (live resolver shapes that no activity
-// invokes) on demand, so the walk can genuinely produce the shape and continue
-// instead of stopping at a phantom capability gap.
-//
-// Reuse-Before-Mint is already satisfied at the call site: we only reach the mint
-// after the backward-chain discover found no producer.
-async function mintResolverWrapper(shape: string): Promise<string | null> {
-  const template = {
-    id: `auto-mint-${shape}`,
-    name: `auto-mint:${shape}`,
-    description: `Auto-minted wrapper around the ${shape} resolver (Reserve-Improvisation): no existing activity produced this shape, so the walk wraps the live resolver on demand.`,
-    input_shapes: [] as string[],
-    inputShapes: [] as string[],
-    output_shapes: [shape],
-    outputShapes: [shape],
-    tags: ["auto_minted", "improvise", "horizon:walk"],
-    variables: [] as unknown[],
-    tasks: [
-      {
-        id: "produce",
-        description: `invoke ${shape} resolver`,
-        resolver: shape,
-        config: { type: shape },
-        output_shapes: [shape],
-        outputShapes: [shape],
-      },
-    ],
-    proposed: false,
-    org_id: "organizations:substrate",
-  };
-  try {
-    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "activity_create_variant", pointer: { type: "activity_create_variant", template } } }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    const variantId = j?.body?.variantId ?? j?.variantId ?? null;
-    return typeof variantId === "string" && variantId ? variantId : null;
-  } catch {
-    return null;
-  }
-}
 
 // Shape-graph WALK (2026-06-23). The DEFAULT goal-execution strategy: instead of
 // picking ONE whole template by goal-text and treating its status as "reached",
