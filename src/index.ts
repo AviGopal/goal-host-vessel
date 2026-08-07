@@ -1570,9 +1570,11 @@ function parsePathsAndExt(goal: string): { rel: string; ext: string | null } | n
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
   if (/\.\w{1,6}$/.test(rel)) return null;                  // a FILE path, not a directory
-  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
-  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  // Shared parse — see parseFileExtension. This was the SIXTH copy of the same
+  // "files?"-only extension match in this file; every one of them answered a goal about
+  // "TypeScript modules" by counting the whole tree, and every one shared its parse with
+  // the command builder so the oracle agreed by construction.
+  const ext = parseFileExtension(goal);
   return { rel, ext };
 }
 
@@ -1843,9 +1845,11 @@ function parseRankAggregate(goal: string): RankParse | null {
   const nM = goal.match(/\b(\d{1,3})\s+(?:largest|biggest|longest)\b/i) ?? goal.match(/\btop\s+(\d{1,3})\b/i);
   const n = nM ? Math.max(1, Math.min(999, parseInt(nM[1]!, 10))) : (/\b(largest|biggest|longest)\b/i.test(goal) ? 1 : 0);
   if (n === 0) return null;                                  // no rank selector -> not rank-aggregate
-  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+files?\b/i);
-  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  // FOURTH copy of this parse in one file, same "files?"-only defect as the aggregate and
+  // count families. A rank goal ("sum the lines in the 3 largest TypeScript MODULES")
+  // would rank over every file in the tree, and the command builder shares the parse, so
+  // the oracle would confirm it. Not yet observed live only because rank goals are rare.
+  const ext = parseFileExtension(goal);
   const op: "sum" | "avg" = /\b(average|mean)\b/i.test(goal) ? "avg" : "sum";
   return { op, rel, ext, n };
 }
@@ -1913,9 +1917,11 @@ function parseAvgThreshold(goal: string): AvgThresholdParse | null {
   if (!/\bhow\s+many\b/i.test(goal)) return null;           // must be a COUNT question
   if (!/\b(more|above|greater|higher)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean)\b/i.test(goal)) return null;
   if (parseRankAggregate(goal)) return null;                // rank owns "N largest" goals
-  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
-  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  // Shared parse — see parseFileExtension. This was the SIXTH copy of the same
+  // "files?"-only extension match in this file; every one of them answered a goal about
+  // "TypeScript modules" by counting the whole tree, and every one shared its parse with
+  // the command builder so the oracle agreed by construction.
+  const ext = parseFileExtension(goal);
   return { rel, ext };
 }
 
@@ -1931,9 +1937,11 @@ function parseBelowMean(goal: string): AvgThresholdParse | null {
   if (!/\bhow\s+many\b/i.test(goal)) return null;           // must be a COUNT question
   if (!/\b(fewer|less|below|lower|smaller)\b[\s\w]{0,20}\b(than\s+)?the\s+(average|mean)\b/i.test(goal)) return null;
   if (parseRankAggregate(goal)) return null;                // rank owns "N smallest" goals
-  const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
-  const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\s+(?:source\s+)?files?\b/i);
-  const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
+  // Shared parse — see parseFileExtension. This was the SIXTH copy of the same
+  // "files?"-only extension match in this file; every one of them answered a goal about
+  // "TypeScript modules" by counting the whole tree, and every one shared its parse with
+  // the command builder so the oracle agreed by construction.
+  const ext = parseFileExtension(goal);
   return { rel, ext };
 }
 
@@ -2951,7 +2959,26 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   if (produced.length === 0) produced.push("universal_fallback_result");
   const toolSummary = executed.map((e) => `${e.tool}${e.ok ? "" : "!"}`).join(", ");
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
-  const digest = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
+  // GRADE THE ANSWER, NOT THE SCRATCHPAD.
+  //
+  // The deterministic oracles decide agreement by looking for the authoritative value among
+  // the numbers in the digest. That is sound for a walk, whose digest is a command result,
+  // and unsound for the floor, whose digest is a DUMP of every tool observation it made
+  // along the way. A floor run that ran `find | wc -l` correctly, and then stated something
+  // else as its answer, still had the right number sitting in its scratchpad — so the
+  // oracle found it and graded REACHED on an answer that contradicted it.
+  //
+  // Measured: in a 36-goal harness run, ALL THREE hollow reaches came from
+  // universal-tool-fallback, across three different families (count, count+artifact,
+  // combined). Walk-answered goals in the same families graded correctly, because their
+  // digests contain the answer rather than the working.
+  //
+  // When the model authored an answer, that answer IS the deliverable and is what gets
+  // graded. The observations still reach the LLM judge through `commandEvidence`, and when
+  // no answer was authored we fall back to the dump exactly as before — an answer that
+  // states no number was never an answer, and should be graded on whatever evidence exists.
+  const scratchpad = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
+  const digest = authoredFinalAnswer ? finalText.trim().slice(0, 6000) : scratchpad;
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`); if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
