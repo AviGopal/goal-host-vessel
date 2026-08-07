@@ -1,0 +1,47 @@
+/**
+ * Is this goal a QUANTITATIVE question about a repository tree — the shape the deterministic
+ * oracles exist to answer?
+ *
+ * The reach gate runs a chain of hand-written verifiers and, when none of them claims the
+ * goal, hands it to an LLM judge. For prose and edit goals that is the right fallback. For a
+ * countable question about a repos/ path it is not, and the measurement is unambiguous.
+ *
+ * 80 goals across four classes deliberately chosen to have NO deterministic verifier
+ * (subdirectory counts, distinct file extensions, largest-module-by-lines, grep counts):
+ *
+ *   reached 72/80 (90%)   correct 23/80 (29%)   hollow 49 = 68% of reaches
+ *
+ *   grep_count    20 reached / 14 correct   (an oracle owns it)
+ *   largest_file  18 reached /  7 correct   (partly owned)
+ *   subdir_count  14 reached /  2 correct   (nothing owns it)
+ *   ext_variety   20 reached /  0 correct   (nothing owns it)
+ *
+ * Correctness tracks verifier coverage exactly. Where nothing owns the goal the judge passes
+ * almost anything, so `reached` stops carrying information — and because a hollow green is
+ * indistinguishable from a success, the system has nothing to learn from and no learning
+ * curve is possible. Recognising the shape is what lets the gate say "I cannot verify this"
+ * instead of guessing.
+ *
+ * Deliberately NARROW. It requires a repos/ path AND a counting/superlative interrogative,
+ * so summaries, explanations, edits and record-this-note goals are untouched — those have no
+ * deterministic answer to withhold, and the LLM judge remains their right grader.
+ */
+
+/** A countable/enumerable question about a repos/ tree. */
+export function isQuantitativeRepoQuestion(goal: string): boolean {
+  // Must name a repos/ tree (not a single file — a file path is a different family).
+  const pathM = goal.match(/repos\/[\w.-]+(?:\/[\w./-]+)?/);
+  if (!pathM || /\.\w{1,6}$/.test(pathM[0])) return false;
+
+  // Must ask for a NUMBER or a SUPERLATIVE — the answers an oracle could check.
+  const countable = /\b(how many|number of|count(?:\s+of)?|total)\b/i.test(goal);
+  const superlative = /\b(largest|biggest|longest|smallest|shortest|most|fewest|highest|lowest)\b/i.test(goal);
+  if (!countable && !superlative) return false;
+
+  // Exclude goals whose deliverable is prose or a mutation: those legitimately have no
+  // deterministic answer, and withholding a verdict there would suppress real reaches.
+  if (/\b(summar(?:y|ise|ize)|explain|describe|purpose of|overview|gist|walk me through)\b/i.test(goal)) return false;
+  if (/\b(edit|add|insert|append|change|modify|replace|fix|remove|delete|rename|refactor)\b/i.test(goal)) return false;
+
+  return true;
+}

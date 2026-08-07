@@ -246,6 +246,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
+import { isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
@@ -2505,6 +2506,30 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   const cmdSection = commandEvidence
     ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. ALSO grade HOLLOW when the command merely ECHOES or PRINTS a literal answer (e.g. echo or printf of a constant) instead of MEASURING it — a self-emitted answer is the model asserting, not evidence. Apply this skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
     : "";
+  // REFUSE TO GUESS ON A COUNTABLE QUESTION NO ORACLE OWNS.
+  //
+  // Every deterministic verifier above has declined. For a prose or edit goal the LLM judge
+  // below is the right grader. For a COUNTABLE question about a repos/ tree it is not, and
+  // the measurement is unambiguous: across 80 goals in four classes with no deterministic
+  // verifier, 72 graded REACHED and 23 were correct — 68% of reaches hollow — and per-family
+  // correctness tracked verifier coverage exactly (grep_count 14/20 with an oracle,
+  // ext_variety 0/20 with none).
+  //
+  // A hollow green is indistinguishable from a success, so it is not merely a wrong number:
+  // it is why no learning curve is possible on novel goal classes. Saying "I cannot verify
+  // this" is the honest verdict and the demand signal for the missing oracle.
+  //
+  // The reason code is load-bearing — the caller SKIPS the beta penalty for it, because the
+  // missing verifier is ours and penalising the arm would teach the learner to avoid a
+  // composition that may have been perfectly good.
+  if (isQuantitativeRepoQuestion(goal)) {
+    return {
+      reached: false,
+      reason: `deterministic:no-oracle-for-goal-class — this is a countable question about a repository tree and no deterministic verifier claims it; the LLM judge measured 29% correct at 90% reach on exactly this shape, so its verdict is withheld rather than recorded as a reach`,
+      deterministic: true,
+      completion_shapes: [],
+    };
+  }
   const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
 
 GOAL: ${goal}
@@ -6620,8 +6645,18 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
-        const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
-        opts.learningSink?.alphaBetaDelta.push(_abDelta);
+        // NO BETA FOR OUR OWN MISSING ORACLE. `no-oracle-for-goal-class` means the gate
+        // withheld a verdict because nothing can verify this goal SHAPE — not that the
+        // composition failed. Penalising the arm here would teach the learner to avoid a
+        // pathway that may have been perfectly good, which is the "a right answer punished
+        // is worse than a wrong one credited" failure with an extra step.
+        const _noOracle = /^deterministic:no-oracle-for-goal-class\b/.test(verdict.reason ?? "");
+        if (!_noOracle) {
+          const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
+          opts.learningSink?.alphaBetaDelta.push(_abDelta);
+        } else {
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
+        }
         tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
