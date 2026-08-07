@@ -3057,7 +3057,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
 // has a live resolver, so the walk can reach it via backward-chain or mint-as-you-go).
 // Cached briefly so we don't GET /registry/shapes on every fresh goal.
 let knownShapesCache: { shapes: string[]; fetchedAt: number } | null = null;
-const KNOWN_SHAPES_TTL_MS_UNUSED = 60_000;
+
 // PEER SHAPE VOCABULARY (SC-P4 cross-location reach, 2026-07-02). Peer-federated
 // capabilities (e.g. the operator-host obsidian vessel registered at the hub)
 // are RESOLVABLE via discovery peer fan-out, but /registry/shapes is local-only —
