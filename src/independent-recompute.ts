@@ -102,9 +102,27 @@ export function parseMeasuredNumber(stdout: string): number | null {
   const lines = String(stdout ?? "").split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length === 0) return null;
   const last = lines[lines.length - 1]!;
-  const m = last.match(/^(\d{1,9})$/);
-  if (!m) return null;
-  return Number(m[1]);
+
+  // A bare integer is what the command was asked for.
+  const bare = last.match(/^(\d{1,9})$/);
+  if (bare) return Number(bare[1]);
+
+  // ...but `wc` does not oblige, and refusing its output was the single largest source of
+  // abstentions in a live run: `[recompute] first derivation gave unusable stdout: total`.
+  // `wc -l` over several files ends with "1234 total", and over one file prints "10 path.ts".
+  // Both are unambiguous single measurements in the format the standard tool emits, and
+  // throwing them away cost a derivation — which, because triangulation needs both, cost the
+  // whole verdict and left a `no-oracle` refusal in its place. 58 of those dominated the run.
+  //
+  // Still strict about AMBIGUITY, which is the property that matters: two bare numbers
+  // ("42 76") or prose around a number stay null, because there the parser would be choosing
+  // which value is the measurement rather than reading it.
+  const wcTotal = last.match(/^(\d{1,9})\s+total$/i);
+  if (wcTotal) return Number(wcTotal[1]);
+  const wcFile = last.match(/^(\d{1,9})\s+(\S*[/.]\S*)$/);
+  if (wcFile) return Number(wcFile[1]);
+
+  return null;
 }
 
 /**
