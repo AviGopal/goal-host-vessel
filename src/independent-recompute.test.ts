@@ -4,7 +4,10 @@ import {
   extractEmittedNumbers,
   gradeRecompute,
   isReadOnlyShellCommand,
+  extractEmittedTokens,
+  gradeTokenRecompute,
   parseAuthoredCommand,
+  parseMeasuredToken,
   parseMeasuredNumber,
   reconcileDerivations,
 } from "./independent-recompute";
@@ -173,5 +176,38 @@ describe("parseAuthoredCommand — a measuring command is full of backslashes", 
     expect(parseAuthoredCommand("I cannot answer that")).toBeNull();
     expect(parseAuthoredCommand('{"notacommand":"x"}')).toBeNull();
     expect(parseAuthoredCommand('{"command":"   "}')).toBeNull();
+  });
+});
+
+/**
+ * largest_file asks "…has the most lines? Give its FILENAME" and sits at 0/12 every round —
+ * not because the plane is down, but because recompute could only grade numbers.
+ */
+describe("token answers — the capability boundary behind largest_file 0/12", () => {
+  it("reads a bare filename, which is what those commands emit", () => {
+    expect(parseMeasuredToken("faiss-index.ts\n")).toBe("faiss-index.ts");
+    expect(parseMeasuredToken("/workspace/git/vessels/x/src/index.ts")).toBe("index.ts");
+  });
+
+  it("refuses wc's summary label — accepting it is how the last regression happened", () => {
+    // "total" is the label on wc's summary line. A parser that returns it as the answer is
+    // confidently wrong, and a wrong truth here CARRIES beta.
+    expect(parseMeasuredToken("total")).toBeNull();
+    expect(parseMeasuredToken("  42 total")).toBeNull();
+    expect(parseMeasuredToken("42")).toBeNull();          // numeric path owns this
+    expect(parseMeasuredToken("two words.ts")).toBeNull();
+  });
+
+  it("grades against answer-context lines, not the whole digest", () => {
+    // A digest containing a directory listing would otherwise match ANY filename — the
+    // bag-of-integers trap in string form.
+    expect(gradeTokenRecompute("index.ts", extractEmittedTokens("The largest module is index.ts with 2679 lines."))).toBe("agree");
+    expect(gradeTokenRecompute("index.ts", extractEmittedTokens("The largest module is router.ts."))).toBe("disagree");
+    expect(gradeTokenRecompute("index.ts", extractEmittedTokens("no answer here"))).toBe("no-measurement");
+  });
+
+  it("is case-insensitive on the filename but not sloppy about what a filename is", () => {
+    expect(gradeTokenRecompute("Index.TS", extractEmittedTokens("answer: index.ts"))).toBe("agree");
+    expect(extractEmittedTokens("the ratio was 3.14 overall")).toEqual([]);
   });
 });

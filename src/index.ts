@@ -248,7 +248,7 @@ import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
-import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, reconcileDerivations } from "./independent-recompute";
+import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
@@ -2868,7 +2868,7 @@ ${nth === "second" ? "- Use a DIFFERENT method from the most obvious one. If the
 Respond with ONLY JSON: {"command": "<the command>"}`;
 
   // Author and run ONE derivation. Returns null at every failure so the caller can abstain.
-  const derive = async (nth: "first" | "second"): Promise<{ value: number; command: string } | null> => {
+  const derive = async (nth: "first" | "second"): Promise<{ value: number | null; token: string | null; command: string } | null> => {
     let command = "";
     try {
       // Distinct buffer keys per derivation. Sharing goalHashOf(goal) for both made the two
@@ -2902,24 +2902,45 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     try { const parsed = JSON.parse(shell.result); if (parsed && typeof parsed === "object" && "stdout" in parsed) stdout = String(parsed.stdout ?? ""); } catch { /* plain string result */ }
 
     const value = parseMeasuredNumber(stdout);
-    if (value === null) { console.log(`[recompute] ${nth} derivation gave unusable stdout: ${String(stdout).slice(0, 160)}`); return null; }
-    return { value, command };
+    if (value !== null) return { value, token: null, command };
+    // TOKEN answers. "…has the most lines? Give its FILENAME" makes the authored command emit
+    // a filename, and grading only numbers left that whole family abstaining 12/12 every round
+    // regardless of plane health.
+    const token = parseMeasuredToken(stdout);
+    if (token !== null) return { value: null, token, command };
+    console.log(`[recompute] ${nth} derivation gave unusable stdout: ${String(stdout).slice(0, 160)}`);
+    return null;
   };
 
   // TWO derivations, required to agree. See reconcileDerivations for why one is not enough —
   // the first live probe measured commits with `git log | wc -l` (log LINES, ~5 per commit),
   // got 147 against the walk's 16, and β-penalised on the strength of its own wrong number.
   const [a, b] = await Promise.all([derive("first"), derive("second")]);
-  const reconciled = reconcileDerivations(a?.value ?? null, b?.value ?? null);
-  if (reconciled.truth === null) {
-    console.log(`[recompute] abstaining — ${reconciled.reason}${a ? ` [a=${a.value} via \`${a.command}\`]` : ""}${b ? ` [b=${b.value} via \`${b.command}\`]` : ""}`);
-    return null;
-  }
-  const truth = reconciled.truth;
 
-  const emitted = extractEmittedNumbers(digest);
-  const verdict = gradeRecompute(truth, emitted);
-  const provenance = `independently recomputed ${truth} by TWO agreeing derivations (\`${a!.command}\` and \`${b!.command}\`), both authored from the goal text alone — the walk's command and answer were withheld from the authors`;
+  // TOKEN branch first: when both derivations name the same file, that IS the agreed truth,
+  // and no numeric reconciliation applies. Same two-derivation requirement either way — the
+  // independence property does not change with the answer's type.
+  let truth: number | string | null = null;
+  let isToken = false;
+  if (a?.token && b?.token && a.token.toLowerCase() === b.token.toLowerCase()) {
+    truth = a.token; isToken = true;
+  } else if (a?.token || b?.token) {
+    console.log(`[recompute] abstaining — token derivations disagree or only one produced a filename${a?.token ? ` [a=${a.token}]` : ""}${b?.token ? ` [b=${b.token}]` : ""}`);
+    return null;
+  } else {
+    const reconciled = reconcileDerivations(a?.value ?? null, b?.value ?? null);
+    if (reconciled.truth === null) {
+      console.log(`[recompute] abstaining — ${reconciled.reason}${a ? ` [a=${a.value} via \`${a.command}\`]` : ""}${b ? ` [b=${b.value} via \`${b.command}\`]` : ""}`);
+      return null;
+    }
+    truth = reconciled.truth;
+  }
+
+  const emitted: Array<number | string> = isToken ? extractEmittedTokens(digest) : extractEmittedNumbers(digest);
+  const verdict = isToken
+    ? gradeTokenRecompute(truth as string, emitted as string[])
+    : gradeRecompute(truth as number, emitted as number[]);
+  const provenance = `independently recomputed ${isToken ? `"${truth}"` : truth} by TWO agreeing derivations (\`${a!.command}\` and \`${b!.command}\`), both authored from the goal text alone — the walk's command and answer were withheld from the authors`;
 
   if (verdict === "no-measurement") {
     console.log(`[recompute] measured ${truth} but the walk emitted no measurable value — abstaining`);

@@ -210,3 +210,57 @@ export function gradeRecompute(truth: number, emitted: number[]): RecomputeVerdi
   if (emitted.length === 0) return "no-measurement";
   return emitted.includes(truth) ? "agree" : "disagree";
 }
+
+/**
+ * Recompute has been NUMERIC-ONLY, and one whole cold family sits at 0/12 because of it.
+ *
+ * `largest_file` asks "…has the most lines? Give its FILENAME", so the authored commands end
+ * `| awk '{print $2}'` and stdout is `faiss-index.ts` — a token, not a number.
+ * `parseMeasuredNumber` returns null, both derivations abstain, and the no-oracle refusal
+ * fires every round regardless of whether the reasoning plane is up. That is a capability
+ * boundary, not a bug, and this closes it.
+ *
+ * STRICT, deliberately, because the immediately preceding attempt to trade strictness for
+ * coverage on the ground-truth side dropped reach 25/48 -> 18/48: a loosened parser produced a
+ * WRONG truth, which turned an inert abstention into a `disagree` that CARRIES β and poisoned
+ * selection across rounds. On this side an abstention is cheap and a wrong value is expensive.
+ */
+export function parseMeasuredToken(stdout: string): string | null {
+  const lines = String(stdout ?? "").split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lines.length === 0) return null;
+  const last = lines[lines.length - 1]!;
+  if (/\s/.test(last) || last.length > 120) return null;   // one bare token, or nothing
+  if (/^\d+$/.test(last)) return null;                     // the numeric path owns numbers
+  // Must LOOK like a filename. "total" is wc's summary label, not an answer — accepting it
+  // would make the parser confidently wrong in exactly the way that just cost 7 goals.
+  if (!/^[\w.@-]*[\w-]\.[A-Za-z][\w]{0,7}$/.test(last.replace(/^.*\//, ""))) return null;
+  return last.replace(/^.*\//, "");
+}
+
+/**
+ * Candidate answer tokens the WALK emitted, filtered by the same anti-pollution discipline the
+ * numeric side uses. A digest that happens to contain a directory listing would otherwise
+ * match ANY filename — the bag-of-integers trap in string form, and the reason this reads
+ * only short answer-context lines rather than the whole digest.
+ */
+export function extractEmittedTokens(digest: string): string[] {
+  const lines = String(digest ?? "").split("\n").map((l) => l.trim()).filter((t) => {
+    if (t.length === 0 || t.length > 160) return false;
+    if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
+    return true;
+  });
+  const out = new Set<string>();
+  for (const l of lines) {
+    for (const m of l.matchAll(/[\w.@-]*[\w-]\.[A-Za-z][\w]{0,7}\b/g)) {
+      const t = m[0].replace(/^.*\//, "");
+      if (!/^\d+\.\d+$/.test(t)) out.add(t);              // a decimal number is not a filename
+    }
+  }
+  return [...out];
+}
+
+/** Same three-verdict shape as the numeric grader, so both sides fail the same way. */
+export function gradeTokenRecompute(truth: string, emitted: string[]): RecomputeVerdict {
+  if (emitted.length === 0) return "no-measurement";
+  return emitted.some((e) => e.toLowerCase() === truth.toLowerCase()) ? "agree" : "disagree";
+}
