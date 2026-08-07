@@ -246,6 +246,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
+import { countsSomeOtherUnit } from "./counts-other-unit";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseMeasuredNumber, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
@@ -1229,7 +1230,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   // ext_variety was 20/20 reached and 0/20 correct across two 80-goal runs, and it was the
   // ONLY family that survived the no-oracle refusal — because this verifier claimed it first.
   // Declining hands it to that refusal, which says so honestly instead of guessing.
-  if (/\b(extensions?|sub-?directories|sub-?dirs?|directories|folders?|functions?|classes|exports?|imports?|dependencies|packages?|symbols?|endpoints?|routes?)\b/i.test(goal)) return null;
+  if (countsSomeOtherUnit(goal)) return null;
   const dirM = goal.match(/(repos|vessels)\/[\w.-]+\/[\w./-]+/);
   if (!dirM) return null;
   const rel = dirM[0].replace(/[.,;:]+$/, "");
@@ -1363,6 +1364,14 @@ function buildAggregateCommand(goal: string): string | null {
   // a bare find|wc count the WRONG set, and since the oracle shares this parse it would AGREE
   // on the wrong count (a hollow green). Defer all of those to the LLM.
   if (!/\bfiles?\b/i.test(goal)) return null;
+  // COUNT WHAT THE GOAL COUNTS — the same rule the oracle above enforces, from one shared
+  // predicate so the two cannot drift. The gate just above matches the FILE in "distinct file
+  // EXTENSIONS", so without this the builder answers a different question, and because this
+  // deterministic branch runs FIRST it pre-empts the reuse-cache and lexical rebind that might
+  // have answered correctly. Measured over 4 identical rounds before this line existed:
+  // 41.7%, 41.7%, 41.7%, 50.0% — flat by construction, because the same wrong command was
+  // re-derived every time and nothing else was ever allowed to try.
+  if (countsSomeOtherUnit(goal)) return null;
   if (/\blines?\b|\bwords?\b|\bcharacters?\b|\bbytes?\b/i.test(goal)) return null;
   if (/\b(contain|containing|match(?:es|ing)?|with the (?:text|string|word|pattern)|includ(?:e|es|ing)|larger|smaller|bigger|greater|more than|less than|modified|changed|older|newer|created)\b/i.test(goal)) return null;
   const dirM = goal.match(/repos\/[\w.-]+\/[\w./-]+/);
