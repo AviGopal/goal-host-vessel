@@ -5535,7 +5535,33 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch { preferComposition = false; }
       }
-      const satisfiableNow = preferComposition ? undefined : eligibleForSatisfier.find((s) => (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s));
+      // THE BARE SATISFIER MUST NOT MUTATE LIVE VESSEL SOURCE.
+      //
+      // vesselResolveShape() on a filesystem-WRITE shape does not "resolve" anything —
+      // it performs the write, against /vessels, with no snapshot, no verification and
+      // no rollback. Both real drafters have that machinery: feature_compose restores
+      // preEditContent and rm -f s created files on UNFAVORABLE, and patch_with_tools
+      // snapshots every path any tool touches and restores them all in a finally on ANY
+      // non-landing outcome. The satisfier has neither, so a walk that ends HOLLOW
+      // strands whatever it wrote in the running source.
+      //
+      // Observed 2026-08-07: after feature_compose returned UNFAVORABLE and
+      // patch_with_tools exhausted and correctly rolled back, the walk reached this
+      // satisfier and wrote an LLM response envelope into
+      // /vessels/ribosome-vessel/src/index.ts. The walk then ended HOLLOW and
+      // β-penalised `satisfier:fs_edit` — the corruption outlived the walk that made it.
+      //
+      // And it is pure downside: the reach gate below already refuses to credit an
+      // edit-effect reach without a landed sha ("advertised-not-applied, not substance"),
+      // so a satisfier write can corrupt the tree but can NEVER produce a reach. Excluding
+      // these shapes removes a capability the walk did not actually have.
+      // Edits belong on the drafter paths, which verify and can undo themselves.
+      const SATISFIER_FORBIDDEN_FS_WRITE = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
+      const _fsBlocked = eligibleForSatisfier.filter((s) => SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)));
+      if (_fsBlocked.length > 0) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): satisfier REFUSED filesystem-write shapes ${JSON.stringify(_fsBlocked)} — the bare satisfier has no snapshot/rollback and an edit-effect reach is uncreditable without a landed sha; edits must route through feature_compose / patch_with_tools`);
+      }
+      const satisfiableNow = preferComposition ? undefined : eligibleForSatisfier.find((s) => !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s));
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
         if (resolved) {
