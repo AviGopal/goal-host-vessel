@@ -27,20 +27,38 @@
  * deterministic answer to withhold, and the LLM judge remains their right grader.
  */
 
+/**
+ * Does this goal ask for a MEASURABLE quantity at all — in ANY domain?
+ *
+ * `isQuantitativeRepoQuestion` below requires a `repos/` path because the refusal it gates is
+ * calibrated on repo-tree measurements. Independent recompute needs no such calibration: it
+ * measures whatever a read-only command can measure, so restricting it to repo trees would
+ * reproduce the exact coverage hole that was measured. Registry goals ("how many shapes does
+ * the discovery registry advertise?") scored 0/15 — never routed, and with no `repos/` path
+ * the refusal never fired either, so nothing observed the failure at all.
+ *
+ * The prose/edit exclusions stay: those have no measurable answer to recompute.
+ */
+export function isCountableQuestion(goal: string): boolean {
+  const countable = /\b(how many|number of|count(?:\s+of)?|total)\b/i.test(goal);
+  const superlative = /\b(largest|biggest|longest|smallest|shortest|most|fewest|highest|lowest)\b/i.test(goal);
+  if (!countable && !superlative) return false;
+  if (/\b(summar(?:y|ise|ize)|explain|describe|purpose of|overview|gist|walk me through)\b/i.test(goal)) return false;
+  if (/\b(edit|insert|append|modify|replace|refactor)\b/i.test(goal)) return false;
+  return true;
+}
+
 /** A countable/enumerable question about a repos/ tree. */
 export function isQuantitativeRepoQuestion(goal: string): boolean {
   // Must name a repos/ tree (not a single file — a file path is a different family).
   const pathM = goal.match(/repos\/[\w.-]+(?:\/[\w./-]+)?/);
   if (!pathM || /\.\w{1,6}$/.test(pathM[0])) return false;
 
-  // Must ask for a NUMBER or a SUPERLATIVE — the answers an oracle could check.
-  const countable = /\b(how many|number of|count(?:\s+of)?|total)\b/i.test(goal);
-  const superlative = /\b(largest|biggest|longest|smallest|shortest|most|fewest|highest|lowest)\b/i.test(goal);
-  if (!countable && !superlative) return false;
+  if (!isCountableQuestion(goal)) return false;
 
-  // Exclude goals whose deliverable is prose or a mutation: those legitimately have no
-  // deterministic answer, and withholding a verdict there would suppress real reaches.
-  if (/\b(summar(?:y|ise|ize)|explain|describe|purpose of|overview|gist|walk me through)\b/i.test(goal)) return false;
+  // Exclude goals whose deliverable is a mutation: those have their own landing evidence, and
+  // withholding a verdict there would suppress real reaches. (Prose, and the edit verbs that
+  // cannot also be measurement verbs, are already excluded by isCountableQuestion.)
   if (/\b(edit|add|insert|append|change|modify|replace|fix|remove|delete|rename|refactor)\b/i.test(goal)) return false;
 
   // Exclude COMPOSITIONAL goals — the ones that also ask for a durable artifact.

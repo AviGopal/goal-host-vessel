@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { isQuantitativeRepoQuestion } from "./quantitative-goal";
+import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 
 /**
  * This predicate decides when the reach gate REFUSES to guess. A false positive suppresses a
@@ -64,5 +64,38 @@ describe("isQuantitativeRepoQuestion — compositional goals are NOT refused", (
   it("needs BOTH halves of the artifact ask, so a bare verb does not disable the refusal", () => {
     // "record" alone with no durable noun is not an artifact request.
     expect(isQuantitativeRepoQuestion("How many subdirectories are under repos/x/src? Record the number.")).toBe(true);
+  });
+});
+
+/**
+ * The recompute oracle is gated on this predicate rather than on the repo-tree one, because
+ * measuring needs no per-domain calibration. The two domains that scored 0/15 are the test:
+ * git goals carry a repos/ path and were REFUSED; registry goals carry none, so nothing
+ * observed their failure at all.
+ */
+describe("isCountableQuestion — domain-independent, which is the point", () => {
+  it("claims the two domains that scored 0/15", () => {
+    expect(isCountableQuestion("How many commits have landed in repos/concept-db in the last 30 days?")).toBe(true);
+    expect(isCountableQuestion("How many distinct shapes does the discovery registry advertise?")).toBe(true);
+  });
+
+  it("claims repo-tree questions too — it is a superset, not a sibling", () => {
+    expect(isCountableQuestion("How many distinct file extensions appear under repos/concept-db/src?")).toBe(true);
+    expect(isQuantitativeRepoQuestion("How many distinct file extensions appear under repos/concept-db/src?")).toBe(true);
+  });
+
+  it("still declines what has no measurable answer to recompute", () => {
+    expect(isCountableQuestion("Summarise the purpose of repos/discovery-vessel based on its README.")).toBe(false);
+    expect(isCountableQuestion("In repos/goal-host-vessel/src/index.ts, replace the sink resolution")).toBe(false);
+    expect(isCountableQuestion("Record a note about repos/boredom-vessel/src")).toBe(false);
+  });
+
+  it("keeps claiming a count-and-record goal, which the REFUSAL must not", () => {
+    // The refusal excludes these because several oracles decline compositional goals by
+    // design, so it would inherit them all (measured: warm families 90% -> 33%). Recompute
+    // has no such problem — it grades the number, and abstains when none was stated.
+    const g = "Count the TypeScript modules under repos/obsidian-vessel/src and record the result in a durable note titled harness-b0-g1.";
+    expect(isCountableQuestion(g)).toBe(true);
+    expect(isQuantitativeRepoQuestion(g)).toBe(false);
   });
 });

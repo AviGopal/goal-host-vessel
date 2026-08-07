@@ -246,7 +246,8 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
-import { isQuantitativeRepoQuestion } from "./quantitative-goal";
+import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
+import { extractEmittedNumbers, gradeRecompute, isReadOnlyShellCommand, parseMeasuredNumber } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
 import type {
@@ -2531,6 +2532,23 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // The reason code is load-bearing — the caller SKIPS the beta penalty for it, because the
   // missing verifier is ours and penalising the arm would teach the learner to avoid a
   // composition that may have been perfectly good.
+  //
+  // BUT A REFUSAL TEACHES NOBODY. Because this reason code makes the caller skip beta, the
+  // posterior never moves, so reach on a novel goal class is pinned at the refusal rate
+  // forever — an honest verdict that cannot change is as inert as a hollow one, it just fails
+  // in the safe direction. Before refusing, try to EARN a verdict the domain-general way:
+  // recompute the answer independently and see whether the walk agrees. That yields the first
+  // learnable negative on a class no hand-written oracle owns, which is the precondition for
+  // reach to RISE here rather than sit flat.
+  //
+  // Deliberately gated on isCountableQuestion, NOT isQuantitativeRepoQuestion: recompute needs
+  // no per-domain calibration, so restricting it to `repos/` trees would rebuild the coverage
+  // hole. Registry goals scored 0/15 with no `repos/` path — never routed, and never refused
+  // either, so nothing observed the failure at all.
+  if (isCountableQuestion(goal)) {
+    const rc = await recomputeIndependently(goal, dig);
+    if (rc) return rc;
+  }
   if (isQuantitativeRepoQuestion(goal)) {
     return {
       reached: false,
@@ -2800,6 +2818,89 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
     return { ok: true, result: typeof c === "string" ? c : JSON.stringify(c) };
   } catch (e) { return { ok: false, error: String((e as Error)?.message ?? e).slice(0, 160) }; }
 }
+/**
+ * Recompute a countable goal's answer INDEPENDENTLY and grade the walk against it.
+ *
+ * This is the domain-general replacement for "author one more per-class oracle". It authors a
+ * single read-only measuring command FROM THE GOAL TEXT ALONE, runs it through the same
+ * ufExecuteTool/shellResult path every other tool call uses (no second execution path), and
+ * compares the measured value against what the walk emitted.
+ *
+ * THE INPUTS ARE DELIBERATELY STARVED. The prompt below receives the goal and nothing else —
+ * not the walk's command, not its answer, not the digest. That is the entire source of this
+ * oracle's authority: `verifyCountFilesReach` has to say in its own verdict string that it is
+ * "not an independent recount" because its builder and its checker share a parse, and this
+ * session watched a generator and a grader share a `-maxdepth 1` and certify each other. An
+ * oracle that has seen the answer it is checking is a rubber stamp with extra steps.
+ *
+ * Fails toward abstention at every step (no LLM plane, refused command, unusable stdout,
+ * nothing measurable emitted) so the honest no-oracle refusal remains the floor. The only two
+ * verdicts it will assert are backed by a number measured from the world.
+ */
+async function recomputeIndependently(
+  goal: string,
+  digest: string,
+): Promise<{ reached: boolean; reason: string; deterministic: true; completion_shapes: string[] } | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+
+  const prompt = `Author ONE read-only shell command that MEASURES the answer to the goal below, so its answer can be checked independently.
+
+GOAL: ${goal}
+
+Rules:
+- The repository clones live under /workspace/git/vessels/<vessel>/ — a goal path "repos/<vessel>/src" means /workspace/git/vessels/<vessel>/src. The super-repo is /workspace/git/super-repo.
+- Available interpreters: bash, jq, bun, awk, perl. There is NO python, python3, node, or bc.
+- The command MUST measure by inspecting the system (find, wc, grep, git log, curl+jq, ...). Never echo or printf a literal answer.
+- The command MUST be read-only: no redirection, no tee, no rm/mv/cp/mkdir/touch, no git commit/add/checkout/fetch, no installs.
+- It MUST print exactly ONE integer on stdout and nothing else.
+- Single line.
+
+Respond with ONLY JSON: {"command": "<the command>"}`;
+
+  let command = "";
+  try {
+    const rr = await routedComplete(goalHashOf(goal), "reach_verification", { prompt, model: "auto" });
+    if (!rr.ok) return null;
+    const j: any = rr.json;
+    const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
+    const m = String(text).match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    command = String(JSON.parse(m[0])?.command ?? "");
+  } catch { return null; }
+
+  const gate = isReadOnlyShellCommand(command);
+  if (!gate.ok) {
+    // Name the refusal. A verifier that declines silently cannot be told apart from one that
+    // never ran, and this branch is exactly where a bad authoring habit would hide.
+    console.log(`[recompute] REFUSED authored command (${gate.reason}): ${command.slice(0, 200)}`);
+    return null;
+  }
+
+  const shell = await ufExecuteTool("shellResult", { command }, new Set<string>(["shellResult"]));
+  if (!shell.ok) { console.log(`[recompute] command failed: ${shell.error}`); return null; }
+  let stdout = shell.result;
+  try { const parsed = JSON.parse(shell.result); if (parsed && typeof parsed === "object" && "stdout" in parsed) stdout = String(parsed.stdout ?? ""); } catch { /* plain string result */ }
+
+  const truth = parseMeasuredNumber(stdout);
+  if (truth === null) { console.log(`[recompute] unusable stdout, abstaining: ${String(stdout).slice(0, 160)}`); return null; }
+
+  const emitted = extractEmittedNumbers(digest);
+  const verdict = gradeRecompute(truth, emitted);
+  const provenance = `independently recomputed ${truth} via \`${command}\` (authored from the goal text alone — the walk's command and answer were withheld from the author)`;
+
+  if (verdict === "no-measurement") {
+    console.log(`[recompute] measured ${truth} but the walk emitted no measurable value — abstaining`);
+    return null;
+  }
+  if (verdict === "agree") {
+    return { reached: true, reason: `deterministic:independent-recompute-agrees — ${provenance}; the walk reported the same value`, deterministic: true, completion_shapes: [] };
+  }
+  // A stated-but-wrong number is the walk's own error, so this verdict CARRIES beta — unlike
+  // the no-oracle refusal below, which withholds it because the missing verifier was ours.
+  // This is the first learnable negative available on a goal class no hand-written oracle owns.
+  return { reached: false, reason: `deterministic:independent-recompute-disagrees — ${provenance}; the walk reported ${JSON.stringify(emitted.slice(0, 8))} instead`, deterministic: true, completion_shapes: [] };
+}
+
 // Module-level grounded tool->observe loop, extracted from universalToolFallback so the
 // a.5 investigation fallback REUSES the same EXECUTING loop instead of fabricating an answer.
 // Dispatches llm_completion_dispatch WITH tools, EXECUTES returned tool_calls via ufExecuteTool,
