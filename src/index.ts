@@ -8370,6 +8370,46 @@ async function runGoalWithRecovery(
             // feature_compose failed on this file. Measured posterior: byte-anchored
             // tool-driven patching (patch_with_tools ReAct + typecheck verify-on-done)
             // converges where prose drafting does not. Escalate ONCE before failing.
+            //
+            // NOT FOR REGION-NAMED GAPS (2026-08-07). Escalation is for the class where
+            // the FIX SHAPE is already agreed and only its application failed — a bad
+            // anchor, a missing old_string. It is the wrong instrument when JUDGEMENT is
+            // the load-bearing part, because the escalated route runs no semantic judge
+            // and its landings are not graded (gap escalated-pwt-landings-are-ungraded),
+            // so Thompson never learns the route produced a bad patch and posterior decay
+            // can never retire it.
+            //
+            // EVIDENCE: a human complaint naming region "sub-fleet-elapsed" ("the elapsed
+            // column keeps counting after a run has finished") failed compose twice on
+            // MECHANICAL anchor errors, escalated both times, and both times landed an
+            // unjudged patch on a different render site that simply HID the value
+            // (046d754, 49421ae — reverted 78c675d, 0022455). Region containment cannot
+            // stop this class: both patches touched the region line literally. The
+            // escalation was legitimate each time; the route it escalates TO is the
+            // problem.
+            //
+            // So this is routing, not a gate: a region-named gap goes through the path
+            // that has the judge, and if the drafter never converges the gap honestly
+            // stays open rather than closing on a wrong patch. Fail-open by design — if
+            // the phrasing is absent, escalation proceeds exactly as before.
+            //
+            // Mirrors gap-to-feature's canonical `in the region "<x>"` summary phrasing
+            // (development-vessel regionFromProposalText); duplicated across repos on
+            // purpose rather than coupling the two vessels.
+            const namedRegion = (String(spec).match(/\bin the region\s+"([^"]{2,120})"/i)?.[1] ?? "").trim();
+            if (namedRegion) {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SUPPRESSED for ${editFile} — the spec names region "${namedRegion}", and the byte-anchored route runs no semantic judge and lands ungraded; a region-named gap stays on the judged compose path (${failWhy})`);
+              return {
+                result: null,
+                status: "failed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: null,
+                attempts: 1,
+                goalReachReason: `routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy}); escalation suppressed — the spec names region "${namedRegion}" and the byte-anchored route runs no semantic judge`,
+                reached: false,
+                executionId: `feature_compose:rejected:${goalHashOf(goal as string)}`,
+              };
+            }
             try {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION — feature_compose verdict=${verdict || "(none)"} for ${editFile}; escalating to patch_with_tools (byte-anchored route)`);
               const pwtResp = await fetch(composeUrl, {
