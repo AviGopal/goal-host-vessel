@@ -47,7 +47,34 @@
 
 /** The repository tree a countable goal names. One tree; a multi-tree goal is a different family. */
 export function goalTreePath(goal: string): string | null {
-  const all = [...new Set((goal.match(/repos\/[\w.-]+(?:\/[\w./-]+)?/g) ?? []).map((m) => m.replace(/[.,;:]+$/, "")))];
+  // MATCH THE PATH FORM THE RECIPES THEMSELVES USE. This recognised only `repos/<vessel>`,
+  // so a goal naming the absolute in-container tree — `/workspace/git/vessels/<v>/src`, or
+  // the runtime mirror `/vessels/<v>/src` — returned null and the whole recipe path was
+  // unreachable for it.
+  //
+  // That excluded the recipes' own vocabulary: every stored template targets
+  // `find /workspace/git/vessels/{{vessel}}/src ...`. The family could mint a recipe from
+  // one goal and then never recognise a sibling goal written the same way.
+  //
+  // Measured 2026-08-08: 21 subdirectory-count goals dispatched against a family whose
+  // recipe carries agreed=6, and the recipe answered ZERO of them. Reuse instead fell to
+  // lexical rebind (17) and exact cache hits (6) — the weakest mechanism served while the
+  // strongest sat unused. A recipe is two independently-agreeing derivations; a rebind is
+  // a literal-gated guess. That is a correctness gap, not a routing detail.
+  //
+  // Both absolute forms normalise to the `repos/<vessel>/...` shape the rest of this
+  // module (generaliseCommand, recipeAppliesTo, instantiateRecipe) already speaks, so the
+  // literal-substitution proof those functions rely on is unchanged.
+  const norm = goal
+    .replace(/\/workspace\/git\/vessels\//g, "repos/")
+    .replace(/(^|[\s"'(`])\/vessels\//g, "$1repos/");
+  // A URL IS NOT A LOCAL TREE. `https://api.github.com/repos/oven-sh/bun` contains
+  // `repos/…` and matched as one — pre-existing, and reachable far more often once the
+  // absolute forms above are normalised. An external-domain goal routed into a local
+  // filesystem recipe would answer a live-API question by measuring a directory. Strip
+  // URLs before matching; found by corpus-testing this change rather than in production.
+  const noUrls = norm.replace(/\bhttps?:\/\/\S+/gi, " ");
+  const all = [...new Set((noUrls.match(/repos\/[\w.-]+(?:\/[\w./-]+)?/g) ?? []).map((m) => m.replace(/[.,;:]+$/, "")))];
   if (all.length !== 1) return null;               // 0 = not a tree goal; >1 = the chain form, which one command cannot answer
   const p = all[0]!;
   return /\.\w{1,6}$/.test(p) ? null : p;          // a FILE path is not a tree
