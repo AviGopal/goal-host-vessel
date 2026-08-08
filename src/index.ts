@@ -3131,7 +3131,28 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     const dp: number[][] = Array.from({ length: la + 1 }, () => new Array<number>(lb + 1).fill(0));
     for (let i = la - 1; i >= 0; i--) for (let j = lb - 1; j >= 0; j--) dp[i][j] = na[i] === nb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     const lcsLen = dp[0][0];
-    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.5) { refuse(`scaffold-too-weak(${(lcsLen / Math.max(la, lb)).toFixed(2)})`); continue; } // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
+    // THE SCAFFOLD RATIO IS A PRE-FILTER, NOT THE CORRECTNESS GUARD — as the comment above
+    // already says: "the per-slot literal gate is the real correctness guard". At 0.5 it was
+    // discarding candidates before that guard could adjudicate them, and it was discarding
+    // ALL of them for any goal phrased unlike the cache.
+    //
+    // Measured with the refusal tally added in 7b3e308, on a report-generation goal:
+    //   [rebind] NO ADAPTATION for "shellResult" — cache=159 same-shape-candidates=158
+    //     refusals: scaffold-too-weak(0.06)x60 scaffold-too-weak(0.17)x28 scaffold-too-weak(0.11)x22
+    // 158 same-shape donors available, every one refused here, and no other gate ever
+    // reached. Adaptation therefore fires only where phrasing REPEATS (count goals, already
+    // at 100% reach) and never where it is novel (report generation, largest-file — the
+    // families with headroom). That is a retrieval-key defect: the key is goal-token overlap,
+    // not task structure, so a donor needing nearly the same command is rejected for being
+    // worded differently.
+    //
+    // Lowered to 0.25, deliberately not removed. Every causal guard downstream is unchanged
+    // and still has to pass: type-congruence, the injection guard, the sub-token guard, and
+    // above all the literal gate requiring each varying slot's content to appear EXACTLY
+    // ONCE in the donor command. A structurally incompatible donor now gets REJECTED BY THE
+    // REAL GUARD and says so as slot-gate-rejected, instead of being discarded unexamined —
+    // which also means the tally now distinguishes "no compatible donor" from "never looked".
+    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.25) { refuse(`scaffold-too-weak(${(lcsLen / Math.max(la, lb)).toFixed(2)})`); continue; } // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
     // backtrack the alignment; the gaps between matched anchors are slot token-index ranges
     const slots: Array<{ ai0: number; ai1: number; bi0: number; bi1: number }> = [];
     let i = 0, j = 0, ai0 = 0, bi0 = 0;
