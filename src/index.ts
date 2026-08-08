@@ -6388,6 +6388,39 @@ If one of those sibling shapes is the action that would create what the goal ask
         _deg = _degenerateReason(direct);
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 80) + ")" : "now produces a value"}`);
       }
+      // RECOVERY BEFORE REFUSAL — a refusal that leaves NO artifact is not obviously
+      // better than a wrong one, and right now it is the larger failure.
+      //
+      // Measured 2026-08-08, immediately after the embedded-zero check landed: the gate
+      // fired 7 times in one 32-dispatch run, self-correction ran 11 times and mostly
+      // failed, and EMPTY artifacts became the dominant failure in BOTH arms (11 of 14
+      // and 10 of 11). Artifact-correct for the reuse arm went 81% -> 83% -> 6% across
+      // three runs of IDENTICAL code and design. The refusal is right — writing a wrong
+      // number is worse than writing none — but trading wrong answers for missing ones
+      // is not a fix, and the variance it introduced makes any measurement unreadable.
+      //
+      // Self-correction asks the SAME LLM to guess again, twice, which is why it is
+      // unreliable. A family recipe is different in kind: a command two independent
+      // derivations already agreed on, instantiated against this goal's tree and
+      // read-only gated. Try it before giving up.
+      //
+      // Gated on !_suppressReuse deliberately. A recipe IS reuse, so the ablated floor
+      // arm must not get it — otherwise the counterfactual is contaminated and the arms
+      // stop differing in the one way the experiment varies.
+      if (_deg && !_suppressReuse && shape === "shellResult") {
+        const _recovery = recipeCommandFor(goal);
+        if (_recovery && _recovery !== (directArgsRaw["command"] as string | undefined)) {
+          const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: _recovery }));
+          const _reDeg = _degenerateReason(_re);
+          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" self-correction exhausted — RECOVERING with the learned family recipe instead of refusing; ${_reDeg ? "recipe also degenerate (" + _reDeg.slice(0, 60) + ")" : "recipe produced a value"}`);
+          if (!_reDeg && _re != null) {
+            direct = _re;
+            directArgsRaw = { ...directArgsRaw, command: _recovery };
+            _deg = null;
+            commandReuseFired = true;
+          }
+        }
+      }
       // HONEST-REACH ON EXHAUSTED SELF-CORRECTION (2026-07-27, surfaced by an adversarial everyday
       // battery: a "how many vessels registered in discovery" goal produced EMPTY stdout across both
       // self-correction attempts, yet the walk REACHED "the count of vessels" — a hollow green on a
