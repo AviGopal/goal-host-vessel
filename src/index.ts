@@ -3881,8 +3881,50 @@ async function fileReachabilityGap(shape: string, goal: string, goalTargets: str
   // exist, and the loop then failed to close them because there was nothing to close. Filing a
   // gap for an unavailable dependency turns an outage into permanent backlog.
   if (EXECUTOR_ROOTED_SHAPES.has(shape)) { console.log("[reach-gap] skip " + shape + ": executor shape, payload must be synthesized — cold-unreachable by design"); return null; }
+  // A LOOKUP THAT FAILED MUST ABSTAIN, NOT REPORT ABSENCE.
+  //
+  // This block used to swallow a transport failure and carry on to file the gap with
+  // producerId="" — indistinguishable from "discovery answered, and nothing produces
+  // this shape". The comment directly above already argues that filing a gap for an
+  // unavailable dependency turns an outage into permanent backlog; the code then did
+  // exactly that whenever the lookup timed out.
+  //
+  // Measured: this endpoint is 161ms called INSIDE the hub but 4.0-10.5s from a spoke
+  // across the network (3 consecutive samples: 10473ms, 6607ms, 3994ms), against an
+  // 8s budget — so the first call after any load spike fails open. Under hub saturation
+  // it measured 55-77s on 6/6 calls, i.e. it failed open EVERY time, and the walk logged
+  // "missing shapes [X] have no producer" while discovery listed two producers for X.
+  //
+  // The consequence is not a stray gap row. It is the shellResult monoculture: the
+  // forward-producer walk never succeeds, every goal re-frames onto the shellResult
+  // satisfier, and the reached-command cache ends up 98.5% shellResult (1178/1196).
+  // One fail-open timeout, read as absence, collapses the whole shape space onto one arm.
+  //
+  // So: three outcomes, kept distinct. Answered with producers -> proceed. Answered with
+  // none -> return null (nothing to file, same as before). Could not ask -> log and
+  // abstain, filing nothing. The timeout is also raised to 20s to match the sibling
+  // candidate-generation call, which already uses 20s against the same endpoint.
   let producerId = ""; let producerInputs: string[] = [];
-  try { const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ required_shapes: [shape], mode: "forward" }), signal: AbortSignal.timeout(8_000) }); if (pr.ok) { const pj = await pr.json() as { activities?: any[] }; if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null; const a0 = pj.activities[0] || {}; producerId = String(a0.variant_id || a0.id || ""); producerInputs = Array.isArray(a0.input_schema?.required_shapes) ? a0.input_schema.required_shapes.map(String) : []; } } catch { /* fail-open */ }
+  try {
+    const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ required_shapes: [shape], mode: "forward" }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!pr.ok) {
+      console.log(`[reach-gap] ABSTAIN ${shape}: producer discovery answered http ${pr.status} — cannot distinguish "no producer" from "could not ask"; filing nothing`);
+      return null;
+    }
+    const pj = await pr.json() as { activities?: any[] };
+    if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null;
+    const a0 = pj.activities[0] || {};
+    producerId = String(a0.variant_id || a0.id || "");
+    producerInputs = Array.isArray(a0.input_schema?.required_shapes) ? a0.input_schema.required_shapes.map(String) : [];
+  } catch (e) {
+    console.log(`[reach-gap] ABSTAIN ${shape}: producer discovery unreachable (${(e as Error).message}) — a failed lookup is not evidence of absence; filing nothing`);
+    return null;
+  }
   const slug = shape.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   const id = `reach-gap-${slug}`;
   const summary = `Reachability gap: shape "${shape}" is advertised by a producer, but the walk could not reach it from cold — the producer's required input_shapes are not producible from the goal pool. If the producer's resolver self-grounds (does not consume that input), declare the gating input as optional_input_shapes (non-gating) so it becomes cold-feasible; otherwise author a producer for the missing input. Do NOT expand scope.`;
