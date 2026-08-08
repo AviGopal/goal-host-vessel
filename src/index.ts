@@ -4420,6 +4420,43 @@ function buildCompositeTraceFromChain(
   } as ExecutionTrace;
 }
 
+/**
+ * The extraction-depth bound, read as a shape and cached.
+ *
+ * Mirrors ribosome-vessel's read of the same `extractionPolicy` shape so the two paths
+ * cannot drift to different bounds. The literal applies only when the resolve fails, and
+ * the fallback is logged ONCE PER WINDOW rather than per mint — the warning is the standing
+ * demand signal for minting a producer, and 738 copies of it in two hours is noise, not
+ * signal.
+ */
+let _maxExtractionDepth = 1;
+let _maxExtractionDepthAt = 0;
+async function resolveMaxExtractionDepth(): Promise<number> {
+  if (Date.now() - _maxExtractionDepthAt < 300_000) return _maxExtractionDepth;
+  let source = "fallback-literal";
+  try {
+    const res = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "extractionPolicy" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (res.ok) {
+      const o = await res.json() as Record<string, unknown>;
+      const c = o["content"] as Record<string, unknown> | undefined;
+      const bv = o["body"] ?? (c && typeof c === "object" ? (c["body"] ?? c["value"] ?? c) : undefined) ?? o;
+      const b = (typeof bv === "object" && bv !== null && !Array.isArray(bv)) ? (bv as Record<string, unknown>) : null;
+      const v = b?.["maxExtractionDepth"];
+      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+      if (Number.isFinite(n) && n >= 0) { _maxExtractionDepth = Math.floor(n); source = "extractionPolicy"; }
+    }
+  } catch { /* fall through to the literal */ }
+  if (source === "fallback-literal") {
+    console.log(`[goal-host-vessel] extractionPolicy unresolved — falling back to maxExtractionDepth=${_maxExtractionDepth} (law-1 fallback, logged once per 5min window)`);
+  }
+  _maxExtractionDepthAt = Date.now();
+  return _maxExtractionDepth;
+}
 async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string): Promise<void> {
   const executionId = trace?.id;
   if (!executionId) return;
@@ -4442,6 +4479,29 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
     // runtime-derived (over-declared) input contract. The ribosome's value is
     // compressing MULTI-step/composed chains; skip trivial reaches so we don't mint
     // near-duplicate learned-<parent> variants that reintroduce input-overload.
+    // EXTRACTION DEPTH — the bound existed, on the path that never mints.
+    //
+    // ribosome-vessel counts `learned-` markers in the producer id and refuses past
+    // maxExtractionDepth, and it logged 32,245 skips in 24h. But its WS trigger is not
+    // what mints: this function is, via host.runGoal("ribosome-extract"), and it had no
+    // depth check at all. The measured result across the 2,419-template catalogue is 53
+    // learned-of-learned templates nesting up to SEVEN deep (e.g.
+    // learned-activity-learned-learned-learned-satisfier-shellresult, 202 executions and
+    // 0 successes), 1,646 executions between them. Each is a fresh Beta(1,1) cell that
+    // splits selection traffic across near-duplicates: rho_grow rises while lambda_1 does
+    // not, which is the inequality SUBSTRATE_AS_DYNAMICS section 3 says must hold.
+    //
+    // Same rule as the ribosome's, applied where the mint actually happens. The policy is
+    // read at use time (law 1) but CACHED for five minutes: extractionPolicy currently has
+    // no producer anywhere in the registry — 738 "unresolved" warnings since 05:00 — and a
+    // per-mint resolve would add a 404 round trip to every reached goal for a value that
+    // cannot change until someone mints the producer.
+    const _extractionDepth = ((trace.templateId ?? "").toLowerCase().match(/learned-/g) ?? []).length;
+    const _maxDepth = await resolveMaxExtractionDepth();
+    if (_extractionDepth > _maxDepth) {
+      console.log(`[goal-host-vessel] reach->mint: SKIP extraction depth ${_extractionDepth} > ${_maxDepth} for ${executionId} (parent=${trace.templateId}) — extracting from an extraction mints a near-duplicate uninformed cell`);
+      return;
+    }
     const composedDepth = Array.isArray(trace.compositionChain) ? trace.compositionChain.length : 0;
     if (tasks.length <= 1 && composedDepth === 0) {
       console.log(`[goal-host-vessel] reach->mint: SKIP trivial single-template reach for ${executionId} (taskCount=${tasks.length}) — source template is already reusable`);
