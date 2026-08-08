@@ -1118,6 +1118,57 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
   return { reached: false, reason: `deterministic:wrong-compute-answer — recomputed ${label} does not match any distinctive answer token in the output (e.g. ${claimed[0]})`, completion_shapes: [] };
 }
 
+/**
+ * Does the artifact the goal NAMED actually carry the answer?
+ *
+ * "Verify reach by downstream USE": a goal that says "record it in a memory note
+ * titled T" is not reached because the walk said the right number in its digest — it
+ * is reached when T holds it. Resolves T through discovery's universal proxy (the
+ * same FLAT { pointer } path the policy reads use) and looks for the truth in the
+ * stored body.
+ *
+ * FAILS OPEN, deliberately and in every direction: no parseable title, non-numeric
+ * truth, unreachable store, no matching note, or an unreadable body all return null,
+ * which leaves the caller's verdict untouched. The only outcome it can produce is
+ * ok:false — turning a green that certified a wrong deliverable into a red. It can
+ * never manufacture a green, and it never reds on evidence it does not have.
+ *
+ * Matches on the truth appearing as a standalone number in the body rather than on
+ * exact equality: a note reading "There are 19 commits" is a correct deliverable, and
+ * demanding a bare "19" would red it. The failure this exists to catch is not
+ * formatting — it is a body that holds the GOAL TEXT, a different number, or prose
+ * about the run.
+ */
+async function verifyNamedArtifactCarries(
+  goal: string,
+  truth: number | string,
+): Promise<{ ok: boolean; title: string; storedExcerpt: string } | null> {
+  if (typeof truth !== "number" || !Number.isFinite(truth)) return null;
+  const title = (goal.match(/\btitled\s+["“']([^"”']{2,80})["”']/i)?.[1] ?? "").trim();
+  if (!title) return null;
+  try {
+    const res = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "memoryNote", title_prefix: title } }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return null;
+    const j = await res.json() as { body?: { notes?: Array<{ title?: string; body?: unknown; updated_at?: string }> } };
+    const notes = j.body?.notes ?? [];
+    if (notes.length === 0) return null;              // nothing to judge -> abstain
+    // Most recently updated wins: a family can accumulate several notes under one
+    // title, and the deliverable of THIS run is the newest.
+    const newest = [...notes].sort((x, y) => String(y.updated_at ?? "").localeCompare(String(x.updated_at ?? "")))[0];
+    const body = typeof newest?.body === "string" ? newest.body : JSON.stringify(newest?.body ?? "");
+    if (!body) return null;
+    const carries = new RegExp(`(?<![\\d.])${String(truth).replace(/[.]/g, "\\.")}(?![\\d.])`).test(body);
+    return { ok: carries, title, storedExcerpt: body.slice(0, 160) };
+  } catch {
+    return null;                                      // store unreachable -> abstain
+  }
+}
+
 // INDEPENDENT REGISTRY-INVENTORY ORACLE (2026-07-27). The independent-oracle critical path shared by
 // validatability (gaming_gap) and falsifiability (confabulation_rate): for a self-inventory COUNT over
 // the discovery registry, do NOT trust the command's own stdout — query the AUTHORITATIVE source
@@ -3272,7 +3323,36 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     return null;
   }
   if (verdict === "agree") {
-    return { reached: true, reason: `deterministic:independent-recompute-agrees — ${provenance}; the walk reported the same value`, deterministic: true, completion_shapes: [] };
+    // THE WALK REPORTING THE TRUTH IS NOT THE GOAL BEING REACHED. When the goal asks
+    // for the answer to be RECORDED somewhere, the deliverable is the stored artifact,
+    // and this oracle has only ever compared the recompute against the walk's own
+    // output digest. Measured 2026-08-08, four goals of the form "count X and record
+    // it in a memory note titled T", every one graded reached=true:
+    //
+    //   boredom commit count            stored the GOAL TEXT + verdict prose   truth 126
+    //   development-vessel commit count stored the GOAL TEXT + verdict prose   truth 1385
+    //   goal-host commit count          stored the GOAL TEXT + verdict prose   truth 607
+    //   ribosome commit count           stored 3905, overwriting a correct 19  truth 19
+    //
+    // and for the ribosome goal the note read "There are 150 commits" at the same
+    // moment this branch certified "independently recomputed 19 ... the walk reported
+    // the same value". The walk computed correctly and the artifact held something
+    // else, so a green verdict certified a wrong deliverable.
+    //
+    // Fails OPEN in every direction it cannot see: no parseable title, no store, no
+    // note, non-numeric truth, or a body we cannot read all return the original
+    // verdict. This can only ever turn a FALSE green into a red — never a red green,
+    // and never a red on evidence it does not have.
+    const artifact = await verifyNamedArtifactCarries(goal, truth);
+    if (artifact && artifact.ok === false) {
+      return {
+        reached: false,
+        reason: `deterministic:artifact-does-not-carry-the-answer — ${provenance}, and the walk reported the same value, BUT the goal asked for it to be recorded in "${artifact.title}" and that artifact does not contain it (stored: ${JSON.stringify(artifact.storedExcerpt)}). The computation was right; the deliverable is wrong, so the goal was not reached.`,
+        deterministic: true,
+        completion_shapes: [],
+      };
+    }
+    return { reached: true, reason: `deterministic:independent-recompute-agrees — ${provenance}; the walk reported the same value${artifact?.ok ? ` and the artifact "${artifact.title}" carries it` : ""}`, deterministic: true, completion_shapes: [] };
   }
   // A stated-but-wrong number is the walk's own error, so this verdict CARRIES beta — unlike
   // the no-oracle refusal below, which withholds it because the missing verifier was ours.
