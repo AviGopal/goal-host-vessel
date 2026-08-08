@@ -3118,6 +3118,12 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   for (const [srcHash, e] of reachedCommandCache.entries()) {
     if (e.shape !== shape) { refuse("shape-mismatch"); continue; }
     if (!REBIND_EXEC_FIELDS.includes(e.field)) { refuse("field-not-executable"); continue; }
+    // The write-side guard stops NEW shell-dependent donors being banked; it cannot
+    // un-bank the 686 `echo`-carrying commands already in the library. Filter at READ
+    // time too, so an existing poisoned donor is not adapted onto a fresh goal. Same
+    // predicate, same reason: `echo "a\nb"` expands under sh and does not under bash,
+    // so adapting one propagates a coin flip across the family.
+    if (/\becho\b[^|;]*\\[nrt]/.test(e.command)) { refuse("donor-is-shell-dependent"); continue; }
     if (!e.goalText) { refuse("donor-has-no-goal-text"); continue; }
     const A = toks(e.goalText), B = toks(goalNow);
     candidates++;
