@@ -12396,6 +12396,27 @@ server = Bun.serve({
       return Response.json({
         status: "healthy",
         in_flight: [...executionStore.values()].filter((r) => r.status === "running").length,
+        // ADVERTISE THE DRAIN, so a restarter does not have to guess.
+        //
+        // pull-sync defers converging this vessel whenever in_flight > 0, on the
+        // premise — stated in its own comment — that "the durable fix is a SIGTERM
+        // drain in $v, which it does not have". It does: gracefulShutdown() 503s new
+        // dispatches, de-advertises from discovery, and waits for in-flight to reach
+        // zero (GOAL_HOST_DRAIN_MS, default 80s) under TimeoutStopSec=300.
+        //
+        // The comment is stale, and the cost of it is real. This vessel is the busiest
+        // dispatch host, so the autonomous loop keeps in_flight >= 1 almost always: on
+        // 2026-08-08 it deferred four consecutive ticks and would have taken the
+        // AUTHORING_HOST_MAX_DEFERS=6 starvation break, which converges anyway and
+        // says outright that "an in-flight authoring run may be lost". So the guard
+        // both delays every deploy to the busiest vessel by up to six ticks AND still
+        // ends by doing the unsafe thing it was protecting against.
+        //
+        // Publishing the number rather than a boolean: a restarter can compare it to
+        // its own patience. Reported in ms, 0/absent meaning "no drain — a restart
+        // will destroy in-flight work", which is the safe default for any vessel that
+        // has not opted in.
+        drain_ms: Number(process.env["GOAL_HOST_DRAIN_MS"] ?? "80000"),
         vesselId: VESSEL_ID,
         vesselName: "Goal Host Vessel",
         shapes: SHAPES,
