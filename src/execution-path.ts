@@ -26,6 +26,14 @@ export interface TerminalizedSeek {
   attempts?: number | null;
   reached?: boolean | null;
   executionId?: string | null;
+  /**
+   * OBSERVED reuse: the walk took at least one step because a stored pathway
+   * proved it (pathwayReusePicks > 0), on either the candidate or the satisfier
+   * plane. This is a fact the walk recorded about itself, not an inference drawn
+   * from the outcome. Null/undefined when the caller cannot supply it — see the
+   * heuristic in classifyExecutionPath, which exists only for those callers.
+   */
+  reusedPathway?: boolean | null;
 }
 
 /**
@@ -55,9 +63,26 @@ export function classifyExecutionPath(seek: TerminalizedSeek): WalkTier {
   }
   if (tid.startsWith("satisfier:")) return "satisfier";
 
+  // OBSERVED REUSE OUTRANKS INFERRED REUSE. The walk knows whether it took a step
+  // because a stored pathway proved it; when it tells us, believe it and stop guessing.
+  if (seek.reusedPathway === true) return "learned_pathway";
+
   // Generic: a template that reached on its first attempt is a path this
   // substrate already knew. Only meaningful once the named mechanisms above
-  // have been excluded.
+  // have been excluded — and ONLY for callers that cannot supply the observation
+  // above.
+  //
+  // This heuristic contradicts the module docstring's promise that the label is
+  // "deliberately independent of whether the run SUCCEEDED": it gates on
+  // reached === true, so a learned pathway that FAILED, or that needed a retry, is
+  // definitionally invisible as a learned pathway. Measured on the human surface's
+  // 50-row board: 24 rows eligible, 17 with attempts === 1, 3 with reached === true,
+  // ZERO satisfying both — while four of those runs used `learned-*` templates. The
+  // one mechanism field a human sees could not report the mechanism.
+  //
+  // Left in place rather than deleted because removing it would silently reclassify
+  // every caller that has no observation to give. It is now a documented last
+  // resort that under-reports in a known direction, not the primary answer.
   if (tid.length > 0 && seek.attempts === 1 && seek.reached === true) return "learned_pathway";
   return "fresh_derivation";
 }

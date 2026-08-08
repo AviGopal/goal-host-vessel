@@ -4186,24 +4186,42 @@ function tierFromChain(chainIds: string[]): WalkTier {
 }
 /**
  * `parent` is the pathway this walk actually BORROWED FROM, or null when it derived
- * fresh. POST /v2/goal-paths has always accepted parent_goal_hash and
- * parent_path_signature; nothing ever sent them, so a borrowed pathway left no lineage
- * and reuse could be neither credited, blamed, nor compared against fresh derivation.
- * That is why "does the ceiling beat the floor" has been unanswerable from stored data:
- * the two arms are indistinguishable after the fact.
+ * fresh. Reuse leaves no lineage in the store, so "does the ceiling beat the floor"
+ * cannot be answered from stored data: a reusing walk and a fresh derivation are
+ * indistinguishable after the fact.
  *
- * `walk_tier` cannot stand in for this. tierFromChain no longer returns
- * "learned_pathway" at all — that branch was removed when it was found to be counting
- * every landed direct edit — so the label now means different things in different rows
- * depending on which era and which writer produced it. Lineage is a fact about this
- * walk, recorded by the walk, at the moment it borrowed.
+ * IT IS DELIBERATELY NOT SENT ON THE WIRE YET, and that is not an oversight.
+ * parent_goal_hash / parent_path_signature exist on POST /v2/goal-paths but mean
+ * something ELSE: they declare SUB-GOAL lineage, and the route asserts CC1
+ * scope-narrowing — a child must produce a SUBSET of the parent's output shapes.
+ * Borrowed-pathway reuse is the opposite relation. A nearby match is accepted at
+ * cover >= 0.5, so by construction up to half the child's shapes are outside the
+ * donor's, and CC1 rejects the write.
  *
- * Only pass a parent when a pathway step was genuinely used. Recording the pathway the
- * walk was OFFERED, rather than the one it took, would manufacture exactly the
- * correlation that makes reuse look effective (law 12).
+ * Measured, on the first walk after it shipped: a REACHED 2-step reuse
+ * (cover=0.50, borrowed_from_goal=d925f1c6c299204e, donor 68/68 reached) had its
+ * goal-path record rejected 400. Sending these fields did not add lineage — it
+ * DESTROYED the record, for exactly the reused walks that matter most to
+ * compounding, and it would have done so silently if the res.ok check below had not
+ * landed in the same commit.
+ *
+ * Reuse lineage needs its own field with its own semantics (reused_from_goal_hash /
+ * reused_from_path_signature) and no scope assertion. Until that exists on the route,
+ * this parameter is carried and logged but not transmitted, so the walk's knowledge of
+ * what it borrowed is not lost while the store cannot yet hold it.
+ *
+ * Only ever pass a parent when a pathway step was genuinely used. Recording the
+ * pathway the walk was OFFERED rather than the one it took would manufacture exactly
+ * the correlation that makes reuse look effective (law 12).
  */
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
+  if (parent?.goalHash || parent?.pathSignature) {
+    // Emitted, not transmitted — see the note above. This is the one place the fact
+    // "this walk reused pathway X" is currently recoverable, so it must at least be
+    // greppable until the store can hold it.
+    console.log(`[goal-host] REUSE LINEAGE (not yet storable) goal_hash=${goalHashOf(goalText)} borrowed_from_goal=${parent.goalHash ?? "?"} borrowed_path_signature=${parent.pathSignature ?? "?"} reached=${reached}`);
+  }
   try {
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
       method: "POST",
@@ -4219,8 +4237,6 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         cost_usd: costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
         walk_tier: walkTier,
-        ...(parent?.goalHash ? { parent_goal_hash: parent.goalHash } : {}),
-        ...(parent?.pathSignature ? { parent_path_signature: parent.pathSignature } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -7827,6 +7843,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
       if (_rec) {
         (_rec as { walkTier?: string }).walkTier = commandReuseFired ? "learned_pathway" : tierFromChain(chain);
+        // OBSERVED reuse, stamped by the walk that did it, so the execution-path
+        // classifier stops inferring reuse from (attempts === 1 && reached === true).
+        (_rec as { reusedPathway?: boolean }).reusedPathway = pathwayReusePicks > 0 || commandReuseFired;
         if (walkGroundedVerdict !== undefined) (_rec as { grounded?: boolean }).grounded = walkGroundedVerdict;
       }
     }
@@ -11272,7 +11291,10 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
-      const execution_path: WalkTier = classifyExecutionPath(seek);
+      const execution_path: WalkTier = classifyExecutionPath({
+        ...seek,
+        reusedPathway: (record as { reusedPathway?: boolean }).reusedPathway ?? null,
+      });
       // NOTE: this tag's value is an ATTEMPT COUNT, not the WalkTier enum that
       // `walkTier` means everywhere else in this file. The name is wrong and is
       // left in place only because existing trace consumers key on it; read
