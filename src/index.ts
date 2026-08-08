@@ -1472,8 +1472,89 @@ async function verifyArtifactWrittenReach(goal: string, _dig: string): Promise<G
     return { reached: false, completion_shapes: [],
       reason: `deterministic:artifact-malformed — ${out} exists (${body.length} bytes) but is not valid ${ext.toUpperCase()}: ${why}` };
   }
+  // PARSING IS NOT ANSWERING. A structural check grades the artifact's SHAPE; when the
+  // goal also states a question this substrate can recompute, the shape passing while the
+  // CONTENT is wrong is artifact-shaped hollow completion, and crediting it is worse here
+  // than in an ordinary verifier: this oracle exists so a family can bank its FIRST REACH
+  // and start compounding, so a wrong artifact banked as a donor teaches the whole family
+  // a wrong recipe.
+  //
+  // Measured 2026-08-08, truth = 1 (.ts files under /vessels/light-dispatch-vessel/src):
+  //   "light-dispatch-vessel,"   (EMPTY cell)  -> graded reached
+  //   "light-dispatch-vessel,0"  (WRONG value) -> graded reached
+  //   "light-dispatch-vessel,1"  (correct)     -> graded reached
+  // All three parse as CSV, so all three passed. The commit that shipped this verifier
+  // justified it with an EXTERNAL grading table that checked values against independently
+  // computed truth; the shipped gate checked only exists+parses.
+  //
+  // Narrow by construction: only the class this file can recompute WITHOUT the walk's help
+  // (count files under a named directory). Anything else recomputes to null and keeps the
+  // structural verdict exactly as before, so no goal that passes today starts failing
+  // unless its own stated answer is demonstrably absent from its own artifact.
+  const truth = await recomputeFileCountFromGoal(goal);
+  if (truth !== null) {
+    const carries = new RegExp(`(?<![\\d.])${truth}(?![\\d.])`).test(body);
+    if (!carries) {
+      return { reached: false, deterministic: true, completion_shapes: [],
+        reason: `deterministic:artifact-carries-the-wrong-value — ${out} exists and parses as ${ext.toUpperCase()} (${why}), but the goal's own question recomputes to ${truth} and the artifact does not contain it (${JSON.stringify(body.slice(0, 120))}). Right shape, wrong answer.` };
+    }
+    return { reached: true, deterministic: true, completion_shapes: [],
+      reason: `deterministic:verified-artifact-written — ${out} parses as ${ext.toUpperCase()} (${why}) AND carries the independently recomputed value ${truth}, both read from disk rather than from the walk's own report` };
+  }
+  // FORMAT IS NOT PAYLOAD. Shipping the structural check alone made this verifier a
+  // hollow GENERATOR: measured on the cold report-generation domain, reaches went 3/16 ->
+  // 10/15 while externally-correct artifacts stayed flat at 8, and hollow went 0 -> 3. A
+  // well-formed CSV carrying none of the asked-for values passed, banked a donor, and fed
+  // the reuse channel this verifier had just unblocked — the same defect as an oracle
+  // grading a subdirectory question against totalVessels, introduced by me one hour after
+  // cataloguing it.
+  //
+  // So require the CONTENT the goal named, using only what can be read off the goal text
+  // deterministically: the bare identifiers it mentions (repos/<vessel>, quoted names).
+  // If the goal named identifiable subjects, at least one must appear in the artifact.
+  // A goal naming none falls back to the structural check, which is all that is knowable.
+  const subjects = [...new Set([
+    ...((goal.match(/repos\/([\w.-]+)/g) ?? []).map((x) => x.split("/")[1] ?? "")),
+    ...((goal.match(/[\"'`]([\w.-]{3,})[\"'`]/g) ?? []).map((x) => x.replace(/[\"'`]/g, ""))),
+  ])].filter((x) => x && x.length >= 3);
+  if (subjects.length > 0 && !subjects.some((sub) => body.includes(sub))) {
+    return { reached: false, completion_shapes: [],
+      reason: `deterministic:artifact-missing-subject — ${out} is valid ${ext.toUpperCase()} but carries none of the subjects the goal named (${subjects.slice(0, 3).join(", ")}); a well-formed file that answers nothing is the artifact-shaped hollow` };
+  }
   return { reached: true, deterministic: true, completion_shapes: [],
-    reason: `deterministic:verified-artifact-written — ${out} exists and parses as ${ext.toUpperCase()} (${why}), read from disk rather than from the walk's own report` };
+    reason: `deterministic:verified-artifact-written — ${out} exists, parses as ${ext.toUpperCase()} (${why})${subjects.length ? ` and carries the named subject` : ""}, read from disk rather than from the walk's own report` };
+}
+
+/**
+ * Recompute "how many <ext> files are under <dir>" from the goal text alone.
+ *
+ * Independent by construction: it walks the filesystem here, never re-running or reading
+ * the walk's command, so it cannot agree with the walk by sharing its mistake — the
+ * self-confirming shape this file has already been caught in more than once.
+ *
+ * Returns null for anything it does not represent (no count question, no absolute
+ * directory, unreadable tree), so the caller keeps its existing verdict. A null must
+ * never read as zero: a directory that cannot be walked is unknown, not empty.
+ */
+async function recomputeFileCountFromGoal(goal: string): Promise<number | null> {
+  const m = goal.match(/how many\s+\.?([A-Za-z0-9]{1,6})\s+files?\s+(?:are\s+)?(?:under|in|beneath)\s+(\/[\w./-]+)/i);
+  if (!m) return null;
+  const ext = (m[1] ?? "").toLowerCase();
+  const dir = m[2] ?? "";
+  if (!ext || !dir || dir.includes("..")) return null;
+  let count = 0;
+  const walk = async (d: string, depth: number): Promise<boolean> => {
+    if (depth > 12) return true;
+    let entries;
+    try { entries = await readdir(d, { withFileTypes: true }); } catch { return false; }
+    for (const e of entries) {
+      const p = `${d}/${e.name}`;
+      if (e.isDirectory()) { if (!await walk(p, depth + 1)) return false; }
+      else if (e.isFile() && e.name.toLowerCase().endsWith(`.${ext}`)) count++;
+    }
+    return true;
+  };
+  return (await walk(dir, 0)) ? count : null;
 }
 
 async function verifyGitCommitCountReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
