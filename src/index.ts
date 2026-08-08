@@ -965,7 +965,72 @@ function deliverReachVerdict(
 const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
-const CONCEPT_DB_ENDPOINT = process.env.CONCEPT_DB_ENDPOINT ?? "http://127.0.0.1:8260";
+// CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
+// Leaving it declared but unused invites the next call site to reach for it again, and
+// it is wrong on every deployment where concept-db does not run locally.
+//
+// ONE way to read concept-db, because there are three separate ways to get nothing
+// back from it and each of them looks like an empty store:
+//   1. TRANSPORT — a pinned host:port, while concept-db is MASKED
+//      wherever it does not own its data (law 11). Measured 1909/1909 failures in 24h.
+//   2. PRODUCER — TWO vessels advertise the `concept` shape with INCOMPATIBLE contracts
+//      (concept-db answers a search; development-vessel answers a pattern-mining
+//      summary). Discovery's generic /resolve prefers a local plain-HTTP row, so the
+//      wrong one wins wherever development-vessel is local. A shape collision cannot be
+//      resolved by preference order — pick the producer BY NAME.
+//   3. ENVELOPE — a DIRECT resolve answers {content:[...]}; the SAME resolve over the
+//      libp2p egress answers {content:{shape,produced_by,body:[...]}}. Reading only
+//      `content` yields an object where an array was expected.
+// Returns null when concept-db could not be ASKED, and [] when it was asked and had
+// nothing. Callers must not collapse those two — they are different facts.
+let _conceptDbUrl: string | null = null;
+let _conceptDbResolvedAt = 0;
+async function conceptDbUrl(): Promise<string | null> {
+  if (_conceptDbUrl && Date.now() - _conceptDbResolvedAt < 300_000) return _conceptDbUrl;
+  try {
+    const vr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "concept" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!vr.ok) return null;
+    const vj = await vr.json() as { content?: { vessels?: Array<Record<string, unknown>> } };
+    const vessels = Array.isArray(vj?.content?.vessels) ? vj.content!.vessels! : [];
+    const named = vessels.filter((x) => /concept-db/i.test(String(x?.["id"] ?? x?.["vesselId"] ?? "")));
+    const http = named.find((x) => x?.["protocol"] !== "libp2p" && x?.["endpoint"]);
+    const relay = named.find((x) => Array.isArray(x?.["libp2p_multiaddr"]) && (x["libp2p_multiaddr"] as string[])[0]);
+    if (http) {
+      const re = String(http["resolve_endpoint"] ?? "/resolve");
+      _conceptDbUrl = (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(http["endpoint"]).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
+    } else if (relay) {
+      const addr = (relay["libp2p_multiaddr"] as string[])[0]!;
+      const vid = String(relay["id"] ?? relay["vesselId"] ?? "");
+      _conceptDbUrl = `${FED_TRANSPORT_EGRESS}/egress/resolve?target=${encodeURIComponent(addr)}${vid ? `&vessel=${encodeURIComponent(vid)}` : ""}`;
+    } else { _conceptDbUrl = null; }
+    _conceptDbResolvedAt = Date.now();
+    return _conceptDbUrl;
+  } catch { return null; }
+}
+async function recallConceptRows(query: string, limit: number, timeoutMs = 10_000): Promise<Array<{ summary?: string; content?: string }> | null> {
+  const url = await conceptDbUrl();
+  if (!url) return null;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "concept", query, limit } } }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) return null;
+    const j = await r.json() as { content?: unknown; body?: unknown };
+    const inner = (j.content && typeof j.content === "object" && !Array.isArray(j.content))
+      ? (j.content as { body?: unknown }).body : undefined;
+    const rows = [j.content, inner, j.body].find((x) => Array.isArray(x)) as
+      Array<{ summary?: string; content?: string }> | undefined;
+    return rows ?? [];
+  } catch { return null; }
+}
 
 // Goal-reaching verification (2026-06-22). status=completed only means the
 // selected template EXECUTED, not that the GOAL was reached — many completions
@@ -4798,11 +4863,17 @@ async function runGoalAsPoolWalk(
    } catch { /* fail-open: no vessel schema advertised, fall back to how-to + goal text */ }
    let howToGuidance = "";
     try {
-      const hq = encodeURIComponent(`${shape} pointer arguments payload fields how to invoke resolver`);
-      const hr = await fetch(`${CONCEPT_DB_ENDPOINT}/concepts/search?query=${hq}&limit=3`, { headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}, signal: AbortSignal.timeout(4000) });
-      if (hr.ok) {
-        const hj = await hr.json() as { concepts?: Array<{ summary?: string; content?: string }> };
-        const lines = (hj.concepts ?? []).map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 400)}`).filter((s) => s.length > 8);
+      // Same three faults as the walk-time recall, same fix: pinned port -> masked
+      // vessel, colliding `concept` producers, and a federated envelope the old parse
+      // could not read. This site teaches the drafter the resolver's pointer-arg
+      // structure, so a silent zero here is a drafter left to guess the field names.
+      // The query is short and shape-specific because the surviving retrieval is
+      // AND-matched: the long sentence this used to send ("... pointer arguments
+      // payload fields how to invoke resolver") could only match a document containing
+      // EVERY one of those words.
+      const rows = await recallConceptRows(`${shape} pointer payload`, 3, 4000);
+      {
+        const lines = (rows ?? []).map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 400)}`).filter((s) => s.length > 8);
         if (lines.length) howToGuidance = `PAYLOAD GUIDANCE for shape "${shape}" from the substrate's knowledge store — the correct pointer-arg field structure to emit (follow it EXACTLY, including any nested objects it names):\n${lines.join("\n")}\n\n`;
       }
     } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
@@ -7780,71 +7851,24 @@ async function runGoalWithRecovery(
         const _stop = new Set(["the","and","for","that","with","from","this","into","under","are","was","how","many","what","which","then","than","when","where","file","files","using","use","report","name","list","each"]);
         const _terms = [...new Set((goal.toLowerCase().match(/[a-z][a-z_]{3,}/g) ?? []).filter((w) => !_stop.has(w)))]
           .sort((a, b) => b.length - a.length);
-        // WHICH PRODUCER, not merely which route. TWO vessels advertise the `concept`
-        // shape with INCOMPATIBLE contracts: concept-db answers a SEARCH ({content:[...]})
-        // while development-vessel answers a pattern-mining summary
-        // ({body:{concept_name,...}}). Discovery's generic /resolve prefers a local
-        // plain-HTTP row, so wherever development-vessel is local this read resolved to
-        // the wrong vessel and returned "(no dominant pattern found)" — recall of nothing,
-        // reported as a clean success. Observed on the FIRST dispatch after the transport
-        // fix landed, which is the only reason it was caught. Pick the concept-db row by
-        // name; a shape collision cannot be resolved by preference order.
-        let _cdbUrl: string | null = null;
-        try {
-          const vr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "concept" } }),
-            signal: AbortSignal.timeout(5_000),
-          });
-          if (vr.ok) {
-            const vj = await vr.json() as { content?: { vessels?: Array<Record<string, unknown>> } };
-            const vessels = Array.isArray(vj?.content?.vessels) ? vj.content!.vessels! : [];
-            const named = vessels.filter((x) => /concept-db/i.test(String(x?.["id"] ?? x?.["vesselId"] ?? "")));
-            const http = named.find((x) => x?.["protocol"] !== "libp2p" && x?.["endpoint"]);
-            const relay = named.find((x) => Array.isArray(x?.["libp2p_multiaddr"]) && (x["libp2p_multiaddr"] as string[])[0]);
-            if (http) {
-              const re = String(http["resolve_endpoint"] ?? "/resolve");
-              _cdbUrl = (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(http["endpoint"]).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
-            } else if (relay) {
-              const addr = (relay["libp2p_multiaddr"] as string[])[0]!;
-              const vid = String(relay["id"] ?? relay["vesselId"] ?? "");
-              _cdbUrl = `${FED_TRANSPORT_EGRESS}/egress/resolve?target=${encodeURIComponent(addr)}${vid ? `&vessel=${encodeURIComponent(vid)}` : ""}`;
-            }
-          }
-        } catch { _cdbUrl = null; }
+        // Producer selection and envelope unwrapping now live in recallConceptRows,
+        // which distinguishes "could not be asked" (null) from "asked, nothing there"
+        // ([]). Both used to log identically, which is how a read against the WRONG
+        // vessel passed as an empty store.
         let recalled: string[] = [];
         let _hitWidth = 0;
-        if (!_cdbUrl) {
-          tap(`[walk-concepts] no concept-db producer for shape "concept" — recall unavailable (NOT an empty result)`);
-        }
-        for (let take = _cdbUrl ? Math.min(3, _terms.length) : 0; take >= 1 && recalled.length === 0; take--) {
+        let _asked = true;
+        for (let take = Math.min(3, _terms.length); take >= 1 && recalled.length === 0; take--) {
           const q = _terms.slice(0, take).join(" ");
           if (!q) break;
-          const cr = await fetch(_cdbUrl!, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ impulse: { pointer: { type: "concept", query: q, limit: 5 } } }),
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!cr.ok) break;
-          // ENVELOPE DIVERGENCE, again. A DIRECT concept-db resolve answers
-          // {content:[...]}; the SAME resolve over the libp2p egress answers
-          // {content:{shape,produced_by,body:[...]}}. Reading only `content` returns an
-          // object where an array was expected, which .map()s to nothing — recall of
-          // nothing, indistinguishable from an empty store. The file already documents
-          // this divergence for resolver_schema fetches; it applies to every federated
-          // read, so unwrap both here rather than assume the local shape.
-          const cj = await cr.json() as { content?: unknown; body?: unknown };
-          const _inner = (cj.content && typeof cj.content === "object" && !Array.isArray(cj.content))
-            ? (cj.content as { body?: unknown }).body : undefined;
-          const _rows = [cj.content, _inner, cj.body].find((x) => Array.isArray(x)) as
-            Array<{ summary?: string; content?: string }> | undefined;
-          recalled = (_rows ?? [])
+          const rows = await recallConceptRows(q, 5);
+          if (rows === null) { _asked = false; break; }
+          recalled = rows
             .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
             .filter((s) => s.length > 8);
           _hitWidth = take;
         }
+        if (!_asked) tap(`[walk-concepts] concept-db could not be asked (no producer or transport error) — recall unavailable, NOT an empty result`);
         if (recalled.length > 0) {
           walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
           tap(`[walk-concepts] consulted concept-db via discovery: ${recalled.length} concept(s) recalled at ${_hitWidth} term(s) "${_terms.slice(0, _hitWidth).join(" ")}" for goal_hash=${goalHashOf(goal)}`);
