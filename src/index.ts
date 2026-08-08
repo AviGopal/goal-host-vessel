@@ -3477,7 +3477,25 @@ async function fileMissingVerifierGap(goal: string): Promise<void> {
       const noun = (g.match(/\b(commits?|files?|lines?|extensions?|subdirector\w+|functions?|exports?|imports?|rows?|columns?|entries|records?|vessels?|shapes?|branch\w*|tags?|notes?|csv|xml|json)\b/) ?? [])[1];
       if (verb && noun) family = `unclassified-${verb.replace(/\s+/g, "-")}-${noun.replace(/s$/, "")}`;
     }
-    if (!family || _filedVerifierGaps.has(family)) return;
+    // SAY WHICH RETURN FIRED. Both of these exited silently, so a no-oracle refusal that
+    // filed no gap was indistinguishable from one that filed successfully — and that is
+    // exactly what happened: the refusal fired, this function logged NOTHING, and the store
+    // still shows 0 missing-verifier gaps out of 109. Three explanations were live and none
+    // could be told apart from outside.
+    //
+    // This is the SEVENTH place today where a failed lookup reported itself as absence
+    // (concept recall, producer discovery, deliverable-shapes, the DB pressure probe, the
+    // rebind refusal path, an artifact verifier grading format as answer — and here). It is
+    // one habit of construction rather than seven bugs, and it is the direct reason the
+    // system cannot observe its own failures. No behaviour change; only the silence goes.
+    if (!family) {
+      console.log(`[missing-verifier] NO GAP: could not derive a family from the goal — the refusal named an ungradable class and nothing was recorded: "${goal.slice(0, 90)}"`);
+      return;
+    }
+    if (_filedVerifierGaps.has(family)) {
+      console.log(`[missing-verifier] NO GAP: family "${family}" already filed in THIS PROCESS — the dedup set is in-memory and never consults the store, so a filed-then-closed gap can never be re-filed`);
+      return;
+    }
     _filedVerifierGaps.add(family);
     const gap = missingVerifierGap(family, goal);
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
