@@ -6274,7 +6274,34 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (_fsBlocked.length > 0) {
         tap(`[goal-host-vessel] walk(${opts.surface}): satisfier REFUSED filesystem-write shapes ${JSON.stringify(_fsBlocked)} — the bare satisfier has no snapshot/rollback and an edit-effect reach is uncreditable without a landed sha; edits must route through feature_compose / patch_with_tools`);
       }
-      const satisfiableNow = preferComposition ? undefined : eligibleForSatisfier.find((s) => !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s));
+      // REUSE BEFORE DERIVE, ON THE SATISFIER PLANE TOO.
+      //
+      // The reuse tie-break below matches `pathwaySet` against `candidates`, and a
+      // satisfier is never a candidate — it is chosen here, in a separate branch, by
+      // taking the FIRST eligible shape in whatever order the shape list happens to
+      // carry. So a proven pathway whose steps are satisfier steps could not steer the
+      // walk at all, however good its record.
+      //
+      // That is not an edge case, it is the majority: of the pathways that clear the
+      // live acceptance bar, 63.5% are satisfier-ONLY and 40% of ALL recorded path
+      // steps are `satisfier:<shape>` pseudo-ids. The composition the reuse commit
+      // cites as its own motivating example — ['satisfier:shellResult',
+      // 'satisfier:memoryNote_write'], cover 1.0, 6/6 reached — is exactly one of
+      // these. The store had it, the walk could not see it, and the walk re-derived.
+      //
+      // Ordering, not gating: a proven shape goes first, everything else keeps its
+      // place behind it. When the pathway has nothing to say the selection is
+      // byte-for-byte what it was, so this cannot make a walk worse — it can only stop
+      // one from re-deriving a step it has already been shown.
+      const _satEligible = eligibleForSatisfier.filter((s) =>
+        !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s))
+        && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s))
+        && !satisfierTried.has(s) && !minted.has(s));
+      const _satProven = _satEligible.filter((s) => pathwaySet.has(`satisfier:${String(s)}`));
+      if (_satProven.length > 0) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): REUSE-BEFORE-DERIVE (satisfier) — ${JSON.stringify(_satProven)} ${_satProven.length === 1 ? "is a step" : "are steps"} of a composition already proven to reach this goal family; satisfying ${String(_satProven[0])} ahead of ${JSON.stringify(_satEligible.filter((s) => !_satProven.includes(s)))} (pathway_steps=${pathwaySet.size})`);
+      }
+      const satisfiableNow = preferComposition ? undefined : (_satProven[0] ?? _satEligible[0]);
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
         if (resolved) {
