@@ -3146,13 +3146,20 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     // not task structure, so a donor needing nearly the same command is rejected for being
     // worded differently.
     //
-    // Lowered to 0.25, deliberately not removed. Every causal guard downstream is unchanged
+    // 0.5 -> 0.25 was directionally right and numerically insufficient: with the tally in
+    // place the same family then reported scaffold-too-weak(0.18) x8, still above 0.25 and
+    // still refusing every donor. 0.15 is chosen from that measurement, not by feel — it is
+    // the first value below the 0.18 these goals actually score. If the literal gate then
+    // rejects them, the tally will say slot-gate-rejected and the answer moves from
+    // retrieval to what gets banked; that is the informative outcome either way.
+    //
+    // Lowered deliberately rather than removed. Every causal guard downstream is unchanged
     // and still has to pass: type-congruence, the injection guard, the sub-token guard, and
     // above all the literal gate requiring each varying slot's content to appear EXACTLY
     // ONCE in the donor command. A structurally incompatible donor now gets REJECTED BY THE
     // REAL GUARD and says so as slot-gate-rejected, instead of being discarded unexamined —
     // which also means the tally now distinguishes "no compatible donor" from "never looked".
-    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.25) { refuse(`scaffold-too-weak(${(lcsLen / Math.max(la, lb)).toFixed(2)})`); continue; } // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
+    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.15) { refuse(`scaffold-too-weak(${(lcsLen / Math.max(la, lb)).toFixed(2)})`); continue; } // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
     // backtrack the alignment; the gaps between matched anchors are slot token-index ranges
     const slots: Array<{ ai0: number; ai1: number; bi0: number; bi1: number }> = [];
     let i = 0, j = 0, ai0 = 0, bi0 = 0;
