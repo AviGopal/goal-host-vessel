@@ -5763,6 +5763,28 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (r == null) return "the resolver produced no body";
         // GRADE EVERY LEVEL, NOT JUST THE INNERMOST.
         //
+        // CORRECTION (same session, after this landed as 7deef44): the commit message
+        // claimed this fixes the gap-closing first-reach blocker. IT DOES NOT, and the
+        // claim is withdrawn here rather than left standing in the history.
+        //
+        // Two checks against the LIVE system contradict it. (a) The real body is
+        //   {"success":false,"error":"shape is required for shape_gap_resolution"}
+        // — flat, with no `shape` key, so there is no envelope to unwrap past and the
+        // pre-existing code already graded it at the top level. (b) rawResolve returns
+        // NULL on `success === false` well before _degenerateReason is consulted, so that
+        // body never reaches this function at all.
+        //
+        // Therefore the walk log line `VESSEL-RESOLVE SATISFIER produced
+        // "shape_gap_resolution" directly` cannot come from that resolve — the satisfier
+        // reaches the shape by some other route that bypasses rawResolve's rejection, and
+        // THAT route is the unfound blocker. Do not re-derive this from the code paths, as
+        // I did twice; fetch the body the satisfier actually receives on that route first.
+        //
+        // What this block still earns on its own merits: grading every level is strictly
+        // stronger than grading only the innermost, it cannot accept anything previously
+        // refused, and its 7/7 test uses real fleet bodies. Keep it; just do not credit it
+        // with a fix it does not deliver.
+        //
         // The unwrap below walks {shape, body:{...}} envelopes inward. It used to grade ONLY
         // the final inner object, which discards the level where the denial usually lives: a
         // vessel resolve answers {"success":false,"shape":"X","body":{...}} — the `success:false`
