@@ -8420,6 +8420,36 @@ If one of those sibling shapes is the action that would create what the goal ask
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT banking "${sh}" — the command uses \`echo\` with a backslash escape, whose output differs between sh and bash; a shell-dependent donor is not a reusable recipe`);
           continue;
         }
+        // BANK ON A VERIFIED REACH, NOT ANY REACH.
+        //
+        // A donor was banked whenever the walk REACHED, and reach is not correctness — the
+        // gate accepts an LLM judge's verdict as readily as an independent recomputation. So
+        // a walk that reached on a judge's say-so banked its command, and every later goal in
+        // the family adapted from it.
+        //
+        // Measured: after the retrieval key was fixed, adaptation fires 41/51 and answer
+        // correctness stays FLAT (early 4/10 = 40%, late 15/41 = 37%, n=51). Reuse reproduces
+        // the quality of what was banked rather than improving on it, and the donor library
+        // holds 407 entries selected by PRODUCTION, not by verified correctness. This is the
+        // last standing explanation for that null.
+        //
+        // The `verdict` object is not in scope here — banking sits inside the `if (reached)`
+        // branch, before grading is assembled — but `goalReachReason` is, and a deterministic
+        // verdict is identifiable from it: the independent oracles emit
+        // `deterministic:verified-*` or `deterministic:independent-recompute-agrees`, all of
+        // which recompute the answer from the authoritative source instead of believing the
+        // walk. Gate on that rather than restructuring the control flow.
+        //
+        // FAIL-OPEN on absence, deliberately: an empty reason keeps the previous behaviour,
+        // so this NARROWS what gets banked instead of switching banking off. A family whose
+        // reaches are only ever LLM-judged now banks nothing — which is the honest outcome:
+        // it has no verified command to teach anyone.
+        const _reason = String(goalReachReason ?? "");
+        const _verifiedReach = _reason === "" || /^deterministic:(verified-|independent-recompute-agrees)/.test(_reason);
+        if (!_verifiedReach) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT banking "${sh}" — reached on a non-deterministic verdict (${_reason.slice(0, 64)}); a donor whose own answer was never independently checked teaches the whole family its mistake`);
+          continue;
+        }
         if (opts.learningMode !== "observe" && producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
           reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal });
