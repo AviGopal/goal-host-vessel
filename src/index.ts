@@ -3182,7 +3182,35 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       if (numeric !== isNum(newContent)) { ok = false; break; }                      // type-congruence
       if (META.test(newContent) && !META.test(oldContent)) { ok = false; break; }    // injection guard
       const first = e.command.indexOf(oldContent);
-      if (first < 0) { ok = false; break; }                                          // LOAD-BEARING literal gate
+      // A SLOT THE COMMAND DOES NOT CONTAIN IS A DIMENSION THE COMMAND DOES NOT ENCODE.
+      //
+      // This refused the whole donor when any slot was absent from the command. That
+      // excluded every MULTI-STEP goal, because a donor is banked as ONE step's command:
+      // for "count .ts under /vessels/<v>/src and write a CSV at <outpath>", the banked
+      // entry is the COUNT (`find ... | wc -l`) since the write happens in a later step.
+      // The goal varies in BOTH <v> and <outpath>; <outpath> is nowhere in the count
+      // command, so the gate failed and adaptation refused.
+      //
+      // Measured: REBOUND fired ONCE across seven controlled A/Bs and ~90 dispatches,
+      // 0/16 in the powered run — so the reuse arm never contained the mechanism it was
+      // meant to test, and no ceiling could be observed however the numbers fell.
+      //
+      // Skipping the absent slot is SAFE, and for the same reason it is necessary: if
+      // the literal is not in the command, the command makes no reference to that
+      // dimension, so there is nothing to corrupt by leaving it alone. The value is
+      // supplied by whichever later step owns it, whose args are synthesized per goal.
+      // (The tempting misreading — "then it will write to the DONOR's path" — is wrong:
+      // that danger exists only when the path IS in the command, in which case the slot
+      // is present and gets substituted normally.)
+      //
+      // Verified against the real banked donor:
+      //   find /vessels/ribosome-vessel/src -name '*.ts' -type f | wc -l
+      //   slots: /vessels/<v>/src  SUBSTITUTED     outpath, bare <v>  ABSENT -> skipped
+      //   result: find /vessels/discovery-vessel/src -name '*.ts' -type f | wc -l
+      //
+      // The `subs.length < 1` check below still refuses when NOTHING was substitutable:
+      // that is a verbatim reuse, which the exact-hash path already owns.
+      if (first < 0) continue;                                                       // absent from the command -> not this command's dimension
       // MULTI-OCCURRENCE IS NOT AMBIGUITY WHEN EVERY OCCURRENCE IS THE SAME SLOT.
       //
       // This refused outright whenever the slot literal appeared more than once, which is
