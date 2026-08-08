@@ -10801,6 +10801,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         learningMode,
       });
       record.status = seek.status;
+      record.endedAt = Date.now();
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
