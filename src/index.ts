@@ -3243,22 +3243,25 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       // sub-token guard below only protects the single-occurrence case.
       const occurrences: number[] = [];
       { let at = first; while (at >= 0) { occurrences.push(at); at = e.command.indexOf(oldContent, at + oldContent.length); } }
-      // REVERTED (was d9a2597, which widened this to allow multi-occurrence substitution for
-      // non-numeric slots >=4 chars). Three reasons, in order of weight:
-      //   1. Its stated reason was falsified — REBOUND stayed 0/12 after the widening, and
-      //      the refusal tally later showed the scaffold pre-filter was the actual gate.
-      //   2. It was never shown to help: adaptation only began firing after the pre-filter
-      //      came down (0.5 -> 0.25 -> 0.15), not after this.
-      //   3. There is now evidence of harm. Artifacts from the rebound population contain
-      //      malformed rows — "development-vessel/12" (delimiter replaced) and
-      //      "stateful-ui-vessel,src,1" (a path fragment spliced in as a third column) —
-      //      which is what substituting MULTIPLE spans per slot looks like when one of them
-      //      was not the slot. Correct counts appear alongside them (concept-db,11;
-      //      goal-host-vessel,6), so the command body transfers fine and the SPLICE is what
-      //      corrupts the output.
-      // A wider substitution surface is not worth carrying on a change with a falsified
-      // premise and no measured benefit. Back to one occurrence, refuse on ambiguity.
-      if (occurrences.length > 1) { ok = false; break; }                             // ambiguous occurrence -> refuse
+      // RESTORED. I reverted this in 6b0701a on three grounds and a matched rerun refuted
+      // all three:
+      //   "premise falsified" — I judged it by REBOUND staying 0/12 immediately after it
+      //     deployed, but the scaffold pre-filter was still blocking every candidate then.
+      //     The two changes are both necessary and neither sufficient; I evaluated the
+      //     first while the second gate was still shut.
+      //   "no measured benefit" — with the pre-filter at 0.15 and this in place, REBOUND
+      //     fired 41/51. With this reverted, 1/54. It is load-bearing.
+      //   "evidence of harm" — malformed rows persist without it
+      //     ("/workspace/git/super-repo/repos/concept-db/src/routes,1", a header row
+      //     emitted as data), so the splice corruption is independent of this gate.
+      //
+      // Multi-occurrence is not ambiguity when every occurrence is the SAME literal being
+      // replaced by the SAME content: the causal literal gate is unchanged, it applies N
+      // times instead of once. Narrow on purpose — non-numeric slots of >=4 chars only,
+      // because a short or numeric literal can collide with an unrelated span and the
+      // sub-token guard protects only the single-occurrence case.
+      const multiOk = !numeric && oldContent.length >= 4;
+      if (occurrences.length > 1 && !multiOk) { ok = false; break; }                 // ambiguous occurrence -> refuse
       if (numeric) {                                                                 // sub-token guard: a numeric literal must not be embedded in a larger number (e.g. "6" inside "16"/"6.5")
         const bch = first > 0 ? e.command[first - 1] : "";
         const ach = e.command[first + oldContent.length] ?? "";
