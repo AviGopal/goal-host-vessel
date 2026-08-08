@@ -7752,20 +7752,67 @@ async function runGoalWithRecovery(
         const _stop = new Set(["the","and","for","that","with","from","this","into","under","are","was","how","many","what","which","then","than","when","where","file","files","using","use","report","name","list","each"]);
         const _terms = [...new Set((goal.toLowerCase().match(/[a-z][a-z_]{3,}/g) ?? []).filter((w) => !_stop.has(w)))]
           .sort((a, b) => b.length - a.length);
-        let recalled: string[] = [];
-        let _hitWidth = 0;
-        for (let take = Math.min(3, _terms.length); take >= 1 && recalled.length === 0; take--) {
-          const q = _terms.slice(0, take).join(" ");
-          if (!q) break;
-          const cr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+        // WHICH PRODUCER, not merely which route. TWO vessels advertise the `concept`
+        // shape with INCOMPATIBLE contracts: concept-db answers a SEARCH ({content:[...]})
+        // while development-vessel answers a pattern-mining summary
+        // ({body:{concept_name,...}}). Discovery's generic /resolve prefers a local
+        // plain-HTTP row, so wherever development-vessel is local this read resolved to
+        // the wrong vessel and returned "(no dominant pattern found)" — recall of nothing,
+        // reported as a clean success. Observed on the FIRST dispatch after the transport
+        // fix landed, which is the only reason it was caught. Pick the concept-db row by
+        // name; a shape collision cannot be resolved by preference order.
+        let _cdbUrl: string | null = null;
+        try {
+          const vr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ pointer: { type: "concept", query: q, limit: 5 } }),
+            body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "concept" } }),
+            signal: AbortSignal.timeout(5_000),
+          });
+          if (vr.ok) {
+            const vj = await vr.json() as { content?: { vessels?: Array<Record<string, unknown>> } };
+            const vessels = Array.isArray(vj?.content?.vessels) ? vj.content!.vessels! : [];
+            const named = vessels.filter((x) => /concept-db/i.test(String(x?.["id"] ?? x?.["vesselId"] ?? "")));
+            const http = named.find((x) => x?.["protocol"] !== "libp2p" && x?.["endpoint"]);
+            const relay = named.find((x) => Array.isArray(x?.["libp2p_multiaddr"]) && (x["libp2p_multiaddr"] as string[])[0]);
+            if (http) {
+              const re = String(http["resolve_endpoint"] ?? "/resolve");
+              _cdbUrl = (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(http["endpoint"]).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
+            } else if (relay) {
+              const addr = (relay["libp2p_multiaddr"] as string[])[0]!;
+              const vid = String(relay["id"] ?? relay["vesselId"] ?? "");
+              _cdbUrl = `${FED_TRANSPORT_EGRESS}/egress/resolve?target=${encodeURIComponent(addr)}${vid ? `&vessel=${encodeURIComponent(vid)}` : ""}`;
+            }
+          }
+        } catch { _cdbUrl = null; }
+        let recalled: string[] = [];
+        let _hitWidth = 0;
+        if (!_cdbUrl) {
+          tap(`[walk-concepts] no concept-db producer for shape "concept" — recall unavailable (NOT an empty result)`);
+        }
+        for (let take = _cdbUrl ? Math.min(3, _terms.length) : 0; take >= 1 && recalled.length === 0; take--) {
+          const q = _terms.slice(0, take).join(" ");
+          if (!q) break;
+          const cr = await fetch(_cdbUrl!, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ impulse: { pointer: { type: "concept", query: q, limit: 5 } } }),
             signal: AbortSignal.timeout(10_000),
           });
           if (!cr.ok) break;
-          const cj = await cr.json() as { content?: Array<{ summary?: string; content?: string }> };
-          recalled = (cj.content ?? [])
+          // ENVELOPE DIVERGENCE, again. A DIRECT concept-db resolve answers
+          // {content:[...]}; the SAME resolve over the libp2p egress answers
+          // {content:{shape,produced_by,body:[...]}}. Reading only `content` returns an
+          // object where an array was expected, which .map()s to nothing — recall of
+          // nothing, indistinguishable from an empty store. The file already documents
+          // this divergence for resolver_schema fetches; it applies to every federated
+          // read, so unwrap both here rather than assume the local shape.
+          const cj = await cr.json() as { content?: unknown; body?: unknown };
+          const _inner = (cj.content && typeof cj.content === "object" && !Array.isArray(cj.content))
+            ? (cj.content as { body?: unknown }).body : undefined;
+          const _rows = [cj.content, _inner, cj.body].find((x) => Array.isArray(x)) as
+            Array<{ summary?: string; content?: string }> | undefined;
+          recalled = (_rows ?? [])
             .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
             .filter((s) => s.length > 8);
           _hitWidth = take;
