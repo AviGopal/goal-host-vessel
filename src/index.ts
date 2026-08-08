@@ -3210,7 +3210,15 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       //
       // The `subs.length < 1` check below still refuses when NOTHING was substitutable:
       // that is a verbatim reuse, which the exact-hash path already owns.
-      if (first < 0) continue;                                                       // absent from the command -> not this command's dimension
+      if (first < 0) {
+  const oldContentToks = oldContent.split(/\s+/);
+  if (oldContentToks.some((tok) => e.command.includes(tok))) {
+    ok = false;
+    break;
+  } else {
+    continue;
+  }
+}                                                       // absent from the command -> not this command's dimension
       // MULTI-OCCURRENCE IS NOT AMBIGUITY WHEN EVERY OCCURRENCE IS THE SAME SLOT.
       //
       // This refused outright whenever the slot literal appeared more than once, which is
