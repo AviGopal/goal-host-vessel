@@ -7731,20 +7731,50 @@ async function runGoalWithRecovery(
       // lessons. FAIL-OPEN: concept-db down or slow (4s cap) must not delay the walk.
       let walkConceptContext = "";
       try {
-        const cq = encodeURIComponent(goal.slice(0, 300));
-        const cr = await fetch(`${CONCEPT_DB_ENDPOINT}/concepts/search?query=${cq}&limit=5`, {
-          headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (cr.ok) {
-          const cj = await cr.json() as { concepts?: Array<{ summary?: string; content?: string }> };
-          const recalled = (cj.concepts ?? [])
+        // ROUTE THROUGH DISCOVERY, never a pinned port. CONCEPT_DB_ENDPOINT defaults to
+        // http://127.0.0.1:8260, and concept-db is MASKED wherever it does not own its data
+        // (law 11) — so this read failed on EVERY goal: 1909 consecutive
+        // "[walk-concepts] consult failed (fail-open)" in 24 hours, zero successes, while the
+        // store held 90 reach_gate_lesson and 200+ impulse_signature concepts the walk was
+        // never shown. The WRITE side of this same channel was already converted to
+        // DISCOVERY_ENDPOINT/resolve (see the reach-gate-lesson write above); only the read
+        // side was left pinned. Same wire, same auth, one working route.
+        //
+        // The query is REDUCED, not the raw goal. concept-db's surviving lexical path is
+        // AND-matched — measured against the live store: "reach" returns 5, "hollow reach gate"
+        // returns 5, but "reach zzzznotaword" returns 0, so ONE out-of-vocabulary token zeroes
+        // the whole result. A real goal sentence always carries tokens absent from the store
+        // (vessel names, path fragments, numbers), so passing goal.slice(0, 300) as the query
+        // returns nothing BY CONSTRUCTION, and fixing only the transport would have replaced a
+        // loud failure with a silent zero. Longest content words first (they carry the most
+        // signal), narrowing until something matches; the tap records which width hit, so a
+        // recall that only ever succeeds at one term is visible rather than inferred.
+        const _stop = new Set(["the","and","for","that","with","from","this","into","under","are","was","how","many","what","which","then","than","when","where","file","files","using","use","report","name","list","each"]);
+        const _terms = [...new Set((goal.toLowerCase().match(/[a-z][a-z_]{3,}/g) ?? []).filter((w) => !_stop.has(w)))]
+          .sort((a, b) => b.length - a.length);
+        let recalled: string[] = [];
+        let _hitWidth = 0;
+        for (let take = Math.min(3, _terms.length); take >= 1 && recalled.length === 0; take--) {
+          const q = _terms.slice(0, take).join(" ");
+          if (!q) break;
+          const cr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ pointer: { type: "concept", query: q, limit: 5 } }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!cr.ok) break;
+          const cj = await cr.json() as { content?: Array<{ summary?: string; content?: string }> };
+          recalled = (cj.content ?? [])
             .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
             .filter((s) => s.length > 8);
-          if (recalled.length > 0) {
-            walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
-            tap(`[walk-concepts] consulted concept-db: ${recalled.length} concepts recalled for goal_hash=${goalHashOf(goal)}`);
-          }
+          _hitWidth = take;
+        }
+        if (recalled.length > 0) {
+          walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
+          tap(`[walk-concepts] consulted concept-db via discovery: ${recalled.length} concept(s) recalled at ${_hitWidth} term(s) "${_terms.slice(0, _hitWidth).join(" ")}" for goal_hash=${goalHashOf(goal)}`);
+        } else {
+          tap(`[walk-concepts] no concepts recalled for goal_hash=${goalHashOf(goal)} (terms tried: ${_terms.slice(0, 3).join(",") || "none"})`);
         }
       } catch (e) {
         console.warn(`[walk-concepts] consult failed (fail-open): ${(e as Error).message}`);
