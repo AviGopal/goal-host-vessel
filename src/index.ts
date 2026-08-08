@@ -7019,11 +7019,31 @@ If one of those sibling shapes is the action that would create what the goal ask
         // pathway that may have been perfectly good, which is the "a right answer punished
         // is worse than a wrong one credited" failure with an extra step.
         const _noOracle = /^deterministic:no-oracle-for-goal-class\b/.test(verdict.reason ?? "");
-        if (!_noOracle) {
+        // NEGATIVE SCORES FOR A PATHWAY THAT MEASURED NOTHING.
+        //
+        // Withholding β on `no-oracle-for-goal-class` is right when the walk DID the work and
+        // we simply cannot check it — the missing verifier is ours. But it was withholding β
+        // in the other case too: when the walk produced nothing measurable at all. Those
+        // pathways (`auto-bridge-fileWriteResult`, `observe-orthogonal-patterns`,
+        // `universal-tool-fallback` on a countable question) then keep their priors intact,
+        // get re-selected next round, and fail identically — which is precisely why 126 of 168
+        // class-runs never varied and reach is invariant under repetition. Selection cannot
+        // move off a bad arm that is never charged for being bad.
+        //
+        // So split it on EVIDENCE, not on the reason code: if the walk emitted a candidate
+        // measurement (a number or a filename in an answer-context line), the failure is
+        // ours to verify and β stays withheld. If it emitted nothing measurable, the PATHWAY
+        // failed on its own terms and takes the β — no oracle is needed to observe that a
+        // countable question came back with no measurement in it.
+        const _measured = _noOracle
+          ? (extractEmittedNumbers(contentDigest).length > 0 || extractEmittedTokens(contentDigest).length > 0)
+          : false;
+        if (!_noOracle || !_measured) {
           const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
           opts.learningSink?.alphaBetaDelta.push(_abDelta);
+          if (_noOracle) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED and NOTHING MEASURABLE emitted — β APPLIED to ${lastPick}; no oracle is needed to observe that a countable question produced no measurement`);
         } else {
-          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — the walk emitted a candidate measurement we cannot verify; the gap is the missing verifier, not the pathway`);
         }
         tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
