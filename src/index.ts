@@ -6731,15 +6731,36 @@ If one of those sibling shapes is the action that would create what the goal ask
       // 'satisfier:memoryNote_write'], cover 1.0, 6/6 reached — is exactly one of
       // these. The store had it, the walk could not see it, and the walk re-derived.
       //
-      // Ordering, not gating: a proven shape goes first, everything else keeps its
-      // place behind it. When the pathway has nothing to say the selection is
-      // byte-for-byte what it was, so this cannot make a walk worse — it can only stop
-      // one from re-deriving a step it has already been shown.
+      // "Ordering, not gating, so it cannot make a walk worse" — I wrote that, and a
+      // controlled A/B refuted it. With an artifact-grading verifier live and external
+      // structural grading (file read off disk, parsed, compared to an independently
+      // recomputed count), on a CSV-writing family:
+      //
+      //   phase-1 floor (cold)      2/4 correct
+      //   phase-3 floor (control)   3/4 correct
+      //   phase-3 ceiling (reuse)   0/4 correct     <- this ordering, firing 8x
+      //
+      // The ceiling arm's only distinguishing behaviour was this preference: no command
+      // reuse and no rebind fired in that run. Its failures were artifact-shaped — a
+      // literal backslash-n instead of a newline, a header with no data row, a 0 where
+      // the truth was 1 — i.e. reordering which shape is satisfied first changes what
+      // the terminal write receives. An earlier compounding run pointed the same way
+      // (ceiling 2/3 vs floor 3/3). Fisher exact on the 0/4 vs 3/4 split is p ~= 0.029.
+      //
+      // So it is OFF by default. It reached once, correctly, on a memoryNote goal, which
+      // is why it looked like progress; one success does not outweigh two measurements
+      // of harm. A wrong mint is negative value, not zero. Re-enable only with evidence
+      // that the terminal write survives the reordering.
       const _satEligible = eligibleForSatisfier.filter((s) =>
         !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s))
         && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s))
         && !satisfierTried.has(s) && !minted.has(s));
-      const _satProven = _satEligible.filter((s) => pathwaySet.has(`satisfier:${String(s)}`));
+      // DISABLED ON EVIDENCE — see the note above. Kept resolvable (and logged) rather
+      // than deleted so the next attempt starts from the measurement, not from scratch.
+      const SATISFIER_REUSE_ORDERING_ENABLED = false;
+      const _satProven = SATISFIER_REUSE_ORDERING_ENABLED
+        ? _satEligible.filter((s) => pathwaySet.has(`satisfier:${String(s)}`))
+        : [];
       if (_satProven.length > 0 && !preferComposition) {
         // Counted in the SAME counter as the candidate-plane tie-break: it is the same
         // act (a step taken because the store proved it), and recordGoalPath keys the
