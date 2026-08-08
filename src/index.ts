@@ -6318,8 +6318,34 @@ If one of those sibling shapes is the action that would create what the goal ask
       // skepticism, applied EARLY so the walk self-corrects the command instead of
       // accepting 0 and wandering). Bounded by the retry cap, so a genuinely-zero
       // answer still returns after the retries exhaust.
-      if (/^0+$/.test(st) && /\b(count|number of|how many|length|words?|lines?|characters?|chars?)\b/i.test(goal)) {
+      const _isMeasureGoal = /\b(count|number of|how many|length|words?|lines?|characters?|chars?)\b/i.test(goal);
+      if (/^0+$/.test(st) && _isMeasureGoal) {
         return `the command returned "0" for a count/measure goal on a non-empty target — likely the wrong command or file path`;
+      }
+      // ...AND THE SAME ZERO EMBEDDED IN A FORMATTED ARTIFACT. The test above matches only
+      // when the WHOLE output is "0", so the moment a command wraps its count in the
+      // artifact the goal asked for, a zero becomes invisible to it:
+      //
+      //   stdout "0"                                  -> caught
+      //   stdout "vessel,ts_file_count\nactivity-api,0" -> NOT caught, accepted as a value
+      //
+      // Measured 2026-08-08 over a 32-dispatch paired run: artifacts read
+      // "activity-api,0" (truth 177), "identity-vessel,0" (truth 27) and
+      // "(goal-host-vessel,0)" (truth 38). The paths were not at fault — /vessels/<v>/src
+      // and /workspace/git/vessels/<v>/src both exist and count correctly for every one —
+      // so the command was wrong and the walk accepted it because the zero was wearing a
+      // CSV. This is the single largest source of wrong artifacts and it hits cold
+      // derivation and reuse equally, so it caps correctness independently of learning.
+      //
+      // Same rationale and same bound as the check above: if EVERY standalone number the
+      // command printed is zero on a measure goal, that is a wrong command far more often
+      // than a true zero, and the retry cap still lets a genuinely-zero answer through.
+      // Requires at least one number so a non-numeric artifact is untouched.
+      if (_isMeasureGoal) {
+        const _nums = st.match(/(?<![\d.])\d+(?![\d.])/g) ?? [];
+        if (_nums.length > 0 && _nums.every((n) => /^0+$/.test(n))) {
+          return `every number the command printed is zero on a count/measure goal (${JSON.stringify(st.slice(0, 80))}) — a zero wrapped in the requested artifact is still a zero, and on a non-empty target that is almost always the wrong command or path`;
+        }
       }
       return null;
     };
