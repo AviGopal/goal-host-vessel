@@ -1382,6 +1382,62 @@ async function resolveAuthoritativeRoot(rel: string): Promise<string> {
   return cands[cands.length - 1] as string;
 }
 
+/**
+ * INDEPENDENT GIT-COMMIT-COUNT ORACLE.
+ *
+ * "How many commits are in the git history of repos/<vessel>?" had NO verifier. Measured over
+ * 24 completed dispatches of this family: 12 reached, 11 correct, 3 reached-but-WRONG and 2
+ * correct-but-refused — the refusals landing on `deterministic:no-oracle-for-goal-class`,
+ * which is honest but terminal. A family with no verifier can never bank a verified donor,
+ * and reuse growth is gated on a family's FIRST REACH, so the family cannot improve no matter
+ * how often it is attempted. That is why git counts have sat near 46% while the file-count
+ * families run at 100%.
+ *
+ * Recompute independently with `git rev-list --count HEAD` against the authoritative clone —
+ * NOT by re-running the walk's own command, which would agree with it by construction (the
+ * -maxdepth 1 self-confirming oracle, found three times). Three verdicts: reached when the
+ * output states the computed count, not-reached when it states a different one, null when it
+ * states none, so a goal this parse does not represent falls through to the next verifier
+ * rather than being claimed.
+ */
+async function verifyGitCommitCountReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
+  if (!/\bcommits?\b/i.test(goal)) return null;
+  if (!/\bgit\b|\bhistory\b|\brepo(?:sitory)?\b/i.test(goal)) return null;
+  // Scope discipline: one tree, named as repos/<vessel>. A multi-tree or file-scoped goal is a
+  // different question and this parse does not represent it.
+  const all = [...new Set((goal.match(/repos\/[\w.-]+/g) ?? []))];
+  if (all.length !== 1) return null;
+  const vessel = all[0]!.split("/")[1];
+  if (!vessel || vessel.includes("..")) return null;
+  // A goal narrowing to a path, author, date or message is not a whole-history count.
+  if (/\bsince\b|\bauthor\b|\blast\b|\bbetween\b|\btouch(?:ed|ing)?\b|\bmessage\b/i.test(goal)) return null;
+  const root = `/workspace/git/vessels/${vessel}`;
+  try { if (!(await stat(root)).isDirectory()) return null; } catch { return null; }
+  let expected: number | null = null;
+  try {
+    const proc = Bun.spawn(["git", "-C", root, "rev-list", "--count", "HEAD"], { stdout: "pipe", stderr: "pipe" });
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+    const m = out.match(/^(\d{1,9})$/);
+    if (m) expected = Number(m[1]);
+  } catch { return null; }                       // could not ask -> abstain, never claim
+  if (expected === null || expected <= 0) return null;
+  // Harvest candidate numbers the way the sibling oracles do, minus ids: hyphens are word
+  // boundaries, so every digit run inside a dispatch uuid reads as a claimed count.
+  const digIds = dig
+    .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
+    .replace(/\b[0-9a-f]{16,}\b/gi, " ");
+  const claimed = [...new Set((digIds.match(/\b\d{1,9}\b/g) ?? []))];
+  if (claimed.length === 0) return null;         // produced no number -> cannot verify -> LLM
+  if (claimed.includes(String(expected))) {
+    return { reached: true, deterministic: true, completion_shapes: [],
+      reason: `deterministic:verified-git-commit-count — independently recomputed ${expected} with \`git -C ${root} rev-list --count HEAD\` (the authoritative clone, not the walk's command); the produced output states that count` };
+  }
+  return { reached: false, completion_shapes: [],
+    reason: `deterministic:wrong-git-commit-count — independently recomputed ${expected} commits for repos/${vessel} with \`git rev-list --count HEAD\`, but the output reports ${claimed[0]}` };
+}
+
 async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
   if (parseTwoSourceCompare(goal)) return null;           // two-source-compare owns this goal
@@ -2655,6 +2711,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // INDEPENDENT COUNT-FILES ORACLE — confirm a file-count against the directory itself (both the
   // clone and the deployed mirror, verified only on agreement), so the count family survives an
   // LLM reach-verifier outage instead of failing closed.
+  // INDEPENDENT GIT-COMMIT-COUNT ORACLE — recompute the history length from the authoritative
+  // clone. Placed BEFORE the file-count oracle: "how many commits" also matches that oracle's
+  // how-many trigger, and whichever claims first wins, so the more specific parse must go first.
+  {
+    const gitV = await verifyGitCommitCountReach(goal, dig);
+    if (gitV) return gitV;
+  }
+
   {
     const cntV = await verifyCountFilesReach(goal, dig);
     if (cntV) return cntV;
