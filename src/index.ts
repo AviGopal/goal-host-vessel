@@ -7158,7 +7158,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         } else {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
         }
-        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; β-penalised last pick ${lastPick}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        // Say which of the two actually happened. This line printed "β-penalised last pick"
+        // unconditionally, including on the branch immediately above that WITHHOLDS β — so
+        // every trace of a no-oracle refusal read as a penalty that was never applied. The
+        // code was right and the log was wrong, which is the worse way round: the log is
+        // what the reach-gate lessons, the judge, and every after-the-fact analysis read.
+        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
         // shape has NO live resolver (a true CAPABILITY gap — not a selection

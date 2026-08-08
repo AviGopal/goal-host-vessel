@@ -71,6 +71,46 @@ const MUTATING_SUBCOMMAND =
 /** Output redirection writes a file even when every command in the pipeline is a reader. */
 const REDIRECT = /(?:^|[^0-9<>&])>{1,2}\s*(?!&\s*[12]\b)\S/;
 
+/**
+ * A nested shell cannot be audited by the rules below — everything after `-c` is a program
+ * this gate never sees as shell syntax. Refuse it outright rather than pretend to inspect it.
+ */
+const NESTED_SHELL = /\b(?:sh|bash|zsh|dash|ash)\s+(?:-[a-z]+\s+)*-c\b|\beval\b/i;
+
+/**
+ * Shell metacharacters only MEAN anything outside quotes. Blank the quoted spans before
+ * testing for them, keeping the same length so nothing else shifts.
+ *
+ * This exists because the redirection rule refused this command:
+ *
+ *   find … -type f -name '*.*' | awk -F'.' '{if (NF>1) print $NF}' | sort -u | wc -l
+ *
+ * with "output redirection writes to disk". There is no redirection in it. The `>` is the
+ * comparison in awk's `NF>1`, inside a quoted program. Consequence, measured: EVERY
+ * distinct-file-extension goal had BOTH of its authored derivations refused, so the
+ * recompute oracle could never produce ground truth, the reach gate fell through to
+ * `no-oracle-for-goal-class`, and the family scored 0/12 in all four rounds of every
+ * repeated-exposure run — read for four runs as "the system cannot do this", when the
+ * system was computing the right answer and this predicate was discarding the evidence.
+ *
+ * A false refusal in a safety gate is not a safe default. It is silent capability loss,
+ * and it is indistinguishable from incapacity from the outside.
+ */
+function outsideQuotes(cmd: string): string {
+  let out = "";
+  let quote: string | null = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (quote) {
+      if (c === quote) { quote = null; out += c; } else { out += " "; }
+      continue;
+    }
+    if (c === "'" || c === '"') { quote = c; out += c; continue; }
+    out += c;
+  }
+  return out;
+}
+
 export type CommandRefusal = { ok: false; reason: string };
 export type CommandAccepted = { ok: true };
 
@@ -84,8 +124,12 @@ export function isReadOnlyShellCommand(raw: string): CommandAccepted | CommandRe
   if (cmd.length === 0) return { ok: false, reason: "empty command" };
   if (cmd.length > 800) return { ok: false, reason: "command too long to audit" };
   if (/\n/.test(cmd)) return { ok: false, reason: "multi-line command — a recompute must be a single auditable line" };
+  if (NESTED_SHELL.test(cmd)) return { ok: false, reason: "nested shell or eval — the inner program cannot be audited by these rules" };
   if (SELF_EMITTED.test(cmd)) return { ok: false, reason: "command EMITS a literal instead of measuring — a self-asserted answer is not evidence" };
-  if (REDIRECT.test(cmd)) return { ok: false, reason: "output redirection writes to disk" };
+  // Redirection is shell SYNTAX, so it is only redirection outside quotes. Tested on the
+  // quote-blanked form; the nested-shell refusal above is what keeps `sh -c "… > f"` from
+  // slipping through the blanking.
+  if (REDIRECT.test(outsideQuotes(cmd))) return { ok: false, reason: "output redirection writes to disk" };
   if (MUTATING_SUBCOMMAND.test(cmd)) return { ok: false, reason: "in-place edit or history-mutating subcommand" };
   if (MUTATING.test(cmd)) return { ok: false, reason: "mutating command" };
   return { ok: true };
