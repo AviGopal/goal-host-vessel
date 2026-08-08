@@ -3976,7 +3976,7 @@ function tierOf(id: string | undefined | null): WalkTier {
   const s = String(id ?? "");
   if (s === "universal-tool-fallback") return "universal_tool_fallback";
   if (s.startsWith("satisfier:")) return "satisfier";
-  if (s.includes("learned-") || s.includes("composed-cap")) return "learned_pathway";
+  // Reuse is NOT inferable from a template id: selecting a template whose name contains 'learned-' is ordinary Thompson derivation. Genuine reuse is tracked by commandReuseFired at the recordGoalPath call sites.
   if (s.includes("feature_compose")) return "feature_compose";
   return "fresh_derivation";
 }
