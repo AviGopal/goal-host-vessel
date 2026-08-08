@@ -5745,13 +5745,49 @@ If one of those sibling shapes is the action that would create what the goal ask
       // closes. Command grading is byte-for-byte unchanged when no policy is supplied.
       if (pol) {
         if (r == null) return "the resolver produced no body";
+        // GRADE EVERY LEVEL, NOT JUST THE INNERMOST.
+        //
+        // The unwrap below walks {shape, body:{...}} envelopes inward. It used to grade ONLY
+        // the final inner object, which discards the level where the denial usually lives: a
+        // vessel resolve answers {"success":false,"shape":"X","body":{...}} — the `success:false`
+        // is on the OUTER envelope, and unwrapping to `body` throws it away before the
+        // flagFields check ever runs. The guard then reports "not a denial" about a body that
+        // literally says success:false.
+        //
+        // Observed live on "Close substrate gap advertised-shapes-with-no-resolver": the walk
+        // logged `VESSEL-RESOLVE SATISFIER produced "shape_gap_resolution" directly` with NO
+        // dishonest-body tap, and the reach gate then had to catch it after the fact —
+        // "indicates an error due to a missing required shape", "'success': false". Because the
+        // error satisfied the shape, the walk stopped searching instead of falling through to
+        // the rejection path, which is where a first reach would come from. That is the
+        // first-reach blocker for the family that is 47% of all execution at 6.7% reach.
+        //
+        // Collect each level on the way in and grade them outermost-first, so a denial at ANY
+        // level is caught. Strictly widens what is refused; nothing previously refused is now
+        // accepted.
+        const _levels: Record<string, unknown>[] = [];
         let b: unknown = r;
         for (let _d = 0; _d < 3; _d++) {
           const _bo = (typeof b === "object" && b !== null && !Array.isArray(b)) ? (b as Record<string, unknown>) : null;
-          if (!_bo || !("shape" in _bo)) break;
+          if (!_bo) break;
+          _levels.push(_bo);
+          if (!("shape" in _bo)) break;
           const _k = pol.envelopeKeys.find((k) => k in _bo);
           if (!_k) break;
           b = _bo[_k];
+        }
+        for (const _lvl of _levels) {
+          for (const f of pol.flagFields) {
+            if (f in _lvl && _lvl[f] === false) {
+              return `envelope declares failure: "${f}": false`;
+            }
+          }
+          for (const f of pol.errorFields) {
+            const v = _lvl[f];
+            if (typeof v === "string" && v.trim().length > 0) {
+              return `envelope carries ${f}: ${v.slice(0, 120)}`;
+            }
+          }
         }
         const bo = (typeof b === "object" && b !== null && !Array.isArray(b)) ? (b as Record<string, unknown>) : null;
         if (!bo) return null; // a bare string/number/array payload is content, not a denial
