@@ -7882,23 +7882,36 @@ async function runGoalWithRecovery(
         // which distinguishes "could not be asked" (null) from "asked, nothing there"
         // ([]). Both used to log identically, which is how a read against the WRONG
         // vessel passed as an empty store.
-        let recalled: string[] = [];
-        let _hitWidth = 0;
-        let _asked = true;
-        for (let take = Math.min(3, _terms.length); take >= 1 && recalled.length === 0; take--) {
-          const q = _terms.slice(0, take).join(" ");
-          if (!q) break;
-          const rows = await recallConceptRows(q, 5);
-          if (rows === null) { _asked = false; break; }
-          recalled = rows
-            .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
-            .filter((s) => s.length > 8);
-          _hitWidth = take;
-        }
-        if (!_asked) tap(`[walk-concepts] concept-db could not be asked (no producer or transport error) — recall unavailable, NOT an empty result`);
+        // TWO QUERIES IN PARALLEL, NOT A SEQUENTIAL LADDER. The first version narrowed
+        // 3 -> 2 -> 1 terms, awaiting each; concept-db is reached over the libp2p relay,
+        // which measured 1.3s idle but 2.6-6.8s under 12-way concurrency, so a goal whose
+        // terms miss at every width paid up to ~20s BEFORE inference even started.
+        // Measured consequence: median seconds per reached goal went from 12-46s across
+        // seven baseline runs to 25/36/129/50s per round — a regression I introduced.
+        //
+        // The narrow query (all three terms) is precise; the single longest term is the
+        // one most likely to match at all. Ask both AT ONCE and prefer the precise one:
+        // same information, one round trip instead of three. The timeout is 4s, not 10s,
+        // because recall is an optimisation and the walk must never wait on it.
+        const _q3 = _terms.slice(0, 3).join(" ");
+        const _q1 = _terms.slice(0, 1).join(" ");
+        const [_r3, _r1] = await Promise.all([
+          _q3 ? recallConceptRows(_q3, 5, 4_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
+          _q1 && _q1 !== _q3 ? recallConceptRows(_q1, 5, 4_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
+        ]);
+        // null from BOTH means concept-db could not be ASKED; that is not an empty store
+        // and must not be logged as one.
+        const _asked = _r3 !== null || _r1 !== null;
+        const _rows = (_r3 && _r3.length > 0) ? _r3 : (_r1 ?? []);
+        const _hitWidth = (_r3 && _r3.length > 0) ? 3 : 1;
+        const recalled = _rows
+          .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
+          .filter((s) => s.length > 8);
         if (recalled.length > 0) {
           walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
           tap(`[walk-concepts] consulted concept-db via discovery: ${recalled.length} concept(s) recalled at ${_hitWidth} term(s) "${_terms.slice(0, _hitWidth).join(" ")}" for goal_hash=${goalHashOf(goal)}`);
+        } else if (!_asked) {
+          tap(`[walk-concepts] concept-db could not be asked (no producer or transport error) — recall unavailable, NOT an empty result`);
         } else {
           tap(`[walk-concepts] no concepts recalled for goal_hash=${goalHashOf(goal)} (terms tried: ${_terms.slice(0, 3).join(",") || "none"})`);
         }
