@@ -3243,8 +3243,22 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       // sub-token guard below only protects the single-occurrence case.
       const occurrences: number[] = [];
       { let at = first; while (at >= 0) { occurrences.push(at); at = e.command.indexOf(oldContent, at + oldContent.length); } }
-      const multiOk = !numeric && oldContent.length >= 4;
-      if (occurrences.length > 1 && !multiOk) { ok = false; break; }                 // ambiguous occurrence -> refuse
+      // REVERTED (was d9a2597, which widened this to allow multi-occurrence substitution for
+      // non-numeric slots >=4 chars). Three reasons, in order of weight:
+      //   1. Its stated reason was falsified — REBOUND stayed 0/12 after the widening, and
+      //      the refusal tally later showed the scaffold pre-filter was the actual gate.
+      //   2. It was never shown to help: adaptation only began firing after the pre-filter
+      //      came down (0.5 -> 0.25 -> 0.15), not after this.
+      //   3. There is now evidence of harm. Artifacts from the rebound population contain
+      //      malformed rows — "development-vessel/12" (delimiter replaced) and
+      //      "stateful-ui-vessel,src,1" (a path fragment spliced in as a third column) —
+      //      which is what substituting MULTIPLE spans per slot looks like when one of them
+      //      was not the slot. Correct counts appear alongside them (concept-db,11;
+      //      goal-host-vessel,6), so the command body transfers fine and the SPLICE is what
+      //      corrupts the output.
+      // A wider substitution surface is not worth carrying on a change with a falsified
+      // premise and no measured benefit. Back to one occurrence, refuse on ambiguity.
+      if (occurrences.length > 1) { ok = false; break; }                             // ambiguous occurrence -> refuse
       if (numeric) {                                                                 // sub-token guard: a numeric literal must not be embedded in a larger number (e.g. "6" inside "16"/"6.5")
         const bch = first > 0 ? e.command[first - 1] : "";
         const ach = e.command[first + oldContent.length] ?? "";
