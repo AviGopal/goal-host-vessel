@@ -7191,13 +7191,38 @@ If one of those sibling shapes is the action that would create what the goal ask
         // match neither condition, so they never write a vault note.
         try {
           const durableOutputRequested = goalRequestsDurableArtifact(goal);
-          const shouldBridge = reached === true && (isObsidianSurface || durableOutputRequested);
+          // TWO GATES, NOT ONE. The vault note and the concept writeback have opposite
+          // economics and were sharing a condition. A note is a HUMAN artifact and must
+          // stay selective — internal ticks must never spam a vault. A concept is
+          // internal, cheap, and is the ONLY thing walk-time recall reads, so gating it
+          // on "did the goal ask for a durable artifact" means everything the system
+          // proves it can do outside that phrasing leaves nothing a later goal can find.
+          //
+          // Measured against the live store: 200+ goal_finding concepts exist and every
+          // one comes from the artifact-requesting family ("... then record a durable
+          // note titled ..."), while "subdirectories", "extensions" and "largest" return
+          // ZERO — although subdirectory-count goals reach 12/12 on repeated exposure.
+          // Those families reach over and over and deposit nothing, so the next goal in
+          // the family has nothing to reuse and re-derives from scratch. That is the
+          // write half of generalization; the read half was separately dead (53d9080,
+          // 5ab2a21).
+          // The concept writeback is widened to DETERMINISTICALLY VERIFIED reaches, not
+          // to every reach. An LLM-judged reach can be a plausible-sounding wrapper, and
+          // ~90% of dispatch roots are machinery ticks that reach through generic
+          // satisfiers; writing those back would fill the store with noise and, because
+          // the surviving retrieval is AND-matched BM25 with no semantic reranking, noise
+          // in the store degrades recall PRECISION for every future goal. A finding worth
+          // recalling is one that was actually verified.
+          const bridgeNotes = isObsidianSurface || durableOutputRequested;
+          const shouldBridge = reached === true && (bridgeNotes || verdict?.deterministic === true);
           if (shouldBridge) {
             const dispatchId = typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : "";
             const execId = lastExecId ?? dispatchId;
             const bridgeReason = isObsidianSurface
               ? "goal originated from the obsidian human surface (seed obsidian_vessel_endpoint)"
-              : "goal explicitly requested a durable artifact";
+              : durableOutputRequested
+                ? "goal explicitly requested a durable artifact"
+                : "goal reached — concept writeback so a later goal in this family can recall it";
             // Human-consumable body: prefer the rendered answer, else the produced pool findings.
             const bridgeBody = (answerBody && answerBody.trim().length > 0)
               ? answerBody
@@ -7258,7 +7283,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             // ── bridge step 2: materialize the concept as a vault note (only when a
             // concept was created) so the finding note's wikilink is NEVER dead ─────
             let conceptNoteMaterialized = false;
-            if (conceptId) {
+            if (conceptId && bridgeNotes) {
               const before = shapeArr();
               const conceptNotePath = `Substrate/Concepts/${findingSlug}.md`;
               const conceptNoteBody = [
@@ -7291,7 +7316,10 @@ If one of those sibling shapes is the action that would create what the goal ask
 
             // ── bridge step 3: the finding note (wikilinks the concept IFF its note
             // materialized — never a dead link, per the rendering contract) ─────────
-            {
+            // Still gated on bridgeNotes: this is the human artifact, and the original
+            // selectivity ("a record/save VERB and a durable NOUN, or the obsidian
+            // surface") is correct for it and unchanged.
+            if (bridgeNotes) {
               const before = shapeArr();
               const notePath = `Substrate/${findingSlug}-${shortDispatch}.md`;
               const conceptLink = conceptNoteMaterialized
