@@ -8264,6 +8264,7 @@ async function runGoalWithRecovery(
           }
           // Not reached: fall through to the ordinary walk. A recommendation that does not
           // pan out must cost a walk, never the goal.
+          if (opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway did NOT reach — falling through to the full walk`);
         } catch (e) {
           tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway threw (${(e as Error).message.slice(0, 120)}) — falling through to the full walk`);
