@@ -75,6 +75,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
       operator: r.operator ?? null,
       trigger: r.trigger ?? null,
       startedAt: r.startedAt,
+      endedAt: r.endedAt ?? null,
       selectedTemplateId: r.selectedTemplateId ?? null,
       executionId: r.executionId ?? null,
     }));
