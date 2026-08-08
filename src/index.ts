@@ -1400,6 +1400,82 @@ async function resolveAuthoritativeRoot(rel: string): Promise<string> {
  * states none, so a goal this parse does not represent falls through to the next verifier
  * rather than being claimed.
  */
+/**
+ * INDEPENDENT ARTIFACT-WRITTEN ORACLE — "write a <FORMAT> file at <path> containing ...".
+ *
+ * The cheapest verifier class there is: the check is STRUCTURAL, needs no LLM, and reads the
+ * artifact off disk rather than believing the walk. It exists because report generation in
+ * machine formats was the first genuinely cold domain measured on this substrate, and it was
+ * cold for a reason that had nothing to do with capability.
+ *
+ * Measured over 16 sequential CSV/XML dispatches with external structural grading (file
+ * exists on the host, parses as the requested format, carries the independently computed
+ * value): 8/16 artifacts were CORRECT, but the substrate granted reach on only 3/16. Five
+ * correct artifacts were graded not-reached; zero wrong artifacts were credited. Reuse fired
+ * 0/16 and there was no improvement across exposure.
+ *
+ * That is the whole loop stalling on one missing link. Reuse growth is gated on a family's
+ * FIRST REACH: no verifier -> no reach -> no cached donor -> no reuse -> no accumulation. The
+ * same family shape proved it in the other direction the same day — git-commit-count sat at
+ * 46% until a verifier was added, then went to 21/23 without the walk changing at all.
+ *
+ * Verdicts are three-valued so a goal this parse does not represent falls through instead of
+ * being claimed: reached when the file exists AND parses as its extension, not-reached when
+ * the goal named an output path and nothing valid is there, null when no output path is named.
+ */
+async function verifyArtifactWrittenReach(goal: string, _dig: string): Promise<GoalReachVerdict | null> {
+  if (!/\b(write|create|generate|produce|export|emit|save)\b/i.test(goal)) return null;
+  // The goal must name ONE absolute output path with a format we can structurally check.
+  const paths = [...new Set((goal.match(/\/[\w./-]+\.(?:csv|tsv|xml|json|md)\b/gi) ?? []))];
+  if (paths.length !== 1) return null;
+  const out = paths[0]!;
+  const ext = (out.split(".").pop() ?? "").toLowerCase();
+  // Reading an INPUT file is not writing an artifact. If the goal reads one path and writes
+  // another, the write target is the one the write verb governs — we only claim the
+  // unambiguous single-path case, so a read+write goal falls through to the next verifier.
+  if (/\b(read|load|parse|open)\b[^.]{0,40}$/i.test(goal.slice(0, goal.indexOf(out)))) return null;
+  let body = "";
+  try {
+    const st = await stat(out);
+    if (!st.isFile()) {
+      return { reached: false, completion_shapes: [],
+        reason: `deterministic:artifact-not-written — the goal named ${out} but no file exists there` };
+    }
+    body = await readFile(out, "utf8");
+  } catch {
+    return { reached: false, completion_shapes: [],
+      reason: `deterministic:artifact-not-written — the goal named ${out} but no file exists there` };
+  }
+  if (!body.trim()) {
+    return { reached: false, completion_shapes: [],
+      reason: `deterministic:artifact-empty — ${out} exists but is empty` };
+  }
+  // STRUCTURAL parse per format. Existence alone is not the goal: a file containing prose
+  // where CSV was asked for is the artifact-shaped analogue of a hollow completion.
+  let parses = false; let why = "";
+  if (ext === "csv" || ext === "tsv") {
+    const sep = ext === "csv" ? "," : "\t";
+    const rows = body.trim().split("\n").filter((r) => r.trim().length > 0);
+    parses = rows.length >= 2 && rows[0]!.includes(sep);
+    why = parses ? `${rows.length} rows, delimited header` : "no delimited header or fewer than 2 rows";
+  } else if (ext === "xml") {
+    parses = /<[a-zA-Z][\w:-]*[^>]*>/.test(body) && /<\/[a-zA-Z][\w:-]*>|\/>/.test(body);
+    why = parses ? "well-formed element structure" : "no element open/close pair";
+  } else if (ext === "json") {
+    try { JSON.parse(body); parses = true; why = "parses as JSON"; }
+    catch { parses = false; why = "does not parse as JSON"; }
+  } else if (ext === "md") {
+    parses = body.trim().length > 0;
+    why = "non-empty markdown";
+  }
+  if (!parses) {
+    return { reached: false, completion_shapes: [],
+      reason: `deterministic:artifact-malformed — ${out} exists (${body.length} bytes) but is not valid ${ext.toUpperCase()}: ${why}` };
+  }
+  return { reached: true, deterministic: true, completion_shapes: [],
+    reason: `deterministic:verified-artifact-written — ${out} exists and parses as ${ext.toUpperCase()} (${why}), read from disk rather than from the walk's own report` };
+}
+
 async function verifyGitCommitCountReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   if (!/\b(how many|count|number of)\b/i.test(goal)) return null;
   if (!/\bcommits?\b/i.test(goal)) return null;
@@ -2717,6 +2793,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const gitV = await verifyGitCommitCountReach(goal, dig);
     if (gitV) return gitV;
+  }
+
+  // INDEPENDENT ARTIFACT-WRITTEN ORACLE — structural, no LLM: read the named file off disk and
+  // parse it as its extension. The cheapest verifier class, and the one whose absence was
+  // measured stalling the learning loop on a cold domain (8/16 correct, 3/16 reached, 0 reuse).
+  {
+    const artV = await verifyArtifactWrittenReach(goal, dig);
+    if (artV) return artV;
   }
 
   {
