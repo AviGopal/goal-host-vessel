@@ -11637,10 +11637,10 @@ try {
               // learning loop as a success.
               const landedSha = sha === "reconciled" ? "" : sha;
               if (!landedSha) {
-                r.status = "failed"; r.reached = false; r.selectedTemplateId = "feature_compose";
+                r.status = "failed"; r.reached = false; r.selectedTemplateId = "feature_compose"; r.endedAt = Date.now();
                 r.goalReachReason = "deterministic:interrupted-staged-not-landed — the compose report was FAVORABLE but no cutover reported a new_git_sha, so the edit is not on origin/dev; a staged clone is not a reach";
               } else {
-                r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + landedSha; r.selectedTemplateId = "feature_compose"; r.error = undefined;
+                r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + landedSha; r.endedAt = Date.now(); r.selectedTemplateId = "feature_compose"; r.error = undefined;
               }
               // Feed the oracle corpus, exactly as the primary path does at :6048 and
               // :7695. Those call recordDeterministicLabel unconditionally on polarity;
