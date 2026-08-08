@@ -3452,7 +3452,31 @@ void loadVerifierRecipes();
 
 async function fileMissingVerifierGap(goal: string): Promise<void> {
   try {
-    const family = verifierFamilyOf(goal);
+    // AN UNRECOGNISED FAMILY IS THE ONE THAT MOST NEEDS A VERIFIER.
+    //
+    // verifierFamilyOf() matches a hardcoded list of 8 families. When a goal is outside it
+    // the function returns null and this filed NOTHING — silently. So the refusal
+    // `deterministic:no-oracle-for-goal-class`, which fires precisely because nothing can
+    // grade the goal, produced no work item for exactly the classes with no verifier.
+    //
+    // Measured: 0 of 109 open gaps are missing-verifier, while that refusal fires at scale
+    // (1,027 occurrences in one 24h window). The families probed today that most needed one —
+    // report generation, git commit counts before its verifier existed — all return null.
+    // This is the same defect shape found five times elsewhere today: a failed lookup
+    // reported as absence. The refusal KNOWS the class is ungradable; the classifier cannot
+    // name it; so nothing is recorded.
+    //
+    // Derive a coarse family from the goal's own verb+noun skeleton when the classifier
+    // abstains, so the demand signal is captured under a stable key instead of dropped. Kept
+    // coarse on purpose: similar goals must collapse to ONE family, or the store fills with a
+    // row per goal — the `reach-gap-*` failure already demonstrated at 105 rows and 4% reach.
+    let family = verifierFamilyOf(goal);
+    if (!family) {
+      const g = goal.toLowerCase();
+      const verb = (g.match(/\b(how\s+many|number\s+of|count|list|report|write|compare|find|show|extract|summari[sz]e)\b/) ?? [])[1];
+      const noun = (g.match(/\b(commits?|files?|lines?|extensions?|subdirector\w+|functions?|exports?|imports?|rows?|columns?|entries|records?|vessels?|shapes?|branch\w*|tags?|notes?|csv|xml|json)\b/) ?? [])[1];
+      if (verb && noun) family = `unclassified-${verb.replace(/\s+/g, "-")}-${noun.replace(/s$/, "")}`;
+    }
     if (!family || _filedVerifierGaps.has(family)) return;
     _filedVerifierGaps.add(family);
     const gap = missingVerifierGap(family, goal);
