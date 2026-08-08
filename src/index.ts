@@ -3306,45 +3306,11 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // env var. Gating the floor behind an unobservable, unset config value is exactly the
   // behaviour-behind-config violation the substrate forbids; runGroundedToolLoop already returns
   // null when the dispatch is genuinely unavailable, so removing the gate stays fail-open.
-  // SEED THE FLOOR WITH A LEARNED RECIPE.
-  //
-  // This is where the failing classes actually land. Ten repeated-exposure runs pinned reach on
-  // the ANSWERING side, and the recipe-as-answerer added to the walk's pointer-arg cascade
-  // fired ZERO times in 48 goals — because the classes that fail never resolve `shellResult`
-  // at all. Their recorded templates are `universal-tool-fallback`, `auto-bridge-fileWriteResult`,
-  // `observe-orthogonal-patterns`: they fall through the walk to HERE.
-  //
-  // So hand the floor the measurement its family already earned, as an OBSERVATION it must
-  // still ground on — not as an answer to repeat. The model is told the command and its output
-  // and required to use them, which keeps the floor's own grounding discipline intact rather
-  // than letting it narrate a number it did not measure.
-  //
-  // The same invariant holds as everywhere else: a goal answered with help from the recipe is
-  // recorded, so verification refuses the recipe shortcut and pays for two FRESH derivations.
-  // The answer and its check may never come from the same source.
-  let recipeSeed = "";
-  {
-    const rc = recipeCommandFor(goal);
-    if (rc) {
-      const shell = await ufExecuteTool("shellResult", { command: rc }, new Set<string>(["shellResult"]));
-      if (shell.ok) {
-        let out = shell.result;
-        try { const j = JSON.parse(shell.result); if (j && typeof j === "object" && "stdout" in j) out = String(j.stdout ?? ""); } catch { /* plain */ }
-        const measured = String(out).trim().slice(0, 200);
-        if (measured) {
-          answeredFromRecipe.add(goalHashOf(goal));
-          recipeSeed = `\n\nA VERIFIED MEASUREMENT for this class of goal has already been run for you:\n  command: ${rc}\n  output: ${measured}\nThis command was earned by two independent derivations agreeing on an earlier goal of the same kind. Treat its output as the measured value and build your answer on it; re-run or refine it only if the goal plainly asks for something the command does not measure.`;
-          console.log(`[goal-host-vessel] floor: SEEDED with learned family recipe (measured=${measured.slice(0, 40)}) — verification will use two FRESH derivations`);
-        }
-      }
-    }
-  }
-
   const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
   const tools: any[] = [...UNIVERSAL_READ_TOOLS];
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
   const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
-  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The available shell interpreters are bash, jq, and bun ONLY (no python, python3, node, or bc in this container). The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}${recipeSeed}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The available shell interpreters are bash, jq, and bun ONLY (no python, python3, node, or bc in this container). The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
   // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
@@ -10917,6 +10883,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       record.status = "failed"; record.endedAt = Date.now();
       record.reached = false;
       record.error = (err as Error).message;
+      record.endedAt = Date.now();
       // A throw is an honest negative verdict, and it was never delivered: the only
       // delivery site sat on the success path above this catch, so the executions the
       // learner most needs to penalize were the exact ones it could not hear about.
