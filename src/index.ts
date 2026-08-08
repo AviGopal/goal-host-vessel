@@ -1126,6 +1126,26 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
 // fabricated count for an entity the registry does not track (the nonexistent-entity confabulation,
 // e.g. "17 frobnicate services"). Fails OPEN (null -> LLM) when unreachable or not a registry count.
 async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  // A CLAIM PREDICATE MUST NOT MATCH INSIDE A PATH. This is the FOURTH instance of one
+  // bug class — an oracle claiming a goal whose scope its parse does not represent —
+  // and it is the same class as the extension goals claimed by the file-count oracle,
+  // by the command builder, and the two-tree chain goals claimed by the aggregate
+  // oracle.
+  //
+  // Observed live: "How many subdirectories are directly under repos/discovery-vessel/src?"
+  // The word boundary in /\b(registry|discovery)\b/ matched the "discovery" INSIDE the
+  // PATH, and /\bvessels?\b/ matches the "vessel" inside any "<name>-vessel" path, so a
+  // subdirectory-count question was graded as a registry-inventory question against
+  // totalVessels=17 and answered "the output reports 8551" — 8551 being a fragment of
+  // the dispatch UUID, picked up by \b\d{1,7}\b. The walk had computed the correct
+  // answer; it was declared HOLLOW and β-penalised TWICE for it. 97 wrong-registry-count
+  // verdicts were recorded in 24h.
+  //
+  // A registry-inventory question does not name a repository tree. When one is named,
+  // this oracle's parse cannot represent the goal's scope, so it abstains — abstaining
+  // costs one LLM judgement, claiming wrongly poisons the posterior of an arm that was
+  // right.
+  if (/repos\//i.test(goal)) return null;
   const g = goal.toLowerCase();
   const isRegistryCtx = /\b(registr(?:y|ies|ered|ration)|discovery)\b/.test(g);
   const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
@@ -1148,7 +1168,14 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   }
   const expected = String((stats as Record<string, number>)[field] ?? "");
   if (!expected) return null;
-  const claimed = [...new Set((dig.match(/\b\d{1,7}\b/g) ?? []))];
+  // Strip UUIDs and long hex ids before harvesting numbers. Hyphens are word
+  // boundaries, so every 1-7 digit run inside a dispatch id ("ebd20ac5-8551-47f1-...")
+  // reads as a claimed count, and the FIRST such run is what the failure message
+  // reports — which is how a verdict came to say "the output reports 8551".
+  const digIds = dig
+    .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
+    .replace(/\b[0-9a-f]{16,}\b/gi, " ");
+  const claimed = [...new Set((digIds.match(/\b\d{1,7}\b/g) ?? []))];
   if (claimed.length === 0) return null;                // no number produced -> cannot verify -> LLM
   if (claimed.includes(expected)) {
     return { reached: true, reason: `deterministic:verified-registry-count — independently queried ${DISCOVERY_ENDPOINT}/registry/stats.${field}=${expected}; the produced output matches the authoritative registry`, deterministic: true, completion_shapes: [] };
