@@ -6421,6 +6421,25 @@ If one of those sibling shapes is the action that would create what the goal ask
       const satisfiableNow = preferComposition ? undefined : (_satProven[0] ?? _satEligible[0]);
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
+        // INSTRUMENTATION, DELIBERATELY NOT A FIX.
+        //
+        // Gap-closing goals are the dominant never-reaching family (47% of execution at
+        // 6.7% reach vs 39.6% external), and the walk logs "produced <shape> directly" here
+        // immediately before a HOLLOW that cites an error in the content. I diagnosed the
+        // cause three times from the code paths and was wrong three times: the honesty guard
+        // does not unwrap past the denial (the real body is flat), rawResolve already returns
+        // null on success===false long before that guard, and this route is
+        // vesselResolveShape rather than the `direct` path I patched.
+        //
+        // Every one of those wrong answers came from inferring instead of capturing the
+        // value at the call site. So capture it: log what this actually returns, bounded and
+        // shape-scoped, and let the next dispatch settle what three readings of the source
+        // could not. No behaviour changes on this line.
+        if (resolved && /(_resolution|_gap|gap_)/i.test(satisfiableNow)) {
+          const _c = resolved.content;
+          const _preview = (typeof _c === "string" ? _c : JSON.stringify(_c) ?? "").slice(0, 300);
+          console.log(`[satisfier-probe] "${satisfiableNow}" returned type=${typeof _c} content=${_preview}`);
+        }
         if (resolved) {
           addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`);
           // Record the satisfier as a GENUINE step: synthesize a minimal
