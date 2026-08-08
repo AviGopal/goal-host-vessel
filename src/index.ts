@@ -1145,7 +1145,29 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   // this oracle's parse cannot represent the goal's scope, so it abstains — abstaining
   // costs one LLM judgement, claiming wrongly poisons the posterior of an arm that was
   // right.
-  if (/repos\//i.test(goal)) return null;
+  // FIFTH INSTANCE, AND THE GUARD ENCODED THE SYMPTOM. The rule above abstained on
+  // the literal prefix `repos/` — the one tree the observed failure happened to name.
+  // Any other tree walks straight through it. Observed 2026-08-08, twice in one
+  // controlled A/B:
+  //
+  //   goal   "Count how many .ts files are under /vessels/discovery-vessel/src ..."
+  //   truth  7   (verified independently: find /vessels/discovery-vessel/src -name '*.ts')
+  //   walk   7   -- CORRECT
+  //   verdict deterministic:wrong-registry-count — registry totalVessels=15,
+  //           but the output reports 7
+  //
+  // `\bdiscovery\b` matched inside the PATH, exactly as before, and a correct answer
+  // was graded not-reached and β-penalised in BOTH arms of the experiment. A false
+  // negative here is worse than a missed green: it teaches the learner that a working
+  // composition failed, which is precisely how a ceiling gets held down.
+  //
+  // The invariant is not "the path starts with repos/". It is: A REGISTRY-INVENTORY
+  // QUESTION DOES NOT NAME A FILESYSTEM TREE. When one is named, this oracle's parse
+  // cannot represent the goal's scope, so it must abstain regardless of which tree.
+  // Abstaining hands the goal to the oracle that can actually grade it — the
+  // independent-recompute oracle, which graded the sibling variants of this exact goal
+  // correctly on the same run.
+  if (/(?:^|[\s"'(`])\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]+/.test(goal)) return null;
   const g = goal.toLowerCase();
   const isRegistryCtx = /\b(registr(?:y|ies|ered|ration)|discovery)\b/.test(g);
   const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
