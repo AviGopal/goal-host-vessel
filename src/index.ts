@@ -10566,6 +10566,52 @@ async function handleRunGoal(req: Request): Promise<Response> {
   const goal = typeof body.goal === "string" ? body.goal : undefined;
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 
+  // A GOAL WITH A COLLAPSED INTERPOLATION IS NOT ANSWERABLE — REFUSE IT AT THE DOOR.
+  //
+  // Measured on the hub over goal_execution_paths (6,708 rows): goal_hash 7cad0b412d12baf1,
+  //   "scaffold + publish vessel  supplying capability shape from a routed vessel-authoring gap"
+  // — note the DOUBLE SPACE where {{extract_vessel_name_text}} belongs — was dispatched
+  // 2,018 times and reached ZERO times, across only TWO distinct path signatures. No
+  // exploration: the same two pathways retried two thousand times. That one class is 18% of
+  // EVERY never-reaching attempt in the corpus (6,087 attempts across 713 classes).
+  //
+  // The declared guard never ran, twice over. The emitting task
+  // (development-vessel/src/seed/vessel-scaffold-trigger-tick.ts) carries
+  // validation:{requiredPatterns:["-vessel"]}, but ontology.ts states plainly that the
+  // canonical executor does NOT read task-level `validation` ("consumed by host-side
+  // resolvers"), and that task's resolver is json_path_extract, not the validation resolver —
+  // whose own header says pattern mode is "OUT OF SCOPE for the minimum-viable port".
+  //
+  // The compounding harm is not the wasted attempts, it is the CREDIT. Because the name is
+  // empty, every dispatch collapses onto ONE goal_hash, so the learner took 2,018 beta
+  // updates that cannot distinguish "this pathway is bad" from "this goal was never
+  // answerable" — the learning signal is not merely absent, it is actively misleading.
+  //
+  // Refuse only when BOTH signals are present: a collapsed placeholder in the text AND an
+  // empty string among the supplied variables. Either alone is too loose — prose legitimately
+  // contains double spaces, and an empty optional variable is not by itself malformed. An
+  // unrendered literal "{{...}}" is unambiguous on its own.
+  if (typeof goal === "string") {
+    const _vars = (typeof body.variables === "object" && body.variables !== null && !Array.isArray(body.variables))
+      ? body.variables as Record<string, unknown> : {};
+    const _emptyVars = Object.entries(_vars).filter(([, v]) => typeof v === "string" && v.trim() === "").map(([k]) => k);
+    const _unrendered = /\{\{\s*[\w.]+\s*\}\}/.test(goal);
+    const _collapsed = /\S {2,}\S/.test(goal) && _emptyVars.length > 0;
+    if (_unrendered || _collapsed) {
+      const why = _unrendered
+        ? "goal text still contains an unrendered {{placeholder}}"
+        : `goal text has a collapsed placeholder (doubled space) and these variables are empty: ${_emptyVars.join(", ")}`;
+      console.log(`[goal-host-vessel] /run-goal REFUSED malformed dispatch — ${why}. goal="${goal.slice(0, 120)}"`);
+      return Response.json({
+        error: "malformed goal: interpolation did not render",
+        detail: why,
+        refused: true,
+        why_this_is_refused_rather_than_attempted:
+          "an unanswerable goal that is dispatched anyway collapses every attempt onto one goal_hash and feeds the learner beta updates that cannot be distinguished from a bad pathway",
+      }, { status: 400 });
+    }
+  }
+
   // SECRET-EXTRACTION REFUSAL AT HANDLER ENTRY (2026-07-27, falsifiability + security). Gate here —
   // the single entry ALL processing flows through — so NO path (the walk, its retries/reframes, the
   // universal-tool grounded fallback, or the resume re-dispatch) ever handles a secret-VALUE goal.
