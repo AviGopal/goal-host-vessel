@@ -3659,12 +3659,27 @@ async function fetchLearnedDeliverableShapes(): Promise<string[]> {
       headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       signal: AbortSignal.timeout(8_000),
     });
-    if (!r.ok) return learnedDeliverableCache?.shapes ?? [];
+    // A FAILED LOOKUP IS NOT AN EMPTY ANSWER — the same conflation that collapsed the
+    // shape space onto shellResult at the producer-discovery call site. There, an 8s
+    // timeout against an endpoint measured at 55-77s returned null, the walk read it as
+    // "this shape has no producer", and the reached-command cache ended up 98.5%
+    // shellResult (1178/1196). This endpoint was measured >100s during the same window.
+    //
+    // Falling back to the CACHE is right (it is the last known-good vocabulary). Falling
+    // back to [] when there is no cache is not: it silently narrows the shape space the
+    // walk will consider, and it does so most aggressively exactly when the store is
+    // slowest — i.e. under the load where the walk most needs its full vocabulary.
+    // Distinguish the two, and say which happened.
+    if (!r.ok) {
+      console.log(`[deliverable-shapes] lookup answered http ${r.status} — keeping ${learnedDeliverableCache ? "last known-good vocabulary" : "EMPTY vocabulary (no cache yet); the walk is narrower than the substrate"}`);
+      return learnedDeliverableCache?.shapes ?? [];
+    }
     const j: any = await r.json();
     const shapes = (Array.isArray(j?.shapes) ? j.shapes : []).map((x: unknown) => String(x)).filter(Boolean);
     learnedDeliverableCache = { shapes, fetchedAt: now };
     return shapes;
-  } catch {
+  } catch (e) {
+    console.log(`[deliverable-shapes] lookup unreachable (${(e as Error).message}) — a failed lookup is not evidence of absence; keeping ${learnedDeliverableCache ? "last known-good vocabulary" : "EMPTY vocabulary (no cache yet); the walk is narrower than the substrate"}`);
     return learnedDeliverableCache?.shapes ?? [];
   }
 }
