@@ -8337,6 +8337,33 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     if (reached) {
       for (const [sh, cmd] of executorCommands.entries()) {
+        // A DONOR WHOSE OUTPUT DEPENDS ON WHICH SHELL RUNS IT IS NOT A RECIPE.
+        //
+        // `echo "a\nb"` expands the escape under POSIX sh (dash) and emits the two
+        // literal characters under bash. The SAME banked command therefore produces a
+        // valid artifact or a malformed one depending on the interpreter, and the
+        // library holds both `sh -c` and `bash -c` forms of it. Reproduced at the shell:
+        //
+        //   sh -c   'echo "vessel,count\nx,177"'  -> real newline      (parses)
+        //   bash -c 'echo "vessel,count\nx,177"'  -> literal backslash-n (does not)
+        //   printf  'vessel,count\nx,%s\n' 177     -> real newline      (parses)
+        //
+        // Measured over a 32-dispatch paired run: this ONE defect was the entire
+        // measured advantage of pathway reuse. Graded on the artifact as a whole,
+        // reuse scored 13/16 vs 8/16; graded on the VALUE alone it scored 12/16 vs
+        // 11/16 (p = 1.00). Reuse was not reasoning better — it was carrying a command
+        // that happened to escape correctly, while cold derivation re-invented the
+        // broken form. Banking such a command teaches the family a coin flip.
+        //
+        // REFUSED rather than rewritten: a textual rewrite of someone else's shell is
+        // how a working command becomes a broken one, and the cost of refusing is only
+        // that the family re-derives until it produces a portable command — which is
+        // the signal we want it to learn from. Narrow by construction: only `echo` with
+        // a backslash escape, which is exactly the shell-dependent case.
+        if (typeof cmd === "string" && /\becho\b[^|;]*\\[nrt]/.test(cmd)) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT banking "${sh}" — the command uses \`echo\` with a backslash escape, whose output differs between sh and bash; a shell-dependent donor is not a reusable recipe`);
+          continue;
+        }
         if (opts.learningMode !== "observe" && producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
           reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal });
