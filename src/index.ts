@@ -3197,7 +3197,20 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   // donated command is checked against new derivations rather than against itself — but they
   // come from the same authoring process, so a WRONG donor could be re-derived and agree with
   // itself. Watch the hollow rate; that is the tell, and reverting is one line.
-  if (!isToken) {
+  //
+  // A DEGENERATE TRUTH IS NOT EVIDENCE — the same rule the MINT below already enforces, which
+  // this block was missing. Observed live:
+  //
+  //   [recompute] DONATED verified command for this goal class (truth=0, two agreeing
+  //     derivations): `find /workspace/git/vessels/*/repos/concept-db/src/ -maxdepth 1 -type d
+  //     | wc -l`
+  //
+  // That path cannot match anything, so both derivations "agreed" on 0 by failing the same
+  // way. Agreement on nothing is agreement about the AUTHORING, not about the answer. Donated,
+  // it becomes the command every future member of the class runs first — returning 0, then
+  // disagreeing with walks that are right, and carrying β for it. That is the failure that
+  // took reach 25/48 -> 18/48 and had to be reverted, arriving through a second door.
+  if (!isToken && typeof truth === "number" && truth > 0) {
     const donorHash = goalHashOf(goal);
     if (!reachedCommandCache.has(donorHash)) {
       const donor = { command: a!.command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: goal };
@@ -3205,6 +3218,8 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
       persistReachedCommand(donorHash, donor);
       console.log(`[recompute] DONATED verified command for this goal class (truth=${truth}, two agreeing derivations): \`${a!.command}\``);
     }
+  } else if (!isToken) {
+    console.log(`[recompute] donation SKIPPED — degenerate truth=${truth}; two derivations agreeing on nothing is evidence about the authoring, not about the answer`);
   }
 
   // MINT — only from a truth two independent derivations already agreed on, and only for a
