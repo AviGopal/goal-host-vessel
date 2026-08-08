@@ -3139,13 +3139,32 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       if (META.test(newContent) && !META.test(oldContent)) { ok = false; break; }    // injection guard
       const first = e.command.indexOf(oldContent);
       if (first < 0) { ok = false; break; }                                          // LOAD-BEARING literal gate
-      if (e.command.indexOf(oldContent, first + 1) >= 0) { ok = false; break; }      // ambiguous occurrence -> refuse
+      // MULTI-OCCURRENCE IS NOT AMBIGUITY WHEN EVERY OCCURRENCE IS THE SAME SLOT.
+      //
+      // This refused outright whenever the slot literal appeared more than once, which is
+      // the COMMON case for the goals that most need adaptation: a report goal names its
+      // subject twice ("the vessel X ... under repos/X/src"), so the donor command carries
+      // it twice and rebind declined every time. Measured: REBOUND fired 0/10 on
+      // never-seen report-generation goals while firing freely on single-mention count
+      // goals — i.e. adaptation engaged exactly where there was no headroom and refused
+      // exactly where there was. That is why every learning curve measured flat.
+      //
+      // Replacing ALL occurrences is well-defined precisely because they are the same
+      // literal being replaced by the same new content — the causal literal gate is
+      // unchanged, it just applies N times instead of once. Kept narrow deliberately:
+      // only for NON-NUMERIC slots of >=4 chars. A short or numeric literal can collide
+      // with an unrelated span (a "6" that is both a count and part of a path), and the
+      // sub-token guard below only protects the single-occurrence case.
+      const occurrences: number[] = [];
+      { let at = first; while (at >= 0) { occurrences.push(at); at = e.command.indexOf(oldContent, at + oldContent.length); } }
+      const multiOk = !numeric && oldContent.length >= 4;
+      if (occurrences.length > 1 && !multiOk) { ok = false; break; }                 // ambiguous occurrence -> refuse
       if (numeric) {                                                                 // sub-token guard: a numeric literal must not be embedded in a larger number (e.g. "6" inside "16"/"6.5")
         const bch = first > 0 ? e.command[first - 1] : "";
         const ach = e.command[first + oldContent.length] ?? "";
         if (/[\d.]/.test(bch) || /[\d.]/.test(ach)) { ok = false; break; }
       }
-      subs.push({ pos: first, len: oldContent.length, newText: newContent });
+      for (const at of occurrences) subs.push({ pos: at, len: oldContent.length, newText: newContent });
     }
     if (!ok || subs.length < 1) continue;
     subs.sort((x, y) => x.pos - y.pos);
