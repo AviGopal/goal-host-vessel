@@ -4017,7 +4017,7 @@ function tierOf(id: string | undefined | null): WalkTier {
 function tierFromChain(chainIds: string[]): WalkTier {
   // Any reused learned/composed composition in the chain => learned_pathway;
   // else classify the last pick.
-  if (chainIds.some((id) => id.includes("learned-") || id.includes("composed-cap"))) return "learned_pathway";
+  
   return tierOf(chainIds[chainIds.length - 1]);
 }
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = []): Promise<void> {
@@ -8421,7 +8421,6 @@ async function runGoalWithRecovery(
       if ((walk.reached === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
           const uf = await universalToolFallback(goal, seededOutputShapes ?? []);
-          if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
