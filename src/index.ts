@@ -3094,6 +3094,21 @@ async function loadReachedCommandCache(): Promise<void> {
 // varying goal span appears LITERALLY (exactly once) in the verified command — a causal proof
 // that that span is what flowed into the command, not a similarity heuristic.
 function tryLexicalRebind(goalNow: string, shape: string): { field: string; command: string; srcHash: string } | null {
+  // WHY IT REFUSED, NOT JUST THAT IT DID.
+  //
+  // Adaptation fired 0/22 across two cold families with never-seen subjects, while firing
+  // freely on count-style goals — so it engages where reach is already 100% and refuses
+  // where there is headroom. Three separate hypotheses for WHICH gate closes were tested
+  // and all three were falsified, because this function refuses SILENTLY: every branch
+  // below is a bare `continue`, so from the outside "no donor existed" and "a donor existed
+  // and every gate rejected it" are indistinguishable. That is the same defect this session
+  // found four times elsewhere — a failed lookup reported as absence.
+  //
+  // Tally the refusal reasons and emit one line per call. The next diagnosis should read
+  // which gate closed instead of guessing at it.
+  const refusals: Record<string, number> = {};
+  const refuse = (why: string) => { refusals[why] = (refusals[why] ?? 0) + 1; };
+  let candidates = 0;
   const REBIND_EXEC_FIELDS = ["command", "cmd", "script", "sql"];
   const META = /[;&|`$><\n\\]|\$\(/;
   const isNum = (x: string) => /^-?\d+(\.\d+)?$/.test(x.trim());
@@ -3101,11 +3116,12 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   const norm = (t: string) => t.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, "");
   let best: { ratio: number; field: string; command: string; srcHash: string } | null = null;
   for (const [srcHash, e] of reachedCommandCache.entries()) {
-    if (e.shape !== shape) continue;
-    if (!REBIND_EXEC_FIELDS.includes(e.field)) continue;
-    if (!e.goalText) continue;
+    if (e.shape !== shape) { refuse("shape-mismatch"); continue; }
+    if (!REBIND_EXEC_FIELDS.includes(e.field)) { refuse("field-not-executable"); continue; }
+    if (!e.goalText) { refuse("donor-has-no-goal-text"); continue; }
     const A = toks(e.goalText), B = toks(goalNow);
-    if (A.length < 3 || B.length < 3) continue;
+    candidates++;
+    if (A.length < 3 || B.length < 3) { refuse("goal-too-short"); continue; }
     const na = A.map((t) => norm(t.raw)), nb = B.map((t) => norm(t.raw));
     const la = na.length, lb = nb.length;
     // LCS(suffix) DP over normalized tokens: the matched subsequence is the shared SCAFFOLD; the
@@ -3115,7 +3131,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     const dp: number[][] = Array.from({ length: la + 1 }, () => new Array<number>(lb + 1).fill(0));
     for (let i = la - 1; i >= 0; i--) for (let j = lb - 1; j >= 0; j--) dp[i][j] = na[i] === nb[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
     const lcsLen = dp[0][0];
-    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.5) continue; // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
+    if (lcsLen < 2 || lcsLen / Math.max(la, lb) < 0.5) { refuse(`scaffold-too-weak(${(lcsLen / Math.max(la, lb)).toFixed(2)})`); continue; } // scaffold must be non-trivial; the per-slot literal gate is the real correctness guard
     // backtrack the alignment; the gaps between matched anchors are slot token-index ranges
     const slots: Array<{ ai0: number; ai1: number; bi0: number; bi1: number }> = [];
     let i = 0, j = 0, ai0 = 0, bi0 = 0;
@@ -3124,7 +3140,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       else if (dp[i + 1][j] >= dp[i][j + 1]) i++; else j++;
     }
     if (la > ai0 || lb > bi0) slots.push({ ai0, ai1: la, bi0, bi1: lb });
-    if (slots.length < 1) continue;
+    if (slots.length < 1) { refuse("no-varying-slots"); continue; }
     const subs: Array<{ pos: number; len: number; newText: string }> = [];
     let ok = true;
     for (const s2 of slots) {
@@ -3166,16 +3182,24 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       }
       for (const at of occurrences) subs.push({ pos: at, len: oldContent.length, newText: newContent });
     }
-    if (!ok || subs.length < 1) continue;
+    if (!ok || subs.length < 1) { refuse("slot-gate-rejected"); continue; }
     subs.sort((x, y) => x.pos - y.pos);
     let overlap = false;
     for (let k = 1; k < subs.length; k++) if (subs[k].pos < subs[k - 1].pos + subs[k - 1].len) { overlap = true; break; }
-    if (overlap) continue;
+    if (overlap) { refuse("overlapping-substitutions"); continue; }
     let newCommand = e.command;
     for (let k = subs.length - 1; k >= 0; k--) newCommand = newCommand.slice(0, subs[k].pos) + subs[k].newText + newCommand.slice(subs[k].pos + subs[k].len); // apply right-to-left so earlier positions stay valid
-    if (newCommand === e.command || /\n/.test(newCommand)) continue;
+    if (newCommand === e.command || /\n/.test(newCommand)) { refuse("substitution-was-a-no-op"); continue; }
     const ratio = lcsLen / Math.max(la, lb);
     if (!best || ratio > best.ratio) best = { ratio, field: e.field, command: newCommand, srcHash };
+  }
+  // One line per call, always. A silent refusal is why three separate diagnoses of this
+  // function were wrong: "no donor existed for this shape" and "a donor existed and every
+  // gate rejected it" produced identical evidence from outside.
+  if (!best) {
+    const top = Object.entries(refusals).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([k, n]) => `${k}x${n}`).join(" ");
+    console.log(`[rebind] NO ADAPTATION for "${shape}" — cache=${reachedCommandCache.size} same-shape-candidates=${candidates} refusals: ${top || "(none — cache empty)"}`);
   }
   return best;
 }
