@@ -10912,7 +10912,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // gracefulShutdown()'s drain breaks only when in-flight reaches zero (so it could
       // never exit early and always burned its full budget), and /health's in_flight grew
       // monotonically as a zombie count.
-      record.status = "failed";
+      record.status = "failed"; record.endedAt = Date.now();
       record.reached = false;
       record.error = (err as Error).message;
       // A throw is an honest negative verdict, and it was never delivered: the only
