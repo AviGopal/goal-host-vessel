@@ -8143,38 +8143,28 @@ async function runGoalWithRecovery(
     }
     // --- end gap-record hydration ---
 
-    // SHELL SAFETY NET (FIX B, 2026-07-23): an IMPERATIVE / system-inspection goal
-    // ("count the .ts files under …", "how many vessels are running", "list …",
-    // "check …", "run …") maps to no bespoke producer, so inference returns nothing
-    // and the walk goes opportunistic → hollow. shellResult is the UNIVERSAL executor
-    // (local-tools real bash + the executor-command synthesis in llmExtractPointerArgs),
-    // the PROVEN satisfier for "run a command / inspect the repo|fs|running system".
-    // Seed it deterministically. CONSERVATIVE + FAIL-OPEN: fires ONLY when (a) inference
-    // produced NOTHING usable (so a legitimately-inferred specific shape is never masked),
-    // (b) shellResult is in the live vocabulary, and (c) the goal matches an imperative
-    // verb AND an inspection noun AND carries NO write/analysis/edit signal.
-    if (
-      knownShapes &&
-      knownShapes.includes("shellResult") &&
-      (!seededOutputShapes || seededOutputShapes.length === 0)
-    ) {
-      const g = goal.toLowerCase();
-      const imperativeInspect =
-        /\b(count|list|find|show|how\s+many|how\s+much|number\s+of|report\s+the\s+current|check|run|execute|ls|grep|cat|tail|head|du|df|ps|which)\b/.test(g);
-      const inspectNoun =
-        /(\bfiles?\b|\bdirector(?:y|ies)\b|\bfolders?\b|\bvessels?\b|\bunits?\b|\bservices?\b|\bprocesses?\b|\bcontainers?\b|\bcommits?\b|\bbranch(?:es)?\b|\bports?\b|\bdisk\b|\bstatus\b|\brunning\b|\bsystemd\b|\bdocker\b|\brepos?\b|\b[\w-]+\.(?:ts|js|md|json|txt|py|sh|go|rs|yaml|yml|toml|sql)\b)/.test(g);
-      const writeAnalysisEdit =
-        /\b(write|note|summ|analy|review|assess|audit|refactor|edit|implement|propose|proposal|document|concept|explain|design|draft|save|record|export|dump|generate)\b/.test(g);
-      if (imperativeInspect && inspectNoun && !writeAnalysisEdit) {
-        seededOutputShapes = ["shellResult"];
-        goalTargetDecision = { shapes: ["shellResult"], confidence: 0.5, alternatives: [] };
-        tap(
-          `[goal-host-vessel] ${opts.surface}: shell safety-net seeded shellResult for imperative/system-inspection goal ` +
-            JSON.stringify({ goal_hash: goalHashOf(goal) }),
-        );
-      }
-    }
-
+    // The shell safety net lives AFTER inference (see below), where its own stated
+    // precondition — "fires ONLY when inference produced NOTHING usable" — can actually be
+    // evaluated. A duplicate of that block used to sit HERE, before
+    // inferGoalTargetDecision was called, where `seededOutputShapes` is empty because
+    // inference has not run yet rather than because it returned nothing. The precondition
+    // was therefore vacuously true and the net pre-empted inference instead of backstopping
+    // it, pinning goalTargetDecision to shellResult at confidence 0.5 for every goal
+    // matching a very broad predicate (count|list|find|show|how many|check|run crossed with
+    // files|repos|vessels|*.json|...).
+    //
+    // That is the monoculture: the reached-command cache is 98.5% shellResult (1178/1196),
+    // and the walk never exercised the producer vocabulary it already had — 19 learned
+    // deliverable shapes including json_path_extract, all reachable, none chosen. Measured
+    // directly: "sum the qty field in orders_probe.json" inferred ["shellResult"] alone,
+    // while the same goal ending in "record it in a durable note" — which trips
+    // writeAnalysisEdit and so SUPPRESSED this block — inferred
+    // ["shellResult","memoryNote_write"] and composed a correct 2-step chain.
+    //
+    // Deleting the duplicate restores the documented design. The surviving copy still
+    // catches the case it was written for (inference returns nothing → seed shellResult),
+    // and the countable-goal UNION below still appends shellResult when inference DOES
+    // return something, so the measurement stays composable either way.
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         decisionCache: inferredTargetDecisionCache,
         llmEndpoint: LLM_VESSEL_ENDPOINT,
