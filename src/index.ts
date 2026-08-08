@@ -4184,10 +4184,28 @@ function tierFromChain(chainIds: string[]): WalkTier {
   
   return tierOf(chainIds[chainIds.length - 1]);
 }
-async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = []): Promise<void> {
+/**
+ * `parent` is the pathway this walk actually BORROWED FROM, or null when it derived
+ * fresh. POST /v2/goal-paths has always accepted parent_goal_hash and
+ * parent_path_signature; nothing ever sent them, so a borrowed pathway left no lineage
+ * and reuse could be neither credited, blamed, nor compared against fresh derivation.
+ * That is why "does the ceiling beat the floor" has been unanswerable from stored data:
+ * the two arms are indistinguishable after the fact.
+ *
+ * `walk_tier` cannot stand in for this. tierFromChain no longer returns
+ * "learned_pathway" at all — that branch was removed when it was found to be counting
+ * every landed direct edit — so the label now means different things in different rows
+ * depending on which era and which writer produced it. Lineage is a fact about this
+ * walk, recorded by the walk, at the moment it borrowed.
+ *
+ * Only pass a parent when a pathway step was genuinely used. Recording the pathway the
+ * walk was OFFERED, rather than the one it took, would manufacture exactly the
+ * correlation that makes reuse look effective (law 12).
+ */
+async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   try {
-    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
+    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({
@@ -4201,10 +4219,23 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         cost_usd: costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
         walk_tier: walkTier,
+        ...(parent?.goalHash ? { parent_goal_hash: parent.goalHash } : {}),
+        ...(parent?.pathSignature ? { parent_path_signature: parent.pathSignature } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });
-  } catch { /* non-fatal */ }
+    // A DROPPED RECOMMENDATION IS NOT A NON-EVENT. This write is the store the reuse
+    // arm reads from, and it was `catch { /* non-fatal */ }` with no res.ok check —
+    // silence on both a rejection and a throw. Measured consequence: failures were
+    // retained at 12.5% against ~100% for successes, an 8x optimism bias baked into
+    // every recommendation the walk later receives. Still non-fatal to the walk; no
+    // longer invisible.
+    if (!res.ok) {
+      console.warn(`[goal-host] goal-path record REJECTED ${res.status} for a ${pathActivities.length}-step path (reached=${reached}); this walk will not inform future reuse`);
+    }
+  } catch (e) {
+    console.warn(`[goal-host] goal-path record FAILED for a ${pathActivities.length}-step path (reached=${reached}); this walk will not inform future reuse: ${(e as Error).message}`);
+  }
 }
 // Durable-trace persistence for SATISFIER reaches (2026-06-28). The shape-graph
 // walk's vessel-resolve satisfier produces a SYNTHETIC ExecutionTrace in-memory
@@ -4800,6 +4831,12 @@ async function runGoalAsPoolWalk(
      * never overrides feasibility. Absent/empty ⇒ behaviour unchanged.
      */
     preferPathway?: string[];
+    /**
+     * Identity of the pathway `preferPathway` came from, so a walk that borrows can say
+     * WHAT it borrowed. Recorded only if a step is actually taken from it — see
+     * recordGoalPath's `parent`.
+     */
+    preferPathwayOrigin?: { goalHash: string | null; pathSignature: string | null };
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -6298,8 +6335,14 @@ If one of those sibling shapes is the action that would create what the goal ask
         && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s))
         && !satisfierTried.has(s) && !minted.has(s));
       const _satProven = _satEligible.filter((s) => pathwaySet.has(`satisfier:${String(s)}`));
-      if (_satProven.length > 0) {
-        tap(`[goal-host-vessel] walk(${opts.surface}): REUSE-BEFORE-DERIVE (satisfier) — ${JSON.stringify(_satProven)} ${_satProven.length === 1 ? "is a step" : "are steps"} of a composition already proven to reach this goal family; satisfying ${String(_satProven[0])} ahead of ${JSON.stringify(_satEligible.filter((s) => !_satProven.includes(s)))} (pathway_steps=${pathwaySet.size})`);
+      if (_satProven.length > 0 && !preferComposition) {
+        // Counted in the SAME counter as the candidate-plane tie-break: it is the same
+        // act (a step taken because the store proved it), and recordGoalPath keys the
+        // borrowed-from lineage off this counter. Counting satisfier reuse separately
+        // would leave every satisfier-only reuse recording no parent — i.e. the 63.5%
+        // majority would stay exactly as unattributable as before.
+        pathwayReusePicks++;
+        tap(`[goal-host-vessel] walk(${opts.surface}): REUSE-BEFORE-DERIVE (satisfier) — ${JSON.stringify(_satProven)} ${_satProven.length === 1 ? "is a step" : "are steps"} of a composition already proven to reach this goal family; satisfying ${String(_satProven[0])} ahead of ${JSON.stringify(_satEligible.filter((s) => !_satProven.includes(s)))} (pathway_steps=${pathwaySet.size}, reuse_picks=${pathwayReusePicks})`);
       }
       const satisfiableNow = preferComposition ? undefined : (_satProven[0] ?? _satEligible[0]);
       if (satisfiableNow) {
@@ -7742,7 +7785,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // and names both operands, so one run decides between the candidates instead of another
     // dispatched guess.
     console.log(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
-    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target]);
+    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null);
     {
       const _wid = opts.variables.dispatch_id;
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
@@ -7774,7 +7817,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // reaches with no engine trace, which is exactly the multi-satisfier composition case that
     // compounding depends on. Scoped as an `else if` so every path that already records is
     // untouched: this fires only when the guarded block was skipped, and it cannot double-write.
-    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target]);
+    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null);
     console.log(`[goal-host-vessel] recordGoalPath (traceless reach) path=${JSON.stringify(chain)} reached=${reached} goal="${goal.slice(0, 80)}"`);
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
@@ -8560,7 +8603,7 @@ async function runGoalWithRecovery(
           const reused = await universalToolFallback(goal, seededOutputShapes ?? []);
           if (reused?.reached) {
             if (opts.learningMode !== "observe") {
-              void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? []);
+              void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
               console.log(`[goal-host-vessel] recordGoalPath (floor REUSE) shapes=${JSON.stringify(reused.completionShapes ?? [])} goal="${goal.slice(0, 60)}"`);
             }
             return reused;
@@ -8586,6 +8629,7 @@ async function runGoalWithRecovery(
         ablation: opts.ablation,
         learningMode: opts.learningMode,
         preferPathway: reachingPathway?.activities,
+          preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
       });
       // IN-DISPATCH SATISFIER RETRY: a HOLLOW verdict reached via a vessel-resolve
       // satisfier means the satisfier resolved but produced nothing goal-satisfying —
@@ -8613,6 +8657,7 @@ async function runGoalWithRecovery(
         ablation: opts.ablation,
         learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
+          preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
           suppressSatisfierShapes: [suppressedShape],
         });
         if (retryWalk.reached) {
