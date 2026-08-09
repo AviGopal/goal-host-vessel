@@ -162,6 +162,7 @@ export type FileSearch = (term: string) => Promise<readonly string[]>;
  * Ambiguity is treated as failure rather than resolved by ranking: with two
  * candidate files there is no evidence here for choosing between them, and
  * picking the first is exactly the guess this whole module exists to prevent.
+ * THIS FUNCTION IS FAIL-CLOSED. See the module docstring for a full explanation of why.
  */
 export async function resolvePathlessCodeChangeGoal(
   goal: string,
