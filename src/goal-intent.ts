@@ -13,7 +13,10 @@
  * never be diverted to the ReAct floor, which reads and reasons but does not land commits.
  */
 /**
- * The goal asks for a DURABLE ARTIFACT — a record/save verb plus a durable noun.
+ * A "durable artifact" is a permanent record the substrate should write, typically
+ * to disk or a knowledge base, based on a goal requesting a record/save verb plus
+ * a durable noun. It signifies an intent to persist information beyond the current
+ * execution context.
  *
  * This is the condition the terminal-output bridge already used to decide whether to
  * materialize a walk's content into a sink. It is shared because the floor cannot deliver
