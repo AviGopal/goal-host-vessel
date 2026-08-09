@@ -39,6 +39,6 @@ export function goalRequestsDurableArtifact(goal: string): boolean {
 export function isEditIntentGoal(goal: string): boolean {
   return (
     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) &&
-    /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal)
+    /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose)\b/i.test(goal)
   );
 }
