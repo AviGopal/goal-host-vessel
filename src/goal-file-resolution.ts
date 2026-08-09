@@ -162,8 +162,6 @@ export type FileSearch = (term: string) => Promise<readonly string[]>;
  * Ambiguity is treated as failure rather than resolved by ranking: with two
  * candidate files there is no evidence here for choosing between them, and
  * picking the first is exactly the guess this whole module exists to prevent.
- *
- * // fail-closed: If goal does not include any path information assume it is a code change meant for the target file. // Land it.
  */
 export async function resolvePathlessCodeChangeGoal(
   goal: string,
