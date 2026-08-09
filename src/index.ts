@@ -6101,8 +6101,29 @@ If one of those sibling shapes is the action that would create what the goal ask
     let _directComputed: string | null = null;
     if (terminalShapes.has(shape)) {
       const _gLow = goal.toLowerCase();
+      // THE TRIGGER MISSED THE GOALS THAT MOST NEED IT. Direct-bind fires only when the
+      // goal names the thing to record with a GENERIC word (number/count/total/...). A goal
+      // that names the value by its FIELD — "find the LARGEST unpackedSize, then record it",
+      // "record the stargazers_count" — matched nothing, fell through to LLM re-synthesis,
+      // and the computed answer was lost on the way to the artifact.
+      //
+      // Measured over a 22-cell capability matrix (3 sources x 6 operations, external
+      // ground truth): the substrate computed correctly in ~15/22 but 12 of 22 notes carried
+      // GOAL-TEXT NARRATION instead of the value, and 6 failures had the right number in
+      // shellResult.stdout while the note held something else (23295 -> 17935,
+      // 1554951 -> 399047, 1413741 -> 258960, 10 -> 8, 75429 -> empty). Every one of those
+      // goals misses the old predicate; the cells that passed are the ones it matched.
+      //
+      // So: also fire when a record/write verb is followed by a bare "it"/"that" (an
+      // anaphor whose referent is the value just computed), or by "the <identifier>" that
+      // looks like a FIELD name (snake_case or camelCase). Both mean "emit one value", which
+      // is the precondition this block already checks for downstream — it still refuses
+      // unless a clean single-line shellResult is in the pool, so widening the trigger
+      // cannot fabricate a body, only stop discarding one that exists.
       const _wantsSingleValue = /\bwrite\s+only\b/.test(_gLow) ||
-        /\b(write|save|store|output|record)\b[^.]{0,60}\b(the |that |only )?(number|count|result|value|total|length|digit|sum)\b/.test(_gLow);
+        /\b(write|save|store|output|record)\b[^.]{0,60}\b(the |that |only )?(number|count|result|value|total|length|digit|sum)\b/.test(_gLow) ||
+        /\b(record|write|save|store|output)\s+(it|that|this)\b/.test(_gLow) ||
+        /\b(record|write|save|store|output)\s+(?:only\s+)?the\s+[a-z]+(?:_[a-z]+|[A-Z][a-z]+)+\b/.test(goal);
       if (_wantsSingleValue) {
         for (const _imp of poolImpulses) {
           const _sh = (_imp.metadata as { shape?: string } | undefined)?.shape;
