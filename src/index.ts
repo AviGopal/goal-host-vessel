@@ -11555,6 +11555,18 @@ async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> 
     // change to that symbol belongs. This is evidence, not a tiebreak: when the
     // definition is unique we know which file, and when it is not we still fall
     // back to requiring an unambiguous mention.
+    // EXPORTED DEFINITION FIRST. Measured live: `isEditIntentGoal` is an
+    // exported function in goal-intent.ts AND a local `const` of the same name
+    // inside index.ts, so "any definition" found two and declined a goal whose
+    // target was unambiguous. A local shadowing an import is not a rival
+    // definition of the symbol the goal is about; the exported one is the
+    // symbol. Narrowest evidence first, widening only when it finds nothing.
+    const exported = await run([
+      "-e", `export\\s+(async\\s+)?function\\s+${term}\\b`,
+      "-e", `export\\s+(const|let|class|interface|type)\\s+${term}\\b`,
+      "--",
+    ]);
+    if (exported.length === 1) return exported;
     const defined = await run([
       "-e", `(export\\s+)?(async\\s+)?function\\s+${term}\\b`,
       "-e", `(export\\s+)?(const|let|class|interface|type)\\s+${term}\\b`,
