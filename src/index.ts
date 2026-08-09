@@ -6618,7 +6618,29 @@ If one of those sibling shapes is the action that would create what the goal ask
         // runs arbitrary shell). It EXECUTES tools and yields content ONLY when at least one read
         // actually grounded (inv.groundedOk >= 1) — never an un-executed LLM answer (the root of
         // the ".rs count = 6" hollow-green was returning an ungrounded LLM guess here).
-        const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (source_code, fs_read, codeSearchResult, shellResult) to FIND and READ the relevant source/files yourself BEFORE answering — do not ask for them, and never answer from memory; an answer not grounded in what your tools actually returned is INVALID.\n\nGoal:\n${goal}\n\nWhen finished, respond with ONLY the concrete content (file contents, analysis, or answer) grounded in your tool results — no preamble, no code fences.`;
+        // TELL IT WHERE THE CODE IS (2026-08-09, law 8).
+        //
+        // This prompt demanded grounding — "never answer from memory", "an answer not
+        // grounded in what your tools actually returned is INVALID" — while telling the
+        // model NOTHING about where any source lives. That is an impossible instruction,
+        // and the model did the only thing left: it guessed filenames.
+        //
+        // Five walks in a row died this way on a goal about slow deletes, and the guesses
+        // degraded as it grew more desperate: 'trace_store_schema.sql', then
+        // 'trace_store_deletion_logic.py' (a .py in an all-TypeScript fleet), then
+        // 'execution_table_schema.sql', 'trace_store.py', 'error_log', and finally
+        // './find . -name "*execution*"' passed as a FILE PATH — the model trying to
+        // search through the only channel it had.
+        //
+        // Confabulation is downstream of information starvation, not model weakness. The
+        // fix is not a sterner instruction; it is making the load-bearing fact available
+        // at the moment of use. The layout below is verified on the substrate:
+        //   /vessels/<vessel>/           the running tree (src/, sql/) — what executes
+        //   /workspace/git/vessels/<vessel>/  the git checkout mirror-to-live deploys FROM
+        // and the shell resolver already runs with cwd=/workspace, so find/grep from
+        // there work today and always did.
+        const invLayout = `\n\nWHERE THE CODE IS. This substrate runs a fleet of vessels. Each vessel's RUNNING source is at /vessels/<vessel>/src (schemas and migrations at /vessels/<vessel>/sql), and its git checkout is at /workspace/git/vessels/<vessel>. Vessel names are directory names, e.g. activity-api, goal-host-vessel, development-vessel, analysis-vessel, local-tools-vessel. The shell tool runs with cwd=/workspace.\n\nHOW TO FIND A FILE. SEARCH FIRST — never guess a filename. Use shellResult, e.g. \`ls /vessels\`, \`find /vessels/<vessel>/src -name '*.ts'\`, or \`grep -rl "<symbol>" /vessels/<vessel>/src\`. Then fs_read the ABSOLUTE path you found. A filename you did not obtain from a tool result is a guess, and an answer built on one is INVALID even if it sounds right. If your searches genuinely find nothing, say so plainly rather than inventing a path.`;
+        const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (source_code, fs_read, codeSearchResult, shellResult) to FIND and READ the relevant source/files yourself BEFORE answering — do not ask for them, and never answer from memory; an answer not grounded in what your tools actually returned is INVALID.${invLayout}\n\nGoal:\n${goal}\n\nWhen finished, respond with ONLY the concrete content (file contents, analysis, or answer) grounded in your tool results — no preamble, no code fences.`;
         const inv = await runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, []);
         if (inv && inv.groundedOk >= 1) {
           const invContent = inv.finalText.trim() || inv.observations.join("\n\n").slice(0, 6000);
