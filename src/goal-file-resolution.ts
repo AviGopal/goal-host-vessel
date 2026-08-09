@@ -143,3 +143,54 @@ export function extractSearchTerms(goal: string): string[] {
 export function restateWithTargetFile(goal: string, file: string): string {
   return `Edit ${file} to satisfy the following request. If that file is the wrong target, say so rather than editing it.\n\n${goal.trim()}`;
 }
+
+/** Returns repo-relative `repos/<vessel>/…` paths containing the term. */
+export type FileSearch = (term: string) => Promise<readonly string[]>;
+
+/**
+ * Turn a pathless code-change goal into a path-bearing one, or return it unchanged.
+ *
+ * FAIL-CLOSED ON PURPOSE, in three places: the goal must satisfy the
+ * conservative predicate, the search must return EXACTLY ONE file, and any
+ * search error returns the original goal. The cost asymmetry drives this — a
+ * goal left pathless behaves exactly as it does today (it walks and reports,
+ * which is the status quo), while a goal restated onto the WRONG file routes a
+ * confident edit into feature_compose, which drafts and commits. One is a
+ * missed opportunity; the other writes code nobody asked for.
+ *
+ * Terms are tried in specificity order and the FIRST unique hit wins.
+ * Ambiguity is treated as failure rather than resolved by ranking: with two
+ * candidate files there is no evidence here for choosing between them, and
+ * picking the first is exactly the guess this whole module exists to prevent.
+ */
+export async function resolvePathlessCodeChangeGoal(
+  goal: string,
+  search: FileSearch,
+  tap?: (message: string) => void,
+): Promise<string> {
+  if (!isPathlessCodeChangeGoal(goal)) return goal;
+  const terms = extractSearchTerms(goal);
+  if (terms.length === 0) {
+    tap?.(`pathless code-change goal but no searchable term — left unrestated`);
+    return goal;
+  }
+  for (const term of terms) {
+    let hits: readonly string[];
+    try {
+      hits = await search(term);
+    } catch {
+      // A broken search must not silently become "no such file".
+      tap?.(`pathless code-change goal: file search threw on "${term}" — left unrestated`);
+      return goal;
+    }
+    if (hits.length === 1) {
+      tap?.(`pathless code-change goal — restated with target ${hits[0]} (unique hit for "${term}")`);
+      return restateWithTargetFile(goal, hits[0]!);
+    }
+    if (hits.length > 1) {
+      tap?.(`pathless code-change goal: "${term}" matched ${hits.length} files — ambiguous, trying next term`);
+    }
+  }
+  tap?.(`pathless code-change goal: no unique file for terms [${terms.join(", ")}] — left unrestated`);
+  return goal;
+}

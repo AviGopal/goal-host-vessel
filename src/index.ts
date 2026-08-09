@@ -254,6 +254,7 @@ import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
+import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import type {
   EventSink,
   Impulse,
@@ -11511,6 +11512,42 @@ discoveryLoop.onUnhealthy(() => {
 // Request helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Files under the vessel checkouts containing `term`, as repo-relative
+ * `repos/<vessel>/…` paths (the form every downstream path extractor expects).
+ *
+ * Bounded on purpose. `-l` (names only), a hard `--max-count 1` per file, a
+ * fixed-string match so a goal's punctuation cannot become a pattern, and a
+ * result cap: the caller only cares whether the answer is EXACTLY ONE, so
+ * reading past a handful of hits buys nothing and a runaway search would sit in
+ * the dispatch path. `--fixed-strings` also means an operator writing "fix the
+ * (broken) guard" cannot make rg throw on an unbalanced group.
+ *
+ * Returns [] on any failure — the caller treats that as "leave the goal alone".
+ */
+async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> {
+  const ROOT = "/workspace/git/vessels";
+  try {
+    const proc = Bun.spawn(
+      ["rg", "-l", "--fixed-strings", "--max-count", "1", "--glob", "*.ts", "--glob", "!*.test.ts", "--", term, ROOT],
+      { stdout: "pipe", stderr: "ignore" },
+    );
+    const timer = setTimeout(() => { try { proc.kill(); } catch { /* already gone */ } }, 10_000);
+    const out = await new Response(proc.stdout).text();
+    clearTimeout(timer);
+    const hits = out
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith(`${ROOT}/`))
+      // /workspace/git/vessels/<vessel>/<rest>  ->  repos/<vessel>/<rest>
+      .map((l) => `repos/${l.slice(ROOT.length + 1)}`)
+      .slice(0, 8);
+    return [...new Set(hits)];
+  } catch {
+    return [];
+  }
+}
+
 async function handleRunGoal(req: Request): Promise<Response> {
   // Reject new dispatches while draining for a graceful restart (cutover) so the
   // in-flight set can reach zero; the caller retries against the fresh instance.
@@ -11524,7 +11561,24 @@ async function handleRunGoal(req: Request): Promise<Response> {
     return Response.json({ error: (err as Error).message }, { status: 400 });
   }
 
-  const goal = typeof body.goal === "string" ? body.goal : undefined;
+  const rawGoal = typeof body.goal === "string" ? body.goal : undefined;
+  // RESOLVE THE FILE THE OPERATOR DID NOT NAME (2026-08-09).
+  //
+  // isEditIntentGoal requires a literal repos/<vessel>/<file> path, so a goal
+  // that asks for a change without one never enters the edit path at all —
+  // measured on two live hub dispatches that inferred shellResult and
+  // llm_completion_dispatch and landed nothing. Restating here, at the door,
+  // means EVERY downstream consumer (inference, the ~12 path extractors, the
+  // edit-intent predicate, feature_compose) sees a goal it already knows how to
+  // route, with no change to any of them.
+  //
+  // Fail-closed: unchanged unless the goal passes a conservative predicate AND
+  // the search returns exactly one file. A goal left alone behaves as it does
+  // today; a goal restated onto the WRONG file commits code nobody asked for.
+  const goal = rawGoal === undefined
+    ? undefined
+    : await resolvePathlessCodeChangeGoal(rawGoal, searchWorkspaceForTerm, (m) =>
+        console.log(`[goal-host-vessel] /run-goal: ${m}`));
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 
   // A GOAL WITH A COLLAPSED INTERPOLATION IS NOT ANSWERABLE — REFUSE IT AT THE DOOR.

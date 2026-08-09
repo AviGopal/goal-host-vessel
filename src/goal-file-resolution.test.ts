@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  resolvePathlessCodeChangeGoal,
   extractSearchTerms,
   isPathlessCodeChangeGoal,
   restateWithTargetFile,
@@ -114,5 +115,71 @@ describe("restateWithTargetFile", () => {
 
   test("marks the target as inferred so a wrong guess stays visible", () => {
     expect(restated.toLowerCase()).toContain("wrong target");
+  });
+});
+
+describe("resolvePathlessCodeChangeGoal", () => {
+  const CHANGE = "Change the fleet's code so the loopbackGuard stops publishing bad addresses.";
+
+  test("restates on a unique hit, and the result routes to the edit path", async () => {
+    const out = await resolvePathlessCodeChangeGoal(CHANGE, async () => [
+      "repos/discovery-vessel/src/index.ts",
+    ]);
+    expect(out).toContain("repos/discovery-vessel/src/index.ts");
+    expect(isEditIntentGoal(out)).toBe(true);
+  });
+
+  // AMBIGUITY IS FAILURE, NOT A RANKING PROBLEM. Two candidates means there is
+  // no evidence for choosing, and choosing anyway is the guess this prevents.
+  test("leaves the goal unchanged when the term matches several files", async () => {
+    const out = await resolvePathlessCodeChangeGoal(CHANGE, async () => [
+      "repos/a-vessel/src/index.ts",
+      "repos/b-vessel/src/index.ts",
+    ]);
+    expect(out).toBe(CHANGE);
+    expect(isEditIntentGoal(out)).toBe(false);
+  });
+
+  test("leaves the goal unchanged when nothing matches", async () => {
+    expect(await resolvePathlessCodeChangeGoal(CHANGE, async () => [])).toBe(CHANGE);
+  });
+
+  test("a throwing search must not read as 'no such file'", async () => {
+    const out = await resolvePathlessCodeChangeGoal(CHANGE, async () => {
+      throw new Error("rg exploded");
+    });
+    expect(out).toBe(CHANGE);
+  });
+
+  test("never touches a goal the predicate declined", async () => {
+    const report = "Analyze the resolver code and report which functions changed";
+    expect(
+      await resolvePathlessCodeChangeGoal(report, async () => ["repos/x-vessel/src/i.ts"]),
+    ).toBe(report);
+  });
+
+  test("tries the next term when the most specific one is ambiguous", async () => {
+    // Needs a goal carrying TWO searchable terms — `loopbackGuard` alone gives
+    // the resolver nothing to fall back to.
+    const twoTerms =
+      "Change the fleet's code so the loopbackGuard in discovery-vessel stops publishing bad addresses.";
+    expect(extractSearchTerms(twoTerms).length).toBeGreaterThan(1);
+    const calls: string[] = [];
+    const out = await resolvePathlessCodeChangeGoal(twoTerms, async (term) => {
+      calls.push(term);
+      return calls.length === 1 ? ["a.ts", "b.ts"] : ["repos/discovery-vessel/src/index.ts"];
+    });
+    expect(calls.length).toBeGreaterThan(1);
+    expect(isEditIntentGoal(out)).toBe(true);
+  });
+
+  test("reports what it did through the tap, so the walk log shows it", async () => {
+    const taps: string[] = [];
+    await resolvePathlessCodeChangeGoal(
+      CHANGE,
+      async () => ["repos/discovery-vessel/src/index.ts"],
+      (m) => taps.push(m),
+    );
+    expect(taps.join(" ")).toContain("restated with target repos/discovery-vessel/src/index.ts");
   });
 });
