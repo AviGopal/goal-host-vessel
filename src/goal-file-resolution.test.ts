@@ -4,6 +4,7 @@ import {
   extractSearchTerms,
   isPathlessCodeChangeGoal,
   restateWithTargetFile,
+  type FileSearch,
 } from "./goal-file-resolution";
 import { isEditIntentGoal } from "./goal-intent";
 
@@ -281,6 +282,37 @@ describe("resolvePathlessCodeChangeGoal", () => {
     });
     expect(calls.length).toBeGreaterThan(1);
     expect(isEditIntentGoal(out)).toBe(true);
+  });
+
+  test("a named vessel scopes the search instead of being searched for", async () => {
+    // Measured live 2026-08-09: grepping for `discovery-vessel` matched 66
+    // files across the fleet (everyone who mentions it), read as ambiguous, and
+    // dropped through to the vague phrase "vessels register" — which resolved a
+    // goal about discovery-vessel onto goal-host-vessel/src/index.ts.
+    const seen: Array<{ term: string; vessel?: string }> = [];
+    const search: FileSearch = async (term, vessel) => {
+      seen.push({ term, vessel });
+      return term === "loopback address" ? ["repos/discovery-vessel/src/resolvers.ts"] : [];
+    };
+    const out = await resolvePathlessCodeChangeGoal(
+      "Make the discovery vessel stop advertising a loopback address in its registry code",
+      search,
+    );
+    expect(out).toContain("repos/discovery-vessel/src/resolvers.ts");
+    // The vessel name must never be issued as a query...
+    expect(seen.map((s) => s.term)).not.toContain("discovery-vessel");
+    // ...and every query must carry it as scope.
+    expect(seen.every((s) => s.vessel === "discovery-vessel")).toBe(true);
+  });
+
+  test("two named vessels are not evidence for either — no scope", async () => {
+    const seen: Array<string | undefined> = [];
+    const search: FileSearch = async (_t, vessel) => { seen.push(vessel); return []; };
+    await resolvePathlessCodeChangeGoal(
+      "Make the discovery vessel and the boredom vessel agree on the loopback address rule in their code",
+      search,
+    );
+    expect(seen.every((v) => v === undefined)).toBe(true);
   });
 
   test("reports what it did through the tap, so the walk log shows it", async () => {

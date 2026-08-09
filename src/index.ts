@@ -11525,8 +11525,24 @@ discoveryLoop.onUnhealthy(() => {
  *
  * Returns [] on any failure — the caller treats that as "leave the goal alone".
  */
-async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> {
+async function searchWorkspaceForTerm(
+  term: string,
+  vessel?: string,
+): Promise<readonly string[]> {
   const ROOT = "/workspace/git/vessels";
+  // A VESSEL NAME IS A DIRECTORY, NOT A SEARCH STRING. Measured 2026-08-09:
+  // "make the discovery vessel prefer a reachable endpoint" extracted
+  // `discovery-vessel` correctly and then grepped for that TEXT — 66 files
+  // across the fleet mention it, so it read as ambiguous, the search fell
+  // through to the phrase "vessels register", and that resolved onto
+  // goal-host-vessel. Searching for a repository's NAME finds everyone who
+  // talks about it; what the goal meant was "look inside it".
+  // The name is pattern-checked before it reaches a path: it comes from goal
+  // text, so it must never be able to walk out of ROOT.
+  const scope =
+    vessel && /^[a-z][a-z0-9-]+$/.test(vessel) && (await Bun.file(`${ROOT}/${vessel}/package.json`).exists())
+      ? `${ROOT}/${vessel}`
+      : undefined;
   // grep, NOT ripgrep. `rg` IS NOT INSTALLED IN THE CONTAINER — Bun.spawn threw
   // ENOENT on every call, the catch below turned that into [], and three
   // consecutive live probes reported "no unique file" for a symbol whose file was
@@ -11545,7 +11561,11 @@ async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> 
         "--include=*.ts", "--include=*.sh", "--include=Makefile",
         "--include=*.mk", "--include=*.service", "--include=*.timer",
         "--exclude=*.test.ts",
-        ...args, ROOT,
+        // Dependencies are not this fleet's source. Without this a common word
+        // matches thousands of vendored .d.ts files and every term looks
+        // ambiguous — measured: "loopback" hit bun-types and @types/node.
+        "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=dist",
+        ...args, scope ?? ROOT,
       ],
       { stdout: "pipe", stderr: "ignore" },
     );

@@ -253,7 +253,11 @@ export function restateWithTargetFile(goal: string, file: string): string {
 }
 
 /** Returns repo-relative `repos/<vessel>/…` paths containing the term. */
-export type FileSearch = (term: string) => Promise<readonly string[]>;
+export type FileSearch = (
+  term: string,
+  /** Restrict the search to this vessel's repo, when the goal named one. */
+  vessel?: string,
+) => Promise<readonly string[]>;
 
 /**
  * Turn a pathless code-change goal into a path-bearing one, or return it unchanged.
@@ -278,7 +282,17 @@ export async function resolvePathlessCodeChangeGoal(
   tap?: (message: string) => void,
 ): Promise<string> {
   if (!isPathlessCodeChangeGoal(goal)) return goal;
-  const terms = extractSearchTerms(goal);
+  const allTerms = extractSearchTerms(goal);
+  // A named vessel SCOPES the search instead of being searched for. Grepping a
+  // repository's name finds every file that merely mentions it (66 across the
+  // fleet for `discovery-vessel`), which reads as ambiguity and drops through
+  // to a vaguer term — measured live, that is how a goal about discovery-vessel
+  // came to be restated onto goal-host-vessel. Only the first named vessel
+  // counts: a goal naming two is not evidence for either.
+  const vessels = allTerms.filter((t) => /^[a-z][a-z0-9-]*-vessel$/.test(t) || t === "concept-db");
+  const vessel = vessels.length === 1 ? vessels[0] : undefined;
+  const terms = allTerms.filter((t) => !vessels.includes(t));
+  if (vessel) tap?.(`pathless code-change goal: scoping the search to ${vessel}`);
   if (terms.length === 0) {
     tap?.(`pathless code-change goal but no searchable term — left unrestated`);
     return goal;
@@ -286,7 +300,7 @@ export async function resolvePathlessCodeChangeGoal(
   for (const term of terms) {
     let hits: readonly string[];
     try {
-      hits = await search(term);
+      hits = await search(term, vessel);
     } catch {
       // A broken search must not silently become "no such file".
       tap?.(`pathless code-change goal: file search threw on "${term}" — left unrestated`);
