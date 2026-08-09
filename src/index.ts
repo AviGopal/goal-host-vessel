@@ -4113,7 +4113,21 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
       durationMs: 0,
       // dispatcher_used:goal-host keeps the row consistent with every other walk trace;
       // the reach tag is what actually grades it.
-      tags: ["dispatcher_used:goal-host", floorReached ? "reached:true" : "reached:false"],
+      //
+      // completion_shapes: A FLOOR REACH USED TO RECORD NO SHAPES AT ALL (2026-08-09).
+      // Observed on universal-tool-fallback-af854b4a:1-…: status success, reached:true,
+      // "produced shapes: (none recorded)". A reach with no shapes cannot be compared
+      // against the goal's target shapes, so it is unfalsifiable by construction — the
+      // same hollow-green class this codebase keeps fighting, one level up: not a wrong
+      // verdict, an ungradable one. It matters more here than elsewhere because the floor
+      // is the pathway that gets REUSED (REUSE-BEFORE-DERIVE borrows it by shape
+      // signature), so an ungradable reach propagates into later posteriors it never
+      // earned. Tag the shapes the floor was actually asked for, and only when it reached.
+      tags: [
+        "dispatcher_used:goal-host",
+        floorReached ? "reached:true" : "reached:false",
+        ...(floorReached && targetShapes.length > 0 ? [`completion_shapes:${targetShapes.join(",")}`] : []),
+      ],
       metadata: {
         floor: true,
         goal_hash: goalHashOf(goal),
@@ -4122,6 +4136,23 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
         tools_total: executed.length,
         authored_answer: authoredFinalAnswer,
         reach_reason: verdict?.reason ?? null,
+        target_shapes: targetShapes,
+        // PERSIST THE ANSWER, OR THE REACH IS UNAUDITABLE (2026-08-09).
+        //
+        // The floor's final text lived only in the process log line (finalTextLen=1246)
+        // and nowhere on the trace. execution_trace, goal_reasoning and an
+        // activityExecutionTrace resolve all render task descriptions but not tool
+        // arguments or final text — so an operator asking "what did this reach actually
+        // conclude?" had no reader that could answer, on the one shape the ribosome
+        // treats as EXTRACT FROM THIS.
+        //
+        // A verdict no one can read is not evidence. This repo's own rule is that a
+        // trace's substantive content, not its status field, is what counts; that rule
+        // was unfollowable here. Bounded so a large answer cannot bloat a row in a store
+        // already fighting its size ceiling, with the truncation stated rather than
+        // silent.
+        final_text: finalText.length > 4000 ? `${finalText.slice(0, 4000)}\n…[truncated ${finalText.length - 4000} chars]` : finalText,
+        final_text_len: finalText.length,
       },
     } as ExecutionTrace);
     console.log(`[goal-host-vessel] floor: persisted execution ${floorExecId} reached=${floorReached} tools=${executedOk}/${executed.length} — this run is now gradable`);
