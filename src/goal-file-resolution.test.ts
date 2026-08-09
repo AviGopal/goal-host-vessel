@@ -62,6 +62,62 @@ describe("isPathlessCodeChangeGoal", () => {
       expect(isPathlessCodeChangeGoal(goal)).toBe(false);
     }
   });
+
+  // Measured 2026-08-09 by calling this predicate with real operator phrasings.
+  // Every one of these is a genuine code-change ask that returned FALSE, so no
+  // goal about shell or deploy tooling could reach the edit path at all. The
+  // ask is not exotic — "make the deploy fail loudly" is how a person says it.
+  test("accepts shell and deploy tooling as a code target", () => {
+    for (const goal of [
+      "Change the deploy script to verify the commit it actually shipped",
+      "Fix the shell script that mirrors vessels into the live container",
+      "Update the entrypoint script so it fails when a unit is masked",
+    ]) {
+      expect(isPathlessCodeChangeGoal(goal)).toBe(true);
+    }
+  });
+
+  test("accepts 'make X do Y' phrasing — the way an operator states a change", () => {
+    // MUTATION_VERB had no `make`, so the single most natural phrasing of a
+    // change request was invisible to the edit path.
+    expect(
+      isPathlessCodeChangeGoal(
+        "Make the deploy script fail loudly instead of reporting success when the wrong commit landed",
+      ),
+    ).toBe(true);
+  });
+
+  test("a bare 'count' inside a change ask does not veto it", () => {
+    // NOT_A_CHANGE carried \bcount\b for "count the files". It also matched
+    // "so scripts count as code", vetoing an unambiguous edit request.
+    expect(
+      isPathlessCodeChangeGoal("Update the predicate module so shell scripts count as code"),
+    ).toBe(true);
+  });
+
+  // The vetoes above are the ONLY thing being loosened. These re-assert the
+  // properties that widening a predicate normally breaks — the reason the
+  // narrow version existed. If a later widening trips one of these, it is the
+  // widening that is wrong, not the test.
+  test("still declines counting and reporting asks", () => {
+    for (const goal of [
+      "Count the resolvers in the codebase",
+      "How many scripts does the deploy path run?",
+      "Report the number of source files that changed",
+      "List all the shell scripts in the repo",
+    ]) {
+      expect(isPathlessCodeChangeGoal(goal)).toBe(false);
+    }
+  });
+
+  test("still declines prose and data asks that borrow a code word", () => {
+    for (const goal of [
+      "Update my notes about the deploy script",
+      "Add a note describing how the shell script works",
+    ]) {
+      expect(isPathlessCodeChangeGoal(goal)).toBe(false);
+    }
+  });
 });
 
 describe("extractSearchTerms", () => {

@@ -36,7 +36,7 @@
 
 /** Mutation verbs — kept in sync with `isEditIntentGoal` in ./goal-intent. */
 const MUTATION_VERB =
-  /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|implement|land|patch|correct|stop)\b/i;
+  /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|implement|land|patch|correct|stop|make|harden|teach)\b/i;
 
 /**
  * Evidence the goal is about CODE rather than data, prose, or the running fleet.
@@ -46,7 +46,7 @@ const MUTATION_VERB =
  * ("report which vessels changed"), in analysis asks, and in gap prose.
  */
 const CODE_TARGET =
-  /\b(code|codebase|source|sources?\s+file|implementation|function|method|class|module|predicate|regex|handler|resolver|vessel|endpoint|route|parser|schema|typescript|\.ts\b|\.tsx\b|\.js\b|logic|branch|guard|helper|the\s+fleet'?s?\s+code)\b/i;
+  /\b(code|codebase|source|sources?\s+file|implementation|function|method|class|module|predicate|regex|handler|resolver|vessel|endpoint|route|parser|schema|typescript|\.ts\b|\.tsx\b|\.js\b|logic|branch|guard|helper|the\s+fleet'?s?\s+code|scripts?|shell\s+scripts?|\.sh\b|makefile|deploy\s+(?:path|script|step)|entrypoint|unit\s+file|systemd\s+unit)\b/i;
 
 /**
  * Asks that must NOT be treated as code changes even when they carry a mutation
@@ -54,8 +54,24 @@ const CODE_TARGET =
  * and diverting them to the edit path would be the "tries and misfires" failure
  * this module exists to avoid.
  */
+// `count` is anchored to a counting ASK ("count the resolvers"), never the bare
+// word: as a plain alternation it also matched "so scripts count as code" and
+// vetoed an unambiguous edit request. Measured 2026-08-09 — a veto term must
+// match the request, not merely the vocabulary of the request.
 const NOT_A_CHANGE =
-  /\b(explain|describe|summar\w*|what\s+(is|are|does|do)\b|why\s+(do|does|did|is|are)\b|how\s+many|count|list all|report the (?:number|count)|audit|review|analy[sz]e|investigate|diagnose|find out|tell me about|walk me through|overview)\b/i;
+  /\b(explain|describe|summar\w*|what\s+(is|are|does|do)\b|why\s+(do|does|did|is|are)\b|how\s+many|count\s+(?:the|all|how|every)\b|list all|report the (?:number|count)|audit|review|analy[sz]e|investigate|diagnose|find out|tell me about|walk me through|overview)\b/i;
+
+/**
+ * Prose/data destinations that outrank any code word later in the sentence.
+ *
+ * "Update my notes about the deploy script" is a note edit, not a code edit —
+ * but it carries a mutation verb and (since `script` joined CODE_TARGET) a code
+ * target too. Widening the code vocabulary made this class newly reachable, so
+ * the destination has to be checked explicitly. Caught by the regression test
+ * written alongside that widening, not in review.
+ */
+const PROSE_DESTINATION =
+  /\b(?:my|the)\s+(?:notes?|vault|journal|memory|doc|docs|documentation|write-?up)\b|\badd\s+a\s+note\b|\bnote\s+(?:about|describing|that)\b/i;
 
 /** A goal that already names a file needs no resolution — it is already routable. */
 const HAS_PATH = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/;
@@ -94,6 +110,7 @@ export function isPathlessCodeChangeGoal(goal: string): boolean {
   // not become an edit goal, but the parser is still what it is about.
   const asked = goal.replace(NEGATED_SPAN, " ");
   if (NOT_A_CHANGE.test(asked)) return false;
+  if (PROSE_DESTINATION.test(asked)) return false;
   return MUTATION_VERB.test(asked) && CODE_TARGET.test(goal);
 }
 
