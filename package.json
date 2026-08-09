@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@avigopal/ias-executor-ts": "file:/vessels/ias-executor-ts"
+    "@avigopal/ias-executor-ts": "file:../ias-executor-ts"
   },
   "devDependencies": {
     "@types/bun": "^1.0.0",
