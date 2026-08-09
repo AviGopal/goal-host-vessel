@@ -147,6 +147,44 @@ describe("extractSearchTerms", () => {
   test("returns empty rather than guessing when the goal names nothing", () => {
     expect(extractSearchTerms("fix the code")).toEqual([]);
   });
+
+  // Measured 2026-08-09: the real blocker after the vocabulary fix. An operator
+  // describes a BEHAVIOUR ("the deploy reports success when it shipped the wrong
+  // commit") and names no camelCase symbol, so every extractor above returned
+  // nothing and the goal was declined for lack of a search term. Distinctive
+  // multi-word phrases are the evidence such a goal DOES carry: they are how the
+  // thing is named in prose, and they appear in the code as log strings, target
+  // names, comments and identifiers-with-separators.
+  test("extracts a distinctive noun phrase when the goal names no symbol", () => {
+    const terms = extractSearchTerms(
+      "The deploy can report success even though it shipped the wrong commit. Make the deploy fail loudly instead.",
+    );
+    expect(terms.length).toBeGreaterThan(0);
+    // A phrase, not a bare stopword-adjacent noun.
+    expect(terms.some((t) => t.includes(" "))).toBe(true);
+  });
+
+  test("phrases never outrank a named symbol", () => {
+    // Ordering is the contract: the caller stops at the first term that yields a
+    // unique hit, so a vague phrase ahead of a real identifier would resolve the
+    // wrong file while the right one sat second.
+    const terms = extractSearchTerms(
+      "Fix `resolvePathlessCodeChangeGoal` so the deploy reports the wrong commit loudly",
+    );
+    expect(terms[0]).toBe("resolvePathlessCodeChangeGoal");
+  });
+
+  test("still refuses to invent a phrase out of pure filler", () => {
+    // The fail-closed property must survive: no phrase may be built from words
+    // that carry no information, or this becomes a random-file generator.
+    for (const goal of [
+      "fix the code",
+      "make it work properly",
+      "update the thing so it does the right thing",
+    ]) {
+      expect(extractSearchTerms(goal)).toEqual([]);
+    }
+  });
 });
 
 describe("restateWithTargetFile", () => {

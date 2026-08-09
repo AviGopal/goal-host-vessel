@@ -11534,8 +11534,19 @@ async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> 
   // that had never executed once. grep is in the base image; the fancier tool is
   // not, and a dependency the deployment does not carry is not a dependency.
   const run = async (args: readonly string[]): Promise<readonly string[]> => {
+    // The include list must cover every file type the predicate accepts as a
+    // code target. It was *.ts only, while isPathlessCodeChangeGoal now accepts
+    // shell scripts, Makefiles and unit files — so a goal about the deploy
+    // script would pass the door and then find nothing to point at, declining
+    // for a reason that looks like "no such file" but is really "never looked".
     const proc = Bun.spawn(
-      ["grep", "-rl", "--include=*.ts", "--exclude=*.test.ts", ...args, ROOT],
+      [
+        "grep", "-rl",
+        "--include=*.ts", "--include=*.sh", "--include=Makefile",
+        "--include=*.mk", "--include=*.service", "--include=*.timer",
+        "--exclude=*.test.ts",
+        ...args, ROOT,
+      ],
       { stdout: "pipe", stderr: "ignore" },
     );
     const timer = setTimeout(() => { try { proc.kill(); } catch { /* already gone */ } }, 10_000);

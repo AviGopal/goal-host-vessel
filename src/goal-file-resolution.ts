@@ -141,6 +141,82 @@ export function extractSearchTerms(goal: string): string[] {
   // 3. Named vessels — narrows to a repo even when no symbol is given.
   for (const m of goal.matchAll(/\b([a-z][a-z0-9-]*-vessel)\b/g)) push(m[1]);
 
+  // 4. Distinctive noun phrases — LAST, so a phrase can never outrank a real
+  //    symbol (the caller stops at the first unique hit).
+  //
+  //    Why this exists: an operator describing a BEHAVIOUR names no camelCase
+  //    token, so steps 1-3 returned [] and the goal was declined for want of a
+  //    search term — measured 2026-08-09 on "the deploy reports success even
+  //    though it shipped the wrong commit". The phrase IS the evidence such a
+  //    goal carries: it is how the thing is named in prose, and prose names
+  //    recur in code as log strings, target names and comments.
+  //
+  //    Two content words, adjacent, neither a stopword. Two rather than one
+  //    because single content words ("deploy", "commit") match half the tree and
+  //    the caller requires EXACTLY ONE hit — a too-common term does not resolve
+  //    the wrong file, it resolves nothing, which is the safe direction.
+  for (const phrase of distinctivePhrases(goal)) push(phrase);
+
+  return out;
+}
+
+/**
+ * Words that carry no locating information. A phrase built only from these
+ * would be a random-file generator, so both halves of a phrase must be content
+ * words. Includes the mutation verbs and generic nouns that appear in virtually
+ * every goal ("fix the code", "make it work") precisely because their presence
+ * says nothing about WHERE.
+ */
+const FILLER = new Set([
+  "the", "a", "an", "it", "its", "this", "that", "these", "those", "there",
+  "and", "or", "but", "so", "if", "when", "then", "than", "even", "though",
+  "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
+  "can", "could", "should", "would", "will", "may", "might", "must", "have",
+  "has", "had", "we", "our", "us", "you", "your", "they", "them", "their",
+  "of", "to", "in", "on", "at", "by", "for", "with", "from", "into", "about",
+  "not", "no", "any", "all", "some", "one", "two", "very", "just", "only",
+  "instead", "rather", "actually", "really", "properly", "correctly",
+  "fix", "make", "update", "change", "add", "remove", "stop", "thing", "things",
+  "work", "works", "right", "wrong", "good", "bad", "new", "old", "code",
+  "please", "need", "needs", "want", "let", "get", "gets", "put", "use", "uses",
+  // Interrogatives and clause connectives. They sit BETWEEN ideas, so a pair
+  // built across one ("commit nothing", "what landed") reads as a unit the
+  // author never wrote — observed verbatim on the first live extraction.
+  "what", "which", "who", "whom", "whose", "where", "why", "how",
+  "nothing", "something", "anything", "everything", "because", "while",
+  "against", "though", "although", "unless", "until", "whether",
+]);
+
+/**
+ * Adjacent content-word pairs, in the order they appear.
+ *
+ * Deliberately dumb: no stemming, no ranking, no model. The pair either occurs
+ * verbatim in a file or it does not, and the caller's exactly-one-hit rule does
+ * the discriminating. A cleverer extractor would produce more candidates, and
+ * more candidates means more chances to resolve confidently onto a wrong file —
+ * the one failure this module exists to prevent.
+ */
+function distinctivePhrases(goal: string): string[] {
+  const out: string[] = [];
+  // Sentence-bounded so a phrase cannot span a full stop and read as a unit
+  // the author never wrote.
+  for (const sentence of goal.split(/[.;!?\n]+/)) {
+    const words = sentence
+      .toLowerCase()
+      .split(/[^a-z0-9_-]+/)
+      .filter((w) => w.length >= 3 && !FILLER.has(w));
+    // Only pairs that were ADJACENT in the original sentence survive: filtering
+    // first would join words that never touched, inventing a phrase.
+    const raw = sentence.toLowerCase().split(/[^a-z0-9_-]+/).filter(Boolean);
+    for (let i = 0; i < raw.length - 1; i++) {
+      const a = raw[i];
+      const b = raw[i + 1];
+      if (a.length < 3 || b.length < 3) continue;
+      if (FILLER.has(a) || FILLER.has(b)) continue;
+      if (!words.includes(a) || !words.includes(b)) continue;
+      out.push(`${a} ${b}`);
+    }
+  }
   return out;
 }
 
