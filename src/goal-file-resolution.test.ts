@@ -138,6 +138,22 @@ describe("extractSearchTerms", () => {
     );
   });
 
+  test("reads an unhyphenated vessel name, and ranks it above loose phrases", () => {
+    // Measured 2026-08-09: a goal saying "make the discovery vessel prefer a
+    // reachable endpoint" resolved onto goal-host-vessel/src/index.ts, because
+    // the vessel extractor only matched the hyphenated spelling while the
+    // phrase "vessels register" happened to hit one file first. A person writes
+    // "the discovery vessel"; naming the vessel is the STRONGEST locating
+    // signal in the goal, so it must outrank every phrase.
+    const terms = extractSearchTerms(
+      "Some vessels register themselves with a loopback address. Make the discovery vessel prefer a reachable endpoint.",
+    );
+    expect(terms).toContain("discovery-vessel");
+    const vesselAt = terms.indexOf("discovery-vessel");
+    const firstPhraseAt = terms.findIndex((t) => t.includes(" "));
+    expect(firstPhraseAt === -1 || vesselAt < firstPhraseAt).toBe(true);
+  });
+
   test("drops sub-3-character noise and never repeats a term", () => {
     const terms = extractSearchTerms("fix isEditIntentGoal and isEditIntentGoal in ts");
     expect(terms.filter((t) => t === "isEditIntentGoal")).toHaveLength(1);

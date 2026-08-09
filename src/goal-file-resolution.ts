@@ -138,8 +138,23 @@ export function extractSearchTerms(goal: string): string[] {
   for (const m of goal.matchAll(/\b([a-z][a-zA-Z0-9]*[A-Z][A-Za-z0-9]*)\b/g)) push(m[1]);
   for (const m of goal.matchAll(/\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g)) push(m[1]);
 
-  // 3. Named vessels — narrows to a repo even when no symbol is given.
+  // 3. Named vessels — narrows to a repo even when no symbol is given, and is
+  //    the STRONGEST locating signal a pathless goal can carry: it names the
+  //    repository outright. Both spellings, because a person writes "the
+  //    discovery vessel" and only tooling writes "discovery-vessel".
+  //
+  //    Measured 2026-08-09: with the hyphenated form alone, "make the discovery
+  //    vessel prefer a reachable endpoint" resolved onto goal-host-vessel's
+  //    index.ts — the loose phrase "vessels register" happened to hit one file
+  //    first, and first unique hit wins. The goal named its target explicitly
+  //    and the resolver edited a different vessel.
   for (const m of goal.matchAll(/\b([a-z][a-z0-9-]*-vessel)\b/g)) push(m[1]);
+  for (const m of goal.matchAll(/\b([a-z][a-z0-9-]*)\s+vessel\b/gi)) {
+    const name = m[1].toLowerCase();
+    // "the vessel", "a vessel", "each vessel" name nothing.
+    if (FILLER.has(name) || name === "vessel") continue;
+    push(`${name}-vessel`);
+  }
 
   // 4. Distinctive noun phrases — LAST, so a phrase can never outrank a real
   //    symbol (the caller stops at the first unique hit).
