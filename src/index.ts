@@ -6391,7 +6391,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // Only flagFields (an explicit success/ok === false) deny unconditionally.
         const _hasPayload = pol.payloadFields.some((k) => {
           const v = bo[k];
-          if (typeof v === "string") return v.trim().length > 0;
+          if (typeof v === "string") { const _t = v.trim(); if (!_t) return false; if (!/^[[{]/.test(_t)) return true; try { const _p: unknown = JSON.parse(_t); if (Array.isArray(_p)) return _p.length > 0; if (_p && typeof _p === "object") { const _e = Object.entries(_p as Record<string, unknown>); const _cols = _e.filter(([, x]) => Array.isArray(x)); const _tots = _e.filter(([kk, x]) => /^(total|count)$/i.test(kk) && typeof x === "number"); const _colsEmpty = _cols.length > 0 && _cols.every(([, x]) => (x as unknown[]).length === 0); const _totsZero = _tots.length > 0 && _tots.every(([, x]) => x === 0); if ((_colsEmpty || _totsZero) && !(_cols.some(([, x]) => (x as unknown[]).length > 0)) && !(_tots.some(([, x]) => (x as number) > 0))) return false; } return true; } catch { return true; } }
           if (Array.isArray(v)) return v.length > 0;
           if (typeof v === "number" || typeof v === "boolean") return true;
           return typeof v === "object" && v !== null;
