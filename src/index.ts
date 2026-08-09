@@ -2717,7 +2717,33 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     meaningfulShapes.includes("mitosisStaged") &&
     !dig.split("\n").some((l) => /"landed"\s*:\s*true/.test(l));
   if (stagedNotLanded) {
-    return { reached: false, reason: "deterministic:staged-not-landed — patch_with_tools staged the edit in the clone (typecheck-clean) but it is not committed/pushed to origin (mitosis cutover pending/failed); a working-tree edit is not a reach", completion_shapes: ["mitosisCutoverReport"] };
+    // SAY WHERE mitosisStaged CAME FROM (2026-08-09).
+    //
+    // The verdict text below is a FIXED STRING describing the class. It asserts a
+    // filesystem state — "staged the edit in the clone (typecheck-clean)" — that this
+    // function never checks; the condition above only tests that a mitosisStaged shape
+    // was produced and no landed:true line is present.
+    //
+    // Observed on dispatch 5d7a0bd3: this verdict fired, and the edit it asserts could
+    // not be found anywhere. All four vessel clones were clean, /workspace/git/compose
+    // was empty, and `find -mmin -40` over /vessels and /workspace/git returned only
+    // unrelated deploy artifacts. The EDIT-INTENT ESCALATION path that normally emits
+    // mitosisStaged taps distinctive log lines, and NONE of them appear in the journal —
+    // so the shape entered meaningfulShapes by some other route, and the verdict named a
+    // clone it had never looked at.
+    //
+    // Two possibilities remain open, with very different fixes: the patch was staged and
+    // rolled back when the cutover failed, or something emitted mitosisStaged without
+    // writing at all. The second would be serious — the honesty of this gate rests on
+    // that shape meaning what it says.
+    //
+    // So log the provenance: the produced-shape list and every digest line mentioning
+    // the shape. That makes the next occurrence attributable instead of leaving it to be
+    // inferred from a fixed string, which is the same mistake that cost two wrong
+    // diagnoses today.
+    const stagedLines = dig.split("\n").filter((l) => /mitosis/i.test(l)).slice(0, 5);
+    console.log(`[goal-host-vessel] staged-not-landed: mitosisStaged present but UNVERIFIED by this gate — producedShapes=${JSON.stringify(meaningfulShapes)} digestLines=${JSON.stringify(stagedLines)}`);
+    return { reached: false, reason: "deterministic:staged-not-landed — a mitosisStaged shape was produced and no landed:true cutover line is present, so the patch is not committed/pushed to origin; a working-tree edit is not a reach. NOTE: this gate does not itself verify a staged clone exists — see the provenance line logged alongside this verdict", completion_shapes: ["mitosisCutoverReport"] };
   }
 
   if (dig !== "") {
