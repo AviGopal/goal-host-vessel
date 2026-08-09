@@ -1,0 +1,145 @@
+/**
+ * Resolving a code-change goal that did not name a file.
+ *
+ * WHY THIS EXISTS (2026-08-09). `isEditIntentGoal` ANDs a mutation verb with a
+ * literal `repos/<vessel>/<path>.<ext>`:
+ *
+ *     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|fix|…)\b/i.test(goal)
+ *
+ * so a goal that asks for a change but does not already contain the path is not
+ * an edit goal at all. Measured on two live hub dispatches: "Fix this so
+ * consumers resolve an address they can actually reach" inferred
+ * ["shellResult","memoryNote_write"], and "Write and land the code change, do
+ * not just describe it" inferred ["llm_completion_dispatch"] with NO
+ * alternatives. Neither produced a commit. No edit shape appeared in either
+ * primary set or either alternatives list, because for a pathless goal the edit
+ * family is never a candidate to rank in the first place.
+ *
+ * That is law 13 as a boolean: "if a goal only works after an operator rewrites
+ * it with file paths, that rewriting is a gap in the system, not a workflow to
+ * institutionalize."
+ *
+ * WHY NOT JUST RELAX THE `&&`. The path is not consulted once — `goal.match(
+ * /repos\/[\w.-]+\/[\w./-]+/)` recurs at roughly a dozen sites in index.ts. A
+ * predicate that admits pathless goals hands every one of those a null match, so
+ * the goal would enter the edit path and misfire deeper in, which is strictly
+ * worse than declining it early. The path requirement is load-bearing.
+ *
+ * So this module does the decomposition the operator is currently doing by hand:
+ * recognise a pathless code-change goal, extract the terms worth searching for,
+ * and restate the goal with the resolved path so that EVERY existing downstream
+ * consumer — the predicate, the path extractors, feature_compose — works
+ * unchanged. The filesystem search itself is deliberately NOT here: it is
+ * injected, so this module stays pure and directly testable (index.ts boots a
+ * server on import and cannot be tested).
+ */
+
+/** Mutation verbs — kept in sync with `isEditIntentGoal` in ./goal-intent. */
+const MUTATION_VERB =
+  /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|implement|land|patch|correct|stop)\b/i;
+
+/**
+ * Evidence the goal is about CODE rather than data, prose, or the running fleet.
+ *
+ * Required so that "fix the gap queue" or "update my notes" do not become edit
+ * goals. A mutation verb alone is far too common — it appears in report asks
+ * ("report which vessels changed"), in analysis asks, and in gap prose.
+ */
+const CODE_TARGET =
+  /\b(code|codebase|source|sources?\s+file|implementation|function|method|class|module|predicate|regex|handler|resolver|vessel|endpoint|route|parser|schema|typescript|\.ts\b|\.tsx\b|\.js\b|logic|branch|guard|helper|the\s+fleet'?s?\s+code)\b/i;
+
+/**
+ * Asks that must NOT be treated as code changes even when they carry a mutation
+ * verb and mention code. These have their own paths (analysis, prose, inventory)
+ * and diverting them to the edit path would be the "tries and misfires" failure
+ * this module exists to avoid.
+ */
+const NOT_A_CHANGE =
+  /\b(explain|describe|summar\w*|what\s+(is|are|does|do)\b|why\s+(do|does|did|is|are)\b|how\s+many|count|list all|report the (?:number|count)|audit|review|analy[sz]e|investigate|diagnose|find out|tell me about|walk me through|overview)\b/i;
+
+/** A goal that already names a file needs no resolution — it is already routable. */
+const HAS_PATH = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/;
+
+/**
+ * Spans where a word appears only to be RULED OUT.
+ *
+ * "Write and land the code change, do not just describe it" is the clearest
+ * possible edit instruction, and it was rejected because `describe` appears in
+ * it — inside the clause forbidding description. Measured on hub dispatch
+ * 72f02fea, whose author (me) was trying to force an edit and produced the
+ * opposite. Any goal that anticipates the failure mode and says "don't just
+ * report" trips the report guard; the more precise the instruction, the more
+ * likely it is to carry the negated word. That is the explicitness
+ * anti-correlation showing up as a lexical bug rather than a model one.
+ *
+ * Strip these spans before applying the disqualifiers, so a disqualifier only
+ * fires when the goal is ASKING for that thing.
+ */
+const NEGATED_SPAN =
+  /\b(?:do\s+not|don'?t|never|rather\s+than|instead\s+of|not\s+just|no\s+need\s+to|without)\b[^.;!?]*/gi;
+
+/**
+ * A code-change ask that omits the file path.
+ *
+ * Deliberately conservative: a mutation verb AND a code target AND no existing
+ * path AND no analysis/prose lead. A false negative costs what we already have
+ * today (the goal walks as a report). A false positive sends a report goal into
+ * feature_compose, which drafts and commits — so the guard errs toward declining.
+ */
+export function isPathlessCodeChangeGoal(goal: string): boolean {
+  if (HAS_PATH.test(goal)) return false;
+  // Disqualifiers are judged on what the goal ASKS for, so negated clauses
+  // ("do not just describe it") are removed first. The mutation verb and code
+  // target are still read from the FULL text: "don't touch the parser" should
+  // not become an edit goal, but the parser is still what it is about.
+  const asked = goal.replace(NEGATED_SPAN, " ");
+  if (NOT_A_CHANGE.test(asked)) return false;
+  return MUTATION_VERB.test(asked) && CODE_TARGET.test(goal);
+}
+
+/**
+ * Terms worth grepping the workspace for, most specific first.
+ *
+ * Ordered by how much they narrow the search, because the caller stops at the
+ * first term that yields a usable hit: quoted spans and identifier-shaped tokens
+ * (camelCase, snake_case, dotted) name real symbols; bare words rarely do. A
+ * search that starts with the vaguest term finds thousands of files and picks
+ * one at random, which is the confabulation this is meant to prevent.
+ */
+export function extractSearchTerms(goal: string): string[] {
+  const out: string[] = [];
+  const push = (t: string | undefined) => {
+    const v = (t ?? "").trim();
+    // 3 chars filters out "is", "to", "ts" — noise that matches everything.
+    if (v.length >= 3 && !out.includes(v)) out.push(v);
+  };
+
+  // 1. Backticked or quoted spans: the author pointing at a literal.
+  for (const m of goal.matchAll(/[`"']([A-Za-z_][\w.$-]{2,})[`"']/g)) push(m[1]);
+
+  // 2. Identifier-shaped tokens: camelCase, snake_case, or dotted.
+  for (const m of goal.matchAll(/\b([a-z][a-zA-Z0-9]*[A-Z][A-Za-z0-9]*)\b/g)) push(m[1]);
+  for (const m of goal.matchAll(/\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/g)) push(m[1]);
+
+  // 3. Named vessels — narrows to a repo even when no symbol is given.
+  for (const m of goal.matchAll(/\b([a-z][a-z0-9-]*-vessel)\b/g)) push(m[1]);
+
+  return out;
+}
+
+/**
+ * Restate the goal so the EXISTING machinery routes it.
+ *
+ * The path goes in the LEAD SENTENCE because that is what the documented
+ * edit-intent contract keys on ("a goal whose lead sentence names a real
+ * repos/<vessel>/src/… file"), and the original text is preserved verbatim
+ * underneath so the drafter still sees what was actually asked for — dropping it
+ * would replace the operator's intent with a filename.
+ *
+ * The resolution is stated as an inference rather than a fact so a wrong guess is
+ * visible in the trace and to the drafter, instead of masquerading as something
+ * the operator specified.
+ */
+export function restateWithTargetFile(goal: string, file: string): string {
+  return `Edit ${file} to satisfy the following request. If that file is the wrong target, say so rather than editing it.\n\n${goal.trim()}`;
+}
