@@ -8466,7 +8466,20 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (!satisfierOnly) {
           if (opts.learningMode !== "observe") void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal));
         } else if (chain.length >= 2) {
-          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, opts.tags, poolImpulses, goalHashOf(goal));
+          // CARRY THE VERDICT THE WALK ALREADY COMPUTED (2026-08-09).
+          //
+          // The composite inherited `opts.tags` verbatim and so carried no reach tag,
+          // leaving every walk-composite-* execution `ungraded / no-reach-tag` to the
+          // ribosome — which then correctly refuses to extract from it. Same defect as
+          // the satisfier traces (fixed above), one construction site over.
+          //
+          // Unlike a satisfier, a verdict IS in scope here: this branch only runs when
+          // the walk reached, and `mintGrounded` is the honesty gate already applied
+          // three lines up — grounded reach (landed edit / executed command / real
+          // in-chain edge) versus a bare LLM-yes. Tagging with mintGrounded rather than
+          // a blanket true means a hollow reach is recorded as reached:false and stays
+          // out of the extraction pool, which is exactly what that gate decided.
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), mintGrounded ? "reached:true" : "reached:false", "composite:true"], poolImpulses, goalHashOf(goal));
           // Persist the composite so ribosome-extract can read it by id, then mint.
           void (async () => {
             try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
