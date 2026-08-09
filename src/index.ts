@@ -11527,14 +11527,25 @@ discoveryLoop.onUnhealthy(() => {
  */
 async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> {
   const ROOT = "/workspace/git/vessels";
+  // grep, NOT ripgrep. `rg` IS NOT INSTALLED IN THE CONTAINER — Bun.spawn threw
+  // ENOENT on every call, the catch below turned that into [], and three
+  // consecutive live probes reported "no unique file" for a symbol whose file was
+  // never in doubt. Two refinements were diagnosed and shipped against a search
+  // that had never executed once. grep is in the base image; the fancier tool is
+  // not, and a dependency the deployment does not carry is not a dependency.
   const run = async (args: readonly string[]): Promise<readonly string[]> => {
-    const proc = Bun.spawn(["rg", "-l", "--glob", "*.ts", "--glob", "!*.test.ts", ...args, ROOT], {
-      stdout: "pipe",
-      stderr: "ignore",
-    });
+    const proc = Bun.spawn(
+      ["grep", "-rl", "--include=*.ts", "--exclude=*.test.ts", ...args, ROOT],
+      { stdout: "pipe", stderr: "ignore" },
+    );
     const timer = setTimeout(() => { try { proc.kill(); } catch { /* already gone */ } }, 10_000);
     const out = await new Response(proc.stdout).text();
+    const code = await proc.exited;
     clearTimeout(timer);
+    // grep: 0 = matched, 1 = no match (NOT an error), >1 = real failure. Letting a
+    // real failure throw is the point — the caller distinguishes "search broke"
+    // from "found nothing", and collapsing them is what hid the missing binary.
+    if (code > 1) throw new Error(`grep exited ${code}`);
     return [
       ...new Set(
         out
@@ -11546,7 +11557,7 @@ async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> 
       ),
     ].slice(0, 8);
   };
-  try {
+  {
     // DEFINITION BEATS MENTION. Measured live: the goal "stop isEditIntentGoal
     // requiring a literal file path" found that symbol in three files — its
     // definition and two call sites — so a unique-hit rule declined a goal whose
@@ -11561,21 +11572,26 @@ async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> 
     // target was unambiguous. A local shadowing an import is not a rival
     // definition of the symbol the goal is about; the exported one is the
     // symbol. Narrowest evidence first, widening only when it finds nothing.
+    // POSIX ERE via grep -E: no \s and no \b, so [[:space:]] and [[:>:]]-free
+    // word edges are spelled out. `t` is the term with ERE metacharacters
+    // escaped, so a goal mentioning "foo(bar)" cannot become a capture group.
+    const t = term.replace(/[.[\]{}()*+?^$|\\]/g, "\\$&");
+    const S = "[[:space:]]+";
     const exported = await run([
-      "-e", `export\\s+(async\\s+)?function\\s+${term}\\b`,
-      "-e", `export\\s+(const|let|class|interface|type)\\s+${term}\\b`,
+      "-E",
+      "-e", `export${S}(async${S})?function${S}${t}([^[:alnum:]_]|$)`,
+      "-e", `export${S}(const|let|class|interface|type)${S}${t}([^[:alnum:]_]|$)`,
       "--",
     ]);
     if (exported.length === 1) return exported;
     const defined = await run([
-      "-e", `(export\\s+)?(async\\s+)?function\\s+${term}\\b`,
-      "-e", `(export\\s+)?(const|let|class|interface|type)\\s+${term}\\b`,
+      "-E",
+      "-e", `(export${S})?(async${S})?function${S}${t}([^[:alnum:]_]|$)`,
+      "-e", `(export${S})?(const|let|class|interface|type)${S}${t}([^[:alnum:]_]|$)`,
       "--",
     ]);
     if (defined.length === 1) return defined;
-    return await run(["--fixed-strings", "--max-count", "1", "--", term]);
-  } catch {
-    return [];
+    return await run(["-F", "-e", term, "--"]);
   }
 }
 
