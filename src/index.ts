@@ -7097,7 +7097,27 @@ If one of those sibling shapes is the action that would create what the goal ask
             }],
             costUsd: 0,
             durationMs: 0,
-            tags: opts.tags,
+            // TAG IT NOT-REACHED, EXPLICITLY (2026-08-09).
+            //
+            // This synthetic trace carried no reach tag at all, so every consumer read
+            // it as `ungraded / no-reach-tag`. Measured over 3h: 181 executions reached
+            // the ribosome ungraded, and 45 of them were these walk-satisfier traces —
+            // the single largest ungraded family, and far larger than the 3 executions
+            // whose reach-patch actually failed to persist. "Never graded" and "grading
+            // failed" are different defects, and this is the big half.
+            //
+            // NOT tagged reached:true. A satisfier is one vessel-resolve that produced a
+            // shape; nothing has yet judged it against the goal. ribosome-vessel treats
+            // `reached:true` as EXTRACT FROM THIS (src/index.ts:595), so tagging these
+            // true would mint templates out of unjudged single steps — precisely the
+            // hollow reuse the substance gate at :7026 exists to prevent, arriving by a
+            // different door.
+            //
+            // reached:false is the honest local claim: this step is not, by itself, a
+            // reached goal. The walk's own verdict is computed later over the whole
+            // chain and recorded on the walk execution; if it reaches, the credit
+            // belongs there, not to an individual satisfier hop.
+            tags: [...(opts.tags ?? []), "reached:false", `satisfier_shape:${satisfiableNow}`],
             metadata: { satisfier: true, shape: satisfiableNow },
           };
           satisfierTraces.push(synthTrace);
@@ -7669,7 +7689,11 @@ If one of those sibling shapes is the action that would create what the goal ask
                     tasks: [{ taskId: "satisfier-resolve", description: `resolve ${missingShape} via connected vessel`, resolverId: missingShape, resolverTier: "pattern", inputImpulseIds: [], outputImpulseIds: [], outputShapes: [missingShape], success: true }],
                     costUsd: 0,
                     durationMs: 0,
-                    tags: opts.tags,
+                    // Same explicit not-reached tag as the satisfier site above — see the
+                    // note there. Both construction sites must carry it: a tag applied at
+                    // one of two is worse than none, because the family then looks handled
+                    // while half of it still arrives ungraded.
+                    tags: [...(opts.tags ?? []), "reached:false", `satisfier_shape:${missingShape}`],
                     metadata: { satisfier: true, shape: missingShape },
                   };
                   satisfierTraces.push(_vrSynthTrace);
