@@ -3703,10 +3703,32 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   // truth of 0 — two derivations agreeing that they measured nothing, which says the commands
   // failed in the same way, not that the answer is zero. Seeding a family's verifier from that
   // is how a whole family gets a confidently wrong ground truth.
-  if (!isToken && _family && _tree && !_useRecipe && !verifierRecipes.has(_family) && typeof truth === "number" && truth > 0) {
+  // A STRING ANSWER IS STILL A SKILL. This required `!isToken && typeof truth === "number"`,
+  // so a family whose answer is a TOKEN — a branch name, a version, a language, a filename —
+  // could be VERIFIED (gradeTokenRecompute exists and runs) but could never MINT a recipe.
+  // Those families are therefore permanently unable to acquire the one artefact that makes a
+  // skill reusable, however many times they reach.
+  //
+  // The exclusion was incidental, not principled: generaliseCommand takes (command, treePath)
+  // and never inspects the value, and recipeAppliesTo/instantiateRecipe are likewise
+  // value-agnostic. Only the mint site cared.
+  //
+  // Measured 2026-08-09: the store holds 3 distinct families, ALL numeric
+  // (subdirectory-count, distinct-file-extensions, largest-module-by-lines), across 34 rows —
+  // no token family has ever minted, which is exactly what this gate predicts.
+  //
+  // The degenerate-truth protection is PRESERVED and generalised rather than dropped: a
+  // numeric truth must still be > 0 (two derivations agreeing on nothing measured is evidence
+  // about the authoring, not the answer), and a token truth must be non-empty and not an
+  // error-ish word for the same reason.
+  const _truthIsMintable = isToken
+    ? (typeof truth === "string" && truth.trim().length > 0
+       && !/^(null|undefined|nan|none|error|unknown|n\/a)$/i.test(truth.trim()))
+    : (typeof truth === "number" && truth > 0);
+  if (_family && _tree && !_useRecipe && !verifierRecipes.has(_family) && _truthIsMintable) {
     const template = generaliseCommand(a!.command, _tree);
     if (template) {
-      const minted: VerifierRecipe = { family: _family, template, originGoal: goal.slice(0, 200), originValue: truth as number, agreed: 0, disagreed: 0 };
+      const minted: VerifierRecipe = { family: _family, template, originGoal: goal.slice(0, 200), originValue: truth as never, agreed: 0, disagreed: 0 };
       verifierRecipes.set(_family, minted);
       persistRecipe(minted);
       console.log(`[verifier-recipe] MINTED recipe for family "${_family}" from a triangulated truth (${truth}): \`${template}\``);
