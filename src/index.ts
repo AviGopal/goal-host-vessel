@@ -8480,9 +8480,33 @@ If one of those sibling shapes is the action that would create what the goal ask
           // a blanket true means a hollow reach is recorded as reached:false and stays
           // out of the extraction pool, which is exactly what that gate decided.
           const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), mintGrounded ? "reached:true" : "reached:false", "composite:true"], poolImpulses, goalHashOf(goal));
-          // Persist the composite so ribosome-extract can read it by id, then mint.
+          // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
+          //
+          // A composite observed at 14:16:42 — 1m50s after this code was deployed —
+          // reached the store carrying only opts.tags (state_signature, dispatcher_used)
+          // and NOT the reached:/composite:true pair added above. Every layer checks out
+          // in isolation: one construction site, TranslatingTraceSink forwards trace.tags
+          // (activity-api-trace-sink.ts:152), the builder declares tags and returns
+          // ExecutionTrace, and opts.tags demonstrably arrived. So tags are lost between
+          // construction and persistence and I could not tell which side drops them.
+          //
+          // Chasing it through the store is impractical: this branch fires roughly once
+          // in 2.5h AND the row is retention-deleted inside an hour, so the observation
+          // window is minutes wide and does not repeat on demand. The LOG survives
+          // retention; the row does not. Log the constructed tags and the record outcome
+          // so the next occurrence is diagnosable from journalctl alone.
+          //
+          // The catch below was also fully silent — a rejected write looked identical to
+          // a successful one, which is the swallowed-failure class this codebase keeps
+          // rediscovering.
+          console.log(`[goal-host-vessel] composite constructed id=${composite.id} tags=${JSON.stringify(composite.tags ?? [])}`);
           void (async () => {
-            try { await satisfierTraceSink.record(composite as unknown as ExecutionTrace); } catch { /* best-effort */ }
+            try {
+              await satisfierTraceSink.record(composite as unknown as ExecutionTrace);
+              console.log(`[goal-host-vessel] composite recorded id=${composite.id} — sink accepted`);
+            } catch (e) {
+              console.warn(`[goal-host-vessel] composite record FAILED id=${composite.id}: ${(e as Error)?.message ?? String(e)}`);
+            }
             const compositeGrounded = mintGrounded || composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2;
             if (opts.learningMode !== "observe") await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal));
           })();
