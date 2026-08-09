@@ -11527,22 +11527,41 @@ discoveryLoop.onUnhealthy(() => {
  */
 async function searchWorkspaceForTerm(term: string): Promise<readonly string[]> {
   const ROOT = "/workspace/git/vessels";
-  try {
-    const proc = Bun.spawn(
-      ["rg", "-l", "--fixed-strings", "--max-count", "1", "--glob", "*.ts", "--glob", "!*.test.ts", "--", term, ROOT],
-      { stdout: "pipe", stderr: "ignore" },
-    );
+  const run = async (args: readonly string[]): Promise<readonly string[]> => {
+    const proc = Bun.spawn(["rg", "-l", "--glob", "*.ts", "--glob", "!*.test.ts", ...args, ROOT], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
     const timer = setTimeout(() => { try { proc.kill(); } catch { /* already gone */ } }, 10_000);
     const out = await new Response(proc.stdout).text();
     clearTimeout(timer);
-    const hits = out
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.startsWith(`${ROOT}/`))
-      // /workspace/git/vessels/<vessel>/<rest>  ->  repos/<vessel>/<rest>
-      .map((l) => `repos/${l.slice(ROOT.length + 1)}`)
-      .slice(0, 8);
-    return [...new Set(hits)];
+    return [
+      ...new Set(
+        out
+          .split("\n")
+          .map((l) => l.trim())
+          .filter((l) => l.startsWith(`${ROOT}/`))
+          // /workspace/git/vessels/<vessel>/<rest>  ->  repos/<vessel>/<rest>
+          .map((l) => `repos/${l.slice(ROOT.length + 1)}`),
+      ),
+    ].slice(0, 8);
+  };
+  try {
+    // DEFINITION BEATS MENTION. Measured live: the goal "stop isEditIntentGoal
+    // requiring a literal file path" found that symbol in three files — its
+    // definition and two call sites — so a unique-hit rule declined a goal whose
+    // target was never actually in doubt. A symbol that appears in N files
+    // usually has exactly ONE definition, and the definition site is where a
+    // change to that symbol belongs. This is evidence, not a tiebreak: when the
+    // definition is unique we know which file, and when it is not we still fall
+    // back to requiring an unambiguous mention.
+    const defined = await run([
+      "-e", `(export\\s+)?(async\\s+)?function\\s+${term}\\b`,
+      "-e", `(export\\s+)?(const|let|class|interface|type)\\s+${term}\\b`,
+      "--",
+    ]);
+    if (defined.length === 1) return defined;
+    return await run(["--fixed-strings", "--max-count", "1", "--", term]);
   } catch {
     return [];
   }
