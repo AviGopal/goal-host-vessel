@@ -317,6 +317,38 @@ function distinctivePhrases(goal: string): string[] {
  * visible in the trace and to the drafter, instead of masquerading as something
  * the operator specified.
  */
+/**
+ * Paths that cannot be the production site a repair goal means.
+ *
+ * A unique hit inside a seed/fixture/migration script is a SMALLER HAYSTACK, not
+ * better evidence. Observed live: a proposal of `activity_execution_traces`
+ * matched exactly one file — `repos/activity-api/scripts/seed-cleanup-test-data.ts`
+ * — and the goal was restated onto it. `feature_compose` then refused, because
+ * its grounding window did not contain that file at all, which is the correct
+ * outcome reached the expensive way.
+ *
+ * Test files are already excluded by the searches themselves; scripts, seeds,
+ * fixtures and migrations are not, and they mention production table names
+ * constantly precisely because they set them up.
+ */
+const NON_PRODUCTION_PATH = /(^|\/)(scripts?|seeds?|fixtures?|migrations?|examples?|__tests__|test)\//i;
+
+/**
+ * Drop candidates that cannot be the production site before counting hits.
+ *
+ * STRICT — no "keep them all if none survive" fallback. This filters only the
+ * PROPOSAL path, where the words came from a model rather than from the goal.
+ * A lone seed-script hit there is a smaller haystack, not evidence, and letting
+ * it through is precisely the failure this closes.
+ *
+ * A goal genuinely ABOUT a script still resolves: the lexical routes (the goal's
+ * own phrases and symbols) are not filtered, so the goal's own words can still
+ * name a script directly.
+ */
+export function productionCandidates(files: readonly string[]): string[] {
+  return files.filter((f) => !NON_PRODUCTION_PATH.test(f));
+}
+
 export function restateWithTargetFile(goal: string, file: string, anchor?: string): string {
   // CARRY THE ANCHOR FORWARD.
   //
@@ -596,8 +628,8 @@ export async function resolvePathlessCodeChangeGoal(
         // proposal actionable; both are equally fail-closed (still EXACTLY ONE file).
         let hits: readonly string[];
         try {
-          hits = await symbolSearch(word, vessel);
-          if (hits.length === 0) hits = await search(word, vessel);
+          hits = productionCandidates(await symbolSearch(word, vessel));
+          if (hits.length === 0) hits = productionCandidates(await search(word, vessel));
         } catch {
           tap?.(`pathless code-change goal: symbol search threw on proposed "${word}" — left unrestated`);
           return goal;
@@ -642,7 +674,7 @@ export async function resolvePathlessCodeChangeGoal(
             for (const verb of ["CREATE ", "INSERT INTO ", "UPDATE ", "UPSERT "]) {
               let narrowed: readonly string[] = [];
               try {
-                narrowed = await search(`${verb}${word}`, vessel);
+                narrowed = productionCandidates(await search(`${verb}${word}`, vessel));
               } catch {
                 break; // a broken search must not read as "no write site"
               }

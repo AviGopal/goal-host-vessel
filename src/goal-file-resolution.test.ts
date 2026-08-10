@@ -5,6 +5,7 @@ import {
   isPathlessCodeChangeGoal,
   restateWithTargetFile,
   symbolCandidatesFromGoal,
+  productionCandidates,
   type FileSearch,
 } from "./goal-file-resolution";
 import { isEditIntentGoal } from "./goal-intent";
@@ -660,5 +661,43 @@ describe("restateWithTargetFile — the anchor", () => {
     // A mis-resolved anchor must remain refusable by the drafter.
     const out = restateWithTargetFile("g", "f.ts", "someSymbol");
     expect(out).toContain("say so rather than editing it");
+  });
+});
+
+describe("productionCandidates", () => {
+  test("drops seed/script/fixture paths", () => {
+    expect(productionCandidates([
+      "repos/activity-api/scripts/seed-cleanup-test-data.ts",
+      "repos/activity-api/src/routes/goal-paths.ts",
+    ])).toEqual(["repos/activity-api/src/routes/goal-paths.ts"]);
+  });
+
+  test("a unique hit in a seed script no longer wins by being alone", async () => {
+    // The live failure: `activity_execution_traces` matched exactly one file, a
+    // seed script, and the goal was restated onto it. feature_compose then
+    // refused because its grounding did not contain that file — the right
+    // outcome reached expensively.
+    const goalText = "The handler that writes execution-path records lacks a tenant column. Fix it.";
+    const noPhrase: FileSearch = async () => [];
+    const symbolSearch: FileSearch = async (t) =>
+      t === "activity_execution_traces" ? ["repos/activity-api/scripts/seed-cleanup-test-data.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      goalText, noPhrase, undefined, symbolSearch, async () => ["activity_execution_traces"],
+    );
+    expect(out).toBe(goalText);
+  });
+
+  test("is STRICT — nothing survives when every candidate is non-production", () => {
+    // No fallback: this filters only the PROPOSAL path, where the words came
+    // from a model. A goal genuinely about a script still resolves via the
+    // lexical routes, which are not filtered.
+    expect(productionCandidates(["repos/a/scripts/x.ts", "repos/b/migrations/y.ts"])).toEqual([]);
+  });
+
+  test("does not mistake a path merely CONTAINING the word for a directory", () => {
+    expect(productionCandidates(["repos/a/src/test-registration.ts"]))
+      .toEqual(["repos/a/src/test-registration.ts"]);
+    expect(productionCandidates(["repos/a/src/scripting-helpers.ts"]))
+      .toEqual(["repos/a/src/scripting-helpers.ts"]);
   });
 });
