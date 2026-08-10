@@ -529,11 +529,21 @@ export async function resolvePathlessCodeChangeGoal(
         .filter((s) => !words.includes(s.toLowerCase()) && !words.includes(s))
         .slice(0, 8);
       if (fresh.length === 0) {
-        tap?.(`pathless code-change goal: symbol proposal returned nothing usable — left unrestated`);
+        // Log the RAW proposal, not just the verdict. "nothing usable" is a
+        // dead end for a reader: it cannot distinguish an empty model response
+        // from one whose every suggestion was already tried or malformed, and
+        // those need different fixes.
+        tap?.(
+          `pathless code-change goal: symbol proposal returned nothing usable ` +
+            `(raw=[${proposed.map(String).slice(0, 10).join(", ")}]) — left unrestated`,
+        );
         return goal;
       }
       tap?.(`pathless code-change goal: proposed symbols [${fresh.join(", ")}] for the symptom`);
       const ptally = new Map<string, number>();
+      // Set once a MORE SPECIFIC proposal has already matched several files. See
+      // the ambiguity branch below for why a later single match must not win.
+      let ambiguousSeen = false;
       for (const word of fresh) {
         // Try the DECLARATION search first, then the content search.
         //
@@ -550,12 +560,39 @@ export async function resolvePathlessCodeChangeGoal(
           tap?.(`pathless code-change goal: symbol search threw on proposed "${word}" — left unrestated`);
           return goal;
         }
-        if (hits.length === 1) {
+        if (hits.length === 1 && !ambiguousSeen) {
           tap?.(
             `pathless code-change goal — restated with target ${hits[0]} (proposed symbol "${word}" declares in exactly one file)`,
           );
           return restateWithTargetFile(goal, hits[0]!);
         }
+        // AMBIGUITY AT A MORE SPECIFIC NAME DISARMS THE LONE-UNIQUE RULE.
+        //
+        // Proposals arrive most-confident first. If the best one matches several
+        // files we cannot choose between them — and letting a WEAKER name that
+        // happens to be unique decide is precisely how the wrong file gets picked.
+        // Corroboration may still resolve it; a single later match may not.
+        //
+        // Observed live: the model proposed ["goal_execution_paths",
+        // "execution_path"]. The first is correct but is a TABLE name appearing in
+        // many activity-api files, so it read as ambiguous; the second then matched
+        // exactly one file — `goal-host-vessel/src/index.ts` — and the goal was
+        // restated onto a vessel that has nothing to do with it. Only the drafter's
+        // "say so rather than editing it" clause stopped a wrong-file commit, and a
+        // drafter's judgement is not a gate.
+        //
+        // A vaguer name being unique is not evidence; it is a smaller haystack.
+        if (hits.length > 1) {
+          // Ambiguity at a more specific name DISARMS the lone-unique rule, but
+          // does not end the search: corroboration is stronger evidence than any
+          // single match and can still resolve this. What must never happen is a
+          // vaguer name winning outright because its haystack was smaller.
+          ambiguousSeen = true;
+          tap?.(
+            `pathless code-change goal: proposed symbol "${word}" matched ${hits.length} files — ambiguous; a later single match can no longer decide alone, only corroboration`,
+          );
+        }
+        // Cap per word: a name matching half the tree is noise, not corroboration.
         if (hits.length === 0 || hits.length > 6) continue;
         for (const h of hits) ptally.set(h, (ptally.get(h) ?? 0) + 1);
       }

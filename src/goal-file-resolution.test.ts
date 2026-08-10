@@ -504,3 +504,50 @@ describe("resolvePathlessCodeChangeGoal — proposed symbols", () => {
     expect(proposed).toBe(0);
   });
 });
+
+describe("proposed symbols — a vaguer name must not win after an ambiguous one", () => {
+  // Observed live: proposals were ["goal_execution_paths", "execution_path"].
+  // The first is CORRECT but is a table name spread across many activity-api
+  // files, so it read as ambiguous; the second matched exactly one file in a
+  // completely unrelated vessel and the goal was restated onto it. Only the
+  // drafter's "say so rather than editing it" clause prevented a wrong-file
+  // commit — and a drafter's judgement is not a gate.
+  const goalText =
+    "The handler that writes execution-path records sets no tenant marking. Fix it.";
+  const noPhrase: FileSearch = async () => [];
+
+  test("stops at the ambiguous specific proposal instead of taking the vague unique one", async () => {
+    const symbolSearch: FileSearch = async (term) =>
+      term === "goal_execution_paths"
+        ? ["repos/activity-api/src/routes/goal-paths.ts", "repos/activity-api/src/routes/impulses.ts"]
+        : term === "execution_path"
+          ? ["repos/goal-host-vessel/src/index.ts"]
+          : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      goalText, noPhrase, undefined, symbolSearch,
+      async () => ["goal_execution_paths", "execution_path"],
+    );
+    expect(out).toBe(goalText);
+    expect(out).not.toContain("goal-host-vessel/src/index.ts");
+  });
+
+  test("a unique FIRST proposal is still accepted", async () => {
+    const symbolSearch: FileSearch = async (term) =>
+      term === "goal_execution_paths" ? ["repos/activity-api/src/routes/goal-paths.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      goalText, noPhrase, undefined, symbolSearch,
+      async () => ["goal_execution_paths", "execution_path"],
+    );
+    expect(out).toContain("repos/activity-api/src/routes/goal-paths.ts");
+  });
+
+  test("a proposal matching NOTHING is skipped, not treated as ambiguous", async () => {
+    const symbolSearch: FileSearch = async (term) =>
+      term === "org_id" ? ["repos/activity-api/src/routes/goal-paths.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      goalText, noPhrase, undefined, symbolSearch,
+      async () => ["not_a_real_name", "org_id"],
+    );
+    expect(out).toContain("goal-paths.ts");
+  });
+});
