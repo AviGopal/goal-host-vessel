@@ -4,6 +4,7 @@ import {
   extractSearchTerms,
   isPathlessCodeChangeGoal,
   restateWithTargetFile,
+  symbolCandidatesFromGoal,
   type FileSearch,
 } from "./goal-file-resolution";
 import { isEditIntentGoal } from "./goal-intent";
@@ -230,6 +231,31 @@ describe("extractSearchTerms", () => {
   });
 });
 
+describe("symbolCandidatesFromGoal", () => {
+  // The measured ceiling of phrase search (2026-08-10): a goal describing a
+  // SYMPTOM shares no text with the code. "timestamps ... serialized as empty
+  // braces" matched 0 files in activity-api, while the right file declares
+  // `TimestampSchema` 24 times. But the symbol's own words — timestamp, schema —
+  // are both IN the goal. Matching goal words against declared symbol NAMES
+  // bridges the two vocabularies where matching text against text cannot.
+  test("recovers a camelCase symbol whose words the goal uses separately", () => {
+    const cands = symbolCandidatesFromGoal(
+      "timestamps come back from the database as objects and serialize as empty braces; fix the schema code that normalizes those timestamp values",
+    );
+    expect(cands).toContain("timestamp");
+    expect(cands).toContain("schema");
+  });
+
+  test("drops filler so the candidate set stays small and specific", () => {
+    const cands = symbolCandidatesFromGoal("please fix the thing so it works right");
+    expect(cands).toEqual([]);
+  });
+
+  test("keeps an identifier the goal states outright", () => {
+    expect(symbolCandidatesFromGoal("fix TimestampSchema please")).toContain("TimestampSchema");
+  });
+});
+
 describe("restateWithTargetFile", () => {
   const restated = restateWithTargetFile(
     "Stop publishing loopback addresses.",
@@ -339,6 +365,38 @@ describe("resolvePathlessCodeChangeGoal", () => {
       search,
     );
     expect(seen.every((v) => v === undefined)).toBe(true);
+  });
+
+  test("a file declaring symbols for SEVERAL goal words beats one matching a single word", async () => {
+    // Measured 2026-08-10: for the TimestampSchema goal, "timestamp" declares in
+    // 2 files and "schema" in 4 — so no single word is unique and fail-closed
+    // declines. But schemas.ts is the ONLY file in both sets. Corroboration
+    // across independent words is stronger evidence than any one word, and it
+    // does not weaken the rule: a lone leader is still required.
+    const byWord: Record<string, string[]> = {
+      timestamp: ["repos/activity-api/src/models/schemas.ts", "repos/activity-api/src/utils/observed-shapes.ts"],
+      schema: [
+        "repos/activity-api/src/models/schemas.ts",
+        "repos/activity-api/src/models/a.ts",
+        "repos/activity-api/src/models/b.ts",
+      ],
+    };
+    const symbolSearch: FileSearch = async (w) => byWord[w] ?? [];
+    const out = await resolvePathlessCodeChangeGoal(
+      "timestamps come back from the database as objects; fix the schema module that normalizes those timestamp values",
+      async () => [],
+      undefined,
+      symbolSearch,
+    );
+    expect(out).toContain("repos/activity-api/src/models/schemas.ts");
+  });
+
+  test("a tie between corroborated files still declines", async () => {
+    // Two files each matching two words is not evidence for either.
+    const symbolSearch: FileSearch = async () => ["repos/x/src/a.ts", "repos/x/src/b.ts"];
+    const goal =
+      "timestamps come back from the database as objects; fix the schema module that normalizes those timestamp values";
+    expect(await resolvePathlessCodeChangeGoal(goal, async () => [], undefined, symbolSearch)).toBe(goal);
   });
 
   test("reports what it did through the tap, so the walk log shows it", async () => {

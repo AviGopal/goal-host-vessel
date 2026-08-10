@@ -307,6 +307,64 @@ export function restateWithTargetFile(goal: string, file: string): string {
   return `Edit ${file} to satisfy the following request. If that file is the wrong target, say so rather than editing it.\n\n${goal.trim()}`;
 }
 
+/**
+ * Words from the goal that could be PARTS of a declared symbol name.
+ *
+ * Why this exists, measured 2026-08-10: phrase search has a hard ceiling that
+ * no amount of tuning moves. A goal describing a symptom — "timestamps come
+ * back as objects and serialize as empty braces" — shares NO text with the code
+ * that causes it: `timestamp values`, `empty braces`, `real dates` each matched
+ * **zero** files in activity-api, while the file that owns the bug declares
+ * `TimestampSchema` twenty-four times.
+ *
+ * The bridge is that a symbol's own words usually ARE in the goal, just never
+ * adjacent and never in the code's casing: TimestampSchema = timestamp + schema,
+ * and the goal says both. So this yields single words to be matched against
+ * DECLARED SYMBOL NAMES (see the definition-site search), not against file text
+ * — text-vs-text is the comparison that cannot work.
+ *
+ * Single words are far weaker evidence than a phrase, which is why they are used
+ * ONLY against definition sites: `grep "^export const .*timestamp"` is a narrow
+ * question, while grepping files for "timestamp" is not a question at all.
+ */
+export function symbolCandidatesFromGoal(goal: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of goal.split(/[^A-Za-z0-9_$]+/)) {
+    if (!raw) continue;
+    // An identifier the operator typed outright is the strongest form and is
+    // kept verbatim — casing included, since that is how it appears in code.
+    const isIdentifierShaped = /[a-z][A-Z]|_/.test(raw);
+    const word = isIdentifierShaped ? raw : raw.toLowerCase();
+    if (word.length < 4) continue; // "code", "the", "api" match everything
+    if (!isIdentifierShaped && FILLER.has(word)) continue;
+    if (!isIdentifierShaped && SYMBOL_NOISE.has(word)) continue;
+    if (seen.has(word)) continue;
+    seen.add(word);
+    out.push(word);
+  }
+  return out;
+}
+
+/**
+ * Words that are common in goals AND common in code, so they discriminate
+ * nothing as a symbol fragment. Distinct from FILLER, which is about whether a
+ * goal is asking for a change; this is about whether a word can locate a file.
+ */
+const SYMBOL_NOISE = new Set([
+  "this", "that", "there", "these", "those", "then", "than", "when", "where",
+  "with", "from", "into", "onto", "over", "under", "after", "before", "while",
+  "does", "done", "doing", "made", "make", "makes", "take", "takes", "give",
+  "back", "down", "just", "only", "also", "even", "still", "always", "never",
+  "some", "such", "same", "each", "every", "both", "either", "other", "another",
+  "thing", "things", "stuff", "case", "cases", "part", "parts", "side",
+  "should", "would", "could", "might", "must", "will", "shall", "cannot",
+  "actually", "really", "properly", "correctly", "instead", "rather",
+  "please", "need", "needs", "want", "wants", "like", "look", "looks",
+  "because", "since", "though", "although", "however", "therefore",
+  "code", "codebase", "source", "file", "files", "line", "lines",
+]);
+
 /** Returns repo-relative `repos/<vessel>/…` paths containing the term. */
 export type FileSearch = (
   term: string,
@@ -335,6 +393,8 @@ export async function resolvePathlessCodeChangeGoal(
   goal: string,
   search: FileSearch,
   tap?: (message: string) => void,
+  /** Optional: files DECLARING a symbol containing this word. See the last-resort block. */
+  symbolSearch?: FileSearch,
 ): Promise<string> {
   if (!isPathlessCodeChangeGoal(goal)) return goal;
   const allTerms = extractSearchTerms(goal);
@@ -369,6 +429,67 @@ export async function resolvePathlessCodeChangeGoal(
     }
     if (hits.length > 1) {
       tap?.(`pathless code-change goal: "${term}" matched ${hits.length} files — ambiguous, trying next term`);
+    }
+  }
+
+  // LAST RESORT: symbol-name matching, only once every phrase has failed.
+  //
+  // Phrase search compares goal text to file text, and a symptom-described goal
+  // shares no text with the code that causes it (measured: 0 files for every
+  // phrase, in the very repo that owns the bug). Symbol names are the one place
+  // the two vocabularies meet — TimestampSchema is timestamp + schema, and the
+  // goal says both words.
+  //
+  // Ordered after phrases and gated on symbolSearch being supplied, so a caller
+  // that has not opted in keeps exactly today's behaviour. Still fail-closed:
+  // EXACTLY ONE file, or the goal is returned untouched.
+  if (symbolSearch) {
+    const words = symbolCandidatesFromGoal(goal);
+    for (const word of words) {
+      let hits: readonly string[];
+      try {
+        hits = await symbolSearch(word, vessel);
+      } catch {
+        tap?.(`pathless code-change goal: symbol search threw on "${word}" — left unrestated`);
+        return goal;
+      }
+      if (hits.length === 1) {
+        tap?.(
+          `pathless code-change goal — restated with target ${hits[0]} (symbol declaring "${word}"; no phrase matched)`,
+        );
+        return restateWithTargetFile(goal, hits[0]!);
+      }
+    }
+    // CORROBORATION. No single word was unique, but the file that declares
+    // symbols for the MOST goal words is different evidence, not a relaxation:
+    // measured on the TimestampSchema goal, "timestamp" declares in 2 files and
+    // "schema" in 4, and schemas.ts is the only file in both. Independent words
+    // agreeing on one file is stronger than any one word alone.
+    //
+    // Still fail-closed twice over: the leader must match at least two words,
+    // and it must be a STRICT leader — a tie is not evidence for either file.
+    const tally = new Map<string, number>();
+    for (const word of words) {
+      let hits: readonly string[] = [];
+      try {
+        hits = await symbolSearch(word, vessel);
+      } catch {
+        return goal; // already reported above
+      }
+      // Cap per word: a word matching half the tree is noise, not corroboration.
+      if (hits.length === 0 || hits.length > 6) continue;
+      for (const h of hits) tally.set(h, (tally.get(h) ?? 0) + 1);
+    }
+    const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1]);
+    const [best, runnerUp] = [ranked[0], ranked[1]];
+    if (best && best[1] >= 2 && (!runnerUp || runnerUp[1] < best[1])) {
+      tap?.(
+        `pathless code-change goal — restated with target ${best[0]} (declares symbols for ${best[1]} goal words; no phrase or single symbol matched)`,
+      );
+      return restateWithTargetFile(goal, best[0]);
+    }
+    if (words.length) {
+      tap?.(`pathless code-change goal: no unique declaring file for symbols [${words.join(", ")}]`);
     }
   }
   tap?.(`pathless code-change goal: no unique file for terms [${terms.join(", ")}] — left unrestated`);

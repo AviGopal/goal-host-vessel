@@ -11570,6 +11570,61 @@ discoveryLoop.onUnhealthy(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Files DECLARING a symbol whose name contains `word` (case-insensitive).
+ *
+ * The last-resort half of pathless resolution. Phrase search asks "which file
+ * contains this text", which a symptom-described goal can never answer — every
+ * phrase from "timestamps serialize as empty braces" matched zero files in the
+ * repo that owns that bug. This asks a different question: "which file DECLARES
+ * something called …timestamp…", and `TimestampSchema` answers it.
+ *
+ * Definition sites only (`export const|function|class|type|interface`), never
+ * mentions. A word like "timestamp" appears in dozens of files as a variable or
+ * a comment; it is declared as part of a symbol name in very few, and that
+ * asymmetry is what makes a single word usable evidence at all.
+ */
+async function searchWorkspaceForSymbol(
+  word: string,
+  vessel?: string,
+): Promise<readonly string[]> {
+  const ROOT = "/workspace/git/vessels";
+  const scope =
+    vessel && /^[a-z][a-z0-9-]+$/.test(vessel) && (await Bun.file(`${ROOT}/${vessel}/package.json`).exists())
+      ? `${ROOT}/${vessel}`
+      : ROOT;
+  // ERE, and the word is escaped: it comes from goal text and must not be able
+  // to become a group or a quantifier.
+  const w = word.replace(/[.[\]{}()*+?^$|\\]/g, "\\$&");
+  const S = "[[:space:]]+";
+  const proc = Bun.spawn(
+    [
+      "grep", "-rliE",
+      "--include=*.ts", "--exclude=*.test.ts",
+      "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=dist",
+      `^(export${S})?(const|let|function|class|type|interface|enum)${S}[A-Za-z0-9_$]*${w}`,
+      scope,
+    ],
+    { stdout: "pipe", stderr: "ignore" },
+  );
+  const timer = setTimeout(() => { try { proc.kill(); } catch { /* already gone */ } }, 10_000);
+  const out = await new Response(proc.stdout).text();
+  const code = await proc.exited;
+  clearTimeout(timer);
+  // Same contract as the phrase search: 1 = no match, >1 = a real failure that
+  // must throw rather than read as "found nothing".
+  if (code > 1) throw new Error(`grep exited ${code}`);
+  return [
+    ...new Set(
+      out
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.startsWith(`${ROOT}/`))
+        .map((l) => `repos/${l.slice(ROOT.length + 1)}`),
+    ),
+  ].slice(0, 8);
+}
+
+/**
  * Files under the vessel checkouts containing `term`, as repo-relative
  * `repos/<vessel>/…` paths (the form every downstream path extractor expects).
  *
@@ -11713,7 +11768,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   const goal = rawGoal === undefined
     ? undefined
     : await resolvePathlessCodeChangeGoal(rawGoal, searchWorkspaceForTerm, (m) =>
-        console.log(`[goal-host-vessel] /run-goal: ${m}`));
+        console.log(`[goal-host-vessel] /run-goal: ${m}`), searchWorkspaceForSymbol);
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 
   // A GOAL WITH A COLLAPSED INTERPOLATION IS NOT ANSWERABLE — REFUSE IT AT THE DOOR.
