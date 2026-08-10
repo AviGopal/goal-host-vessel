@@ -6584,6 +6584,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const st = stdout.trim();
       if (exit && exit !== 0) return `the command exited ${exit}` + (stderr.trim() ? ` with stderr: ${stderr.slice(0, 200)}` : "");
       if (!st && stderr.trim()) return `the command produced only stderr: ${stderr.slice(0, 200)}`;
+      if (st && /\b(command not found|no such file|not found|permission denied|cannot access)\b/i.test(stderr)) return `the command wrote to stdout but errored on stderr: ${stderr.slice(0, 200)}`;
       if (!st) return "the command produced empty stdout";
       if (/^(null|undefined|nan)$/i.test(st)) return `the command printed "${st}" instead of a real value`;
       if (/\b(command not found|no such file|not found|permission denied|cannot access)\b/i.test(st)) return `the command output looks like an error: ${st.slice(0, 200)}`;
