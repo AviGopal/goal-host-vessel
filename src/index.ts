@@ -6356,6 +6356,48 @@ If one of those sibling shapes is the action that would create what the goal ask
         lastRawResolveReason = _prevReason;
       }
     };
+    const _hasPayload = (pol: _BodyHonesty, v: unknown): boolean => {
+      if (v == null) return false;
+      if (typeof v === "string") {
+        const trimmedV = v.trim();
+        if (trimmedV.length === 0) return false;
+        try {
+          const parsed = JSON.parse(trimmedV);
+          if (Array.isArray(parsed)) {
+            return parsed.length > 0;
+          } else if (typeof parsed === "object" && parsed !== null) {
+            // An object is considered to have a payload if any array-valued field is non-empty,
+            // or if any 'total'/'count' field is greater than 0.
+            for (const key in parsed) {
+              if (Object.prototype.hasOwnProperty.call(parsed, key)) {
+                const value = parsed[key];
+                if (Array.isArray(value) && value.length > 0) return true;
+                if ((key === "total" || key === "count") && typeof value === "number" && value > 0) return true;
+              }
+            }
+            return false;
+          }
+          // If it's a string representation of a non-empty primitive, it's a payload.
+          return true;
+        } catch {
+          // Not valid JSON, fall back to simple string length check.
+          return trimmedV.length > 0;
+        }
+      } else if (Array.isArray(v)) {
+        return v.length > 0;
+      } else if (typeof v === "object") {
+        for (const k of pol.payloadFields) {
+          if (Object.prototype.hasOwnProperty.call(v, k)) {
+            const value = (v as Record<string, unknown>)[k];
+            if (Array.isArray(value) && value.length > 0) return true;
+            if ((k === "total" || k === "count") && typeof value === "number" && value > 0) return true;
+          }
+        }
+        return Object.keys(v as object).length > 0; // Fallback for general objects
+      }
+      return false;
+    };
+
     const _degenerateReason = (r: unknown, pol?: _BodyHonesty): string | null => {
       // BODY-HONESTY MODE (widened: this checker used to be COMMAND-only, so every non-exec
       // shape's body went unread and a {"success":true,"error":"path required"} body was pooled
