@@ -226,6 +226,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
+import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
@@ -963,7 +964,7 @@ function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 // CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
@@ -12787,6 +12788,19 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
   }
   if (type === "fleetActivityFeed") { return Response.json({ resolved: true, shape: "fleetActivityFeed", body: await buildFleetActivityFeedBody() }); }
+  // bodyHonestyPolicy (task #61): the walk resolves this on every use and logs a
+  // law-1 fallback when nothing answers — measured 0 of 417 advertised shapes.
+  // Serving the STORED policy makes the denial vocabulary editable data; serving
+  // nothing when none is stored preserves the consumer's documented fallback.
+  // A malformed file is treated as absent, never merged, because the consumer
+  // replaces its literal list wholesale with whatever arrives.
+  if (type === "bodyHonestyPolicy") {
+    const _pol = await resolveBodyHonestyPolicy();
+    if (!_pol) {
+      return Response.json({ resolved: false, shape: "bodyHonestyPolicy", error: "no body-honesty policy configured — consumer keeps its literal fallback" }, { status: 404 });
+    }
+    return Response.json({ resolved: true, shape: "bodyHonestyPolicy", body: _pol });
+  }
         if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
       { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write, solicitationResponse_write, solicitationHeartbeat_write` },
