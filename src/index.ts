@@ -1048,7 +1048,7 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
 // STATE, emergently). On not-reached we downgrade status to failed and β-penalise
 // the selected template so Thompson stops reinforcing hollow completions.
 interface GoalReachVerdict {
-  endedAt?: number; reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; }
+  endedAt?: number; reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; preferredEndpoint?: string; }
 
 // ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
 // The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
@@ -2456,7 +2456,7 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
     if (cNums.includes(total)) {
       return { reached: true, reason: `deterministic:verified-two-source-combined — ${p.relA}=${A} + ${p.relB}=${B} = ${total} ${cUnit}; the produced output reports that total`, deterministic: true, completion_shapes: [] };
     }
-    return { reached: false, reason: `deterministic:two-source-combined-mismatch — authoritative combined total is ${total} (${p.relA}=${A}, ${p.relB}=${B}); the produced output does not report it`, deterministic: true, completion_shapes: [] };
+    return { reached: false, reason: `deterministic:two-source-combined-mismatch — authoritative combined total is ${total} (${p.relA}=${A}, ${p.relB}=${B}); the produced output does not report it`, deterministic: true, completion_shapes: [], preferredEndpoint: "" };
   }
   if (A === B) return null;                                    // tie -> not a deterministic comparison; LLM
   const winnerRel = (p.dir === "more" ? A > B : A < B) ? p.relA : p.relB;
