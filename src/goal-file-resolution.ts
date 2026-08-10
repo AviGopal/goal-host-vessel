@@ -73,6 +73,39 @@ const NOT_A_CHANGE =
 const PROSE_DESTINATION =
   /\b(?:my|the)\s+(?:notes?|vault|journal|memory|doc|docs|documentation|write-?up)\b|\badd\s+a\s+note\b|\bnote\s+(?:about|describing|that)\b/i;
 
+/**
+ * Repos that are NOT `<name>-vessel`, so the vessel-name rules above cannot see
+ * them. Listed explicitly rather than inferred: a "two hyphenated words" guess
+ * would mint scopes for phrases that name no repository, and a scope that does
+ * not exist silently narrows the search to nothing.
+ *
+ * A name missing here costs a fallback to phrase search (today's behaviour), so
+ * drift is degrading, not breaking. `-vessel` repos are matched by pattern and
+ * deliberately absent.
+ */
+const KNOWN_REPOS = [
+  "activity-api",
+  "concept-db",
+  "cpg-inference-ts",
+  "ias-executor-ts",
+  "libp2p-federation-transport",
+] as const;
+
+/**
+ * Multi-word vessel repos, for recognising "the goal host code". Only names
+ * whose spaced form is ambiguous with ordinary prose need to be here; a
+ * single-word vessel ("the discovery vessel") is already handled by pattern.
+ */
+const KNOWN_VESSELS = [
+  "goal-host-vessel",
+  "local-tools-vessel",
+  "llm-resolver-vessel",
+  "light-dispatch-vessel",
+  "metric-collector-vessel",
+  "stateful-ui-vessel",
+  "human-surface-vessel",
+] as const;
+
 /** A goal that already names a file needs no resolution — it is already routable. */
 const HAS_PATH = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/;
 
@@ -154,6 +187,28 @@ export function extractSearchTerms(goal: string): string[] {
     // "the vessel", "a vessel", "each vessel" name nothing.
     if (FILLER.has(name) || name === "vessel") continue;
     push(`${name}-vessel`);
+  }
+  // Multi-word vessel names with the suffix dropped: people say "the goal host
+  // code", not "goal-host-vessel". Measured 2026-08-09 — that phrasing resolved
+  // to nothing.
+  //
+  // Checked against KNOWN_VESSELS, never minted. The unguarded version of this
+  // loop produced `timestamps-come-vessel`, `judges-reach-vessel` and four more
+  // from ordinary prose; each would have been issued as a search term and, worse,
+  // accepted as a SCOPE — narrowing the search to a directory that cannot exist.
+  for (const m of goal.matchAll(/\b([a-z][a-z0-9]{2,})[\s-]+([a-z][a-z0-9]{2,})\b/gi)) {
+    const candidate = `${m[1].toLowerCase()}-${m[2].toLowerCase()}-vessel`;
+    if ((KNOWN_VESSELS as readonly string[]).includes(candidate)) push(candidate);
+  }
+  // Repos whose names do NOT end in -vessel, written as words. Measured
+  // 2026-08-09: "fix the activity api schema" and "the goal host code" both died
+  // with "no unique file", because a -vessel-only rule cannot name activity-api,
+  // concept-db, cpg-inference-ts, ias-executor-ts or libp2p-federation-transport.
+  // Matched against the KNOWN repo list rather than a shape guess — inventing
+  // "<word>-<word>" from arbitrary prose would fabricate scopes that do not exist.
+  for (const repo of KNOWN_REPOS) {
+    const spaced = repo.replace(/-/g, "[\\s-]+");
+    if (new RegExp(`\\b${spaced}\\b`, "i").test(goal)) push(repo);
   }
 
   // 4. Distinctive noun phrases — LAST, so a phrase can never outrank a real
@@ -289,7 +344,9 @@ export async function resolvePathlessCodeChangeGoal(
   // to a vaguer term — measured live, that is how a goal about discovery-vessel
   // came to be restated onto goal-host-vessel. Only the first named vessel
   // counts: a goal naming two is not evidence for either.
-  const vessels = allTerms.filter((t) => /^[a-z][a-z0-9-]*-vessel$/.test(t) || t === "concept-db");
+  const vessels = allTerms.filter(
+    (t) => /^[a-z][a-z0-9-]*-vessel$/.test(t) || (KNOWN_REPOS as readonly string[]).includes(t),
+  );
   const vessel = vessels.length === 1 ? vessels[0] : undefined;
   const terms = allTerms.filter((t) => !vessels.includes(t));
   if (vessel) tap?.(`pathless code-change goal: scoping the search to ${vessel}`);

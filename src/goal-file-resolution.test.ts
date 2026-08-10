@@ -139,6 +139,32 @@ describe("extractSearchTerms", () => {
     );
   });
 
+  test("reads repo names that do not end in -vessel", () => {
+    // Measured 2026-08-09: two dispatches died with "no unique file" because
+    // "the activity api" and "the goal host code" produced only phrases. Five
+    // repos in the fleet are not <name>-vessel — activity-api, concept-db,
+    // cpg-inference-ts, ias-executor-ts, libp2p-federation-transport — so a
+    // -vessel-only rule silently excluded all of them from being nameable.
+    expect(extractSearchTerms("Fix the activity api schema code that normalizes timestamps")).toContain(
+      "activity-api",
+    );
+    expect(extractSearchTerms("Update the concept db module that stores prose knowledge")).toContain(
+      "concept-db",
+    );
+  });
+
+  test("recognises a multi-word vessel name without minting fake ones", () => {
+    // "the goal host code" means goal-host-vessel. The unguarded version of this
+    // rule also produced timestamps-come-vessel, judges-reach-vessel and four
+    // more from ordinary prose — each would be searched for, and worse, accepted
+    // as a SCOPE, narrowing the search to a directory that cannot exist.
+    const terms = extractSearchTerms(
+      "Fix the goal host code that judges reach content so a payload carrying stub fields does not count",
+    );
+    expect(terms).toContain("goal-host-vessel");
+    expect(terms.filter((t) => t.endsWith("-vessel"))).toEqual(["goal-host-vessel"]);
+  });
+
   test("reads an unhyphenated vessel name, and ranks it above loose phrases", () => {
     // Measured 2026-08-09: a goal saying "make the discovery vessel prefer a
     // reachable endpoint" resolved onto goal-host-vessel/src/index.ts, because
