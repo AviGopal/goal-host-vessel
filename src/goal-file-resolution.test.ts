@@ -6,6 +6,7 @@ import {
   restateWithTargetFile,
   symbolCandidatesFromGoal,
   productionCandidates,
+  consensusSymbols,
   type FileSearch,
 } from "./goal-file-resolution";
 import { isEditIntentGoal } from "./goal-intent";
@@ -699,5 +700,56 @@ describe("productionCandidates", () => {
       .toEqual(["repos/a/src/test-registration.ts"]);
     expect(productionCandidates(["repos/a/src/scripting-helpers.ts"]))
       .toEqual(["repos/a/src/scripting-helpers.ts"]);
+  });
+});
+
+describe("consensusSymbols", () => {
+  test("keeps what recurs across samples", () => {
+    expect(consensusSymbols([
+      ["goal_execution_paths", "execution_path"],
+      ["goal_execution_paths", "activity_execution_traces"],
+      ["goal_execution_paths"],
+    ])[0]).toBe("goal_execution_paths");
+  });
+
+  test("drops one-off guesses when something else recurs", () => {
+    const out = consensusSymbols([["a_name", "one_off"], ["a_name", "other_off"]]);
+    expect(out).toContain("a_name");
+    expect(out).not.toContain("one_off");
+    expect(out).not.toContain("other_off");
+  });
+
+  test("orders by agreement first, then specificity", () => {
+    const out = consensusSymbols([
+      ["short_one", "a_much_longer_name"],
+      ["short_one", "a_much_longer_name"],
+      ["short_one"],
+    ]);
+    expect(out[0]).toBe("short_one"); // 3 votes beats 2, despite being shorter
+    expect(out[1]).toBe("a_much_longer_name");
+  });
+
+  test("falls back to the union when nothing recurs", () => {
+    // One sample's guess is still better than none, and every downstream gate
+    // still has to accept it.
+    const out = consensusSymbols([["short_a"], ["a_longer_name_b"]]);
+    expect(out.length).toBe(2);
+    expect(out[0]).toBe("a_longer_name_b"); // tie on votes → longer name first
+    expect(out).toContain("short_a");
+  });
+
+  test("a single sample degrades to that sample, specificity-ordered", () => {
+    expect(consensusSymbols([["short", "much_longer_name"]])[0]).toBe("much_longer_name");
+  });
+
+  test("empty and blank input yield nothing rather than throwing", () => {
+    expect(consensusSymbols([])).toEqual([]);
+    expect(consensusSymbols([[], [""], ["   "]])).toEqual([]);
+  });
+
+  test("duplicates WITHIN one sample do not count as agreement", () => {
+    // Otherwise a model repeating itself once would look like consensus.
+    const out = consensusSymbols([["dup", "dup", "dup"], ["other"]]);
+    expect(out.length).toBe(2); // no recurrence across samples → union
   });
 });

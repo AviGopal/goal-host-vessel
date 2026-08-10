@@ -345,6 +345,37 @@ const NON_PRODUCTION_PATH = /(^|\/)(scripts?|seeds?|fixtures?|migrations?|exampl
  * own phrases and symbols) are not filtered, so the goal's own words can still
  * name a script directly.
  */
+/**
+ * Collapse several independent proposals into the identifiers they AGREE on.
+ *
+ * The proposal step is a single LLM sample, and on the SAME goal it returned
+ * `goal_execution_paths` first on one run, `execution_path` first on the next,
+ * and `activity_execution_traces` on a third. Each gate downstream handled the
+ * bad ones safely, but the routing outcome was a coin flip.
+ *
+ * Self-consistency: sample a few times and keep what recurs. A name the model
+ * proposes every time is a belief; a name it proposes once is a guess. Ordering
+ * is by agreement first, then by specificity (length), so the most-agreed and
+ * narrowest claim is tested first.
+ *
+ * Falls back to the union when NOTHING recurs — one sample's guess is still
+ * better evidence than none, and every downstream gate still has to accept it.
+ */
+export function consensusSymbols(samples: readonly (readonly string[])[]): string[] {
+  const counts = new Map<string, number>();
+  for (const sample of samples) {
+    for (const s of new Set(sample.map((x) => String(x).trim()).filter(Boolean))) {
+      counts.set(s, (counts.get(s) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) return [];
+  const byAgreement = (a: [string, number], b: [string, number]): number =>
+    b[1] - a[1] || b[0].length - a[0].length;
+  const recurring = [...counts.entries()].filter(([, n]) => n >= 2).sort(byAgreement);
+  if (recurring.length > 0) return recurring.map(([k]) => k);
+  return [...counts.entries()].sort(byAgreement).map(([k]) => k);
+}
+
 export function productionCandidates(files: readonly string[]): string[] {
   return files.filter((f) => !NON_PRODUCTION_PATH.test(f));
 }

@@ -229,6 +229,7 @@ import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, g
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
+import { consensusSymbols } from "./goal-file-resolution";
 import { emptyResultSetReason } from "./empty-result-set";
 import { resolveReportBody } from "./resolve-report-body";
 import { decideContinuation } from "./walk-continuation.js";
@@ -11974,6 +11975,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // cannot restate a goal onto a file the search does not independently single
         // out, so the fail-closed contract is preserved.
         async (g: string): Promise<readonly string[]> => {
+          const SAMPLES = Number(process.env["SYMBOL_PROPOSAL_SAMPLES"] ?? 3);
+          const oneSample = async (): Promise<readonly string[]> => {
           // Hand the model the codebase's OWN vocabulary to choose from.
           //
           // Asked to name identifiers from prose alone it translates
@@ -12012,6 +12015,23 @@ async function handleRunGoal(req: Request): Promise<Response> {
           } catch {
             return [];
           }
+          };
+          // SELF-CONSISTENCY. One sample is a coin flip: on the SAME goal this
+          // returned `goal_execution_paths` first once, `execution_path` first the
+          // next time, and `activity_execution_traces` on a third. Every gate
+          // downstream handled the bad ones safely, but the routing OUTCOME varied
+          // run to run. Sample a few times and keep what recurs — a name proposed
+          // every time is a belief, one proposed once is a guess.
+          //
+          // Concurrent, so the extra samples cost latency once rather than N times,
+          // and reached only on goals where every lexical route already failed.
+          const samples = await Promise.all(
+            Array.from({ length: Math.max(1, SAMPLES) }, () =>
+              oneSample().catch(() => [] as string[])),
+          );
+          const agreed = consensusSymbols(samples);
+          console.log(`[goal-host-vessel] /run-goal: symbol proposal — ${samples.length} sample(s), consensus [${agreed.slice(0, 8).join(", ")}]`);
+          return agreed;
         });
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 
