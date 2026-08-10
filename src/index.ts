@@ -5873,7 +5873,7 @@ async function runGoalAsPoolWalk(
         // Prefer `peer` endpoints immediately, as they indicate a local, reliable connection
         // (e.g., within the same Kubernetes pod or Docker Compose network) and avoid
         // issues with external callers picking loopback addresses.
-        if (cand.discoveredVia === "peer") return route;
+        if (cand.discoveredVia === "peer" && !cand.endpoint.startsWith("http://localhost")) return route;
         if (first === null) first = route;
         try {
           const probe = await fetch(`${cand.endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
