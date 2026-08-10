@@ -5867,13 +5867,16 @@ async function runGoalAsPoolWalk(
         return 0;
       });
 
-      for (const cand of sortedCandidates) {
-        if (!cand?.endpoint || cand.endpoint.match(/^https?:\/\/(localhost|127\.0\.0\.1|\\[::1\\])/)) continue;
-        const route = routeFor(cand);
-        // Prefer `peer` endpoints immediately, as they indicate a local, reliable connection
-        // (e.g., within the same Kubernetes pod or Docker Compose network) and avoid
-        // issues with external callers picking loopback addresses.
-        if (cand.discoveredVia === "peer" && !cand.endpoint.startsWith("http://localhost")) return route;
+      for (const cand of ordered) {
+			if (!cand?.endpoint) continue;
+			const route = routeFor(cand);
+			if (first === null) first = route;
+			// Prefer non-peer endpoints. Discovery sometimes returns the loopback address for
+			// the publishing vessel, and callers on other machines will try that first
+			// since discovery sometimes sorts them ahead of the external address.
+			// Only return a 'peer' route if it's the *only* candidate left.
+			const isLastCandidate = ordered.indexOf(cand) === ordered.length - 1;
+			if (cand.discoveredVia === "peer" && !isLastCandidate) continue;
         if (first === null) first = route;
         try {
           const probe = await fetch(`${cand.endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
