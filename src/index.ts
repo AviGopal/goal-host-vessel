@@ -9543,10 +9543,20 @@ async function runGoalWithRecovery(
             // the callee's floor makes this route unable to succeed regardless of LLM health —
             // the same by-construction defect as a drain budget set above its stop timeout.
             //
-            // NOTE 540s now exceeds GOAL_HOST_DRAIN_MS (240s under TimeoutStopUSec=5min), so a
-            // restart landing mid-compose still SIGKILLs the request. That hazard predates this
-            // change and is why you must never dispatch while a goal-host edit is landing.
-            signal: AbortSignal.timeout(540_000),
+            // NOTE this exceeds GOAL_HOST_DRAIN_MS (240s under TimeoutStopUSec=5min), so a
+            // restart landing mid-compose could still SIGKILL the request. That hazard is now
+            // mitigated for the common cause: substrate-pull-sync defers a vessel restart while
+            // that vessel reports in-flight dispatches (see substrate-pull-sync.sh), so the
+            // convergence timer no longer lands on a live compose.
+            //
+            // RAISED 540s -> 900s because the ceiling was set below the QUEUE, not below the
+            // work. development-vessel serialises composes ("compose nudge skipped — a compose
+            // is already in flight") and the autonomous gap-closing loop keeps that lane busy:
+            // measured 1-19 compose starts per 10-minute window, continuously. An operator
+            // dispatch has no priority, so it waits behind several multi-minute drafts and the
+            // old ceiling expired mid-queue — reported as "The operation timed out", which reads
+            // like a slow model rather than a busy lane.
+            signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
           });
           if (earlyComposeResp.ok) {
             const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
