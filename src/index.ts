@@ -229,6 +229,7 @@ import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, g
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
+import { emptyResultSetReason } from "./empty-result-set";
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
@@ -6425,6 +6426,30 @@ If one of those sibling shapes is the action that would create what the goal ask
     };
 
     const _degenerateReason = (r: unknown, pol?: _BodyHonesty): string | null => {
+      // EMPTY STORE LISTING — checked FIRST, and in BOTH modes.
+      //
+      // A bare vessel-resolve for a shape activity-api also STORES is answered by
+      // the store's LIST endpoint. An empty listing arrives as success:true with a
+      // non-empty `content` string, so `rawResolve` (which only rejects
+      // success:false) and the flagField check below both wave it through, and the
+      // walk records the shape as PRODUCED. The consuming step then dies with "no
+      // constructible payload" and the real drafter is never reached.
+      //
+      // A prior session identified this route as "the unfound blocker" and left an
+      // instruction to fetch the body the satisfier actually receives rather than
+      // re-derive it from code paths. That body is:
+      //   {"success":true,"content":"{\"total\":0,...,\"entries\":[]}",
+      //    "metadata":{"rowCount":0,"summary":"0 <shape> rows"}}
+      //
+      // Applied in both modes because a store listing is never a produced artifact,
+      // policy or not. The predicate is deliberately narrow (see empty-result-set.ts)
+      // so a legitimate "zero results" ANSWER still passes.
+      const _emptyListing = emptyResultSetReason(
+        r,
+        (r && typeof r === "object" ? (r as Record<string, unknown>).metadata : undefined),
+      );
+      if (_emptyListing) return _emptyListing;
+
       // BODY-HONESTY MODE (widened: this checker used to be COMMAND-only, so every non-exec
       // shape's body went unread and a {"success":true,"error":"path required"} body was pooled
       // as content). When a policy is supplied, grade the BODY instead: an in-band denial marker
@@ -7229,7 +7254,33 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _preview = (typeof _c === "string" ? _c : JSON.stringify(_c) ?? "").slice(0, 300);
           console.log(`[satisfier-probe] "${satisfiableNow}" returned type=${typeof _c} content=${_preview}`);
         }
-        if (resolved) {
+        // THE ROUTE THE PRIOR SESSION COULD NOT FIND.
+        //
+        // Its own note above says it: "this route is vesselResolveShape rather
+        // than the `direct` path I patched". Everything upstream — rawResolve's
+        // success:false rejection, and the body-honesty grading applied to
+        // `direct` — sits on the OTHER route. Here the only gate was
+        // `if (resolved)`, so ANY non-null body was pooled as a production.
+        //
+        // Captured from the live fleet, this is what that body is for a shape
+        // activity-api also STORES:
+        //   {"total":0,"offset":0,"limit":100,"entries":[]}   (rowCount 0)
+        // — the store's LIST endpoint answering "I hold none of these". A query
+        // MISS, pooled as a produced artifact. Downstream, `_write` then failed
+        // with "no constructible payload" and the real drafter (feature_compose,
+        // live on development-vessel) was never reached, because the shape
+        // already looked satisfied.
+        //
+        // Deliberately narrow: ONLY the store-listing signature is refused, not
+        // every empty body. "Zero results" is a legitimate ANSWER for a counting
+        // or search goal, and this route carries ~63.5% of recorded pathway
+        // steps — a broad rejection here would break far more than it fixes.
+        const _emptyRead = resolved ? emptyResultSetReason(resolved.content) : null;
+        if (_emptyRead) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${satisfiableNow}" REFUSED — ${_emptyRead}; leaving the shape unsatisfied so a real producer can be selected`);
+          lastRawResolveReason = _emptyRead.slice(0, 200);
+        }
+        if (resolved && !_emptyRead) {
           addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`);
           // Record the satisfier as a GENUINE step: synthesize a minimal
           // ExecutionTrace so the walk's downstream accounting (chain.length > 0 →
