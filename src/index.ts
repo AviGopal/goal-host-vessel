@@ -5868,7 +5868,7 @@ async function runGoalAsPoolWalk(
       });
 
       for (const cand of ordered) {
-			if (!cand?.endpoint) continue;
+			if (!cand?.endpoint || cand.endpoint.startsWith('http://127.0.0.1') || cand.endpoint.startsWith('http://localhost')) continue;
 			const route = routeFor(cand);
 			if (first === null) first = route;
 			// Prefer non-peer endpoints. Discovery sometimes returns the loopback address for
