@@ -633,3 +633,32 @@ describe("proposed symbols — specificity ordering", () => {
     expect(out).toBe(goalText);
   });
 });
+
+describe("restateWithTargetFile — the anchor", () => {
+  test("names the term that found the file", () => {
+    const out = restateWithTargetFile("fix the thing", "repos/a/src/b.ts", "goal_execution_paths");
+    expect(out).toContain("repos/a/src/b.ts");
+    expect(out).toContain("goal_execution_paths");
+    expect(out).toContain("wrong target"); // the escape clause survives
+  });
+
+  test("omits the clause entirely when there is no anchor", () => {
+    // Callers that resolved by a route with no meaningful term must not emit an
+    // empty backtick pair — a hint that says nothing is worse than none.
+    const out = restateWithTargetFile("fix the thing", "repos/a/src/b.ts");
+    expect(out).not.toContain("relevant code is around");
+    expect(out).toContain("wrong target");
+  });
+
+  test("blank and whitespace anchors are treated as absent", () => {
+    for (const a of ["", "   "]) {
+      expect(restateWithTargetFile("g", "f.ts", a)).not.toContain("relevant code is around");
+    }
+  });
+
+  test("an anchor is a HINT, so the wrong-target escape is still offered", () => {
+    // A mis-resolved anchor must remain refusable by the drafter.
+    const out = restateWithTargetFile("g", "f.ts", "someSymbol");
+    expect(out).toContain("say so rather than editing it");
+  });
+});

@@ -317,8 +317,24 @@ function distinctivePhrases(goal: string): string[] {
  * visible in the trace and to the drafter, instead of masquerading as something
  * the operator specified.
  */
-export function restateWithTargetFile(goal: string, file: string): string {
-  return `Edit ${file} to satisfy the following request. If that file is the wrong target, say so rather than editing it.\n\n${goal.trim()}`;
+export function restateWithTargetFile(goal: string, file: string, anchor?: string): string {
+  // CARRY THE ANCHOR FORWARD.
+  //
+  // Resolution knows WHICH TERM found the file — a symbol, a phrase, a table
+  // name — and used to discard it, handing the drafter only a path. The drafter
+  // then grounds on a WINDOW of the file, not the whole thing: measured
+  // groundings run 29-51k chars against files considerably larger. If the window
+  // misses the region the term pointed at, the planner returns `ops: []` — it
+  // cannot edit what it was not shown. Observed exactly that: correct file,
+  // 29,590-char grounding, zero ops, verdict=(none).
+  //
+  // Naming the anchor costs one clause and turns "somewhere in this file" into
+  // "around this identifier". It is a HINT, not an instruction: the wrong-target
+  // escape clause is preserved, so a mis-resolved anchor is still refusable.
+  const anchorClause = anchor && anchor.trim()
+    ? ` The relevant code is around \`${anchor.trim()}\`.`
+    : "";
+  return `Edit ${file} to satisfy the following request.${anchorClause} If that file is the wrong target, say so rather than editing it.\n\n${goal.trim()}`;
 }
 
 /**
@@ -455,7 +471,7 @@ export async function resolvePathlessCodeChangeGoal(
     }
     if (hits.length === 1) {
       tap?.(`pathless code-change goal — restated with target ${hits[0]} (unique hit for "${term}")`);
-      return restateWithTargetFile(goal, hits[0]!);
+      return restateWithTargetFile(goal, hits[0]!, term);
     }
     if (hits.length > 1) {
       tap?.(`pathless code-change goal: "${term}" matched ${hits.length} files — ambiguous, trying next term`);
@@ -487,7 +503,7 @@ export async function resolvePathlessCodeChangeGoal(
         tap?.(
           `pathless code-change goal — restated with target ${hits[0]} (symbol declaring "${word}"; no phrase matched)`,
         );
-        return restateWithTargetFile(goal, hits[0]!);
+        return restateWithTargetFile(goal, hits[0]!, word);
       }
     }
     // CORROBORATION. No single word was unique, but the file that declares
@@ -516,7 +532,7 @@ export async function resolvePathlessCodeChangeGoal(
       tap?.(
         `pathless code-change goal — restated with target ${best[0]} (declares symbols for ${best[1]} goal words; no phrase or single symbol matched)`,
       );
-      return restateWithTargetFile(goal, best[0]);
+      return restateWithTargetFile(goal, best[0], words.join(", "));
     }
     if (words.length) {
       tap?.(`pathless code-change goal: no unique declaring file for symbols [${words.join(", ")}]`);
@@ -590,7 +606,7 @@ export async function resolvePathlessCodeChangeGoal(
           tap?.(
             `pathless code-change goal — restated with target ${hits[0]} (proposed symbol "${word}" declares in exactly one file)`,
           );
-          return restateWithTargetFile(goal, hits[0]!);
+          return restateWithTargetFile(goal, hits[0]!, word);
         }
         // AMBIGUITY AT A MORE SPECIFIC NAME DISARMS THE LONE-UNIQUE RULE.
         //
@@ -634,7 +650,7 @@ export async function resolvePathlessCodeChangeGoal(
                 tap?.(
                   `pathless code-change goal — restated with target ${narrowed[0]} ("${word}" was ambiguous across ${hits.length} files; exactly one contains "${verb.trim()} ${word}" and the goal asks to write)`,
                 );
-                return restateWithTargetFile(goal, narrowed[0]!);
+                return restateWithTargetFile(goal, narrowed[0]!, word);
               }
             }
           }
@@ -657,7 +673,7 @@ export async function resolvePathlessCodeChangeGoal(
         tap?.(
           `pathless code-change goal — restated with target ${pbest[0]} (declares ${pbest[1]} proposed symbols; strict leader)`,
         );
-        return restateWithTargetFile(goal, pbest[0]);
+        return restateWithTargetFile(goal, pbest[0], fresh.join(", "));
       }
       tap?.(`pathless code-change goal: proposed symbols [${fresh.join(", ")}] did not single out a file`);
     }
