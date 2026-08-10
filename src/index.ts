@@ -5842,7 +5842,24 @@ async function runGoalAsPoolWalk(
         return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
       };
       let first: { endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null = null;
-      for (const cand of ordered) {
+      const isIPLoopback = (ip: string) => {
+        // Source: https://en.wikipedia.org/wiki/Loopback#Loopback_addresses
+        // IPv4: 127.0.0.0/8
+        // IPv6: ::1/128
+        const ipRx = /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1)$/;
+        return ipRx.test(ip);
+      };
+
+      const sortedCandidates = ordered.sort((a, b) => {
+        const aIsLoopback = isIPLoopback(new URL(a.endpoint!).hostname);
+        const bIsLoopback = isIPLoopback(new URL(b.endpoint!).hostname);
+
+        if (aIsLoopback && !bIsLoopback) return 1; // 'a' is loopback, 'b' is not, 'a' comes after 'b'
+        if (!aIsLoopback && bIsLoopback) return -1; // 'a' is not loopback, 'b' is, 'a' comes before 'b'
+        return 0;
+      });
+
+      for (const cand of sortedCandidates) {
         if (!cand?.endpoint) continue;
         const route = routeFor(cand);
         if (first === null) first = route;
