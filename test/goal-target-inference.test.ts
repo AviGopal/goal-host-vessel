@@ -267,3 +267,75 @@ describe("inferGoalTargetDecision — compute-then-emit composition guard", () =
     });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EDIT RULE — the prompt must distinguish CHANGING code from ANALYSING it.
+//
+// Two live autonomous attempts at a repair goal both routed to non-edit shapes
+// (a write-bridge, then problem_detection) and the walk then honestly reported
+// "no template produces the inferred target shapes". The prompt taught analysis
+// by example and never mentioned editing.
+// ─────────────────────────────────────────────────────────────────────────────
+function capturingLLM(targetShapes: unknown) {
+  let prompt = "";
+  const fetchImpl = (async (_url: string, init: { body: string }) => {
+    prompt = JSON.parse(init.body).prompt as string;
+    return {
+      ok: true,
+      json: async () => ({ body: { content: JSON.stringify({ target_shapes: targetShapes }) } }),
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  return { fetchImpl, prompt: () => prompt };
+}
+
+describe("edit-intent rule in the inference prompt", () => {
+  it("names the producible edit shapes when one is available", async () => {
+    const { fetchImpl, prompt } = capturingLLM(["fs_edit"]);
+    await inferGoalTargetShapes("fix the bug in the writer", [...KNOWN, "fs_edit"], {
+      llmEndpoint: "http://llm.test",
+      fetchImpl,
+    });
+    expect(prompt()).toContain("CHANGING code is not ANALYSING code");
+    expect(prompt()).toContain("fs_edit");
+  });
+
+  it("stays SILENT when no edit shape is producible", async () => {
+    // Same discipline as the shellResult rule: never steer the model toward a
+    // shape the substrate cannot serve, or it returns an unroutable target.
+    const { fetchImpl, prompt } = capturingLLM(["problem_detection"]);
+    await inferGoalTargetShapes("fix the bug in the writer", KNOWN, {
+      llmEndpoint: "http://llm.test",
+      fetchImpl,
+    });
+    expect(prompt()).not.toContain("CHANGING code is not ANALYSING code");
+  });
+
+  it("warns that analysis shapes report rather than repair", async () => {
+    const { fetchImpl, prompt } = capturingLLM(["fs_edit"]);
+    await inferGoalTargetShapes("repair it", [...KNOWN, "fs_edit"], {
+      llmEndpoint: "http://llm.test",
+      fetchImpl,
+    });
+    // The exact failure seen live: problem_detection chosen for a repair goal.
+    expect(prompt()).toContain("problem_detection");
+    expect(prompt()).toContain("leaves the defect in place");
+  });
+
+  it("still allows BOTH when a goal changes code and reports on it", async () => {
+    const { fetchImpl, prompt } = capturingLLM(["fs_edit", "problem_detection"]);
+    await inferGoalTargetShapes("fix it and report what you changed", [...KNOWN, "fs_edit"], {
+      llmEndpoint: "http://llm.test",
+      fetchImpl,
+    });
+    expect(prompt()).toContain("return BOTH shapes");
+  });
+
+  it("the decision path carries the rule too, not just the shapes path", async () => {
+    const { fetchImpl, prompt } = capturingLLM(["fs_edit"]);
+    await inferGoalTargetDecision("fix the writer", [...KNOWN, "fs_edit"], {
+      llmEndpoint: "http://llm.test",
+      fetchImpl,
+    });
+    expect(prompt()).toContain("CHANGING code is not ANALYSING code");
+  });
+});

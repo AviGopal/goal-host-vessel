@@ -103,6 +103,36 @@ export async function inferGoalTargetShapes(
   const model = opts.model ?? "auto";
   // shellResult is the UNIVERSAL executor (real bash). Steer imperative / system-
   // inspection goals to it — but ONLY mention it when it is actually producible.
+  // EDIT RULE — the counterweight to the worked example in the prompt.
+  //
+  // The prompt teaches ANALYSIS by example ("find code-quality risks" ->
+  // problem_detection / code_quality) and never mentions editing. With nothing
+  // pulling the other way, a REPAIR goal inherits that pull. Observed live,
+  // twice, with a working model: "Fix whatever writes those records..." routed
+  // to a write-bridge, and "Change that source code so..." inferred
+  // ["problem_detection"] — after which the walk correctly reported "no template
+  // produces the inferred target shapes" and filed a capability gap. Routing was
+  // not broken; the prompt had never been told that CHANGING code is a different
+  // job from INSPECTING it.
+  //
+  // Mentioned ONLY when an edit shape is actually producible — same discipline
+  // as shellRule, so the model is never steered at a shape the substrate cannot
+  // serve. This is law 8 (put the load-bearing fact where it is used), not a
+  // keyword shortcut: the deterministic shortcuts elsewhere in this file each
+  // return a SINGLE shape and silently drop the other half of a
+  // compose-then-persist goal, which is how a truncated plan gets graded
+  // "reached" while the write never happened.
+  const producibleEditShapes = [
+    "code_modification_proposal",
+    "fs_edit",
+    "fileEditResult",
+    "fs_write",
+    "fileWriteResult",
+  ].filter((s) => known.has(s));
+  const editRule = producibleEditShapes.length > 0
+    ? `\n\nSPECIAL RULE — CHANGING code is not ANALYSING code. If the goal asks to CHANGE, FIX, REPAIR, IMPLEMENT, EDIT or REWRITE source code, choose an edit shape (${producibleEditShapes.join(" / ")}) — NOT an analysis shape. Analysis shapes such as problem_detection and code_quality REPORT what is wrong; they never alter the code, so a repair goal routed to one yields a finding and leaves the defect in place. Choose an analysis shape ONLY when the goal asks to find, review, audit or report rather than to alter. When a goal asks BOTH to change code and to report on it, return BOTH shapes.`
+    : "";
+
   const shellRule = known.has("shellResult")
     ? `\n\nSPECIAL RULE — the "shellResult" shape is the UNIVERSAL EXECUTOR: producing it RUNS a real shell command. If the goal is fundamentally about RUNNING a command or INSPECTING the repo / filesystem / running system — counting, listing, "how many", "report the current", checking, or running some command X — and NO more-specific analysis / write / data-processing shape in the KNOWN list fits, choose "shellResult". Do NOT choose "shellResult" for analysis / review / note-writing / data-processing / code-edit goals that have a specific matching shape (e.g. problem_detection, code_quality, a write shape) — those are not shell jobs.`
     : "";
@@ -113,7 +143,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list — these are the shapes the substrate can actually produce):
 ${JSON.stringify(knownShapes)}
 
-Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Pick the most specific capability-matched shapes (e.g. a "find code-quality risks" goal maps to code-analysis shapes like problem_detection / code_quality, NOT to a note-writing or summary shape). If nothing in the list fits, return an empty array.${shellRule}
+Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Pick the most specific capability-matched shapes (e.g. a "find code-quality risks" goal maps to code-analysis shapes like problem_detection / code_quality, NOT to a note-writing or summary shape). If nothing in the list fits, return an empty array.${editRule}${shellRule}
 
 Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
 
@@ -363,6 +393,36 @@ export async function inferGoalTargetDecision(
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
   const model = opts.model ?? "auto";
+  // EDIT RULE — the counterweight to the worked example in the prompt.
+  //
+  // The prompt teaches ANALYSIS by example ("find code-quality risks" ->
+  // problem_detection / code_quality) and never mentions editing. With nothing
+  // pulling the other way, a REPAIR goal inherits that pull. Observed live,
+  // twice, with a working model: "Fix whatever writes those records..." routed
+  // to a write-bridge, and "Change that source code so..." inferred
+  // ["problem_detection"] — after which the walk correctly reported "no template
+  // produces the inferred target shapes" and filed a capability gap. Routing was
+  // not broken; the prompt had never been told that CHANGING code is a different
+  // job from INSPECTING it.
+  //
+  // Mentioned ONLY when an edit shape is actually producible — same discipline
+  // as shellRule, so the model is never steered at a shape the substrate cannot
+  // serve. This is law 8 (put the load-bearing fact where it is used), not a
+  // keyword shortcut: the deterministic shortcuts elsewhere in this file each
+  // return a SINGLE shape and silently drop the other half of a
+  // compose-then-persist goal, which is how a truncated plan gets graded
+  // "reached" while the write never happened.
+  const producibleEditShapes = [
+    "code_modification_proposal",
+    "fs_edit",
+    "fileEditResult",
+    "fs_write",
+    "fileWriteResult",
+  ].filter((s) => known.has(s));
+  const editRule = producibleEditShapes.length > 0
+    ? `\n\nSPECIAL RULE — CHANGING code is not ANALYSING code. If the goal asks to CHANGE, FIX, REPAIR, IMPLEMENT, EDIT or REWRITE source code, choose an edit shape (${producibleEditShapes.join(" / ")}) — NOT an analysis shape. Analysis shapes such as problem_detection and code_quality REPORT what is wrong; they never alter the code, so a repair goal routed to one yields a finding and leaves the defect in place. Choose an analysis shape ONLY when the goal asks to find, review, audit or report rather than to alter. When a goal asks BOTH to change code and to report on it, return BOTH shapes.`
+    : "";
+
   const shellRule = known.has("shellResult")
     ? `\n\nSPECIAL RULE — the "shellResult" shape is the UNIVERSAL EXECUTOR: producing it RUNS a real shell command. If the goal is fundamentally about RUNNING a command or INSPECTING the repo / filesystem / running system — counting, listing, "how many", "report the current", checking, or running some command X — and NO more-specific analysis / write / data-processing shape in the KNOWN list fits, choose "shellResult". Do NOT choose "shellResult" for analysis / review / note-writing / data-processing / code-edit goals that have a specific matching shape (e.g. problem_detection, code_quality, a write shape) — those are not shell jobs.`
     : "";
@@ -373,7 +433,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list):
 ${JSON.stringify(knownShapes)}
 
-Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-3 shapes from the KNOWN list.${shellRule}
+Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-3 shapes from the KNOWN list.${editRule}${shellRule}
 
 COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}.
 
