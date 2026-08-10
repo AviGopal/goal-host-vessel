@@ -412,7 +412,8 @@ export async function resolvePathlessCodeChangeGoal(
   /**
    * Optional: propose CODE IDENTIFIERS a symptom probably corresponds to.
    *
-   * The goal says "execution-path records" and "tenant marking"; the code says
+   * A goal phrases things as symptoms; the code uses identifiers. Where a goal
+   * says something like "execution path" records and "tenant" marking, the code says
    * `goal_execution_paths` and `org_id`. No lexical rule bridges that — it is a
    * translation, and it is the single reason symptom-level repair goals are left
    * unrestated and therefore never reach the compose path.
@@ -601,8 +602,7 @@ export async function resolvePathlessCodeChangeGoal(
           //
           // An identifier spread across many files is usually a table or field
           // name: every reader mentions it, but only one place WRITES it. When
-          // the goal is about writing ("the handler that WRITES ... records sets
-          // no tenant marking"), the write site is the file it means.
+          // the goal's verb is a write, the write site is the file it means.
           //
           // This is not a heuristic guess about which file looks important — it
           // reads the intent the goal already stated and asks the search a
