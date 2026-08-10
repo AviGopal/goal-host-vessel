@@ -227,6 +227,7 @@ import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
+import { isBookkeepingOnly } from "./bookkeeping-only";
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
@@ -10277,7 +10278,14 @@ async function runGoalWithRecovery(
             .flatMap((t) => t.outputImpulseIds ?? []);
           contentDigest = outImpulseIds
             .map((id) => store?.get(id))
-            .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp && imp.content !== undefined && imp.content !== null)
+            // A RECEIPT IS NOT A REPORT (task #59). Content that is only execution
+      // bookkeeping — {producedBy, executionId} and friends — serialises to a
+      // plausible string and was counted as reach evidence, so a report goal
+      // could be graded REACHED on proof that something ran rather than on the
+      // report it was asked for. Dropped at CAPTURE time so the digest that
+      // reaches the gate never contains it.
+      .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } =>
+        !!imp && imp.content !== undefined && imp.content !== null && !isBookkeepingOnly(imp.content))
             .map((imp) => {
               const s = imp.metadata?.shape ?? "?";
               let c: string;
