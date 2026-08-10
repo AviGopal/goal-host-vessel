@@ -230,6 +230,7 @@ import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { emptyResultSetReason } from "./empty-result-set";
+import { resolveReportBody } from "./resolve-report-body";
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
@@ -9537,7 +9538,7 @@ async function runGoalWithRecovery(
           });
           if (earlyComposeResp.ok) {
             const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
-            const earlyBody = (earlyJ?.body ?? earlyJ ?? {}) as Record<string, unknown>;
+            const earlyBody = resolveReportBody(earlyJ);
             const earlyVerdict = String(earlyBody.verdict ?? "");
             if (earlyVerdict === "FAVORABLE") {
               const earlyCutovers = Array.isArray(earlyBody.cutovers) ? earlyBody.cutovers as Array<Record<string, unknown>> : [];
@@ -9935,14 +9936,14 @@ async function runGoalWithRecovery(
               resp = await fetch(composeUrl, composeInit());
             }
             let j: any = await resp.json().catch(() => ({}));
-            let body = (j?.body ?? j ?? {}) as Record<string, any>;
+            let body = resolveReportBody(j) as Record<string, any>;
             let verdict = String(body.verdict ?? "");
             if (verdict === "BUSY") {
               console.log("[edit-intent] EDIT-INTENT compose BUSY — waiting 45 s before retry");
               await new Promise<void>((r) => setTimeout(r, 45_000));
               const busyRetryRes = await fetch(composeUrl, composeInit());
               j = await busyRetryRes.json().catch(() => ({}));
-              body = (j?.body ?? j ?? {}) as Record<string, any>;
+              body = resolveReportBody(j) as Record<string, any>;
               verdict = String(body.verdict ?? "");
             }
             const cutovers = Array.isArray(body.cutovers) ? body.cutovers : [];
@@ -10101,7 +10102,7 @@ async function runGoalWithRecovery(
               });
               if (pwtResp.ok) {
                 const pwtJson = await pwtResp.json() as { success?: boolean; shape?: string; body?: Record<string, unknown> };
-                const pwtBody = (pwtJson.body ?? {}) as Record<string, unknown>;
+                const pwtBody = resolveReportBody(pwtJson);
                 // SUBSTANCE GRADE (landed == reached): patch_with_tools now carries landed:true +
                 // landed_sha/new_git_sha when its cutover actually committed+pushed to origin/dev.
                 // Mirror the feature_compose positive (reached:true + fileEditResult) BEFORE the
@@ -10213,7 +10214,7 @@ async function runGoalWithRecovery(
               signal: AbortSignal.timeout(120_000),
             });
             const j: any = await resp.json().catch(() => ({}));
-            const body = (j?.body ?? j ?? {}) as Record<string, any>;
+            const body = resolveReportBody(j) as Record<string, any>;
             const verdict = String(body.verdict ?? "");
             const errStr = typeof body.error === "string" ? body.error : "";
             if (verdict === "FAVORABLE") {
