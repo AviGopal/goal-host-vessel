@@ -51,6 +51,7 @@ export function verifierFamilyOf(goal: string): string | null {
     [/\bdistinct\b[^.?]*\bextensions?\b|\bextensions?\b[^.?]*\bdistinct\b/, "distinct-file-extensions"],
     [/\bsub-?directories\b|\bsub-?dirs?\b|\bfolders?\b/, "subdirectory-count"],
     [/\b(largest|biggest|longest)\b[^.?]*\b(module|file)\b|\b(module|file)\b[^.?]*\bmost lines\b/, "largest-module-by-lines"],
+    [/\bnon-empty-directory-count\b/, "non-empty-directory-count"],
     [/\bfunctions?\b/, "function-count"],
     [/\bexports?\b/, "export-count"],
     [/\bimports?\b/, "import-count"],
