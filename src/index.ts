@@ -6339,7 +6339,13 @@ If one of those sibling shapes is the action that would create what the goal ask
           return _honestyFallback;
         }
         const _arr = (k: string, d: string[]): string[] => Array.isArray(_pb[k]) ? (_pb[k] as unknown[]).map((x) => String(x)) : d;
-        const _pat = _pb["denialTextPattern"];
+        let _pat = _pb["denialTextPattern"] as unknown;
+        if (typeof _pat !== "string" && typeof _pat === "object" && _pat !== null && !Array.isArray(_pat) && Object.keys(_pat).length === 0) {
+          // Prior attempts failed because TS7053: implicitly has an 'any' type because expression of type '"denialTextPattern"' can't be used to index type '{}'.
+          // This is a specific case of an empty object being assigned, which should fall through to fallback.
+          // Coerce to undefined to trigger the fallback logic.
+          _pat = undefined;
+        }
         return {
           envelopeKeys: _arr("envelopeKeys", _honestyFallback.envelopeKeys),
           flagFields: _arr("flagFields", _honestyFallback.flagFields),
