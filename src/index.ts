@@ -5871,13 +5871,12 @@ async function runGoalAsPoolWalk(
       for (const cand of sortedCandidates) {
 			if (!cand?.endpoint) continue;
 			const route = routeFor(cand);
-			if (first === null || !isIPLoopback(new URL(cand.endpoint!).hostname)) first = route;
-			// Prefer non-loopback endpoints by returning them immediately if found
+			// Prefer non-loopback endpoints. Discovery sometimes returns the loopback address for
+			// the publishing vessel, and callers on other machines will try that first
+			// since discovery sometimes sorts them ahead of the external address. This check
+			// means we return the first valid non-loopback route immediately.
 			if (!isIPLoopback(new URL(cand.endpoint!).hostname)) return route;
-			// Discovery sometimes returns the loopback address for the publishing vessel, and
-			// callers on other machines will try that first since discovery sometimes sorts
-			// them ahead of the external address. Prefer non-loopback routes.
-			if (!isIPLoopback(new URL(cand.endpoint!).hostname)) return route;
+			if (first === null) first = route;
         
         try {
           const probe = await fetch(`${cand.endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
