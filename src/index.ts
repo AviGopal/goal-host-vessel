@@ -11712,7 +11712,7 @@ discoveryLoop.onUnhealthy(() => {
  * codebase actually CALLED". It exists to feed the symptom→identifier proposer a
  * SET TO CHOOSE FROM rather than asking a model to invent names from prose.
  *
- * Observed why: given "execution-path records ... tenant marking", the proposer
+ * Observed why: given a symptom phrased as records-without-a-tenant-column, the proposer
  * returned `execution_path_records` and `tenant_marking` — the English phrases
  * snake_cased. The real names are `goal_execution_paths` and `org_id`. A model
  * with no view of the vocabulary translates morphologically; one handed the
@@ -11946,7 +11946,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // SYMPTOM -> IDENTIFIER translation, consulted ONLY after every lexical
         // route above has already failed.
         //
-        // The goal says "execution-path records" / "tenant marking"; the code says
+        // A goal names things as symptoms; the code names them as identifiers. NB:
+        // paraphrased on purpose — the phrase search greps THIS tree, so a verbatim
+        // goal span in searchable source becomes a phantom unique match (it has
+        // already restated goals onto this file and onto goal-file-resolution.ts).
+        // The mismatch is that a goal says
         // `goal_execution_paths` / `org_id`. No lexical rule bridges that, and it is
         // why symptom-level repair goals are left unrestated and so never reach the
         // compose path at all.
@@ -11960,7 +11964,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           // Hand the model the codebase's OWN vocabulary to choose from.
           //
           // Asked to name identifiers from prose alone it translates
-          // morphologically — "execution-path records" became
+          // morphologically — the phrase became
           // `execution_path_records`, when the real name is
           // `goal_execution_paths`. Gather the actual tokens around each
           // content word first, so the task becomes SELECTION rather than
