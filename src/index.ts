@@ -5871,13 +5871,13 @@ async function runGoalAsPoolWalk(
       for (const cand of ordered) {
 			if (!cand?.endpoint) continue;
 			const route = routeFor(cand);
-			if (first === null || cand.endpoint.includes('localhost') || cand.endpoint.includes('127.0.0.1')) first = route;
+			if (first === null || !isIPLoopback(new URL(cand.endpoint!).hostname)) first = route;
 			// Prefer non-peer endpoints. Discovery sometimes returns the loopback address for
 			// the publishing vessel, and callers on other machines will try that first
 			// since discovery sometimes sorts them ahead of the external address.
 			// Only return a 'peer' route if it's the *only* candidate left.
 			const isLastCandidate = ordered.indexOf(cand) === ordered.length - 1;
-			if (cand.discoveredVia === "peer" && !cand.endpoint.includes('localhost') && !cand.endpoint.includes('127.0.0.1')) return route;
+			if (cand.discoveredVia === "peer" && !isIPLoopback(new URL(cand.endpoint!).hostname)) return route;
         if (first === null || !isIPLoopback(new URL(cand.endpoint!).hostname)) first = route;
         try {
           const probe = await fetch(`${cand.endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
