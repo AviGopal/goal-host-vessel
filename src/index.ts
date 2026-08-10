@@ -9521,6 +9521,17 @@ async function runGoalWithRecovery(
               impulse: {
                 pointer: {
                   type: "feature_compose",
+                  // DIRECTED WORK — someone asked for this edit. The gap-drain
+                  // lane is self-generated work that can wait, so
+                  // development-vessel's capacity cap reserves a slot for
+                  // directed composes: without it a busy boredom stream refuses
+                  // every operator dispatch outright (measured: "compose capacity
+                  // cap reached (2 in flight)" on a correctly-routed goal).
+                  //
+                  // Set EXPLICITLY, not inferred: this path also synthesises a gap
+                  // id (route-edit-*), so `pointer.gap` cannot tell the lanes
+                  // apart, and a naming convention is not a contract.
+                  directed: true,
                   spec: earlySpec,
                   verify_vessels: earlyAllVessels.map((v) => `repos/${v}`),
                   land: true,
@@ -9930,6 +9941,7 @@ async function runGoalWithRecovery(
                 impulse: {
                   pointer: {
                     type: "feature_compose",
+                    directed: true,   // see the note at the sibling site above
                     spec,
                     verify_vessels: allEditVessels.map((v) => `repos/${v}`),
                     land: true,
