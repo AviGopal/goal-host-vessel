@@ -11876,7 +11876,7 @@ async function searchWorkspaceForTerm(
     // real failure throw is the point — the caller distinguishes "search broke"
     // from "found nothing", and collapsing them is what hid the missing binary.
     if (code > 1) throw new Error(`grep exited ${code}`);
-    return [
+    const paths = [
       ...new Set(
         out
           .split("\n")
@@ -11886,6 +11886,47 @@ async function searchWorkspaceForTerm(
           .map((l) => `repos/${l.slice(ROOT.length + 1)}`),
       ),
     ].slice(0, 8);
+
+    // A MATCH INSIDE A COMMENT IS NOT EVIDENCE ABOUT CODE.
+    //
+    // `grep -rl` reports a file when the phrase appears ANYWHERE in it, including
+    // prose. Since this search runs over the fleet's own source, any file that
+    // QUOTES a goal — a design note, a defect write-up, a lesson comment —
+    // becomes the unique answer to that goal and gets restated onto.
+    //
+    // Measured THREE times in one session: twice in goal-host-vessel, and once in
+    // `development-vessel/src/vacuous-edit.ts` — a file written to catch drafter
+    // mistakes, which then attracted the very goal it documented. Each instance
+    // was "fixed" by rewording the comment; the class survived because the search
+    // still counts prose as evidence.
+    //
+    // Re-read each hit and keep it only if the term appears OUTSIDE line and
+    // block comments. Fail-open per file: if the file cannot be read, or the
+    // filter would eliminate EVERY hit (the term may genuinely live only in
+    // prose, e.g. a docs-shaped goal), the original list is returned unchanged —
+    // this must never turn a found file into "no such file".
+    try {
+      const stripComments = (s: string): string =>
+        s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+      const needle = args[args.length - 1] ?? "";
+      if (!needle) return paths;
+      const inCode: string[] = [];
+      for (const rel of paths) {
+        try {
+          const abs = `${ROOT}/${rel.replace(/^repos\//, "")}`;
+          const body = await Bun.file(abs).text();
+          if (stripComments(body).includes(needle)) inCode.push(rel);
+        } catch {
+          inCode.push(rel); // unreadable → keep, never invent an absence
+        }
+      }
+      if (inCode.length > 0 && inCode.length < paths.length) {
+        console.log(`[goal-host-vessel] phrase search: dropped ${paths.length - inCode.length} comment-only match(es) for "${needle}"`);
+      }
+      return inCode.length > 0 ? inCode : paths;
+    } catch {
+      return paths;
+    }
   };
   {
     // DEFINITION BEATS MENTION. Measured live: the goal "stop isEditIntentGoal
