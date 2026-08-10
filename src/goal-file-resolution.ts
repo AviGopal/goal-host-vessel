@@ -394,8 +394,21 @@ export function restateWithTargetFile(goal: string, file: string, anchor?: strin
   // Naming the anchor costs one clause and turns "somewhere in this file" into
   // "around this identifier". It is a HINT, not an instruction: the wrong-target
   // escape clause is preserved, so a mis-resolved anchor is still refusable.
+  // SPEAK THE PHRASING THE READER ALREADY PARSES.
+  //
+  // feature-compose derives a `regionHint` via `regionFromProposalText`, which
+  // matches exactly `in the region "X"` — and uses it to FOCUS the grounding
+  // window, then logs `grounding_has_region` to say whether the drafter could
+  // even see the code it was asked to change. That diagnostic's own comment is
+  // unambiguous: "when this is false the plan is confabulation and no amount of
+  // judging it downstream helps — the fix is the window, not the drafter."
+  //
+  // The first version of this clause said "The relevant code is around `X`."
+  // True, readable, and unparseable: across 30 dispatches every plan logged
+  // `region: null`, so the window was never focused and the check never
+  // evaluated. An anchor phrased as prose is an anchor the reader cannot use.
   const anchorClause = anchor && anchor.trim()
-    ? ` The relevant code is around \`${anchor.trim()}\`.`
+    ? ` The relevant code is in the region "${anchor.trim()}".`
     : "";
   return `Edit ${file} to satisfy the following request.${anchorClause} If that file is the wrong target, say so rather than editing it.\n\n${goal.trim()}`;
 }

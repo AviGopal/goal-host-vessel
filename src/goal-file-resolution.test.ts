@@ -637,24 +637,36 @@ describe("proposed symbols — specificity ordering", () => {
 });
 
 describe("restateWithTargetFile — the anchor", () => {
-  test("names the term that found the file", () => {
+  test("names the term in the phrasing feature-compose PARSES", () => {
+    // `regionFromProposalText` matches exactly `in the region "X"` and uses it to
+    // focus the grounding window. Prose like "the relevant code is around X" is
+    // unparseable: 30 dispatches logged `region: null` and the window was never
+    // focused.
     const out = restateWithTargetFile("fix the thing", "repos/a/src/b.ts", "goal_execution_paths");
     expect(out).toContain("repos/a/src/b.ts");
-    expect(out).toContain("goal_execution_paths");
+    expect(out).toMatch(/in the region "goal_execution_paths"/);
     expect(out).toContain("wrong target"); // the escape clause survives
+  });
+
+  test("the emitted clause round-trips through the parser that consumes it", () => {
+    // Pin the CONTRACT, not the wording: this is the same regex feature-compose
+    // uses (regionFromProposalText). If either side is reworded, this fails.
+    const out = restateWithTargetFile("g", "f.ts", "activity_execution_traces");
+    const parsed = out.match(/\bin the region\s+"([^"]{2,120})"/i)?.[1];
+    expect(parsed).toBe("activity_execution_traces");
   });
 
   test("omits the clause entirely when there is no anchor", () => {
     // Callers that resolved by a route with no meaningful term must not emit an
     // empty backtick pair — a hint that says nothing is worse than none.
     const out = restateWithTargetFile("fix the thing", "repos/a/src/b.ts");
-    expect(out).not.toContain("relevant code is around");
+    expect(out).not.toContain("in the region");
     expect(out).toContain("wrong target");
   });
 
   test("blank and whitespace anchors are treated as absent", () => {
     for (const a of ["", "   "]) {
-      expect(restateWithTargetFile("g", "f.ts", a)).not.toContain("relevant code is around");
+      expect(restateWithTargetFile("g", "f.ts", a)).not.toContain("in the region");
     }
   });
 
