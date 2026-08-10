@@ -551,3 +551,65 @@ describe("proposed symbols — a vaguer name must not win after an ambiguous one
     expect(out).toContain("goal-paths.ts");
   });
 });
+
+describe("proposed symbols — write-context narrowing", () => {
+  // The live case: `goal_execution_paths` is a table name every reader mentions,
+  // but exactly one file CREATEs it. The goal says the handler "writes" those
+  // records, so the write site is the file it means.
+  const writeGoal =
+    "The handler that writes execution-path records sets no tenant marking. Fix it.";
+  const readGoal =
+    "The handler that reads execution-path records ignores the tenant column. Fix it.";
+  const noPhrase: FileSearch = async () => [];
+
+  const searchWithWriteSite: FileSearch = async (term) => {
+    if (term === "CREATE goal_execution_paths") return ["repos/activity-api/src/routes/goal-paths.ts"];
+    if (term === "goal_execution_paths")
+      return [
+        "repos/activity-api/src/routes/goal-paths.ts",
+        "repos/activity-api/src/routes/impulses.ts",
+        "repos/activity-api/src/lib/posterior-update.ts",
+      ];
+    return [];
+  };
+  const noSymbols: FileSearch = async () => [];
+
+  test("an ambiguous identifier resolves to its single WRITE site", async () => {
+    const out = await resolvePathlessCodeChangeGoal(
+      writeGoal, searchWithWriteSite, undefined, noSymbols,
+      async () => ["goal_execution_paths"],
+    );
+    expect(out).toContain("repos/activity-api/src/routes/goal-paths.ts");
+  });
+
+  test("narrowing does NOT fire when the goal is about reading", async () => {
+    // A read goal must not be steered to the write site; the ambiguity stands.
+    const out = await resolvePathlessCodeChangeGoal(
+      readGoal, searchWithWriteSite, undefined, noSymbols,
+      async () => ["goal_execution_paths"],
+    );
+    expect(out).toBe(readGoal);
+  });
+
+  test("two write sites are still ambiguous — no restatement", async () => {
+    const twoWriters: FileSearch = async (term) =>
+      term === "CREATE goal_execution_paths" ? ["a.ts", "b.ts"]
+        : term === "goal_execution_paths" ? ["a.ts", "b.ts", "c.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      writeGoal, twoWriters, undefined, noSymbols, async () => ["goal_execution_paths"],
+    );
+    expect(out).toBe(writeGoal);
+  });
+
+  test("a throwing narrow search does not read as 'no write site'", async () => {
+    const throwing: FileSearch = async (term) => {
+      if (term.startsWith("CREATE ")) throw new Error("grep blew up");
+      if (term === "goal_execution_paths") return ["a.ts", "b.ts"];
+      return [];
+    };
+    const out = await resolvePathlessCodeChangeGoal(
+      writeGoal, throwing, undefined, noSymbols, async () => ["goal_execution_paths"],
+    );
+    expect(out).toBe(writeGoal);
+  });
+});

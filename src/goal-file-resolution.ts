@@ -135,6 +135,20 @@ const NEGATED_SPAN =
  * today (the goal walks as a report). A false positive sends a report goal into
  * feature_compose, which drafts and commits — so the guard errs toward declining.
  */
+/**
+ * Does the goal ask for something to be WRITTEN/created/persisted?
+ *
+ * Used only to disambiguate an already-ambiguous identifier: when the goal is
+ * about writing, the file that WRITES a table is the one it means, while every
+ * other file merely reads it.
+ *
+ * VERBS ONLY, and inflected forms spelled out. A first cut used `record\w*` and
+ * `set(s|ting)?`, which fired on "execution-path RECORDS" — a noun — and so
+ * classified a READ goal as a write goal, steering it at the write site. The
+ * narrowing is only sound while the signal really is the goal's verb.
+ */
+const WRITE_INTENT = /\b(writes?|writing|written|creates?|creating|created|inserts?|inserting|inserted|persists?|persisting|persisted|saves?|saving|saved|stores?|storing|stored|stamps?|stamping|stamped)\b/i;
+
 export function isPathlessCodeChangeGoal(goal: string): boolean {
   if (HAS_PATH.test(goal)) return false;
   // Disqualifiers are judged on what the goal ASKS for, so negated clauses
@@ -583,6 +597,36 @@ export async function resolvePathlessCodeChangeGoal(
         //
         // A vaguer name being unique is not evidence; it is a smaller haystack.
         if (hits.length > 1) {
+          // WRITE-CONTEXT NARROWING — disambiguate with the GOAL'S OWN VERB.
+          //
+          // An identifier spread across many files is usually a table or field
+          // name: every reader mentions it, but only one place WRITES it. When
+          // the goal is about writing ("the handler that WRITES ... records sets
+          // no tenant marking"), the write site is the file it means.
+          //
+          // This is not a heuristic guess about which file looks important — it
+          // reads the intent the goal already stated and asks the search a
+          // narrower question. Observed live: `goal_execution_paths` matched
+          // several activity-api files, and exactly one contains
+          // `CREATE goal_execution_paths`.
+          //
+          // Still fail-closed: EXACTLY ONE file, or the ambiguity stands.
+          if (WRITE_INTENT.test(goal)) {
+            for (const verb of ["CREATE ", "INSERT INTO ", "UPDATE ", "UPSERT "]) {
+              let narrowed: readonly string[] = [];
+              try {
+                narrowed = await search(`${verb}${word}`, vessel);
+              } catch {
+                break; // a broken search must not read as "no write site"
+              }
+              if (narrowed.length === 1) {
+                tap?.(
+                  `pathless code-change goal — restated with target ${narrowed[0]} ("${word}" was ambiguous across ${hits.length} files; exactly one contains "${verb.trim()} ${word}" and the goal asks to write)`,
+                );
+                return restateWithTargetFile(goal, narrowed[0]!);
+              }
+            }
+          }
           // Ambiguity at a more specific name DISARMS the lone-unique rule, but
           // does not end the search: corroboration is stronger evidence than any
           // single match and can still resolve this. What must never happen is a
