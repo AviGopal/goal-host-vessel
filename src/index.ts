@@ -228,6 +228,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { isBookkeepingOnly } from "./bookkeeping-only";
+import { pinnableHead } from "./pathway-head";
 import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
@@ -10209,8 +10210,35 @@ async function runGoalWithRecovery(
       // pathway is now logged and available rather than discarded at the call
       // boundary. `pathway_steps` is what a first/last-mile adaptation reads: the
       // rest of the composition this goal's family already proved out.
-      nextTarget = reaching.activities[0];
-      console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${nextTarget} (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"}${reaching.activities.length > 1 ? ` remaining=[${reaching.activities.slice(1).join(",")}]` : ""})`);
+      // A pathway HEAD can be a `satisfier:<shape>` pseudo-id rather than a real
+      // template. Those are not rows in the catalogue -- a template listing
+      // contains zero `satisfier:*` ids -- yet they are ~40% of recorded path
+      // steps, and 63.5% of accepted pathways are satisfier-ONLY. Pinning one as
+      // `targetTemplateId` sends it to GoalHost.runGoal, whose getTemplate 404s;
+      // and because a CALLER-PINNED target deliberately refuses to fall through
+      // to the next ranked candidate (running something other than what was
+      // asked is worse than failing), the dispatch dies with
+      // `template 'satisfier:fs_edit' not found` before a single walk step runs.
+      // Observed killing an edit-intent goal whose target shape had been
+      // inferred CORRECTLY.
+      //
+      // The pathway is still logged either way. We only decline to PIN it: the
+      // walk's satisfier plane already serves these shapes directly
+      // ("VESSEL-RESOLVE SATISFIER produced <shape> directly -- no bridge
+      // needed"), so leaving nextTarget unset falls through to the ordinary
+      // shape-directed selection below rather than crashing.
+      //
+      // We do NOT skip ahead to the first non-satisfier step: the walk seeds on
+      // the HEAD of the pathway, so seeding mid-pathway would silently change
+      // which composition runs.
+      const pathHead = reaching.activities[0];
+      const pinnable = pinnableHead(reaching.activities);
+      if (!pinnable) {
+        console.log(`[goal-host-vessel] ${opts.surface}: known-reaching path head ${pathHead} is a satisfier pseudo-id, not a template -- NOT pinning it; deferring to shape-directed selection (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"})`);
+      } else {
+        nextTarget = pinnable;
+        console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${nextTarget} (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"}${reaching.activities.length > 1 ? ` remaining=[${reaching.activities.slice(1).join(",")}]` : ""})`);
+      }
     }
   }
   if (!nextTarget && goal && seededOutputShapes && seededOutputShapes.length > 0) {
