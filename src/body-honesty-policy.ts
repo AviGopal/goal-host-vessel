@@ -45,7 +45,16 @@ export interface BodyHonestyPolicy {
   denialTextPattern: string;
 }
 
-/** Same volume convention as llm-resolver's model policy: WORKSPACE_ROOT/policies/<name>.json */
+/**
+ * Same volume convention as llm-resolver's model policy: WORKSPACE_ROOT/policies/<name>.json
+ *
+ * ★ WORKSPACE_ROOT IS NOT /workspace. Measured live 2026-08-10: goal-host's unit
+ * carries `WORKSPACE_ROOT="/workspace/git/super-repo"`, so the policy lives at
+ * /workspace/git/super-repo/policies/. Seeding it at /workspace/policies/ produced
+ * a perfectly honest "no policy configured" 404 that looked exactly like a broken
+ * reader — the third-tree confusion again (see the golden-drift note). Always
+ * resolve this path from the ENV the unit actually has, never from the literal.
+ */
 export function bodyHonestyPolicyPath(workspaceRoot?: string): string {
   return join(workspaceRoot ?? process.env["WORKSPACE_ROOT"] ?? "/workspace", "policies", "body-honesty-policy.json");
 }
