@@ -5868,7 +5868,7 @@ async function runGoalAsPoolWalk(
       });
 
       for (const cand of sortedCandidates) {
-        if (!cand?.endpoint) continue;
+        if (!cand?.endpoint || cand.endpoint.startsWith('http://127.0.0.1') || cand.endpoint.startsWith('http://localhost')) continue;
         const route = routeFor(cand);
         // Prefer `peer` endpoints immediately, as they indicate a local, reliable connection
         // (e.g., within the same Kubernetes pod or Docker Compose network) and avoid
