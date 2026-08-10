@@ -11695,6 +11695,58 @@ discoveryLoop.onUnhealthy(() => {
  * a comment; it is declared as part of a symbol name in very few, and that
  * asymmetry is what makes a single word usable evidence at all.
  */
+/**
+ * IDENTIFIER NAMES in the vessel checkouts containing `word`, as bare tokens.
+ *
+ * The sibling searches answer "which FILES match"; this answers "what is this
+ * codebase actually CALLED". It exists to feed the symptom→identifier proposer a
+ * SET TO CHOOSE FROM rather than asking a model to invent names from prose.
+ *
+ * Observed why: given "execution-path records ... tenant marking", the proposer
+ * returned `execution_path_records` and `tenant_marking` — the English phrases
+ * snake_cased. The real names are `goal_execution_paths` and `org_id`. A model
+ * with no view of the vocabulary translates morphologically; one handed the
+ * vocabulary can select. Law 8: the load-bearing fact is the codebase's own
+ * naming, and it was not available at the moment of use.
+ *
+ * Matches snake_case and camel/Pascal tokens ANYWHERE in the source, not just at
+ * declarations, because the names that matter are often table names living
+ * inside SQL template strings.
+ */
+async function listWorkspaceIdentifiers(word: string, vessel?: string): Promise<readonly string[]> {
+  const ROOT = "/workspace/git/vessels";
+  const scope =
+    vessel && /^[a-z][a-z0-9-]+$/.test(vessel) && (await Bun.file(`${ROOT}/${vessel}/package.json`).exists())
+      ? `${ROOT}/${vessel}`
+      : ROOT;
+  const w = word.replace(/[.[\]{}()*+?^$|\\]/g, "\\$&");
+  const proc = Bun.spawn(
+    [
+      "grep", "-rhoE",
+      "--include=*.ts", "--exclude=*.test.ts",
+      "--exclude-dir=node_modules", "--exclude-dir=.git", "--exclude-dir=dist",
+      `[A-Za-z_][A-Za-z0-9_]*${w}[A-Za-z0-9_]*`,
+      scope,
+    ],
+    { stdout: "pipe", stderr: "ignore" },
+  );
+  const timer = setTimeout(() => { try { proc.kill(); } catch { /* already gone */ } }, 10_000);
+  const out = await new Response(proc.stdout).text();
+  const code = await proc.exited;
+  clearTimeout(timer);
+  if (code > 1) throw new Error(`grep exited ${code}`);
+  // Rank by frequency: a name used often is more likely the real one, and the
+  // cap keeps the prompt bounded.
+  const freq = new Map<string, number>();
+  for (const raw of out.split("\n")) {
+    const tok = raw.trim();
+    if (tok.length < 4 || tok.length > 60) continue;
+    if (!/[_A-Z]/.test(tok)) continue; // require snake_case or a capital: skip plain english
+    freq.set(tok, (freq.get(tok) ?? 0) + 1);
+  }
+  return [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([k]) => k);
+}
+
 async function searchWorkspaceForSymbol(
   word: string,
   vessel?: string,
@@ -11895,8 +11947,34 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // cannot restate a goal onto a file the search does not independently single
         // out, so the fail-closed contract is preserved.
         async (g: string): Promise<readonly string[]> => {
+          // Hand the model the codebase's OWN vocabulary to choose from.
+          //
+          // Asked to name identifiers from prose alone it translates
+          // morphologically — "execution-path records" became
+          // `execution_path_records`, when the real name is
+          // `goal_execution_paths`. Gather the actual tokens around each
+          // content word first, so the task becomes SELECTION rather than
+          // invention. Bounded and best-effort: if this yields nothing the
+          // proposal still runs, just without the hint.
+          const stems = Array.from(
+            new Set(
+              g.toLowerCase().match(/[a-z]{4,}/g)?.filter(
+                (w) => !["that","this","with","from","they","them","their","which","when","then","than","have","been","were","will","would","should","could","record","records"].includes(w),
+              ) ?? [],
+            ),
+          ).slice(0, 6);
+          const vocab = new Set<string>();
+          for (const s of stems) {
+            try {
+              for (const id of await listWorkspaceIdentifiers(s)) vocab.add(id);
+            } catch { /* vocabulary is a hint, never a hard dependency */ }
+            if (vocab.size >= 60) break;
+          }
+          const vocabHint = vocab.size
+            ? `\n\nIDENTIFIERS THAT ACTUALLY EXIST in this codebase (choose from these when one fits; they are ranked by how often they appear):\n${[...vocab].slice(0, 60).join(", ")}`
+            : "";
           const text = await routedText(goalHashOf(g), "symbol_proposal",
-            `A code repair goal describes a SYMPTOM in prose. Name the code IDENTIFIERS (table names, field names, function names, type names) the symptom most likely refers to in the source.\n\nGOAL: ${g}\n\nRules: identifiers exactly as they would appear in code (snake_case, camelCase or PascalCase). Do NOT return English words lifted from the goal, file paths, or explanation.\n\nRespond with ONLY JSON: {"identifiers": ["..."]}`,
+            `A code repair goal describes a SYMPTOM in prose. Name the code IDENTIFIERS (table names, field names, function names, type names) the symptom most likely refers to in the source.\n\nGOAL: ${g}\n\nRules: identifiers exactly as they would appear in code (snake_case, camelCase or PascalCase). Do NOT return English words lifted from the goal, file paths, or explanation.\n\nRespond with ONLY JSON: {"identifiers": ["..."]}${vocabHint}`,
             { model: "auto" });
           if (!text) return [];
           const mm = String(text).match(/\{[\s\S]*\}/);

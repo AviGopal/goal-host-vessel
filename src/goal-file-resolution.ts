@@ -535,9 +535,17 @@ export async function resolvePathlessCodeChangeGoal(
       tap?.(`pathless code-change goal: proposed symbols [${fresh.join(", ")}] for the symptom`);
       const ptally = new Map<string, number>();
       for (const word of fresh) {
+        // Try the DECLARATION search first, then the content search.
+        //
+        // A proposed identifier is not always a declared symbol: `goal_execution_paths`
+        // is a TABLE name that only ever appears inside SQL template strings, so a
+        // declaration-only lookup finds nothing even when the proposal is exactly
+        // right. Falling through to the content search is what makes a correct
+        // proposal actionable; both are equally fail-closed (still EXACTLY ONE file).
         let hits: readonly string[];
         try {
           hits = await symbolSearch(word, vessel);
+          if (hits.length === 0) hits = await search(word, vessel);
         } catch {
           tap?.(`pathless code-change goal: symbol search threw on proposed "${word}" — left unrestated`);
           return goal;
