@@ -9928,7 +9928,24 @@ async function runGoalWithRecovery(
                 signal: AbortSignal.timeout(5_000),
               });
               const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-              const v = dj?.content?.vessels?.[0];
+              // PREFER A LOCAL PRODUCER — via the helper the EARLY edit-intent site
+              // above already uses, instead of taking whatever discovery listed first.
+              //
+              // `vessels[0]` is order-dependent and the order is not stable. Observed
+              // 2026-08-10: run 31 resolved feature_compose to http://localhost:8090
+              // and composed normally; a dispatch twenty minutes later drew
+              // http://127.0.0.1:8401 — the federation ingress proxy — and died with
+              // `failed to connect via relay with status NO_RESERVATION` while the
+              // local vessel sat healthy and registered. A hub outage transiently
+              // unregisters a healthy spoke, and in that window the federated entry is
+              // the only one left, so index 0 decides whether a compose runs at all.
+              //
+              // pickSatisfierProducer already encodes the rule (honour a pinned
+              // authoritative owner, then score priority with a local-over-libp2p
+              // tiebreak). Reuse, not a new preference — and note this leaves the
+              // env fallback (DEV_VESSEL_ENDPOINT) as the floor, so an empty registry
+              // still composes locally rather than not at all.
+              const v = pickSatisfierProducer((dj?.content?.vessels ?? []) as import("./satisfier-pick.js").SatisfierProducer[]);
               if (v?.endpoint) {
                 composeUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
                 tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
@@ -10113,7 +10130,26 @@ async function runGoalWithRecovery(
             // (development-vessel regionFromProposalText); duplicated across repos on
             // purpose rather than coupling the two vessels.
             const namedRegion = (String(spec).match(/\bin the region\s+"([^"]{2,120})"/i)?.[1] ?? "").trim();
-            if (namedRegion) {
+            // SUPPRESS ONLY WHEN THERE IS A VERDICT TO PREFER.
+            //
+            // The suppression above is a routing preference between two ROUTES THAT
+            // BOTH RAN: keep a region-named gap on the judged compose path rather
+            // than letting it land an ungraded byte patch. That reasoning requires
+            // the compose to have actually produced a verdict.
+            //
+            // It did not check. Observed 2026-08-10: a directed edit resolved the
+            // feature_compose producer to the federation ingress proxy (:8401)
+            // during a window when the local registration had dropped, and the call
+            // died with `ingress proxy failed ... NO_RESERVATION`. `verdict` was
+            // empty — nothing drafted, nothing judged — and this branch still fired,
+            // removing the only remaining route and reporting the dispatch as a
+            // compose rejection. A transport failure was dressed up as a drafting
+            // decision.
+            //
+            // A guard that selects on a property of the REQUEST (the spec names a
+            // region) must also read the KIND of the FAILURE. With no verdict there
+            // is nothing to prefer, so fall through and let escalation try.
+            if (namedRegion && verdict) {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SUPPRESSED for ${editFile} — the spec names region "${namedRegion}", and the byte-anchored route runs no semantic judge and lands ungraded; a region-named gap stays on the judged compose path (${failWhy})`);
               return {
                 result: null,
