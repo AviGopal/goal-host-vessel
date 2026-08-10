@@ -613,3 +613,23 @@ describe("proposed symbols — write-context narrowing", () => {
     expect(out).toBe(writeGoal);
   });
 });
+
+describe("proposed symbols — specificity ordering", () => {
+  const goalText = "The handler that writes execution-path records lacks a tenant column. Fix it.";
+  const noPhrase: FileSearch = async () => [];
+
+  test("the LONGER identifier is tried first regardless of model order", async () => {
+    // Live, the proposer returned the vague name first on one run and the
+    // specific one first on another. Model order is not a specificity signal.
+    const symbolSearch: FileSearch = async (term) =>
+      term === "goal_execution_paths" ? ["a.ts", "b.ts"]
+        : term === "execution_path" ? ["repos/goal-host-vessel/src/index.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      goalText, noPhrase, undefined, symbolSearch,
+      async () => ["execution_path", "goal_execution_paths"], // vague listed FIRST
+    );
+    // The specific name is ambiguous, which disarms lone-unique; the vague name
+    // must therefore not win.
+    expect(out).toBe(goalText);
+  });
+});

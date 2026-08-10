@@ -542,6 +542,17 @@ export async function resolvePathlessCodeChangeGoal(
         .map((s) => String(s).trim())
         .filter((s) => /^[A-Za-z_][A-Za-z0-9_]{3,60}$/.test(s))
         .filter((s) => !words.includes(s.toLowerCase()) && !words.includes(s))
+        // MOST SPECIFIC FIRST — by length, not by the order the model returned.
+        //
+        // Model order is not a specificity signal: the same proposer returned
+        // ["goal_execution_paths", "execution_path"] once and the reverse the next
+        // time. When the vaguer name came first it matched exactly one file and won
+        // outright, restating a goal about activity-api onto goal-host-vessel.
+        //
+        // A longer identifier is a narrower claim, so trying it first means the
+        // ambiguity guard below sees the SPECIFIC name's verdict and can disarm the
+        // lone-unique rule before a vague name ever gets to decide.
+        .sort((a, b) => b.length - a.length)
         .slice(0, 8);
       if (fresh.length === 0) {
         // Log the RAW proposal, not just the verdict. "nothing usable" is a
