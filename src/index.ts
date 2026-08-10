@@ -1224,7 +1224,13 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   // Abstaining hands the goal to the oracle that can actually grade it — the
   // independent-recompute oracle, which graded the sibling variants of this exact goal
   // correctly on the same run.
-  if (/(?:^|[\s"'(`])\/?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]+/.test(goal)) return null;
+  // A REGISTRY-INVENTORY QUESTION DOES NOT NAME A FILESYSTEM TREE. When one is named,
+  // this oracle's parse cannot represent the goal's scope, so it must abstain regardless of
+  // which tree. Abstaining hands the goal to the oracle that can actually grade it — the
+  // independent-recompute oracle, which graded the sibling variants of this exact goal
+  // correctly on the same run.
+  const dirM = goal.match(/(repos|vessels)\/[\w.-]+\/[\w./-]+|\b(?:docs|scripts|openspec|validation|packages)\/[\w./-]+|\b(?:docs|openspec|validation|packages)\b(?=\s+(?:directory|folder|dir)\b)/);
+  if (dirM) return null;
   const g = goal.toLowerCase();
   const isRegistryCtx = /\b(registr(?:y|ies|ered|ration)|discovery)\b/.test(g);
   const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
