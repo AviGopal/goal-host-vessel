@@ -11879,7 +11879,34 @@ async function handleRunGoal(req: Request): Promise<Response> {
   const goal = rawGoal === undefined
     ? undefined
     : await resolvePathlessCodeChangeGoal(rawGoal, searchWorkspaceForTerm, (m) =>
-        console.log(`[goal-host-vessel] /run-goal: ${m}`), searchWorkspaceForSymbol);
+        console.log(`[goal-host-vessel] /run-goal: ${m}`), searchWorkspaceForSymbol,
+        // SYMPTOM -> IDENTIFIER translation, consulted ONLY after every lexical
+        // route above has already failed.
+        //
+        // The goal says "execution-path records" / "tenant marking"; the code says
+        // `goal_execution_paths` / `org_id`. No lexical rule bridges that, and it is
+        // why symptom-level repair goals are left unrestated and so never reach the
+        // compose path at all.
+        //
+        // This only widens the CANDIDATE WORDS. Every gate in the resolver is
+        // unchanged: a proposed identifier still has to declare in EXACTLY ONE file,
+        // or win corroboration as a strict leader. A model that guesses wildly
+        // cannot restate a goal onto a file the search does not independently single
+        // out, so the fail-closed contract is preserved.
+        async (g: string): Promise<readonly string[]> => {
+          const text = await routedText(goalHashOf(g), "symbol_proposal",
+            `A code repair goal describes a SYMPTOM in prose. Name the code IDENTIFIERS (table names, field names, function names, type names) the symptom most likely refers to in the source.\n\nGOAL: ${g}\n\nRules: identifiers exactly as they would appear in code (snake_case, camelCase or PascalCase). Do NOT return English words lifted from the goal, file paths, or explanation.\n\nRespond with ONLY JSON: {"identifiers": ["..."]}`,
+            { model: "auto" });
+          if (!text) return [];
+          const mm = String(text).match(/\{[\s\S]*\}/);
+          if (!mm) return [];
+          try {
+            const parsed = JSON.parse(mm[0]) as { identifiers?: unknown };
+            return Array.isArray(parsed?.identifiers) ? parsed.identifiers.map((s) => String(s)) : [];
+          } catch {
+            return [];
+          }
+        });
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 
   // A GOAL WITH A COLLAPSED INTERPOLATION IS NOT ANSWERABLE — REFUSE IT AT THE DOOR.

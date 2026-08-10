@@ -395,6 +395,21 @@ export async function resolvePathlessCodeChangeGoal(
   tap?: (message: string) => void,
   /** Optional: files DECLARING a symbol containing this word. See the last-resort block. */
   symbolSearch?: FileSearch,
+  /**
+   * Optional: propose CODE IDENTIFIERS a symptom probably corresponds to.
+   *
+   * The goal says "execution-path records" and "tenant marking"; the code says
+   * `goal_execution_paths` and `org_id`. No lexical rule bridges that — it is a
+   * translation, and it is the single reason symptom-level repair goals are left
+   * unrestated and therefore never reach the compose path.
+   *
+   * The proposal only widens the CANDIDATE WORDS. Every gate below is unchanged:
+   * a proposed word still has to declare in EXACTLY ONE file, or win
+   * corroboration as a strict leader across >=2 words. A model that guesses
+   * wildly therefore changes nothing — it cannot restate a goal onto a file the
+   * search does not independently single out.
+   */
+  proposeSymbols?: (goal: string) => Promise<readonly string[]>,
 ): Promise<string> {
   if (!isPathlessCodeChangeGoal(goal)) return goal;
   const allTerms = extractSearchTerms(goal);
@@ -490,6 +505,61 @@ export async function resolvePathlessCodeChangeGoal(
     }
     if (words.length) {
       tap?.(`pathless code-change goal: no unique declaring file for symbols [${words.join(", ")}]`);
+    }
+
+    // PROPOSED SYMBOLS — the symptom/identifier translation, tried last.
+    //
+    // Only reached when every lexical route above has already failed, so it can
+    // never override evidence; it can only supply words that were not in the
+    // goal text. Reuses the SAME single-hit and corroboration gates, so the
+    // fail-closed contract is identical.
+    if (proposeSymbols) {
+      let proposed: readonly string[] = [];
+      try {
+        proposed = await proposeSymbols(goal);
+      } catch {
+        tap?.(`pathless code-change goal: symbol proposal threw — left unrestated`);
+        return goal;
+      }
+      // Never accept a word already tried, and never accept junk: an identifier
+      // is word-ish and long enough to be discriminating.
+      const fresh = proposed
+        .map((s) => String(s).trim())
+        .filter((s) => /^[A-Za-z_][A-Za-z0-9_]{3,60}$/.test(s))
+        .filter((s) => !words.includes(s.toLowerCase()) && !words.includes(s))
+        .slice(0, 8);
+      if (fresh.length === 0) {
+        tap?.(`pathless code-change goal: symbol proposal returned nothing usable — left unrestated`);
+        return goal;
+      }
+      tap?.(`pathless code-change goal: proposed symbols [${fresh.join(", ")}] for the symptom`);
+      const ptally = new Map<string, number>();
+      for (const word of fresh) {
+        let hits: readonly string[];
+        try {
+          hits = await symbolSearch(word, vessel);
+        } catch {
+          tap?.(`pathless code-change goal: symbol search threw on proposed "${word}" — left unrestated`);
+          return goal;
+        }
+        if (hits.length === 1) {
+          tap?.(
+            `pathless code-change goal — restated with target ${hits[0]} (proposed symbol "${word}" declares in exactly one file)`,
+          );
+          return restateWithTargetFile(goal, hits[0]!);
+        }
+        if (hits.length === 0 || hits.length > 6) continue;
+        for (const h of hits) ptally.set(h, (ptally.get(h) ?? 0) + 1);
+      }
+      const pranked = [...ptally.entries()].sort((a, b) => b[1] - a[1]);
+      const [pbest, prunner] = [pranked[0], pranked[1]];
+      if (pbest && pbest[1] >= 2 && (!prunner || prunner[1] < pbest[1])) {
+        tap?.(
+          `pathless code-change goal — restated with target ${pbest[0]} (declares ${pbest[1]} proposed symbols; strict leader)`,
+        );
+        return restateWithTargetFile(goal, pbest[0]);
+      }
+      tap?.(`pathless code-change goal: proposed symbols [${fresh.join(", ")}] did not single out a file`);
     }
   }
   tap?.(`pathless code-change goal: no unique file for terms [${terms.join(", ")}] — left unrestated`);

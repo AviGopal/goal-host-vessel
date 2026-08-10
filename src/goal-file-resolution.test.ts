@@ -409,3 +409,98 @@ describe("resolvePathlessCodeChangeGoal", () => {
     expect(taps.join(" ")).toContain("restated with target repos/discovery-vessel/src/index.ts");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPOSED SYMBOLS — the symptom→identifier translation.
+//
+// The goal says "execution-path records" / "tenant marking"; the code says
+// `goal_execution_paths` / `org_id`. No lexical rule bridges that, so these
+// goals were left unrestated and never reached the compose path.
+//
+// The proposal only widens the CANDIDATE WORDS — every fail-closed gate is
+// unchanged, which is what these cases pin.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolvePathlessCodeChangeGoal — proposed symbols", () => {
+  const noPhrase: FileSearch = async () => [];
+  // NOTE the code noun ("handler"). `isPathlessCodeChangeGoal` deliberately
+  // requires one — a mutation verb alone would send report goals into
+  // feature_compose, which drafts and COMMITS. These cases exercise the symbol
+  // proposal, not that gate.
+  const symptomGoal =
+    "The handler that writes execution-path records sets no tenant marking, so tenant-filtered reads see nothing. Fix it.";
+
+  test("restates when a proposed symbol declares in exactly one file", async () => {
+    const symbolSearch: FileSearch = async (term) =>
+      term === "goal_execution_paths" ? ["repos/activity-api/src/routes/goal-paths.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      symptomGoal, noPhrase, undefined, symbolSearch,
+      async () => ["goal_execution_paths"],
+    );
+    expect(out).toContain("repos/activity-api/src/routes/goal-paths.ts");
+  });
+
+  test("does NOT restate when the proposal singles out nothing", async () => {
+    // A model guessing wildly must change nothing: the search still has to
+    // independently single out one file.
+    const symbolSearch: FileSearch = async () => ["a.ts", "b.ts", "c.ts"];
+    const out = await resolvePathlessCodeChangeGoal(
+      symptomGoal, noPhrase, undefined, symbolSearch,
+      async () => ["totallyMadeUp", "alsoWrong"],
+    );
+    expect(out).toBe(symptomGoal);
+  });
+
+  test("a tie among proposed symbols is not evidence", async () => {
+    const symbolSearch: FileSearch = async (term) =>
+      term === "alpha" ? ["x.ts", "y.ts"] : term === "beta" ? ["x.ts", "y.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      symptomGoal, noPhrase, undefined, symbolSearch, async () => ["alpha", "beta"],
+    );
+    expect(out).toBe(symptomGoal);
+  });
+
+  test("corroboration across proposed symbols needs a STRICT leader", async () => {
+    const symbolSearch: FileSearch = async (term) =>
+      term === "alpha" ? ["x.ts", "y.ts"] : term === "beta" ? ["x.ts", "z.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      symptomGoal, noPhrase, undefined, symbolSearch, async () => ["alpha", "beta"],
+    );
+    expect(out).toContain("x.ts"); // x declares 2, y and z declare 1
+  });
+
+  test("rejects junk proposals rather than searching for them", async () => {
+    // The earlier lexical pass legitimately searches for goal words, so a bare
+    // call counter proves nothing. Assert on WHAT was searched: no proposed junk
+    // string may reach the search.
+    const searched: string[] = [];
+    const symbolSearch: FileSearch = async (term) => { searched.push(term); return []; };
+    const junk = ["a", "b", "-- drop table --", "x y z", ""];
+    const out = await resolvePathlessCodeChangeGoal(
+      symptomGoal, noPhrase, undefined, symbolSearch, async () => junk,
+    );
+    expect(out).toBe(symptomGoal);
+    for (const j of junk) expect(searched).not.toContain(j);
+  });
+
+  test("a throwing proposer leaves the goal untouched", async () => {
+    const symbolSearch: FileSearch = async () => [];
+    const out = await resolvePathlessCodeChangeGoal(
+      symptomGoal, noPhrase, undefined, symbolSearch,
+      async () => { throw new Error("llm down"); },
+    );
+    expect(out).toBe(symptomGoal);
+  });
+
+  test("is never consulted when a lexical route already resolved the file", async () => {
+    let proposed = 0;
+    const symbolSearch: FileSearch = async (t) =>
+      t === "TimestampSchema" ? ["repos/activity-api/src/models/schemas.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      "Fix the TimestampSchema handler so timestamps serialize correctly",
+      noPhrase, undefined, symbolSearch,
+      async () => { proposed++; return ["somethingElse"]; },
+    );
+    expect(out).toContain("schemas.ts");
+    expect(proposed).toBe(0);
+  });
+});
