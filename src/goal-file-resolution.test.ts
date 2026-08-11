@@ -1052,3 +1052,69 @@ describe("phantom self-match discipline", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Scoped-then-unscoped retry, 2026-08-11.
+//
+// A vessel named in a goal is not always the SITE of the defect — often it is the
+// COUNTERPARTY. Measured on live dispatches cba5094f and 56d2a9ec: the goal described
+// an identity-vessel call being misclassified, so the search scoped to
+// repos/identity-vessel while the defect was in activity-api/src/services/auth.ts, the
+// CLIENT. Every term returned nothing under that scope and the goal was left unrestated.
+//
+// The retry does not try to decide semantically which role the vessel plays; it just
+// runs the identical pass again with no scope once the scoped pass has found nothing.
+// Strictly additive — the unscoped pass only runs where the old code had already given
+// up — and governed by the same fail-closed gate.
+// ---------------------------------------------------------------------------
+describe("a named vessel may be the counterparty, not the site", () => {
+  const GOAL =
+    "When the identity vessel is slow to answer, callers are told their api key was revoked " +
+    "instead of treating it as transient. Fix the predicate that decides whether an identity " +
+    "failure was a network problem.";
+
+  test("THE REGRESSION: a hit outside the named vessel is found on the unscoped retry", async () => {
+    const scopesTried: (string | undefined)[] = [];
+    const search: FileSearch = async (term, vessel) => {
+      scopesTried.push(vessel);
+      // Nothing exists under identity-vessel; the real site is in activity-api and is
+      // only visible when the search is unscoped.
+      if (vessel) return [];
+      return term === "network problem" ? ["repos/activity-api/src/services/auth.ts"] : [];
+    };
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search);
+    expect(out).toContain("repos/activity-api/src/services/auth.ts");
+    // Scoped first, then unscoped — order matters: a goal whose vessel IS the site must
+    // still resolve within it before the wider search can introduce ambiguity.
+    expect(scopesTried[0]).toBe("identity-vessel");
+    expect(scopesTried).toContain(undefined);
+  });
+
+  test("the scoped pass still wins when the named vessel IS the site", async () => {
+    const scopesTried: (string | undefined)[] = [];
+    const search: FileSearch = async (term, vessel) => {
+      scopesTried.push(vessel);
+      return term === "network problem" ? [`repos/${vessel ?? "elsewhere"}/src/validate.ts`] : [];
+    };
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search);
+    expect(out).toContain("repos/identity-vessel/src/validate.ts");
+    expect(scopesTried).not.toContain(undefined); // never needed the wider search
+  });
+
+  test("THE BOUNDARY: an ambiguous unscoped result still falls through unrestated", async () => {
+    // Fail-closed must survive the widening: more reach must not mean more guessing.
+    const search: FileSearch = async (_t, vessel) =>
+      vessel ? [] : ["repos/a/src/x.ts", "repos/b/src/y.ts"];
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search);
+    expect(out).toBe(GOAL);
+  });
+
+  test("a goal naming no vessel is unaffected — exactly one unscoped pass", async () => {
+    const scopesTried: (string | undefined)[] = [];
+    const search: FileSearch = async (_t, vessel) => { scopesTried.push(vessel); return []; };
+    await resolvePathlessCodeChangeGoal(
+      "Fix the predicate that decides whether a failure was a network problem", search,
+    );
+    expect(scopesTried.every((s) => s === undefined)).toBe(true);
+  });
+});

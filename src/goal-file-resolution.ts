@@ -650,50 +650,70 @@ export async function resolvePathlessCodeChangeGoal(
     tap?.(`pathless code-change goal but no searchable term — left unrestated`);
     return goal;
   }
-  for (const term of terms) {
-    let hits: readonly string[];
-    // Ask for call sites when the goal says callers should adopt this term, so the
-    // search does not collapse the match down to the declaring file.
-    const wantCallers = wantsCallSitesOf(goal, term);
-    try {
-      hits = await search(term, vessel, wantCallers);
-    } catch {
-      // A broken search must not silently become "no such file".
-      tap?.(`pathless code-change goal: file search threw on "${term}" — left unrestated`);
-      return goal;
+  // SCOPED FIRST, THEN UNSCOPED (2026-08-11). Every term search below is scoped to the
+  // vessel the goal named, and a vessel name is not always the SITE of the defect — it is
+  // often the COUNTERPARTY. Measured on live dispatches cba5094f and 56d2a9ec: the goal
+  // described an identity-vessel call being misclassified, so the search was scoped to
+  // repos/identity-vessel, while the defect was in activity-api/src/services/auth.ts —
+  // the CLIENT. Every term then returned nothing and the goal was left unrestated.
+  //
+  // Rather than try to decide semantically whether a named vessel is the site or the
+  // counterparty (which is a real open question, filed separately), retry the identical
+  // pass UNSCOPED once the scoped pass has found nothing. This is strictly additive: the
+  // unscoped pass only ever runs where the current code has already given up, and it is
+  // governed by the SAME fail-closed gate — exactly one hit, or fall through untouched.
+  // Unscoped uniqueness is already trusted by this design, since that is precisely what
+  // happens today for a goal that names no vessel at all.
+  const scopes: readonly (string | undefined)[] = vessel ? [vessel, undefined] : [undefined];
+  for (const scope of scopes) {
+    if (scope === undefined && vessel) {
+      tap?.(`pathless code-change goal: nothing unique under ${vessel} — retrying unscoped (a named vessel may be the counterparty, not the site)`);
     }
-    // ADOPT-GOAL: drop the declaring file, then require a unique caller.
-    //
-    // With preferCallSites the search no longer collapses to the declaration, so
-    // both the helper and its callers are in `hits`. The declaring file is the one
-    // file that must NOT change, so identify it with the declaration search and
-    // exclude it. Same fail-closed contract as everywhere else: exactly one
-    // remaining candidate, or fall through untouched.
-    if (wantCallers && hits.length > 1 && symbolSearch) {
-      let decl: readonly string[] = [];
+    for (const term of terms) {
+      let hits: readonly string[];
+      // Ask for call sites when the goal says callers should adopt this term, so the
+      // search does not collapse the match down to the declaring file.
+      const wantCallers = wantsCallSitesOf(goal, term);
       try {
-        decl = await symbolSearch(term, vessel);
+        hits = await search(term, scope, wantCallers);
       } catch {
-        decl = [];
+        // A broken search must not silently become "no such file".
+        tap?.(`pathless code-change goal: file search threw on "${term}" — left unrestated`);
+        return goal;
       }
-      const callers = hits.filter((h) => !decl.includes(h));
-      if (callers.length === 1) {
+      // ADOPT-GOAL: drop the declaring file, then require a unique caller.
+      //
+      // With preferCallSites the search no longer collapses to the declaration, so
+      // both the helper and its callers are in `hits`. The declaring file is the one
+      // file that must NOT change, so identify it with the declaration search and
+      // exclude it. Same fail-closed contract as everywhere else: exactly one
+      // remaining candidate, or fall through untouched.
+      if (wantCallers && hits.length > 1 && symbolSearch) {
+        let decl: readonly string[] = [];
+        try {
+          decl = await symbolSearch(term, scope);
+        } catch {
+          decl = [];
+        }
+        const callers = hits.filter((h) => !decl.includes(h));
+        if (callers.length === 1) {
+          tap?.(
+            `pathless code-change goal — restated with target ${callers[0]} (goal asks callers to USE "${term}", declared in ${decl.join(", ") || "unknown"}; targeting the call site)`,
+          );
+          return restateWithTargetFile(goal, callers[0]!, term);
+        }
         tap?.(
-          `pathless code-change goal — restated with target ${callers[0]} (goal asks callers to USE "${term}", declared in ${decl.join(", ") || "unknown"}; targeting the call site)`,
+          `pathless code-change goal: "${term}" is an adopt-target; ${hits.length} hit(s) minus ${decl.length} declaration(s) left ${callers.length} — not unique, trying next term`,
         );
-        return restateWithTargetFile(goal, callers[0]!, term);
+        continue;
       }
-      tap?.(
-        `pathless code-change goal: "${term}" is an adopt-target; ${hits.length} hit(s) minus ${decl.length} declaration(s) left ${callers.length} — not unique, trying next term`,
-      );
-      continue;
-    }
-    if (hits.length === 1) {
-      tap?.(`pathless code-change goal — restated with target ${hits[0]} (unique hit for "${term}")`);
-      return restateWithTargetFile(goal, hits[0]!, term);
-    }
-    if (hits.length > 1) {
-      tap?.(`pathless code-change goal: "${term}" matched ${hits.length} files — ambiguous, trying next term`);
+      if (hits.length === 1) {
+        tap?.(`pathless code-change goal — restated with target ${hits[0]} (unique hit for "${term}")`);
+        return restateWithTargetFile(goal, hits[0]!, term);
+      }
+      if (hits.length > 1) {
+        tap?.(`pathless code-change goal: "${term}" matched ${hits.length} files — ambiguous, trying next term`);
+      }
     }
   }
 
