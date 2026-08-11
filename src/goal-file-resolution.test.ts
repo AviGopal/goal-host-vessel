@@ -7,6 +7,7 @@ import {
   symbolCandidatesFromGoal,
   productionCandidates,
   consensusSymbols,
+  wantsCallSitesOf,
   type FileSearch,
 } from "./goal-file-resolution";
 import { isEditIntentGoal } from "./goal-intent";
@@ -865,5 +866,58 @@ describe("extractSearchTerms — kebab-case module names are locators, not prose
     // stop-list would be another thing to keep correct.
     const t = extractSearchTerms("make the check fail-open and read-only");
     expect(t).toContain("fail-open");
+  });
+});
+
+describe("wantsCallSitesOf — declaration vs call site", () => {
+  // THE DEFECT, and it produced the worst change of the session. The goal was
+  // "several producer lookups ... should use the pickSatisfierProducer helper ...
+  // instead of indexing the first element". The lookups live in index.ts (9 of
+  // them); the helper is DECLARED in satisfier-pick.ts. Phrase search matched both
+  // and went ambiguous, so the declaration search won and restated the goal onto
+  // satisfier-pick.ts.
+  //
+  // Told to make the helper "use pickSatisfierProducer", the only edit that
+  // satisfies the instruction is a self-call:
+  //     - return best ?? pool[0];
+  //     + return pickSatisfierProducer(pool);
+  // which is the non-terminating change that shipped as d96e2ae and hung the
+  // vessel. The drafter was answering the question it was given. Localisation was
+  // wrong FIRST, and reading it as a drafting failure would have kept repairing
+  // the wrong layer.
+  const ADOPT =
+    "Several producer lookups choose a vessel by taking the first entry. These lookups " +
+    "should use the pickSatisfierProducer helper the vessel already has, instead of " +
+    "indexing the first element.";
+
+  test("a callers-should-adopt goal is recognised", () => {
+    expect(wantsCallSitesOf(ADOPT, "pickSatisfierProducer")).toBe(true);
+  });
+
+  test("other adopt phrasings", () => {
+    for (const g of [
+      "callers should call pickSatisfierProducer",
+      "switch to pickSatisfierProducer",
+      "route through pickSatisfierProducer",
+      "use the pickSatisfierProducer helper",
+    ]) {
+      expect(wantsCallSitesOf(g, "pickSatisfierProducer")).toBe(true);
+    }
+  });
+
+  test("a goal that wants the SYMBOL ITSELF changed still targets its declaration", () => {
+    // The control that keeps this from inverting every symbol goal.
+    expect(wantsCallSitesOf("Fix pickSatisfierProducer so it prefers a local producer.", "pickSatisfierProducer")).toBe(false);
+    expect(wantsCallSitesOf("pickSatisfierProducer returns the wrong element", "pickSatisfierProducer")).toBe(false);
+  });
+
+  test("the symbol must be the OBJECT of the adopt phrase", () => {
+    // A stray "use" elsewhere in the sentence must not qualify.
+    expect(wantsCallSitesOf("We use tabs here; rewrite the scoring in someOtherSymbol.", "pickSatisfierProducer")).toBe(false);
+  });
+
+  test("empty input is safe", () => {
+    expect(wantsCallSitesOf("", "x")).toBe(false);
+    expect(wantsCallSitesOf("use the x helper", "")).toBe(false);
   });
 });

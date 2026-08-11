@@ -497,6 +497,28 @@ export function restateWithTargetFile(goal: string, file: string, anchor?: strin
  * ONLY against definition sites: `grep "^export const .*timestamp"` is a narrow
  * question, while grepping files for "timestamp" is not a question at all.
  */
+/**
+ * Does the goal ask CALLERS to adopt a symbol, rather than asking for a change to
+ * the symbol itself?
+ *
+ * "these lookups should use the pickSatisfierProducer helper" wants the call
+ * sites changed; "fix pickSatisfierProducer" wants the declaration changed. The
+ * distinction decides which file is the target, and getting it backwards produced
+ * a non-terminating edit — see the call site of this predicate.
+ *
+ * Requires the adopt-phrasing AND the symbol to be the object of it, so a goal
+ * that merely contains the word "use" elsewhere does not qualify.
+ */
+export function wantsCallSitesOf(goal: string, symbol: string): boolean {
+  if (!goal || !symbol) return false;
+  const esc = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // "should use X", "use the X helper", "call X instead", "switch to X"
+  return new RegExp(
+    `\\b(?:should\\s+(?:instead\\s+)?use|use\\s+the|call|switch\\s+to|route\\s+through|go\\s+through)\\b[^.;!?]{0,60}\\b${esc}\\b`,
+    "i",
+  ).test(goal);
+}
+
 export function symbolCandidatesFromGoal(goal: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -640,6 +662,50 @@ export async function resolvePathlessCodeChangeGoal(
         return goal;
       }
       if (hits.length === 1) {
+        // A "CALLERS SHOULD USE X" GOAL DOES NOT WANT X'S DECLARATION.
+        //
+        // Measured 2026-08-11. The goal was "several producer lookups ... should
+        // use the pickSatisfierProducer helper ... instead of indexing the first
+        // element". The lookups live in index.ts (9 of them); the helper is
+        // DECLARED in satisfier-pick.ts. Phrase search matched both files and went
+        // ambiguous, so this declaration search won and restated the goal onto
+        // satisfier-pick.ts.
+        //
+        // The drafter was then told to make the helper "use pickSatisfierProducer",
+        // and the only edit satisfying that instruction is a self-call:
+        //
+        //   - return best ?? pool[0];
+        //   + return pickSatisfierProducer(pool);
+        //
+        // which is exactly the non-terminating change that shipped as d96e2ae and
+        // hung the vessel. That output was a RATIONAL response to a wrong target,
+        // so treating it as a drafting failure would have kept fixing the wrong
+        // layer — the localisation was wrong first.
+        //
+        // When the goal asks for callers to adopt a symbol, the declaring file is
+        // the one file that must NOT change. Prefer the referencing site instead,
+        // and only when excluding the declaration leaves exactly one candidate —
+        // the same fail-closed contract as every other route here.
+        const declFile = hits[0]!;
+        if (wantsCallSitesOf(goal, word)) {
+          let refs: readonly string[] = [];
+          try {
+            refs = await search(word, vessel);
+          } catch {
+            refs = [];
+          }
+          const callers = refs.filter((f) => f !== declFile);
+          if (callers.length === 1) {
+            tap?.(
+              `pathless code-change goal — restated with target ${callers[0]} (goal asks callers to USE "${word}", which is DECLARED in ${declFile}; targeting the call site instead)`,
+            );
+            return restateWithTargetFile(goal, callers[0]!, word);
+          }
+          tap?.(
+            `pathless code-change goal: goal asks callers to USE "${word}" but excluding its declaration (${declFile}) left ${callers.length} candidate(s) — not restating onto the declaration`,
+          );
+          continue;
+        }
         tap?.(
           `pathless code-change goal — restated with target ${hits[0]} (symbol declaring "${word}"; no phrase matched)`,
         );
