@@ -9053,6 +9053,23 @@ async function runGoalWithRecovery(
     compositionChain?: string[];
     expectedOutputShapes?: string[];
     surface: string;
+    /**
+     * Did an OPERATOR ask for this, or did the substrate ask itself?
+     *
+     * Decides whether a compose may use the full concurrency cap or must leave a
+     * slot free. `directed: true` was hardcoded at both edit-intent sites, so
+     * every autonomous dispatch — gap-closing, gap-decompose, recovery — composed
+     * as if an operator had asked, consumed the reserved slot, and starved the
+     * work the reservation exists to protect. Measured 2026-08-11: 29 of 50 live
+     * dispatches were autonomous by `trigger`, and an operator goal was refused
+     * `BUSY` after its retry while both slots were held by that lane.
+     *
+     * The dispatch record already distinguishes them (`trigger: run-goal` vs
+     * gap-closing / gap-decompose / recovery); this simply carries the fact to the
+     * place that decides. Defaults to false — an unknown origin is treated as
+     * autonomous, so a caller that forgets cannot silently claim priority.
+     */
+    operatorOrigin?: boolean;
     // AUTHOR FALLBACK (2026-06-29): when the walk takes 0 shape-feasible steps,
     // invoke this to LLM-author a from-scratch template and run THAT instead.
     // Deferred (not eager) so the shape-graph walk — including the vessel-resolve
@@ -9551,7 +9568,7 @@ async function runGoalWithRecovery(
                   // Set EXPLICITLY, not inferred: this path also synthesises a gap
                   // id (route-edit-*), so `pointer.gap` cannot tell the lanes
                   // apart, and a naming convention is not a contract.
-                  directed: true,
+                  directed: opts.operatorOrigin === true,
                   spec: earlySpec,
                   verify_vessels: earlyAllVessels.map((v) => `repos/${v}`),
                   land: true,
@@ -9978,7 +9995,7 @@ async function runGoalWithRecovery(
                 impulse: {
                   pointer: {
                     type: "feature_compose",
-                    directed: true,   // see the note at the sibling site above
+                    directed: opts.operatorOrigin === true,   // see the note at the sibling site above
                     spec,
                     verify_vessels: allEditVessels.map((v) => `repos/${v}`),
                     land: true,
@@ -12823,6 +12840,15 @@ async function handleRunGoal(req: Request): Promise<Response> {
         compositionChain,
         expectedOutputShapes,
         surface: "/run-goal",
+        // OPERATOR ORIGIN decides who may use the reserved compose slot.
+        //
+        // `trigger` is computed above from the dispatch's own signals and already
+        // separates an operator ask ("run-goal") from the substrate asking itself
+        // ("gap-closing", "gap-decompose", "gap-drain", "recovery"). Only the
+        // former is directed work. Anything unrecognised counts as autonomous, so
+        // a new self-generated lane cannot silently claim priority by forgetting
+        // to declare itself.
+        operatorOrigin: trigger === undefined || trigger === "run-goal",
         stepSink: walkStepSink,
         learningSink,
         ablation,
