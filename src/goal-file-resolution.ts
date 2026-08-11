@@ -195,6 +195,49 @@ const WRITE_INTENT = /\b(writes?|writing|written|creates?|creating|created|inser
 const NORMATIVE_INTENT =
   /\b(?:should|must|ought\s+to|needs?\s+to|has\s+to|is\s+supposed\s+to)\s+(?:not\s+|never\s+|always\s+|only\s+)?[a-z]+\b/i;
 
+/** The vessel that RUNS this resolver — see `dropSelfVesselForProse`. */
+export const SELF_VESSEL = "goal-host-vessel";
+
+/** Identifier-shaped terms name real symbols; a term containing whitespace is prose. */
+export function isProseTerm(term: string): boolean {
+  return /\s/.test(term);
+}
+
+/**
+ * Drop hits inside this resolver's OWN vessel when a PROSE term is searched unscoped.
+ *
+ * Measured on dispatch faac9a39 (2026-08-11): a symptom goal about template re-minting
+ * was restated onto goal-host-vessel/src/index.ts because the two-word span lifted from
+ * the goal's own sentence matched there uniquely. The real site was in activity-api, and
+ * the same span occurs there too — inside a COMMENT describing the very defect.
+ *
+ * The uniqueness gate was not violated: it asked for exactly one hit and got one. It
+ * cannot tell an implementation site from a comment quoting the same English, and this
+ * vessel's source is the densest source of such quotes in the fleet — it comments about
+ * goals, logs goal text, and its tests embed goal sentences.
+ *
+ * Deliberately narrow. Applies ONLY when the term is prose AND the search is unscoped,
+ * so the scoped path is untouched — there a named vessel is the strongest locating
+ * signal and a prose term inside that scope is trustworthy, which an existing test pins.
+ * Identifier-shaped terms are never filtered: a real symbol declared here must stay
+ * findable.
+ *
+ * It does NOT fall back when filtering empties the set, and that is the whole point: the
+ * live misroute had a hit set consisting ONLY of this vessel, so a fallback would have
+ * preserved exactly the phantom it exists to remove. An emptied set means this term has
+ * no valid candidate, and the caller moves on to the next term — which is the same
+ * fail-closed behaviour as a term that matched nothing at all. I wrote the fallback
+ * first and a test caught that it defeated the fix.
+ */
+export function dropSelfVesselForProse(
+  hits: readonly string[],
+  term: string,
+  scope: string | undefined,
+): readonly string[] {
+  if (scope !== undefined || !isProseTerm(term)) return hits;
+  return hits.filter((h) => !h.startsWith(`repos/${SELF_VESSEL}/`));
+}
+
 export function isPathlessCodeChangeGoal(goal: string): boolean {
   if (HAS_PATH.test(goal)) return false;
   // Disqualifiers are judged on what the goal ASKS for, so negated clauses
@@ -538,6 +581,37 @@ export function wantsCallSitesOf(goal: string, symbol: string): boolean {
   ).test(goal);
 }
 
+/**
+ * Does `term` occur in this file OUTSIDE comments and string literals?
+ *
+ * A localisation that wins on a match inside a COMMENT is the failure mode this
+ * exists to stop. Measured on live dispatch faac9a39 (2026-08-11): the goal's real
+ * technical term matched 4 files and was discarded as ambiguous, while a fragment of
+ * the goal's own prose matched exactly 1 file and won — and that single match was a
+ * comment about an entirely different subject. The goal was restated onto that file
+ * and the compose failed.
+ *
+ * Rarity is not specificity: meaningless word pairs are SYSTEMATICALLY rarer in a
+ * codebase than real technical vocabulary, precisely because they mean nothing, so a
+ * uniqueness gate selects them. Requiring the match to be in code is the cheapest
+ * property that separates the two.
+ *
+ * Deliberately crude and FAIL-OPEN: it strips block comments, line comments and
+ * quoted strings, then asks whether the term survives. Anything it cannot confidently
+ * classify stays a hit, so this can only ever REMOVE a match it is sure about — it
+ * cannot invent one, and it cannot reject a term it failed to parse.
+ */
+export function occursOutsideCommentsAndStrings(source: string, term: string): boolean {
+  if (!term) return false;
+  const stripped = source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")   // block comments
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ")  // line comments (not the // of a URL)
+    .replace(/`(?:[^`\\]|\\.)*`/g, " ")    // template literals
+    .replace(/"(?:[^"\\]|\\.)*"/g, " ")    // double-quoted
+    .replace(/'(?:[^'\\]|\\.)*'/g, " ");   // single-quoted
+  return stripped.toLowerCase().includes(term.toLowerCase());
+}
+
 export function symbolCandidatesFromGoal(goal: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -680,6 +754,13 @@ export async function resolvePathlessCodeChangeGoal(
         // A broken search must not silently become "no such file".
         tap?.(`pathless code-change goal: file search threw on "${term}" — left unrestated`);
         return goal;
+      }
+      {
+        const beforeSelf = hits.length;
+        hits = dropSelfVesselForProse(hits, term, scope);
+        if (hits.length !== beforeSelf) {
+          tap?.(`pathless code-change goal: dropped ${beforeSelf - hits.length} hit(s) inside ${SELF_VESSEL} for the prose term "${term}" — this vessel quotes goal text, so a prose match here is not a code location`);
+        }
       }
       // ADOPT-GOAL: drop the declaring file, then require a unique caller.
       //

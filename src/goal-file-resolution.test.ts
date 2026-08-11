@@ -4,6 +4,8 @@ import {
   extractSearchTerms,
   isPathlessCodeChangeGoal,
   restateWithTargetFile,
+  isProseTerm,
+  dropSelfVesselForProse,
   symbolCandidatesFromGoal,
   productionCandidates,
   consensusSymbols,
@@ -1116,5 +1118,73 @@ describe("a named vessel may be the counterparty, not the site", () => {
       "Fix the predicate that decides whether a failure was a network problem", search,
     );
     expect(scopesTried.every((s) => s === undefined)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Self-vessel prose filter, 2026-08-11.
+//
+// Dispatch faac9a39 — a symptom goal about template re-minting — was restated onto
+// goal-host-vessel/src/index.ts because a two-word span lifted from the goal's own
+// sentence matched there uniquely. The real site was in activity-api, where the same
+// span also occurs, inside a COMMENT describing the very defect.
+//
+// The uniqueness gate was not violated: it asked for one hit and got one. It cannot
+// distinguish an implementation site from a comment quoting the same English, and this
+// vessel's source is the densest source of such quotes in the fleet — it comments about
+// goals, logs goal text, and its tests embed goal sentences.
+//
+// The filter is deliberately narrow: prose terms only, unscoped searches only. The
+// scoped path is pinned untouched by the discovery-vessel test above, where a named
+// vessel is the strongest locating signal.
+// ---------------------------------------------------------------------------
+describe("prose terms must not match the vessel that is reasoning about the goal", () => {
+  // Names no vessel, so the search runs unscoped — the condition under which the live
+  // misroute happened.
+  const GOAL =
+    "Re-minted activity templates keep piling up in the pool instead of merging onto the " +
+    "one they duplicate, and the selector splits its traffic across the copies. Loosen the " +
+    "check that recognises a re-mint.";
+
+  test("THE REGRESSION: a prose-only hit inside this vessel no longer decides", async () => {
+    const search: FileSearch = async (term) =>
+      isProseTerm(term) ? ["repos/goal-host-vessel/src/index.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search);
+    expect(out).toBe(GOAL); // left unrestated rather than pointed at this vessel
+  });
+
+  test("and the real site wins once this vessel's phantom is removed", async () => {
+    const search: FileSearch = async (term) =>
+      isProseTerm(term)
+        ? ["repos/goal-host-vessel/src/index.ts", "repos/activity-api/src/routes/activities.ts"]
+        : [];
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search);
+    expect(out).toContain("repos/activity-api/src/routes/activities.ts");
+  });
+
+  test("an IDENTIFIER-shaped term still resolves inside this vessel", async () => {
+    // A real symbol declared here must stay findable; only prose is filtered.
+    const search: FileSearch = async (term) =>
+      term === "resolvePathlessCodeChangeGoal" ? ["repos/goal-host-vessel/src/goal-file-resolution.ts"] : [];
+    const out = await resolvePathlessCodeChangeGoal(
+      "Loosen the check in resolvePathlessCodeChangeGoal so a recent duplicate is recognised", search,
+    );
+    expect(out).toContain("repos/goal-host-vessel/src/goal-file-resolution.ts");
+  });
+
+  test("a self-ONLY hit set is emptied, not preserved — a fallback would defeat the fix", () => {
+    // The live misroute's hit set was exactly this: one file, inside this vessel. An
+    // earlier draft fell back to the unfiltered hits when filtering emptied the set,
+    // which preserved the very phantom the filter exists to remove. An emptied set means
+    // "no valid candidate for this term", and the caller moves to the next one.
+    expect(dropSelfVesselForProse(["repos/goal-host-vessel/src/index.ts"], "some phrase", undefined))
+      .toEqual([]);
+    expect(dropSelfVesselForProse(["repos/goal-host-vessel/src/index.ts", "repos/x/src/a.ts"], "some phrase", undefined))
+      .toEqual(["repos/x/src/a.ts"]);
+  });
+
+  test("the SCOPED path is untouched — a scoped prose term is still trusted here", () => {
+    expect(dropSelfVesselForProse(["repos/goal-host-vessel/src/index.ts"], "some phrase", "goal-host-vessel"))
+      .toEqual(["repos/goal-host-vessel/src/index.ts"]);
   });
 });
