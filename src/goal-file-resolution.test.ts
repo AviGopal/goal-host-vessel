@@ -964,3 +964,91 @@ describe("resolvePathlessCodeChangeGoal — an adopt goal targets the CALLER, no
     expect(out).toBe(GOAL); // unchanged
   });
 });
+
+// ---------------------------------------------------------------------------
+// Vocabulary widening, 2026-08-11.
+//
+// Four symptom-only goals were dispatched live and all four returned reached:no.
+// Two of them (1f4c0881, 3e841434) never entered this resolver AT ALL:
+// isPathlessCodeChangeGoal returned false and extractSearchTerms returned [], so
+// the LLM symptom-to-identifier bridge behind it never ran. Cause was two
+// vocabulary holes, not architecture:
+//   - MUTATION_VERB listed 22 verbs and none of the make-a-rule-less-restrictive
+//     family, which is one of the commonest repair shapes this substrate
+//     generates about itself.
+//   - CODE_TARGET listed the abbreviated spelling of a match rule but not the
+//     two-word form, nor the words a symptom report naturally uses for a
+//     predicate.
+// The widening is safe because every downstream gate is untouched: a goal that
+// now enters still has to have the search single out EXACTLY ONE file, or it
+// falls through unrestated.
+// ---------------------------------------------------------------------------
+describe("vocabulary: goals that ask to make a too-narrow rule less narrow", () => {
+  // Verbatim text of live dispatch 3e841434.
+  const D4 =
+    "The regular " + "expression that recognises a redundant re-minted activity template is too " +
+    "narrow and must be widened. It currently requires the template id to end with a run of at " +
+    "least ten digits, so it matched 1,623 older rows and zero of the 95 templates minted this week.";
+  // Verbatim text of live dispatch 1f4c0881.
+  const D3 =
+    "Duplicate activity templates that share an identical name are never merged into one, so the " +
+    "pool keeps growing and selection traffic splits across copies of the same behaviour. The " +
+    "merge gate only recognises an id that ends in a ten-digit timestamp suffix, so the " +
+    "deduplicating upsert matches nothing. Widen the condition that decides a template is a " +
+    "redundant re-mint.";
+
+  test("THE REGRESSION: both live goals now enter the resolver", () => {
+    expect(isPathlessCodeChangeGoal(D4)).toBe(true);
+    expect(isPathlessCodeChangeGoal(D3)).toBe(true);
+  });
+
+  test("and they yield searchable terms rather than an empty list", () => {
+    expect(extractSearchTerms(D4).length).toBeGreaterThan(0);
+    expect(extractSearchTerms(D3).length).toBeGreaterThan(0);
+  });
+
+  test("each newly-added verb qualifies on its own", () => {
+    for (const verb of ["widen", "broaden", "loosen", "relax", "tighten", "narrow", "extend"]) {
+      expect(isPathlessCodeChangeGoal(`${verb} the predicate in the resolver`)).toBe(true);
+    }
+  });
+
+  test("THE BOUNDARY: reports and prose asks are still refused", () => {
+    // These carry the new vocabulary but are not change requests. If any of these
+    // flips to true the widening has started swallowing read-only goals, which is
+    // the failure the disqualifiers exist to prevent.
+    expect(isPathlessCodeChangeGoal(
+      "Report how many activity templates were minted this week and summarise the duplicate-name families.",
+    )).toBe(false);
+    expect(isPathlessCodeChangeGoal(
+      "Update my notes about the gap queue and write a summary document.",
+    )).toBe(false);
+    expect(isPathlessCodeChangeGoal(
+      "Explain which condition decides that a template is a redundant re-mint.",
+    )).toBe(false);
+  });
+
+  test("a goal naming a path is still not 'pathless'", () => {
+    expect(isPathlessCodeChangeGoal("Widen the check in repos/activity-api/src/routes/activities.ts")).toBe(false);
+  });
+});
+
+describe("phantom self-match discipline", () => {
+  // extractSearchTerms greps the WORKSPACE, which contains this vessel. Any phrase
+  // written literally in the resolver's own source becomes a unique match for every
+  // goal containing it, and the resolver would restate that goal onto this file with
+  // full confidence. The call site already records that this has happened before.
+  //
+  // It happened again while writing the widening above: a first draft spelled the
+  // two-word form of "match rule" in a comment, which took it from 0 files
+  // fleet-wide to exactly 1 — this one. This test makes the rule mechanical instead
+  // of a comment someone has to notice.
+  test("the resolver's own source contains no literal phrase a goal is likely to use", async () => {
+    const src = await Bun.file(new URL("./goal-file-resolution.ts", import.meta.url)).text();
+    // Assembled at runtime so THIS test file does not itself become the phantom.
+    const forbidden = ["regular" + " expression", "condition that" + " decides", "timestamp" + " suffix"];
+    for (const phrase of forbidden) {
+      expect(src.includes(phrase)).toBe(false);
+    }
+  });
+});

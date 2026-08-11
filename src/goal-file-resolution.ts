@@ -36,7 +36,13 @@
 
 /** Mutation verbs — kept in sync with `isEditIntentGoal` in ./goal-intent. */
 const MUTATION_VERB =
-  /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|implement|land|patch|correct|stop|make|harden|teach)\b/i;
+  // Seven verbs added 2026-08-11 (see the alternation): asking to make a too-restrictive
+  // rule less restrictive is one of the commonest repair shapes this substrate generates
+  // about itself, and not one of those verbs was listed. Measured on two live dispatches
+  // (1f4c0881, 3e841434): isPathlessCodeChangeGoal returned false, extractSearchTerms
+  // returned [], and the goal never entered the resolver at all. Phrasing here is kept
+  // deliberately oblique for the phantom-match reason spelled out under CODE_TARGET.
+  /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|implement|land|patch|correct|stop|make|harden|teach|widen|broaden|loosen|relax|tighten|narrow|extend)\b/i;
 
 /**
  * Evidence the goal is about CODE rather than data, prose, or the running fleet.
@@ -46,7 +52,20 @@ const MUTATION_VERB =
  * ("report which vessels changed"), in analysis asks, and in gap prose.
  */
 const CODE_TARGET =
-  /\b(code|codebase|source|sources?\s+file|implementation|function|method|class|module|predicate|regex|handler|resolver|vessel|endpoint|route|parser|schema|typescript|\.ts\b|\.tsx\b|\.js\b|logic|branch|guard|helper|the\s+fleet'?s?\s+code|scripts?|shell\s+scripts?|\.sh\b|makefile|deploy\s+(?:path|script|step)|entrypoint|unit\s+file|systemd\s+unit)\b/i;
+  // Five spellings added 2026-08-11 (see the alternation): the abbreviated form of
+  // "regex" was listed but not the two-word form, and a goal that names the thing it
+  // wants changed the way a symptom report naturally does — as a rule, a merge g@te, a
+  // ch3ck — matched nothing. This is the CODE_TARGET half of the same two live misses
+  // as MUTATION_VERB above.
+  //
+  // DELIBERATELY MISSPELLED ABOVE, and do not "correct" it. extractSearchTerms greps
+  // THIS tree, so any phrase written literally in this file becomes a phantom unique
+  // match for every goal containing it — the hazard already recorded at the call site,
+  // which notes it has previously restated goals onto this very file. I introduced
+  // exactly that bug by writing the two-word form here in a first draft: it went from
+  // 0 files fleet-wide to 1, this one, which would have restated a goal about a
+  // template-id rule onto goal-file-resolution.ts with full confidence.
+  /\b(code|codebase|source|sources?\s+file|implementation|function|method|class|module|predicate|regex|regular\s+expression|condition|gate|check|pattern|handler|resolver|vessel|endpoint|route|parser|schema|typescript|\.ts\b|\.tsx\b|\.js\b|logic|branch|guard|helper|the\s+fleet'?s?\s+code|scripts?|shell\s+scripts?|\.sh\b|makefile|deploy\s+(?:path|script|step)|entrypoint|unit\s+file|systemd\s+unit)\b/i;
 
 /**
  * Asks that must NOT be treated as code changes even when they carry a mutation
