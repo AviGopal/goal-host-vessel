@@ -12848,7 +12848,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // former is directed work. Anything unrecognised counts as autonomous, so
         // a new self-generated lane cannot silently claim priority by forgetting
         // to declare itself.
-        operatorOrigin: trigger === undefined || trigger === "run-goal",
+        operatorOrigin: trigger === undefined || trigger === "run-goal" || trigger === "operator",
         stepSink: walkStepSink,
         learningSink,
         ablation,
