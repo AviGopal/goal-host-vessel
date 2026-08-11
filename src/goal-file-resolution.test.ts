@@ -765,3 +765,60 @@ describe("consensusSymbols", () => {
     expect(out.length).toBe(2); // no recurrence across samples → union
   });
 });
+
+describe("isPathlessCodeChangeGoal — a NORMATIVE claim is a change ask", () => {
+  // THE DEFECT: the gate demanded an imperative edit verb (edit/fix/change/add).
+  // A person reporting a defect states the DESIRED BEHAVIOUR instead, using a
+  // domain verb — "should refuse", "should prefer" — so real symptom goals were
+  // declined and walked as reports. Measured 2026-08-11: the producer-selection
+  // goal below was answered with `stdout: "46"` and graded reached, having
+  // changed nothing. Law 13 — if a goal only works once the operator rewrites it
+  // as an edit instruction, that rewriting is the gap.
+  test("the two live goals that were wrongly declined are now admitted", () => {
+    expect(
+      isPathlessCodeChangeGoal(
+        "When goal-host-vessel looks up a producer through discovery it takes whichever vessel the registry happens to list first. Producer selection should prefer a reachable local producer over a remote one.",
+      ),
+    ).toBe(true);
+    expect(
+      isPathlessCodeChangeGoal(
+        "development-vessel keeps accepting new long-running work while draining. Once draining has begun, the vessel should refuse new long-running requests instead of admitting work it cannot finish.",
+      ),
+    ).toBe(true);
+  });
+
+  test("other modals count too", () => {
+    expect(isPathlessCodeChangeGoal("The resolver must not drop the org id from the handler.")).toBe(true);
+    expect(isPathlessCodeChangeGoal("The parser needs to reject an empty schema.")).toBe(true);
+  });
+
+  test("an imperative edit verb still works (unchanged path)", () => {
+    expect(isPathlessCodeChangeGoal("Fix the resolver so it stops dropping the org id.")).toBe(true);
+  });
+});
+
+describe("isPathlessCodeChangeGoal — widening must NOT swallow reports", () => {
+  // The disqualifiers run first and are untouched; these are the cases that make
+  // that load-bearing. "Explain why X should prefer Y" contains the normative
+  // clause AND a code target, so only NOT_A_CHANGE keeps it a report.
+  test("a report ABOUT what the code should do is still a report", () => {
+    expect(isPathlessCodeChangeGoal("Explain why the resolver should prefer a local producer.")).toBe(false);
+    expect(isPathlessCodeChangeGoal("Audit the code and report which handlers should be updated.")).toBe(false);
+    expect(isPathlessCodeChangeGoal("Describe how the vessel handles draining.")).toBe(false);
+  });
+
+  test("a counting question is not a change ask", () => {
+    expect(isPathlessCodeChangeGoal("How many resolvers should be registered?")).toBe(false);
+    expect(isPathlessCodeChangeGoal("Count the .ts files in the codebase.")).toBe(false);
+  });
+
+  test("a prose destination still declines", () => {
+    expect(isPathlessCodeChangeGoal("Write up in my notes why the endpoint should retry.")).toBe(false);
+  });
+
+  test("a goal naming a path is still handled by the path route, not this one", () => {
+    expect(
+      isPathlessCodeChangeGoal("repos/goal-host-vessel/src/index.ts should prefer a local producer."),
+    ).toBe(false);
+  });
+});

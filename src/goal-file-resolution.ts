@@ -149,6 +149,33 @@ const NEGATED_SPAN =
  */
 const WRITE_INTENT = /\b(writes?|writing|written|creates?|creating|created|inserts?|inserting|inserted|persists?|persisting|persisted|saves?|saving|saved|stores?|storing|stored|stamps?|stamping|stamped)\b/i;
 
+/**
+ * A NORMATIVE statement about how the code ought to behave.
+ *
+ * MUTATION_VERB only recognises an imperative edit instruction — edit, fix,
+ * change, add. But a person reporting a defect states the DESIRED BEHAVIOUR
+ * instead, and the verb they reach for is a domain verb, not an edit verb:
+ *
+ *   "...once draining has begun it SHOULD REFUSE new long-running requests"
+ *   "...producer selection SHOULD PREFER a reachable local producer"
+ *
+ * Neither "refuse" nor "prefer" is an edit word, so both goals were declined by
+ * this gate and walked as reports. Measured 2026-08-11: the second was answered
+ * with `stdout: "46"` and graded reached, having changed nothing.
+ *
+ * That is law 13 surfacing as a lexical bug — the goal only works once an
+ * operator rewrites it as an edit instruction, and that rewriting is the gap.
+ * A claim that code SHOULD do something it currently does not IS a change ask.
+ *
+ * Requires a verb after the modal so a bare "should" in a noun phrase does not
+ * qualify, and the existing disqualifiers still run FIRST and unchanged, so
+ * "explain why X should prefer Y" is still declined by NOT_A_CHANGE and a
+ * "write it up in my notes" ask by PROSE_DESTINATION. This widens what counts as
+ * asking for a change; it does not touch what counts as a report.
+ */
+const NORMATIVE_INTENT =
+  /\b(?:should|must|ought\s+to|needs?\s+to|has\s+to|is\s+supposed\s+to)\s+(?:not\s+|never\s+|always\s+|only\s+)?[a-z]+\b/i;
+
 export function isPathlessCodeChangeGoal(goal: string): boolean {
   if (HAS_PATH.test(goal)) return false;
   // Disqualifiers are judged on what the goal ASKS for, so negated clauses
@@ -158,7 +185,9 @@ export function isPathlessCodeChangeGoal(goal: string): boolean {
   const asked = goal.replace(NEGATED_SPAN, " ");
   if (NOT_A_CHANGE.test(asked)) return false;
   if (PROSE_DESTINATION.test(asked)) return false;
-  return MUTATION_VERB.test(asked) && CODE_TARGET.test(goal);
+  // An imperative edit verb OR a normative claim about how the code should
+  // behave. The disqualifiers above are what keep this from swallowing reports.
+  return (MUTATION_VERB.test(asked) || NORMATIVE_INTENT.test(asked)) && CODE_TARGET.test(goal);
 }
 
 /**
