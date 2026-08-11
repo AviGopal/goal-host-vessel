@@ -5261,6 +5261,7 @@ interface GoalSeekResult {
   attempts: number;
   goalReachReason?: string;
   reached: boolean;
+  grounded?: boolean;
   /**
    * Explicit executionId for GoalSeekResult paths that don't carry a full
    * result.trace — notably the edit-intent → feature_compose routing branch,
@@ -8873,6 +8874,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     goalReachReason,
     reached,
     answerBody,
+    grounded: walkGroundedVerdict,
   };
 }
 
@@ -9825,7 +9827,7 @@ async function runGoalWithRecovery(
         /\b(summar(?:y|ise|ize|ising|izing)?|explain|describe|what\s+is\b|what'?s\b|purpose\s+of|gist\s+of|overview\s+of|tell me about|walk me through)\b/i.test(goal) &&
         /(repos\/[\w.-]+|\.(?:md|json|ts|tsx|js|jsx|txt|ya?ml|toml|sh|py)\b|\bREADME\b|\bCLAUDE\b|package\.json|based on (?:its|the)\b|\bvessel\b|\bthe file\b)/i.test(goal) &&
         !/\b(edit|add |insert|append|change|modify|replace|\bfix\b|remove|delete|update|rename|refactor|\bcount\b|how many|number of|value of|extract|report the value|report whether)\b/i.test(goal);
-      if ((walk.reached === false || goalIsProseOverSource) && !goalIsEditIntent) {
+      if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
           const uf = await universalToolFallback(goal, seededOutputShapes ?? []);
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
