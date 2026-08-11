@@ -11908,6 +11908,22 @@ async function searchWorkspaceForSymbol(
 async function searchWorkspaceForTerm(
   term: string,
   vessel?: string,
+  /**
+   * The goal wants the term's CALL SITES, not its declaration.
+   *
+   * The declaration/export preference below collapses a multi-file match down to
+   * the single file that EXPORTS the term, which is right for "fix X" and exactly
+   * wrong for "callers should use X". Measured 2026-08-11: the goal asked nine
+   * lookups in index.ts to adopt `pickSatisfierProducer`; the term matched both
+   * index.ts and satisfier-pick.ts, the export rule collapsed it to the latter,
+   * and the phrase branch reported a UNIQUE hit on the declaration. The drafter,
+   * told to make the helper "use pickSatisfierProducer", emitted a self-call —
+   * the non-terminating change that shipped as d96e2ae.
+   *
+   * Threaded as a parameter rather than inferred here because only the caller
+   * knows the goal's phrasing; this function sees a bare term.
+   */
+  preferCallSites?: boolean,
 ): Promise<readonly string[]> {
   const ROOT = "/workspace/git/vessels";
   // A VESSEL NAME IS A DIRECTORY, NOT A SEARCH STRING. Measured 2026-08-09:
@@ -12035,14 +12051,18 @@ async function searchWorkspaceForTerm(
       "-e", `export${S}(const|let|class|interface|type)${S}${t}([^[:alnum:]_]|$)`,
       "--",
     ]);
-    if (exported.length === 1) return exported;
+    // SKIP the declaration collapse when the goal wants call sites: returning the
+    // exporting file here is what routed an "adopt this helper" goal onto the
+    // helper itself. Falling through to the plain text search keeps every caller
+    // in the candidate set, and the resolver's own fail-closed rules then decide.
+    if (exported.length === 1 && !preferCallSites) return exported;
     const defined = await run([
       "-E",
       "-e", `(export${S})?(async${S})?function${S}${t}([^[:alnum:]_]|$)`,
       "-e", `(export${S})?(const|let|class|interface|type)${S}${t}([^[:alnum:]_]|$)`,
       "--",
     ]);
-    if (defined.length === 1) return defined;
+    if (defined.length === 1 && !preferCallSites) return defined;
     return await run(["-F", "-e", term, "--"]);
   }
 }

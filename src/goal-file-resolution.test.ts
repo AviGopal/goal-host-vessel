@@ -921,3 +921,46 @@ describe("wantsCallSitesOf — declaration vs call site", () => {
     expect(wantsCallSitesOf("use the x helper", "")).toBe(false);
   });
 });
+
+describe("resolvePathlessCodeChangeGoal — an adopt goal targets the CALLER, not the helper", () => {
+  // END-TO-END for the routing defect behind d96e2ae. The phrase search collapses
+  // a multi-file match to the file that EXPORTS the term — right for "fix X",
+  // wrong for "callers should use X". That collapse reported a UNIQUE hit on the
+  // declaration, so the earlier declaration-branch guard never even ran: I fixed
+  // one branch while the traffic went through another.
+  const GOAL =
+    "Several producer lookups in goal-host-vessel choose a vessel by taking the first " +
+    "entry the registry hands back. These lookups should use the pickSatisfierProducer " +
+    "helper the vessel already has, instead of indexing the first element.";
+  const HELPER = "repos/goal-host-vessel/src/satisfier-pick.ts";
+  const CALLER = "repos/goal-host-vessel/src/index.ts";
+
+  // Mirrors the real search: without preferCallSites it collapses to the exporter.
+  const search: FileSearch = async (t, _v, preferCallSites) =>
+    t !== "pickSatisfierProducer" ? [] : preferCallSites ? [CALLER, HELPER] : [HELPER];
+  const symbolSearch: FileSearch = async (t) => (t === "pickSatisfierProducer" ? [HELPER] : []);
+
+  test("restates onto the caller", async () => {
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search, undefined, symbolSearch);
+    expect(out).toContain(CALLER);
+  });
+
+  test("does NOT restate onto the declaring file", async () => {
+    // Targeting the helper is what made a self-call the only satisfying edit.
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search, undefined, symbolSearch);
+    expect(out).not.toContain("satisfier-pick.ts");
+  });
+
+  test("a fix-the-symbol goal still targets the declaration", async () => {
+    const fix = "Fix pickSatisfierProducer in goal-host-vessel so the helper prefers a local producer.";
+    const out = await resolvePathlessCodeChangeGoal(fix, search, undefined, symbolSearch);
+    expect(out).toContain(HELPER);
+  });
+
+  test("ambiguity still fails closed — two callers restate nothing", async () => {
+    const twoCallers: FileSearch = async (t, _v, p) =>
+      t !== "pickSatisfierProducer" ? [] : p ? [CALLER, "repos/goal-host-vessel/src/other.ts", HELPER] : [HELPER];
+    const out = await resolvePathlessCodeChangeGoal(GOAL, twoCallers, undefined, symbolSearch);
+    expect(out).toBe(GOAL); // unchanged
+  });
+});

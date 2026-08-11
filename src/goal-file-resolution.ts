@@ -562,6 +562,15 @@ export type FileSearch = (
   term: string,
   /** Restrict the search to this vessel's repo, when the goal named one. */
   vessel?: string,
+  /**
+   * The goal wants the term's CALL SITES, not its declaration.
+   *
+   * An implementation that collapses matches to the declaring/exporting file must
+   * skip that collapse when this is set — otherwise an "adopt this helper" goal
+   * resolves onto the helper itself. Optional, so an implementation that ignores
+   * it keeps today's behaviour.
+   */
+  preferCallSites?: boolean,
 ) => Promise<readonly string[]>;
 
 /**
@@ -624,12 +633,41 @@ export async function resolvePathlessCodeChangeGoal(
   }
   for (const term of terms) {
     let hits: readonly string[];
+    // Ask for call sites when the goal says callers should adopt this term, so the
+    // search does not collapse the match down to the declaring file.
+    const wantCallers = wantsCallSitesOf(goal, term);
     try {
-      hits = await search(term, vessel);
+      hits = await search(term, vessel, wantCallers);
     } catch {
       // A broken search must not silently become "no such file".
       tap?.(`pathless code-change goal: file search threw on "${term}" — left unrestated`);
       return goal;
+    }
+    // ADOPT-GOAL: drop the declaring file, then require a unique caller.
+    //
+    // With preferCallSites the search no longer collapses to the declaration, so
+    // both the helper and its callers are in `hits`. The declaring file is the one
+    // file that must NOT change, so identify it with the declaration search and
+    // exclude it. Same fail-closed contract as everywhere else: exactly one
+    // remaining candidate, or fall through untouched.
+    if (wantCallers && hits.length > 1 && symbolSearch) {
+      let decl: readonly string[] = [];
+      try {
+        decl = await symbolSearch(term, vessel);
+      } catch {
+        decl = [];
+      }
+      const callers = hits.filter((h) => !decl.includes(h));
+      if (callers.length === 1) {
+        tap?.(
+          `pathless code-change goal — restated with target ${callers[0]} (goal asks callers to USE "${term}", declared in ${decl.join(", ") || "unknown"}; targeting the call site)`,
+        );
+        return restateWithTargetFile(goal, callers[0]!, term);
+      }
+      tap?.(
+        `pathless code-change goal: "${term}" is an adopt-target; ${hits.length} hit(s) minus ${decl.length} declaration(s) left ${callers.length} — not unique, trying next term`,
+      );
+      continue;
     }
     if (hits.length === 1) {
       tap?.(`pathless code-change goal — restated with target ${hits[0]} (unique hit for "${term}")`);
