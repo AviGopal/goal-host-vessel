@@ -10036,6 +10036,7 @@ async function runGoalWithRecovery(
             // instead: the gap stays open and is retried when there is capacity, which
             // is exactly what the cap's own refusal message promises.
             if (verdict === "BUSY") {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT capacity-refused for ${editFile} — compose still BUSY after retry; NOT escalating to the ungraded byte-anchored route, the gap stays open for a later tick`);
               return {
                 result: null,
                 status: "failed",
