@@ -10200,7 +10200,33 @@ async function runGoalWithRecovery(
             // A guard that selects on a property of the REQUEST (the spec names a
             // region) must also read the KIND of the FAILURE. With no verdict there
             // is nothing to prefer, so fall through and let escalation try.
-            if (namedRegion && verdict) {
+            // AN ANCHOR FAILURE IS AN ADDRESSING FAILURE, NOT A QUALITY SIGNAL.
+            //
+            // This suppression exists to keep a region-named gap on the JUDGED
+            // compose path rather than letting the byte-anchored route land an
+            // ungraded patch. That trade is right when the compose produced a
+            // draft and the judge disliked it.
+            //
+            // It is wrong when the compose failed to ADDRESS the file at all.
+            // Measured 2026-08-11 on a 13,867-line file, with verified-unique
+            // anchors supplied in the window (`[fc-anchors]` fired twice for this
+            // exact file):
+            //
+            //   apply_failed: "old_string not found in file. NOTHING resembling
+            //   your anchor occurs in this 13867-line file — you are editing from
+            //   memory, not from the file."
+            //
+            // feature_compose drafts from an excerpt; patch_with_tools READS the
+            // file with code_search / code_read_lines and binds anchors it has
+            // actually seen — in earlier trials it located real anchors in this
+            // same file. So for precisely this failure the escalation target is
+            // strictly better at the thing that failed, and suppressing it leaves
+            // the gap with no route at all.
+            //
+            // Same shape as the BUSY fix above: a guard selecting on a property of
+            // the REQUEST must also read the KIND of the failure.
+            const anchorFailure = /old_string not found|no_unique_anchor|anchor_not_found|apply_failed/i.test(failWhy);
+            if (namedRegion && verdict && !anchorFailure) {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SUPPRESSED for ${editFile} — the spec names region "${namedRegion}", and the byte-anchored route runs no semantic judge and lands ungraded; a region-named gap stays on the judged compose path (${failWhy})`);
               return {
                 result: null,
