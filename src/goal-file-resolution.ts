@@ -195,6 +195,40 @@ const WRITE_INTENT = /\b(writes?|writing|written|creates?|creating|created|inser
 const NORMATIVE_INTENT =
   /\b(?:should|must|ought\s+to|needs?\s+to|has\s+to|is\s+supposed\s+to)\s+(?:not\s+|never\s+|always\s+|only\s+)?[a-z]+\b/i;
 
+/** Identifier-shaped terms name real symbols; a term containing whitespace is prose. */
+export function isProseTerm(term: string): boolean {
+  return /\s/.test(term);
+}
+
+/**
+ * Does `term` occur in this file OUTSIDE of comments and string-ish prose?
+ *
+ * Both phantom localisations measured 2026-08-11 were COMMENTS, not code:
+ *   - dispatch faac9a39: "traffic across" matched a `//` comment describing the defect;
+ *   - dispatch bea63f70: "minted activity" matched a `/** ... *\/` docstring.
+ * A comment is by construction a DESCRIPTION of behaviour, and a comment explaining a
+ * defect is written in exactly the vocabulary a symptom goal about that defect uses — so
+ * the better a codebase documents itself, the more phantom candidates it offers.
+ *
+ * This is a VERIFICATION, not a filter, and the distinction is the whole design. An
+ * earlier attempt (dd1195b, reverted 88b212a) removed candidates from the hit set and
+ * thereby turned a safely AMBIGUOUS two-hit into a confident WRONG unique hit. A check
+ * applied to an already-unique candidate can only ever REJECT it; it can never promote
+ * something to uniqueness, so it cannot reproduce that failure.
+ *
+ * Comment stripping is deliberately crude — block comments and line comments only. It
+ * does not parse, so a `//` inside a string literal over-strips. Over-stripping is the
+ * safe direction: it can only cause a rejection (fall through to the next term, i.e.
+ * today's behaviour for a term that matched nothing), never an acceptance.
+ */
+export function termAppearsOutsideComments(content: string, term: string): boolean {
+  const stripped = content
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/^[ \t]*\/\/.*$/gm, " ")
+    .replace(/\/\/.*$/gm, " ");
+  return stripped.toLowerCase().includes(term.toLowerCase());
+}
+
 export function isPathlessCodeChangeGoal(goal: string): boolean {
   if (HAS_PATH.test(goal)) return false;
   // Disqualifiers are judged on what the goal ASKS for, so negated clauses
@@ -631,6 +665,12 @@ export async function resolvePathlessCodeChangeGoal(
    * search does not independently single out.
    */
   proposeSymbols?: (goal: string) => Promise<readonly string[]>,
+  /**
+   * Optional: read a file's text so a PROSE term's unique hit can be verified to occur
+   * outside comments. Omitted -> verification is skipped and behaviour is unchanged, so
+   * this is fail-open by construction.
+   */
+  readFileText?: (path: string) => Promise<string | undefined>,
 ): Promise<string> {
   if (!isPathlessCodeChangeGoal(goal)) return goal;
   const allTerms = extractSearchTerms(goal);
@@ -708,6 +748,21 @@ export async function resolvePathlessCodeChangeGoal(
         continue;
       }
       if (hits.length === 1) {
+        // A prose term's unique hit must occur outside comments — see
+        // termAppearsOutsideComments. Rejection falls through to the next term, which is
+        // exactly what a term matching nothing already does.
+        if (isProseTerm(term) && readFileText) {
+          let text: string | undefined;
+          try {
+            text = await readFileText(hits[0]!);
+          } catch {
+            text = undefined; // unreadable -> skip verification, stay fail-open
+          }
+          if (text !== undefined && !termAppearsOutsideComments(text, term)) {
+            tap?.(`pathless code-change goal: "${term}" occurs in ${hits[0]} only inside comments — a description, not a code location; trying next term`);
+            continue;
+          }
+        }
         tap?.(`pathless code-change goal — restated with target ${hits[0]} (unique hit for "${term}")`);
         return restateWithTargetFile(goal, hits[0]!, term);
       }

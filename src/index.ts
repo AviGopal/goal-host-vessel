@@ -12217,6 +12217,21 @@ async function handleRunGoal(req: Request): Promise<Response> {
           const agreed = consensusSymbols(samples);
           console.log(`[goal-host-vessel] /run-goal: symbol proposal — ${samples.length} sample(s), consensus [${agreed.slice(0, 8).join(", ")}]`);
           return agreed;
+        },
+        // COMMENT VERIFICATION for a prose term's unique hit. Reads the candidate so
+        // `termAppearsOutsideComments` can reject a match that exists only in a comment.
+        // Both phantom localisations measured 2026-08-11 were comments — one inline, one
+        // a docstring — and a comment explaining a defect uses exactly the vocabulary of
+        // a symptom goal about that defect. Reuses authoritativeRoots so "repos/<v>/..."
+        // resolves to the same clone every other reader here uses. Any failure returns
+        // undefined, which skips verification: fail-open, never a new refusal path.
+        async (rel: string): Promise<string | undefined> => {
+          for (const candidate of authoritativeRoots(rel)) {
+            try {
+              return await readFile(candidate, "utf8");
+            } catch { /* try the next root */ }
+          }
+          return undefined;
         });
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 

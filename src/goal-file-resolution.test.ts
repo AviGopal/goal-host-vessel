@@ -3,6 +3,8 @@ import {
   resolvePathlessCodeChangeGoal,
   extractSearchTerms,
   isPathlessCodeChangeGoal,
+  isProseTerm,
+  termAppearsOutsideComments,
   restateWithTargetFile,
   symbolCandidatesFromGoal,
   productionCandidates,
@@ -1116,5 +1118,88 @@ describe("a named vessel may be the counterparty, not the site", () => {
       "Fix the predicate that decides whether a failure was a network problem", search,
     );
     expect(scopesTried.every((s) => s === undefined)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comment verification on a unique prose hit, 2026-08-11.
+//
+// Both phantom localisations measured today were COMMENTS, not code:
+//   faac9a39 — "traffic across" matched a // comment describing the defect
+//   bea63f70 — "minted activity" matched a /** ... */ docstring
+// A comment explaining a defect uses exactly the vocabulary of a symptom goal about that
+// defect, so a well-documented codebase offers MORE phantoms, not fewer.
+//
+// This is a VERIFICATION, not a filter, and that distinction is the design. The earlier
+// attempt (dd1195b, reverted 88b212a) removed candidates from the hit set and turned a
+// safely AMBIGUOUS two-hit into a confident WRONG unique hit. A check applied to an
+// already-unique candidate can only REJECT; it can never promote, so it cannot repeat
+// that failure. The test below pins exactly that property.
+// ---------------------------------------------------------------------------
+describe("a prose term's unique hit must occur outside comments", () => {
+  const GOAL =
+    "Re-minted activity templates keep piling up in the pool instead of merging onto the " +
+    "one they duplicate, and the selector splits its traffic across the copies. Loosen the " +
+    "check that recognises a re-mint.";
+  const HIT = "repos/development-vessel/src/resolvers/author-producer.ts";
+  const search: FileSearch = async (term) => (isProseTerm(term) ? [HIT] : []);
+
+  test("THE REGRESSION: a hit that is comment-only is rejected", async () => {
+    const readFileText = async () =>
+      "/** X — the output shape the minted activity must produce by invoking its resolver. */\nexport const x = 1;\n";
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search, undefined, undefined, undefined, readFileText);
+    expect(out).toBe(GOAL); // unrestated, not pointed at a docstring
+  });
+
+  test("a hit with the term in real code is still accepted", async () => {
+    const readFileText = async () => "export const trafficAcross = 1;\n// traffic across uninformed clones\nconst q = 'splits its traffic across the copies';\n";
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search, undefined, undefined, undefined, readFileText);
+    expect(out).toContain(HIT);
+  });
+
+  test("FAIL-OPEN: with no reader, behaviour is exactly as before", async () => {
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search);
+    expect(out).toContain(HIT);
+  });
+
+  test("FAIL-OPEN: an unreadable file does not reject", async () => {
+    const readFileText = async () => { throw new Error("EACCES"); };
+    const out = await resolvePathlessCodeChangeGoal(GOAL, search, undefined, undefined, undefined, readFileText);
+    expect(out).toContain(HIT);
+  });
+
+  test("IDENTIFIER terms are never verified — only prose is", async () => {
+    // An identifier appearing only in a comment is out of scope here; narrowing that
+    // would touch the adopt-goal flows, which are pinned above.
+    const idSearch: FileSearch = async (term) => (term === "resolvePathlessCodeChangeGoal" ? [HIT] : []);
+    const readFileText = async () => "// resolvePathlessCodeChangeGoal is mentioned only here\n";
+    const out = await resolvePathlessCodeChangeGoal(
+      "Loosen the check in resolvePathlessCodeChangeGoal so a recent duplicate is recognised",
+      idSearch, undefined, undefined, undefined, readFileText,
+    );
+    expect(out).toContain(HIT);
+  });
+});
+
+describe("termAppearsOutsideComments", () => {
+  test("sees code, not comments", () => {
+    expect(termAppearsOutsideComments("const mintedActivity = 1; // minted activity", "minted activity")).toBe(false);
+    expect(termAppearsOutsideComments("const x = 'minted activity';", "minted activity")).toBe(true);
+  });
+
+  test("strips block and line comments, including indented ones", () => {
+    expect(termAppearsOutsideComments("/**\n * the minted activity must produce\n */\nexport const y = 2;", "minted activity")).toBe(false);
+    expect(termAppearsOutsideComments("  // traffic across clones\nexport const z = 3;", "traffic across")).toBe(false);
+  });
+
+  test("over-stripping is the SAFE direction — it can only reject", () => {
+    // A `//` inside a string over-strips. That costs a fall-through to the next term,
+    // which is today's behaviour for a term that matched nothing — never a wrong accept.
+    expect(termAppearsOutsideComments("const url = 'http://x/minted activity';", "minted activity")).toBe(false);
+  });
+
+  test("matching is case-insensitive", () => {
+    expect(termAppearsOutsideComments("const MintedActivity = 1;", "minted activity")).toBe(false);
+    expect(termAppearsOutsideComments("const s = 'Minted Activity';", "minted activity")).toBe(true);
   });
 });
