@@ -822,3 +822,48 @@ describe("isPathlessCodeChangeGoal — widening must NOT swallow reports", () =>
     ).toBe(false);
   });
 });
+
+describe("extractSearchTerms — kebab-case module names are locators, not prose", () => {
+  // THE DEFECT: steps 1-3 covered backticked spans, camelCase, snake_case,
+  // `<x>-vessel` and known repos. A kebab-case MODULE name matched none of them and
+  // was never a candidate — while prose phrases WERE extracted. Measured
+  // 2026-08-11: a goal naming `vacuous-edit` (a real file, and the strongest
+  // locator it carried) produced 28 terms with vacuous-edit at index -1, and the
+  // phrase "makes every" — from "which makes every invocation loop forever" — won
+  // instead, routing the edit to an unrelated file where the drafter invented an
+  // anchor. Nearly every file in these vessels is kebab-case, so this was the
+  // common case being unreachable, not a corner case.
+  const GOAL =
+    "development-vessel already refuses plans through the vacuous-edit check used by " +
+    "feature_compose; it needs a sibling check, which makes every invocation safe.";
+
+  test("the module name is extracted at all", () => {
+    expect(extractSearchTerms(GOAL)).toContain("vacuous-edit");
+  });
+
+  test("a real name outranks a prose phrase — the caller stops at the first hit", () => {
+    const t = extractSearchTerms(GOAL);
+    expect(t.indexOf("vacuous-edit")).toBeGreaterThanOrEqual(0);
+    expect(t.indexOf("vacuous-edit")).toBeLessThan(t.indexOf("makes every"));
+  });
+
+  test("other real module names in this codebase are reachable", () => {
+    for (const name of ["compose-slots", "satisfier-pick", "provider-errors", "cross-file-symbols"]) {
+      expect(extractSearchTerms(`the ${name} helper is wrong`)).toContain(name);
+    }
+  });
+
+  test("vessel and repo names keep their existing handling, not duplicated here", () => {
+    const t = extractSearchTerms("fix development-vessel and activity-api");
+    expect(t.filter((x) => x === "development-vessel").length).toBe(1);
+    expect(t).toContain("activity-api");
+  });
+
+  test("hyphenated prose is harmless — it simply matches no file", () => {
+    // Not filtered by a stop-list on purpose: the resolver demands a UNIQUE file
+    // hit, so a term naming nothing costs one search and yields nothing. A
+    // stop-list would be another thing to keep correct.
+    const t = extractSearchTerms("make the check fail-open and read-only");
+    expect(t).toContain("fail-open");
+  });
+});

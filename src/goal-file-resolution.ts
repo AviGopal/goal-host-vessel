@@ -254,6 +254,41 @@ export function extractSearchTerms(goal: string): string[] {
     if (new RegExp(`\\b${spaced}\\b`, "i").test(goal)) push(repo);
   }
 
+  // 3b. KEBAB-CASE MODULE NAMES — this codebase's dominant filename convention.
+  //
+  // Steps 1-3 cover backticked spans, camelCase, snake_case, `<x>-vessel` and the
+  // known repo list. A kebab-case MODULE name matches none of them, so it fell
+  // through to nothing — while step 4's prose phrases were still extracted.
+  //
+  // Measured 2026-08-11. A goal said "...through the vacuous-edit check used by
+  // feature_compose; it needs a sibling check in the same family". `vacuous-edit`
+  // is a real file (src/vacuous-edit.ts) and the single strongest locator the goal
+  // carried. `extractSearchTerms` returned 28 terms and its index was **-1** — it
+  // was never a candidate at all. Meanwhile "makes every" (from "which makes every
+  // invocation loop forever") ranked 10th, won as the first phrase with a hit, and
+  // became the region anchor. The goal was routed to an unrelated file and the
+  // drafter invented an anchor there.
+  //
+  // Nearly every file in these vessels is kebab-case — compose-slots, satisfier-pick,
+  // provider-errors, goal-file-resolution, cross-file-symbols — so this was not a
+  // corner case; it was the common case being unreachable.
+  //
+  // Placed AFTER real identifiers and BEFORE noun phrases, which is exactly the
+  // ordering rationale step 4 already states: the caller stops at the first term
+  // that yields a usable hit, so a phrase must never outrank a real name.
+  //
+  // Requires >= 2 segments of >= 3 chars, all lowercase. Ordinary hyphenated prose
+  // ("read-only", "fail-open") can still match the shape, and that is harmless by
+  // construction: the resolver demands a UNIQUE file hit, so a term naming no file
+  // yields nothing and the walk moves to the next term. The cost of a miss is one
+  // search; the cost of the gap was a wrong file and an invented anchor.
+  for (const m of goal.matchAll(/\b([a-z][a-z0-9]{2,}(?:-[a-z][a-z0-9]{2,})+)\b/g)) {
+    const t = m[1];
+    // `<x>-vessel` and known repos are already pushed above with better handling.
+    if (t.endsWith("-vessel") || (KNOWN_REPOS as readonly string[]).includes(t)) continue;
+    push(t);
+  }
+
   // 4. Distinctive noun phrases — LAST, so a phrase can never outrank a real
   //    symbol (the caller stops at the first unique hit).
   //
