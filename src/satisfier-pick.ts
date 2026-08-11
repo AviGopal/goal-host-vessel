@@ -35,5 +35,5 @@ export function pickSatisfierProducer(
       best = p;
     }
   }
-  return pickSatisfierProducer(pool);
+  return best ?? pool[0];
 }
