@@ -6735,6 +6735,17 @@ If one of those sibling shapes is the action that would create what the goal ask
     // action-then-read / bridge / honest not-reached) — no addToPool, no synthetic trace.
     if (direct != null && !(_isExecShape && !terminalShapes.has(shape))) {
       const _dishonest = _degenerateReason(direct, await _honestyPolicy());
+      const _isRecentDuplicate = (content: unknown): boolean => {
+        try {
+          const str = JSON.stringify(content) ?? "";
+          return /"template_id"\s*:\s*"[^"]+"/.test(str) && !/"template_id"\s*:\s*"[^"]+-\d+"/.test(str);
+        } catch { return false; }
+      };
+      if (direct != null && _isRecentDuplicate(direct)) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" resolved a RECENT DUPLICATE template — refusing to satisfy (no pool entry, no synthetic completed trace)`);
+        lastRawResolveReason = "recent duplicate template detected";
+        direct = null;
+      }
       if (_dishonest) {
         tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" resolved a DISHONEST body — ${_dishonest.slice(0, 200)} — refusing to satisfy (no pool entry, no synthetic completed trace); grading reach honestly`);
         lastRawResolveReason = _dishonest.slice(0, 200);
