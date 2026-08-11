@@ -9997,6 +9997,37 @@ async function runGoalWithRecovery(
               body = resolveReportBody(j) as Record<string, any>;
               verdict = String(body.verdict ?? "");
             }
+            // BUSY IS NOT A VERDICT — IT IS "ASK AGAIN LATER".
+            //
+            // If the retry above is still refused for capacity, control used to fall
+            // through to the escalation path below, which sends the edit to the
+            // byte-anchored patch_with_tools route: no semantic judge, lands ungraded.
+            // So load — not drafting quality — decided whether a change got judged.
+            //
+            // Observed 2026-08-11, minutes after the concurrency cap went live:
+            //   EDIT-INTENT ROUTED ... -> verdict=BUSY (compose capacity cap reached (2 in flight))
+            //   EDIT-INTENT ESCALATION -- verdict=BUSY ...; escalating to patch_with_tools
+            // twice in 25 seconds, on two different files. The cap that stopped the
+            // compose storm was quietly diverting the overflow to the unjudged route.
+            //
+            // This is the same class as the transport fix below (a compose that never
+            // RAN is not a compose that drafted badly), and the `verdict` truthiness
+            // check there does not catch it because "BUSY" is truthy. Refuse honestly
+            // instead: the gap stays open and is retried when there is capacity, which
+            // is exactly what the cap's own refusal message promises.
+            if (verdict === "BUSY") {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT capacity-refused for ${editFile} — compose still BUSY after retry; NOT escalating to the ungraded byte-anchored route, the gap stays open for a later tick`);
+              return {
+                result: null,
+                status: "failed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: null,
+                attempts: 2,
+                goalReachReason: `routed edit-intent to feature_compose; refused for CAPACITY (BUSY) after one retry — no draft was produced, so there is nothing to judge and nothing to escalate; retry when a compose slot frees`,
+                reached: false,
+                executionId: `feature_compose:busy:${goalHashOf(goal as string)}`,
+              };
+            }
             const cutovers = Array.isArray(body.cutovers) ? body.cutovers : [];
             let landedSha: string | null = null;
             for (const c of cutovers) {
