@@ -210,6 +210,40 @@ export async function inferGoalTargetDecision(
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
 
+  // CACHE HANDLE HOISTED ABOVE THE SHORTCUTS, AND A SINGLE CACHING EXIT.
+  //
+  // `decisionCache` used to be declared BELOW the deterministic pre-LLM shortcuts,
+  // so the six shortcut paths physically could not populate it — they returned a
+  // real decision (confidence 0.6-0.7) and cached nothing. The only writer was the
+  // slow LLM path at the bottom.
+  //
+  // The consequence is not a cache miss, it is a FICTIONAL COLUMN. Both readers
+  // (`recordGoalPath` and the dispatch record) look the decision up by goal hash
+  // and coalesce a miss to null, so every shortcut-routed goal persists
+  // `inference_confidence: null`. Any analysis correlating inference confidence
+  // with reach is therefore measuring a column that is absent exactly where the
+  // decision was most confident — the deterministic paths.
+  //
+  // Routing every exit through `remember()` also makes this correct by
+  // construction for shortcuts added later, which is the property the old shape
+  // lacked: a new `return` above line ~386 silently reintroduced the bug.
+  const decisionCache = opts.decisionCache;
+  const cacheKey = goalHashOf(goal);
+  const remember = (d: GoalTargetDecision): GoalTargetDecision => {
+    if (decisionCache) {
+      if (decisionCache.size >= INFER_CACHE_MAX) {
+        const first = decisionCache.keys().next().value;
+        if (first !== undefined) decisionCache.delete(first);
+      }
+      decisionCache.set(cacheKey, d);
+    }
+    return d;
+  };
+  {
+    const cached = decisionCache?.get(cacheKey);
+    if (cached) return cached;
+  }
+
   // COMPOSITION GUARD for every deterministic pre-LLM shortcut below.
   //
   // A goal that BOTH computes a value AND asks to PERSIST it is a compute-then-emit
@@ -273,11 +307,11 @@ export async function inferGoalTargetDecision(
     return null;
   })();
   if (_namedShape) {
-    return {
+    return remember({
       shapes: [_namedShape],
       confidence: 0.8,
       alternatives: knownShapes.includes("shellResult") ? [["shellResult"]] : [],
-    };
+    });
   }
 
   // EXPLANATORY / CONCEPTUAL PROSE-ANSWER ROUTE (D1 floor, 2026-07-26). A plain
@@ -303,7 +337,7 @@ export async function inferGoalTargetDecision(
     const EXPLANATORY_RE = /\b(explain|describe|define|summar\w*|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
     const NOT_PROSE_RE = /\b(count|how many|how much|number of|sum|total|bytes?|line count|lines?|digest|sha-?\d|hash|checksum|list|report the current|running|status|analy[sz]e|review|audit|problem_detection|code_quality|refactor|implement|fix|edit|patch|write (a|the)? ?(note|file|concept)|save|store|persist|fetch|download|curl|scrape|repos\/[\w.-]+\/)\b|https?:\/\//i;
     if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal)) {
-      return { shapes: [_proseTarget], confidence: 0.7, alternatives: [] };
+      return remember({ shapes: [_proseTarget], confidence: 0.7, alternatives: [] });
     }
   }
 
@@ -325,7 +359,7 @@ export async function inferGoalTargetDecision(
     const FILE_OPERAND = /repos\/[\w.-]+\/[\w./-]+\.\w+|\b[\w-]+\.(?:json|ts|tsx|js|jsx|md|txt|ya?ml|toml|lock|cfg|ini|sh|py|sql|env)\b/i;
     const NOT_EXTRACT = /\b(summar|explain|describe|overview|analy[sz]e|review|audit|refactor|rewrite|gist|understand|two\s+sentences?|what\s+is\s+.*\s+about|quality|problem|complexity|coverage|security|performance|architecture|conformance)\b/i;
     if (!isCompositionAsk && EXTRACT_VERB.test(goal) && VALUE_NOUN.test(goal) && FILE_OPERAND.test(goal) && !NOT_EXTRACT.test(goal)) {
-      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
     }
   }
 
@@ -344,7 +378,7 @@ export async function inferGoalTargetDecision(
     const INVENTORY_NOUN = /\b(registr(?:y|ies|ed)|vessels?|discovery|services?|systemd|units?|containers?|processes|fleet|shapes?|resolvers?|endpoints?|ports?|advertis)\w*/i;
     const NOT_INVENTORY = /\b(analy[sz]e|review|summar|audit|refactor|edit|implement|\bfix\b|quality|problem|complexity|security|write|persist|propose|\bnote\b|concept)\b/i;
     if (!isCompositionAsk && COUNT_ASK.test(goal) && INVENTORY_NOUN.test(goal) && !NOT_INVENTORY.test(goal)) {
-      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
     }
   }
 
@@ -359,7 +393,7 @@ export async function inferGoalTargetDecision(
     const FS_NOUN = /\b(files?|source\s+files?|lines?|\.ts|\.js|repos\/[\w.-]+|src\/|director(?:y|ies)|folders?|codebase)\b/i;
     const NOT_FS_EDIT = /\b(implement|fix|edit|refactor|rewrite|explain|summar\w*|analy[sz]e|review|audit|propose|persist|write\s+(?:a\s+)?(?:note|file|concept))\b/i;
     if (!isCompositionAsk && FS_AGG_VERB.test(goal) && FS_NOUN.test(goal) && !NOT_FS_EDIT.test(goal)) {
-      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
     }
   }
 
@@ -379,15 +413,8 @@ export async function inferGoalTargetDecision(
     const SUBSTRATE_NOUN = /\b(gaps?|substrate\s?gaps?|activity\s?templates?|activities|executions?|traces?|failed_attempts?|failure\s?modes?)\b/i;
     const NOT_AGG = /\b(implement|\bfix\b|edit|refactor|rewrite|explain|summar|analy[sz]e|review|audit|propose|persist|write\s+(?:a|the)?\s*(?:note|file|concept))\b/i;
     if (!isCompositionAsk && AGG_VERB.test(goal) && SUBSTRATE_NOUN.test(goal) && !NOT_AGG.test(goal)) {
-      return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
     }
-  }
-
-  const decisionCache = opts.decisionCache;
-  const cacheKey = goalHashOf(goal);
-  if (decisionCache) {
-    const cached = decisionCache.get(cacheKey);
-    if (cached) return cached;
   }
 
   const known = new Set(knownShapes);
@@ -534,15 +561,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
         outShapes = [...outShapes.filter((s) => !FETCH_ONLY.has(s) && s !== "shellResult"), "shellResult"];
       }
     }
-    const decision: GoalTargetDecision = { shapes: outShapes, confidence, alternatives };
-    if (decisionCache) {
-      if (decisionCache.size >= INFER_CACHE_MAX) {
-        const first = decisionCache.keys().next().value;
-        if (first !== undefined) decisionCache.delete(first);
-      }
-      decisionCache.set(cacheKey, decision);
-    }
-    return decision;
+    return remember({ shapes: outShapes, confidence, alternatives });
   } catch {
     return empty;
   }

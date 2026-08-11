@@ -339,3 +339,48 @@ describe("edit-intent rule in the inference prompt", () => {
     expect(prompt()).toContain("CHANGING code is not ANALYSING code");
   });
 });
+
+// ── SHORTCUT DECISIONS MUST REACH THE CACHE ─────────────────────────────────
+// The deterministic pre-LLM shortcuts used to return BEFORE `decisionCache` was
+// even declared, so they returned a real decision (confidence 0.6-0.8) and cached
+// nothing. Only the slow LLM path wrote. Both readers (recordGoalPath and the
+// dispatch record) look the decision up by goal hash and coalesce a miss to null,
+// so every shortcut-routed goal persisted `inference_confidence: null` — a column
+// absent exactly where the decision was most confident. Every exit now routes
+// through remember(), which also makes shortcuts added later correct by default.
+describe("shortcut decisions populate the decision cache", () => {
+  const shapes = ["shellResult", "memoryNote_write", "fileEditResult"];
+  const complete = async () => null; // never reached by a shortcut
+
+  it("a deterministic shortcut caches its decision, with its real confidence", async () => {
+    const cache = new Map<string, GoalTargetDecision>();
+    const goal = "how many substrate gaps are there";
+    const d = await inferGoalTargetDecision(goal, shapes, { complete, decisionCache: cache });
+    expect(d.confidence).toBeGreaterThan(0);
+    // THE REGRESSION: this used to be 0 — the shortcut returned without caching.
+    expect(cache.size).toBe(1);
+    const cached = [...cache.values()][0]!;
+    expect(cached.confidence).toBe(d.confidence);
+    expect(cached.shapes).toEqual(d.shapes);
+  });
+
+  it("the cached entry is what a later lookup returns — no null coalesce", async () => {
+    const cache = new Map<string, GoalTargetDecision>();
+    const goal = "count the activity templates";
+    const first = await inferGoalTargetDecision(goal, shapes, { complete, decisionCache: cache });
+    const second = await inferGoalTargetDecision(goal, shapes, { complete, decisionCache: cache });
+    expect(second).toEqual(first);
+    expect(cache.size).toBe(1);
+  });
+
+  it("a goal that produces NO decision does not pollute the cache", async () => {
+    const cache = new Map<string, GoalTargetDecision>();
+    await inferGoalTargetDecision("", shapes, { complete, decisionCache: cache });
+    expect(cache.size).toBe(0);
+  });
+
+  it("works without a cache — the helper is a no-op when none is supplied", async () => {
+    const d = await inferGoalTargetDecision("how many gaps are there", shapes, { complete });
+    expect(d.shapes.length).toBeGreaterThan(0);
+  });
+});
