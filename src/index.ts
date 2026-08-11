@@ -259,7 +259,7 @@ import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, re
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
-import { isEditIntentGoal, goalRequestsDurableArtifact } from "./goal-intent";
+import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit } from "./goal-intent";
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import type {
   EventSink,
@@ -2659,6 +2659,7 @@ async function resolveShapeProducers(shape: string): Promise<string[] | null> {
   } catch { return null; }
 }
 
+
 async function verifyShapeProducersReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   const p = parseProducerLookup(goal);                    // SAME parse as the short-circuit
   if (!p) return null;
@@ -2948,9 +2949,26 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // when the edit shape is ABSENT (old behavior) OR present-but-STUB (the bug). Fail-toward-honest.
   const landedEdit = meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))
     && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
-  if (goal && /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal)
-      && /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove)\b/i.test(goal)
-      && !landedEdit) {
+  // WIDENED 2026-08-11 — the entry test used to require a LITERAL repos/<vessel>/<file>
+  // in the goal text, so a symptom-phrased change request skipped the landing requirement
+  // entirely and could be graded reached on a report. Measured on dispatch
+  // fac50cf1-f5be-4f6a-924e-478986aeb80e: the goal asked to widen a too-narrow check,
+  // came back reached:true with completion_shapes=template_audit_report,
+  // activityTemplate_update via universal-tool-fallback, produced shapes '(none
+  // recorded)' — and nothing changed (origin/dev unmoved, the named predicate
+  // byte-identical). The guard did not fire because the walk never entered the
+  // edit-intent route, i.e. the landing requirement was bound to a ROUTE rather than to
+  // the GOAL. `isPathlessCodeChangeGoal` is the same predicate the door already uses to
+  // decide a goal is a code change, so this asks the question the system had already
+  // answered. The verb list is also brought in line with MUTATION_VERB there, which was
+  // missing the make-a-rule-less-restrictive family.
+  //
+  // Direction of error is deliberate and matches this block's stated "fail-toward-honest"
+  // design: a goal that asked for a change and produced no landing now grades false. The
+  // only goals affected are, by construction, ones that requested a change and did not
+  // make one. Read-only asks are protected by isPathlessCodeChangeGoal's own
+  // disqualifiers (reports, prose destinations), which are separately tested.
+  if (goalDemandsLandedEdit(goal) && !landedEdit) {
     return { reached: false, reason: "deterministic:edit-intent-no-landed-edit — an edit goal is reached only by an edit-result shape WITH landing evidence (push_status:pushed / new_git_sha); an advertised/stub edit-result with no landing is not an applied edit", completion_shapes: [] };
   }
 

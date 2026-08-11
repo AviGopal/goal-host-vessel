@@ -1,3 +1,5 @@
+import { isPathlessCodeChangeGoal } from "./goal-file-resolution";
+
 /**
  * Goal-shape predicates shared across the recovery loop.
  *
@@ -41,4 +43,25 @@ export function isEditIntentGoal(goal: string): boolean {
     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) &&
     /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose)\b/i.test(goal)
   );
+}
+
+/**
+ * Does this goal ask for a CODE CHANGE, such that a reach verdict requires landing
+ * evidence rather than a description of the change?
+ *
+ * Exported so the rule is directly assertable: `verifyGoalReached` is unexported and
+ * makes LLM calls, so the predicate it turns on could not otherwise be tested.
+ *
+ * Accepts a goal that names a path OR one the door already classified as a pathless
+ * code-change request. Before 2026-08-11 only the first counted, which meant a
+ * symptom-phrased change request skipped the landing requirement entirely — the
+ * requirement was bound to a ROUTE (edit-intent) rather than to the GOAL, so any route
+ * that bypassed edit-intent bypassed the guard.
+ */
+export function goalDemandsLandedEdit(goal: string | undefined): boolean {
+  if (!goal) return false;
+  const asksForCodeChange =
+    /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal) || isPathlessCodeChangeGoal(goal);
+  if (!asksForCodeChange) return false;
+  return /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow)\b/i.test(goal);
 }
