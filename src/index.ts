@@ -4831,7 +4831,7 @@ function tierFromChain(chainIds: string[]): WalkTier {
  * pathway the walk was OFFERED rather than the one it took would manufacture exactly
  * the correlation that makes reuse look effective (law 12).
  */
-async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null): Promise<void> {
+async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   if (parent?.goalHash || parent?.pathSignature) {
     // Emitted, not transmitted — see the note above. This is the one place the fact
@@ -4854,6 +4854,10 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         cost_usd: costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
         walk_tier: walkTier,
+        // The effect surface this walk actually touched. The receiver derives
+        // work_signature from it; absent, work_signature stays null and nothing
+        // about today's recording changes.
+        ...(toolsUsed.length > 0 ? { tools_used: toolsUsed } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -6159,7 +6163,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (parts.length === 0) return "";
     return `# Findings\n\n${parts.join("\n\n")}\n`;
   };
-  const vesselResolveShape = async (shape: string): Promise<{ content: unknown } | null> => {
+  const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
     satisfierTried.add(shape);
     // DETERMINISTIC PRODUCER-LOOKUP: "how many/which vessels advertise|serve shape X" is
@@ -6767,13 +6771,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" persisted with an EMPTY body — not a genuine emit; treating as unsatisfied so reach is graded honestly (not a hollow green)`);
         // fall through: the terminal shape stays unsatisfied -> honest not-reached
       } else if (v !== null && "persisted" in v && v.persisted === true) {
-        return { content: v.content };
+        return { content: v.content, effect: effectTupleOf(shape, ep?.endpoint, v.content) };
       } else if (v !== null && "persisted" in v && v.persisted === false) {
         tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
         // fall through to action-then-read / bridge / escalate
       } else {
         recordExecutorCommand(directArgsRaw);
-        return { content: direct };
+        return { content: direct, effect: effectTupleOf(shape, ep?.endpoint, direct) };
       }
     }
     if (lastRawResolveReason) {
@@ -6828,7 +6832,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             // this content too — an echo-laundered shell answer is no longer invisible.
             if (inv.commandEvidence) executorCommands.set(shape, inv.commandEvidence.slice(0, 1000));
             tap(`[goal-host-vessel] walk: satisfier produced "${shape}" via GROUNDED tool-enabled investigation (${inv.groundedOk} read(s), reason: ${lastRawResolveReason})`);
-            return { content: invContent };
+            return { content: invContent, effect: effectTupleOf(shape, ep?.endpoint, invContent) };
           }
         }
       } catch { /* fail-open: fall through to action-then-read / bridge */ }
@@ -6899,11 +6903,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     // to the pool too (it's genuine output).
     addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`);
     const reread = await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs });
-    if (reread != null) return { content: reread };
+    if (reread != null) return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) };
     // Action succeeded but re-read empty — still genuine progress (the artifact was
     // created). Surface the action result as the target's content rather than null,
     // so the walk advances and the reach-gate can judge the real artifact.
-    return { content: actionResult };
+    return { content: actionResult, effect: effectTupleOf(shape, ep?.endpoint, actionResult) };
   };
 
   // Goal impulse (shape "goal").
@@ -7025,6 +7029,9 @@ If one of those sibling shapes is the action that would create what the goal ask
   // instead of ever running the real compute. Cap how many times composition may pre-empt the real
   // satisfier; once exhausted, run the satisfier so the genuine computed value is produced+bound.
   let _prefCompBudget = 1;
+  // Effect surface of every satisfied shape this walk touched — the evidence
+  // path_signature throws away. Deduped and sorted at send time.
+  const effectLedger = new Set<string>();
   const ledgerStep = (inputShapes: string[] | undefined, newOutputs: string[]): void => {
     for (const s of (inputShapes ?? [])) if (chainProduced.has(s)) consumedInChain.add(s);
     for (const s of newOutputs) if (s && s !== "activityExecutionSummary") chainProduced.add(s);
@@ -7319,6 +7326,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
         if (resolved && !_emptyRead) {
           addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`);
+          if (resolved.effect) effectLedger.add(resolved.effect);
           // Record the satisfier as a GENUINE step: synthesize a minimal
           // ExecutionTrace so the walk's downstream accounting (chain.length > 0 →
           // reach-gate runs; attempts > 0 → caller does NOT fall to the recovery
@@ -8843,7 +8851,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // and names both operands, so one run decides between the candidates instead of another
     // dispatched guess.
     console.log(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
-    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null);
+    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
     {
       const _wid = opts.variables.dispatch_id;
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
@@ -8878,7 +8886,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // reaches with no engine trace, which is exactly the multi-satisfier composition case that
     // compounding depends on. Scoped as an `else if` so every path that already records is
     // untouched: this fires only when the guarded block was skipped, and it cannot double-write.
-    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null);
+    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
     console.log(`[goal-host-vessel] recordGoalPath (traceless reach) path=${JSON.stringify(chain)} reached=${reached} goal="${goal.slice(0, 80)}"`);
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
@@ -9045,6 +9053,47 @@ async function verifyEditPostState(goal: string, editFile: string, landedSha?: s
 // differ only in maxAttempts (sync /resolve is bounded by the MCP ~290s timeout;
 // async /run-goal can recover more deeply) and in how they pass options. An
 // explicit caller-pinned target is respected verbatim (no alteration).
+/**
+ * The EFFECT SURFACE of one satisfied shape — what was actually contacted.
+ *
+ * `path_signature` hashes `path_activities`, which on a satisfier walk is only
+ * `[satisfier:<shape>]`. Measured on four goals demanding 1, 2, 3 and 4 external
+ * operations, the one-operation and the three-operation goal recorded the
+ * IDENTICAL signature, twice, including once under a fully healthy LLM plane.
+ * They had not done the same work: the journal shows one contacted the registry
+ * and the other contacted the registry AND the gap store and compared them. The
+ * collision is a RECORDING defect — the substrate differentiates and discards
+ * the evidence.
+ *
+ * The tuple is `<vessel host:port>|<shape>|<read|write>|<sorted external endpoints>`.
+ *
+ * CANONICALIZED TO host:port PLUS THE FIRST PATH SEGMENT, deliberately coarse.
+ * The command a satisfier runs is LLM-drafted, so two phrasings of the same
+ * request can pick different routes to one fact. Measured before this was
+ * written, 2 phrasings x 3 repetitions of a single goal produced three distinct
+ * raw paths — /registry/shapes, /registry/stats, /registry/stats.totalShapes —
+ * split along the phrasing boundary. Under this canonicalization all six collapse
+ * to `127.0.0.1:8100/registry`. A finer key would SPLIT IDENTICAL GOALS, the
+ * mirror of the defect being repaired and strictly worse than leaving it alone.
+ *
+ * Endpoints are read from the OBSERVED result rather than from the pointer: the
+ * synthesized command appears in the shell result, so this records what the step
+ * actually reached, not what it was asked to reach.
+ */
+function effectTupleOf(shape: string, vesselEndpoint: string | undefined, content: unknown): string {
+  const canon = (u: string): string => {
+    const m = /^https?:\/\/([^/\s"']+)(\/[A-Za-z0-9_.\-]*)?/.exec(u);
+    if (!m) return "";
+    const seg = (m[2] ?? "").replace(/^\//, "").split(/[.?#]/)[0] ?? "";
+    return `${m[1]}${seg ? "/" + seg : ""}`;
+  };
+  const vessel = vesselEndpoint ? canon(vesselEndpoint) || vesselEndpoint : "unresolved";
+  const kind = /_write$|^fs_write$|Write$/.test(shape) ? "write" : "read";
+  const blob = typeof content === "string" ? content : (() => { try { return JSON.stringify(content) ?? ""; } catch { return ""; } })();
+  const externals = [...new Set((blob.match(/https?:\/\/[^\s"'\\)]+/g) ?? []).map(canon).filter(Boolean))].sort();
+  return `${vessel}|${shape}|${kind}|${externals.join(",")}`;
+}
+
 async function runGoalWithRecovery(
   goal: string | undefined,
   opts: {
