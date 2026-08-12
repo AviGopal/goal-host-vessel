@@ -9551,7 +9551,7 @@ async function runGoalWithRecovery(
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose producer resolved via discovery → ${earlyComposeUrl}`);
             }
           } catch { /* discovery unreachable/empty → env fallback carries */ }
-          const earlyComposeResp = await fetch(earlyComposeUrl, {
+          const earlyComposeInit: RequestInit = {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
             body: JSON.stringify({
@@ -9605,7 +9605,27 @@ async function runGoalWithRecovery(
             // old ceiling expired mid-queue — reported as "The operation timed out", which reads
             // like a slow model rather than a busy lane.
             signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
-          });
+          };
+          let earlyComposeResp = await fetch(earlyComposeUrl, earlyComposeInit);
+          // A DRAINING PRODUCER ANSWERS 503 — DO NOT SPEND THE FAST PATH ON IT.
+          //
+          // This is the route a named-file edit goal takes BEFORE the walk, and it
+          // is the one a restart actually lands on: measured 2026-08-12, restarting
+          // development-vessel mid-dispatch produced `EARLY EDIT-INTENT
+          // feature_compose HTTP 503 — falling through to walk` here, while the
+          // later compose call never saw the 503 at all. The `else` below treats
+          // 503 like any other bad status and abandons the compose, so the fast
+          // path is discarded for a producer that asked to be called back.
+          //
+          // Bounded: one re-issue, honouring Retry-After (the producer sends 30)
+          // and capped at 60s, so a large or malformed header cannot park the goal.
+          if (earlyComposeResp.status === 503) {
+            const ra = Number(earlyComposeResp.headers.get("retry-after") ?? "");
+            const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
+            await new Promise((r) => setTimeout(r, waitMs));
+            earlyComposeResp = await fetch(earlyComposeUrl, earlyComposeInit);
+          }
           if (earlyComposeResp.ok) {
             const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
             const earlyBody = resolveReportBody(earlyJ);
