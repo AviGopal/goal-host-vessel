@@ -10023,6 +10023,26 @@ async function runGoalWithRecovery(
               await new Promise((r) => setTimeout(r, 5000));
               resp = await fetch(composeUrl, composeInit());
             }
+            // A DRAINING PRODUCER ANSWERS; IT DOES NOT THROW.
+            //
+            // The retry above fires only from `catch`, on a THROWN message. A vessel
+            // that is restarting returns an ordinary HTTP 503 with Retry-After, so
+            // control falls straight through to `resp.json()` below, the drain body
+            // carries no `verdict`, and the dispatch dies as `verdict=(none)` — the
+            // same signature bad drafting produces. So a compose that was never asked
+            // is recorded as a compose that failed, and the arm is β-penalised for
+            // work it never did.
+            //
+            // Bounded: one re-issue, honouring Retry-After when the producer sends a
+            // sane one and capped at 60s so a large or malformed header cannot park
+            // an edit goal past its dispatch timeout.
+            if (resp.status === 503) {
+              const ra = Number(resp.headers.get("retry-after") ?? "");
+              const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
+              await new Promise((r) => setTimeout(r, waitMs));
+              resp = await fetch(composeUrl, composeInit());
+            }
             let j: any = await resp.json().catch(() => ({}));
             let body = resolveReportBody(j) as Record<string, any>;
             let verdict = String(body.verdict ?? "");
