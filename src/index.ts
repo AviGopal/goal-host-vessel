@@ -60,7 +60,8 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const members: FeedMember[] = [];
   const gaps: FeedGap[] = [
     { substrate: 'local', id: 'per-gap-failure-lessons-updated', category: 'documentation', status: 'open', summary: 'per-gap failure lessons updated' },
-    { substrate: 'local', id: 'route-edit-3002552e:3', category: 'routing', status: 'open', summary: 'route edit 3002552e:3' }
+    { substrate: 'local', id: 'route-edit-3002552e:3', category: 'routing', status: 'open', summary: 'route edit 3002552e:3' },
+    { substrate: 'local', id: 'route-edit-3002552e:3-narrowed', category: 'routing', status: 'open', summary: 'route-edit-3002552e:3 narrowed' }
   ];
   const boredom: Record<string, unknown>[] = [];
   const rhythms: Record<string, unknown>[] = [];
