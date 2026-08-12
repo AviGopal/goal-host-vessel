@@ -984,7 +984,7 @@ export async function resolvePathlessCodeChangeGoal(
               } catch {
                 break; // a broken search must not read as "no write site"
               }
-              if (narrowed.length === 1 && !ambiguousSeen) {
+              if (narrowed.length === 1 && !ambiguousSeen && hits.length <= 3) {
                 tap?.(
                   `pathless code-change goal — restated with target ${narrowed[0]} ("${word}" was ambiguous across ${hits.length} files; exactly one contains "${verb.trim()} ${word}" and the goal asks to write)`,
                 );
