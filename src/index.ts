@@ -3187,17 +3187,27 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     if (/\becho\b[^|;]*\\[nrt]/.test(e.command)) { refuse("donor-is-shell-dependent"); continue; }
     if (!e.goalText) { refuse("donor-has-no-goal-text"); continue; }
     const A = toks(e.goalText), B = toks(goalNow);
-    const inferStore = (text: string): string | null => {
-      if (/discovery-registry|shapes\/registry|port 18100/.test(text)) return "discovery-registry";
-      if (/gap-store|gaps/.test(text)) return "gap-store";
-      if (/memory-store|memory/.test(text)) return "memory-store"; 
-      if (/concept-store|concept/.test(text)) return "concept-store";
-      if (/trace-store|traces\/executions|port 18080/.test(text)) return "trace-store";
-      if (/host-system|systemctl|journalctl/.test(text)) return "host-system";
+    // Repaired in place (2026-08-13): the autonomously-authored gate keyed its
+    // regexes on store-ID LITERALS ("discovery-registry", "gap-store", "port
+    // 18100") that appear in the GAP DOCUMENT but not in natural goals or donor
+    // goal-texts, and it read the donor store from e.goalText only — so it
+    // returned null for the very systemctl donor it was built to refuse and
+    // fired for nothing (verified: goalStore(W1)=null, donorStore(systemctl)=
+    // null). Two fixes, same structure: (1) match natural language + endpoints/
+    // command patterns; (2) read the donor store from its COMMAND first (what it
+    // actually touches), then its goal text. Precision-only: null => abstain.
+    const inferStore = (text: string | null | undefined): string | null => {
+      const t = (text || "").toLowerCase();
+      if (/\b18100\b|\b8100\b|\bregistr(y|ies)\b|discovery[- ]?(registry|vessel)|advertised shapes?|impulse shapes?|distinct shapes?/.test(t)) return "discovery-registry";
+      if (/\b18080\b|\b8080\b|\/v2\/activities|execution[_-]?trace|traces?\/executions?|\bthompson\b|\bposteriors?\b/.test(t)) return "trace-store";
+      if (/\bgaps?\b|gap[- ]?store|substrategap/.test(t)) return "gap-store";
+      if (/memory ?notes?|memory[- ]?store|memorynote/.test(t)) return "memory-store";
+      if (/\bconcepts?\b|concept[- ]?(db|graph|store)/.test(t)) return "concept-store";
+      if (/\bsystemctl\b|\bjournalctl\b|list-units|\.service\b/.test(t)) return "host-system";
       return null;
     };
     const goalStore = inferStore(goalNow);
-    const donorStore = inferStore(e.goalText);
+    const donorStore = inferStore(e.command) ?? inferStore(e.goalText);
     if (goalStore && donorStore && goalStore !== donorStore) {
       refuse(`store-mismatch(goal=${goalStore},donor=${donorStore})`);
       continue;
