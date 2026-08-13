@@ -200,12 +200,57 @@ Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
  * filtering as inferGoalTargetShapes but returns a GoalTargetDecision.
  * Returns { shapes: [], confidence: 0, alternatives: [] } on any failure.
  */
+// -- Deterministic composition-ask fallback (2026-08-13) --------------------------
+// Recover a [intermediate, terminal] target for "produce/derive <named shape>, then
+// persist it as a note/concept/gap" WITHOUT the LLM/concept-recall, so a
+// compute-then-emit composition survives a recall/transport outage (observed: the LLM
+// inferrer returns [] when concept-db is unreachable, and every such goal then gets an
+// empty target and fails). PRECISION-ONLY: returns null unless BOTH a write terminal
+// AND a DISTINCT known intermediate shape are named; used only where the caller would
+// otherwise return an empty decision -- never preempts the richer LLM path.
+const _COMPOSITION_WRITE_CLAUSE = /\b(?:write|writes|writing|save|saves|saving|record|records|recording|store|stores|storing|persist|persists|persisting|append|appends|appending|capture|captures|capturing|file)\b[^.]{0,48}?\b(?:note|notes|memory|memories|concept|concepts|document|documents|gap|gaps|journal|entry|entries|obsidian|vault)\b/i;
+function _shapeToPhrase(s: string): string {
+  return s.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().trim();
+}
+function deterministicCompositionAsk(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  const wm = _COMPOSITION_WRITE_CLAUSE.exec(goal);
+  if (!wm) return null;
+  // WRITE_CLAUSE confirms a persist-verb + sink-noun within 48 chars. The ACTUAL sink
+  // is the LAST recognised sink noun in the sentence from the write verb, so an
+  // adjectival "concept-level" / "gap-severity" earlier in the window cannot hijack the
+  // terminal away from the real "... in a memory note".
+  const _sentence = goal.slice(wm.index, wm.index + 120).split(/[.!?]/)[0];
+  const _sinkRe = /\b(note|notes|memory|memories|journal|entry|entries|document|documents|obsidian|vault|concept|concepts|gap|gaps)\b/gi;
+  let _sm: RegExpExecArray | null; let _lastSink: string | null = null;
+  while ((_sm = _sinkRe.exec(_sentence)) !== null) _lastSink = _sm[1].toLowerCase();
+  const terminal = _lastSink == null ? null
+    : /^concepts?$/.test(_lastSink) && knownShapes.includes("concept_write") ? "concept_write"
+    : /^gaps?$/.test(_lastSink) && knownShapes.includes("substrateGap_write") ? "substrateGap_write"
+    : knownShapes.includes("memoryNote_write") ? "memoryNote_write"
+    : null;
+  if (!terminal) return null;
+  const excluded = new Set<string>([
+    "shellResult", terminal, terminal.replace(/_write$/, ""),
+    "memoryNote_write", "concept_write", "substrateGap_write", "memoryNote", "concept", "substrateGap",
+  ]);
+  const before = goal.slice(0, wm.index);
+  let best: { shape: string; len: number } | null = null;
+  for (const sh of knownShapes) {
+    if (excluded.has(sh) || sh.endsWith("_write")) continue;
+    const phrase = _shapeToPhrase(sh);
+    if (phrase.length < 5) continue;
+    const re = new RegExp(`\\b${phrase.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s_-]+")}\\b`, "i");
+    if (re.test(before) && (!best || phrase.length > best.len)) best = { shape: sh, len: phrase.length };
+  }
+  if (!best) return null;
+  return { shapes: [best.shape, terminal], confidence: 0.8, alternatives: [] };
+}
 export async function inferGoalTargetDecision(
   goal: string,
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<GoalTargetDecision> {
-  const empty: GoalTargetDecision = (/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] };
+  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
@@ -613,6 +658,16 @@ export async function inferDerivationSplit(
   const llmEndpoint = opts.llmEndpoint;
   // A derivation needs at least 2 distinct target shapes (a derive AND an emit).
   if (!goal || inferredTargets.length < 2) return noSplit;
+  // DETERMINISTIC SPLIT for the three emit terminals (2026-08-13): a recognised emit
+  // sink + a distinct non-emit shape splits unambiguously (defer the write, produce the
+  // source first) with no LLM. Scoped to exactly the sinks the composition route emits;
+  // activityVariant_write is NOT one and falls through to its guard + the LLM path below.
+  {
+    const EMIT_TERMINALS = new Set(["memoryNote_write", "concept_write", "substrateGap_write"]);
+    const emit = inferredTargets.filter((sh) => EMIT_TERMINALS.has(sh));
+    const nonEmit = inferredTargets.filter((sh) => !EMIT_TERMINALS.has(sh));
+    if (emit.length >= 1 && nonEmit.length >= 1 && !inferredTargets.includes("activityVariant_write")) return { intermediate: nonEmit, terminal: emit };
+  }
   if (!opts.complete && !llmEndpoint) return noSplit;
   // SELF-CONTAINED terminal (2026-07-03): activityVariant_write is produced by the
   // template_repair resolver, which grounds its own analysis from the target's
