@@ -3370,6 +3370,8 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   // function were wrong: "no donor existed for this shape" and "a donor existed and every
   // gate rejected it" produced identical evidence from outside.
   if (!best) {
+  console.log(`[rebind] ... refusals: ${JSON.stringify(refusals)}`);
+
     const top = Object.entries(refusals).sort((a, b) => b[1] - a[1]).slice(0, 3)
       .map(([k, n]) => `${k}x${n}`).join(" ");
     console.log(`[rebind] NO ADAPTATION for "${shape}" — cache=${reachedCommandCache.size} same-shape-candidates=${candidates} refusals: ${top || "(none — cache empty)"}`);
