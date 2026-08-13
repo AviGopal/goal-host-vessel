@@ -3204,7 +3204,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       if (/\bgaps?\b|gap[- ]?store|substrategap/.test(t)) return "gap-store";
       if (/memory ?notes?|memory[- ]?store|memorynote/.test(t)) return "memory-store";
       if (/\bconcepts?\b|concept[- ]?(db|graph|store)/.test(t)) return "concept-store";
-      if (/\bsystemctl\b|\bjournalctl\b|list-units|\.service\b/.test(t)) return "host-system";
+      if (/\bsystemctl\b|\bjournalctl\b|list-units|\.service\b|\bfind\b/.test(t)) return "host-system";
       return null;
     };
     const goalStore = inferStore(goalNow);
