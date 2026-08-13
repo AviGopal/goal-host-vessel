@@ -3176,6 +3176,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   const toks = (str: string) => Array.from(str.matchAll(/\S+/g)).map((m) => ({ raw: m[0], start: m.index as number, end: (m.index as number) + m[0].length }));
   const norm = (t: string) => t.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, "");
   let best: { ratio: number; field: string; command: string; srcHash: string } | null = null;
+      console.log("[rebind] outcome selected=" + (best ? "yes" : "no") + " candidates=" + candidates);
   for (const [srcHash, e] of reachedCommandCache.entries()) {
     if (e.shape !== shape) { refuse("shape-mismatch"); continue; }
     if (!REBIND_EXEC_FIELDS.includes(e.field)) { refuse("field-not-executable"); continue; }
