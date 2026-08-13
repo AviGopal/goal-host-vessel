@@ -3154,6 +3154,25 @@ async function loadReachedCommandCache(): Promise<void> {
 // to llmExtractPointerArgs), never emits a wrong rebind. The load-bearing gate is that the
 // varying goal span appears LITERALLY (exactly once) in the verified command — a causal proof
 // that that span is what flowed into the command, not a similarity heuristic.
+// Content-store idealization (2026-08-12): map a goal or a donor COMMAND to the
+// data store its content depends on. HIGH-PRECISION: returns null when
+// un-inferable so the gate below ABSTAINS rather than reduces recall. Refusing a
+// donor that reads a DIFFERENT store than the goal closes a wrong-rebind precision
+// hole — measured: a registry-count and a gap-count goal both rebound one
+// host-system `systemctl` donor (they share the shellResult output shape),
+// producing wrong output for both.
+function inferContentStore(text: string | null | undefined): string | null {
+  const t = (text || "").toLowerCase();
+  if (/\b18100\b|\b8100\b|\/registry\b|discovery[- ]?vessel/.test(t)) return "discovery-registry";
+  if (/\b18080\b|\b8080\b|\/v2\/activities|execution[_-]?trace|\/executions?\b/.test(t)) return "trace-store";
+  if (/\bregistr(y|ies)\b|advertised shapes?\b|impulse shapes?\b|distinct shapes?\b|shape (vocabulary|count|coverage)/.test(t)) return "discovery-registry";
+  if (/\bgaps?\b|\bgap[- ]?store\b|substrategap/.test(t)) return "gap-store";
+  if (/\bmemory ?notes?\b|memory[- ]?store|memorynote/.test(t)) return "memory-store";
+  if (/\bconcepts?\b|concept[- ]?(db|graph|store)/.test(t)) return "concept-store";
+  if (/\btraces?\b|\bexecutions?\b|\bthompson\b|\bposteriors?\b/.test(t)) return "trace-store";
+  if (/\bsystemctl\b|\bjournalctl\b|list-units|\.service\b/.test(t)) return "host-system";
+  return null;
+}
 function tryLexicalRebind(goalNow: string, shape: string): { field: string; command: string; srcHash: string } | null {
   // WHY IT REFUSED, NOT JUST THAT IT DID.
   //
@@ -3188,6 +3207,16 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
     if (!e.goalText) { refuse("donor-has-no-goal-text"); continue; }
     const A = toks(e.goalText), B = toks(goalNow);
     candidates++;
+    // Content-store precision gate (2026-08-12): refuse a same-shape donor ONLY
+    // when both the goal and the donor confidently depend on DIFFERENT data stores.
+    // Abstain (pass through) whenever either store is un-inferable, so recall is
+    // never reduced on ambiguity. Reads the donor store from its COMMAND first
+    // (what it actually touches), then its goal text. Counted in the refusal tally.
+    {
+      const goalStore = inferContentStore(goalNow);
+      const donorStore = inferContentStore(e.command) ?? inferContentStore(e.goalText);
+      if (goalStore && donorStore && goalStore !== donorStore) { refuse(`store-mismatch(goal=${goalStore},donor=${donorStore})`); continue; }
+    }
     if (A.length < 3 || B.length < 3) { refuse("goal-too-short"); continue; }
     const na = A.map((t) => norm(t.raw)), nb = B.map((t) => norm(t.raw));
     const la = na.length, lb = nb.length;
