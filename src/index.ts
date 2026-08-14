@@ -9383,7 +9383,24 @@ async function runGoalWithRecovery(
         if (hydGap && hydGap.id) {
           const hydMeta = JSON.stringify(hydGap.classification_metadata ?? {});
           walkConceptContext += `\nGap record ${hydGap.id}: ${String(hydGap.summary ?? "").slice(0, 500)} | metadata: ${hydMeta.slice(0, 400)}`;
-          const hydFile = (hydMeta.match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/) ?? String(hydGap.summary ?? "").match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/))?.[0];
+          // Substrate-detected gaps (env-gate scans, coverage detectors) cite the site
+          // in their summary as a BARE `<vessel>/src/<path>` with NO `repos/` prefix
+          // (e.g. "e.g. development-vessel/src/resolvers/rhythm-conductor-tick.ts:125").
+          // The original match — and the EARLY edit-intent check it feeds — both require
+          // the `repos/` prefix, so these citations were dropped ("cited file: none"), the
+          // close-goal never routed to feature_compose, and it walked to a diagnostic
+          // HOLLOW (problem_detection/error_log) instead of composing the fix. This is the
+          // authoritative file for the gap (it names the exact offending site), so prefer
+          // it over the coincidental unique-hit text-search restatement upstream. Accept
+          // the bare form and normalise to `repos/`. Require `/src/` so a stray token is
+          // not read as a path; fail-open (routing hint only, feature_compose rejects a
+          // path that does not exist).
+          const _hydText = `${hydMeta}\n${String(hydGap.summary ?? "")}`;
+          let hydFile = _hydText.match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/)?.[0];
+          if (!hydFile) {
+            const _bare = _hydText.match(/\b([\w.-]+\/src\/[\w.\/-]+\.\w+)/)?.[1];
+            if (_bare) hydFile = `repos/${_bare}`;
+          }
           if (hydFile && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
             goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: ${String(hydGap.summary ?? "").slice(0, 300)})`;
           }
