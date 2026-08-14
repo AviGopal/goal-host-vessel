@@ -8792,7 +8792,19 @@ If one of those sibling shapes is the action that would create what the goal ask
           // in-chain edge) versus a bare LLM-yes. Tagging with mintGrounded rather than
           // a blanket true means a hollow reach is recorded as reached:false and stays
           // out of the extraction pool, which is exactly what that gate decided.
-          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), mintGrounded ? "reached:true" : "reached:false", "composite:true"], poolImpulses, goalHashOf(goal));
+          // MINT-TAG CONSISTENCY (2026-08-13): the composite's reach TAG must MATCH the
+          // mint decision below (compositeGrounded), or the ribosome's tag-read skips a
+          // genuine composition. mintGrounded (landed edit / executed command / in-chain
+          // edge) does NOT cover a 2-step composition whose terminal leaf is a
+          // vessel-resolve satisfier — yet that IS a mintable recipe (>=2 steps that
+          // produced real pool impulses, the SAME predicate mintReachedTrace uses).
+          // Tagging with mintGrounded stamped reached:false on genuine compositions, so
+          // the ribosome ("verdict=not-reached (tag:reached:false)") SKIPPED extraction
+          // and NO learned-composition-* template was ever persisted (hub 404, verified).
+          // Build first, then tag with compositeGrounded so tag and mint decision agree.
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal));
+          const compositeGrounded = mintGrounded || composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2;
+          composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];
           // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
           //
           // A composite observed at 14:16:42 — 1m50s after this code was deployed —
@@ -8820,7 +8832,6 @@ If one of those sibling shapes is the action that would create what the goal ask
             } catch (e) {
               console.warn(`[goal-host-vessel] composite record FAILED id=${composite.id}: ${(e as Error)?.message ?? String(e)}`);
             }
-            const compositeGrounded = mintGrounded || composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2;
             if (opts.learningMode !== "observe") await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal));
           })();
         }
