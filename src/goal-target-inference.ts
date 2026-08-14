@@ -245,12 +245,34 @@ function deterministicCompositionAsk(goal: string, knownShapes: string[]): GoalT
   if (!best) return null;
   return { shapes: [best.shape, terminal], confidence: 0.8, alternatives: [] };
 }
+// -- Deterministic self-development env-gate route (2026-08-13) ---------------------
+// A natural-language self-dev goal ("identify capabilities gated behind environment
+// variables") names no shape with an ACTION verb, so _namedShape misses and the LLM
+// inferrer (worked examples teach only code-analysis mapping) returns [] over ~388
+// obscure names -> empty target -> opportunistic walk -> degenerate template -> 0 shapes
+// (hollow; operator-observed on the "decompose failures into environmental conditions"
+// goal). env_gate_scan IS advertised and self-grounding (walks the source tree, emits a
+// substantive envGateReport with NO trace-store/hub dependency). Fold this into the
+// `empty` value so it fires wherever inference would OTHERWISE return empty -- recall-down
+// bail AND LLM-declines-[] -- covering both modes the operator observed. SCOPED to
+// env_gate_scan ALONE (the one self-dev organ verified substantive without the flaky hub);
+// hub-severed organs (failure_mode_summary=404, trace_*_report) are withheld until
+// repaired, since routing to a severed shape hollow-greens the dispatch. !WRITE_CLAUSE so
+// "save an env-gate note" keeps its compose-then-persist path; knownShapes-guarded so a
+// spoke masking the producer falls through unchanged.
+function deterministicEnvGateRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  if (!knownShapes.includes("env_gate_scan")) return null;
+  if (_COMPOSITION_WRITE_CLAUSE.test(goal)) return null;
+  const ENV_GATE = /\benv(?:ironment)?[\s_-]*(?:var(?:iable)?s?[\s_-]*)?gat(?:e|ed|ing)|\benv[\s_-]?gat|gated\s+behind\s+(?:an?\s+)?(?:env|environment)|\bgat(?:e|ed|ing)\b[\s\S]{0,24}\benv(?:ironment)?[\s_-]*var/i;
+  if (!ENV_GATE.test(goal)) return null;
+  return { shapes: ["env_gate_scan"], confidence: 0.7, alternatives: knownShapes.includes("shellResult") ? [["shellResult"]] : [] };
+}
 export async function inferGoalTargetDecision(
   goal: string,
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<GoalTargetDecision> {
-  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
+  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
