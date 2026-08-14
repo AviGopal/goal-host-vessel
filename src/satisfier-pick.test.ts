@@ -26,7 +26,27 @@
 // failure than the one it is guarding (a hung suite looks like infrastructure, a
 // failed suite names the defect).
 import { describe, expect, test } from "bun:test";
-import { pickSatisfierProducer, type SatisfierProducer } from "./satisfier-pick";
+import { pickSatisfierProducer, satisfierProvenBad, type SatisfierProducer } from "./satisfier-pick";
+
+describe("satisfierProvenBad — reads the posterior the walk had ignored (§12.6 step 3)", () => {
+  test("a heavily-penalised satisfier with enough samples is proven-bad (the pull_cutover case)", () => {
+    // satisfier:pull_cutover live: α=1.7/β=41.9 over 148 exec → reliability ~0.04
+    expect(satisfierProvenBad(1.7, 41.9, 148)).toBe(true);
+  });
+  test("a fresh / lightly-used satisfier is NEVER proven-bad (benefit of the doubt, no flood)", () => {
+    expect(satisfierProvenBad(1, 1, 0)).toBe(false);   // Beta(1,1) prior, no samples
+    expect(satisfierProvenBad(1, 9, 5)).toBe(false);   // bad-looking but < minSamples
+  });
+  test("a reliable satisfier with enough samples is NOT proven-bad", () => {
+    expect(satisfierProvenBad(80, 20, 100)).toBe(false); // reliability 0.8
+  });
+  test("the floor boundary and degenerate inputs are safe (fail toward NOT-bad)", () => {
+    expect(satisfierProvenBad(2, 8, 20)).toBe(true);          // reliability 0.2 < 0.3 → bad
+    expect(satisfierProvenBad(30, 70, 100, 0.3)).toBe(false); // reliability 0.3 == floor, not < → not bad
+    expect(satisfierProvenBad(NaN, 1, 50)).toBe(false);
+    expect(satisfierProvenBad(0, 0, 50)).toBe(false);
+  });
+});
 
 const p = (o: Partial<SatisfierProducer>): SatisfierProducer =>
   ({ endpoint: "http://localhost:1", ...o }) as SatisfierProducer;

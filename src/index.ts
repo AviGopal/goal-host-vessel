@@ -233,7 +233,7 @@ import { consensusSymbols } from "./goal-file-resolution";
 import { emptyResultSetReason } from "./empty-result-set";
 import { resolveReportBody } from "./resolve-report-body";
 import { decideContinuation } from "./walk-continuation.js";
-import { pickSatisfierProducer } from "./satisfier-pick.js";
+import { pickSatisfierProducer, satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
 import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent } from "./llm-router";
@@ -4715,6 +4715,28 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
   // surface it in DispatchRecord.learning (decision-transparency, 2026-07-07).
   return { templateId: activityId, dAlpha: 0, dBeta: 2 };
 }
+// Read a satisfier's GRADED Thompson posterior so the walk can PREFER an earned pathway over a
+// satisfier the learner has already condemned (§12.6 step 3, 2026-08-14). Fail-open: ANY error /
+// timeout / missing row returns null, so the caller treats the satisfier as NOT proven-bad and
+// selection proceeds exactly as before (inert-by-default). GET /v2/activities/:id/variant-scores
+// returns the graded posterior (getVariantScores overlays getCanonicalPosteriors) as JSON
+// { scores: [{ activity_id, alpha, beta, total_executions }] }.
+async function fetchSatisfierReliability(shape: string): Promise<{ alpha: number; beta: number; samples: number } | null> {
+  try {
+    const id = shape.startsWith("satisfier:") ? shape : `satisfier:${shape}`;
+    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/${encodeURIComponent(id)}/variant-scores`, {
+      method: "GET",
+      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const j = await res.json() as { scores?: Array<{ activity_id?: string; alpha?: number; beta?: number; total_executions?: number }> };
+    const scores = Array.isArray(j?.scores) ? j.scores : [];
+    const row = scores.find((s) => String(s.activity_id ?? "").endsWith(id)) ?? scores[0];
+    if (!row || typeof row.alpha !== "number" || typeof row.beta !== "number") return null;
+    return { alpha: row.alpha, beta: row.beta, samples: typeof row.total_executions === "number" ? row.total_executions : (row.alpha + row.beta) };
+  } catch { return null; }
+}
 // A reach is SUBSTANCE-HONEST iff the CODE-authored `deterministic` flag is set
 // (verifyGoalReached sets it ONLY on favorable-compose = a landed sha :876; the LLM
 // reach-judge parse is sanitized to deterministic:false so a bare LLM-yes can never
@@ -7182,8 +7204,23 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the satisfier so control falls through to candidate selection (b) which picks the
       // multi-covering composition (the ratchet's reuse tooth). Fail-open: any error leaves
       // preferComposition=false so the satisfier fires exactly as before (floor untouched).
+      // §12.6 step 3 (2026-08-14): if the walk is about to take a SINGLE-shape satisfier the
+      // learner has already CONDEMNED (low graded reliability with enough samples), let an earned
+      // producer win instead of the penalised satisfier. Fail-open: fetch null / too-few-samples
+      // => proven-bad=false => the satisfier fires exactly as before (inert-by-default; the reach
+      // floor is untouched, and a covering producer must EXIST for the swap, so reach cannot break).
+      const _provenBadShapes = new Set<string>();
+      if (missingForSatisfier.length === 1) {
+        const _s0 = String(missingForSatisfier[0]);
+        const _rel = await fetchSatisfierReliability(_s0);
+        if (_rel && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
+          _provenBadShapes.add(_s0);
+          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) — probing for an earned producer to prefer over the penalised satisfier (step 3)`);
+        }
+      }
+      const _provenBadSingle = _provenBadShapes.size > 0;
       let preferComposition = false;
-      if (missingForSatisfier.length > 1) {
+      if (missingForSatisfier.length > 1 || _provenBadSingle) {
         try {
           const _psig = (await getCachedStateSignature())?.signature_hash;
           const _pr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
@@ -7200,13 +7237,13 @@ If one of those sibling shapes is the action that would create what the goal ask
               .some((c: WalkCandidate | null) =>
                 c !== null &&
                 !exclude.has(normActivityId(c.id)) && !chain.includes(c.id) &&
-                c.outputShapes.filter((sh) => missingForSatisfier.includes(sh)).length >= 2 &&
+                c.outputShapes.filter((sh) => missingForSatisfier.includes(sh)).length >= (_provenBadSingle ? 1 : 2) &&
                 (c.inputShapes.length === 0 || c.inputShapes.every((sh) => producedShapes.has(sh))));
             // A directly-satisfiable INTERMEDIATE (non-terminal) shape must RUN rather than be
             // suppressed for a speculative composite: leaked/unbindable composites (the store has
             // ~383) get "preferred", fail to execute, and the walk reframes into confabulation.
             // Reliable direct compute of the intermediate beats a multi-cover composite here.
-            if (preferComposition && eligibleForSatisfier.some((s) => !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s))) {
+            if (preferComposition && eligibleForSatisfier.some((s) => !_provenBadShapes.has(s) && !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s))) {
               preferComposition = false;
               tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION declined — a directly-satisfiable intermediate is available; running the real compute first (a leaked composite would derail into reframe->confabulation)`);
             }

@@ -10,6 +10,30 @@ export interface SatisfierProducer {
   [key: string]: unknown;
 }
 
+/**
+ * Is a satisfier PROVEN-BAD by its Thompson posterior? (§12.6 step 3, 2026-08-14)
+ *
+ * The satisfier plane accumulates a posterior (the write-back works: satisfier:pull_cutover
+ * sits at α=1.7/β=41.9 over 148 executions) but the walk never READS it — so a satisfier the
+ * learner has heavily penalised keeps being picked, stealing selection from earned pathways.
+ * This gate lets the walk PREFER a composition/producer over a satisfier the posterior has
+ * already condemned. Proven-bad ⇔ reliability (mean of Beta(α,β)) below `floor` AND enough
+ * samples to trust the estimate. Conservative by construction: too few samples ⇒ NOT proven-bad
+ * (benefit of the doubt), so a fresh or lightly-used satisfier is never suppressed.
+ */
+export function satisfierProvenBad(
+  alpha: number,
+  beta: number,
+  samples: number,
+  floor = 0.3,
+  minSamples = 10,
+): boolean {
+  if (!Number.isFinite(alpha) || !Number.isFinite(beta) || alpha <= 0 || beta <= 0) return false;
+  if (!Number.isFinite(samples) || samples < minSamples) return false;
+  const reliability = alpha / (alpha + beta);
+  return reliability < floor;
+}
+
 export function pickSatisfierProducer(
   producers: SatisfierProducer[],
 ): SatisfierProducer | undefined {
