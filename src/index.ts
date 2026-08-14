@@ -8372,6 +8372,32 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         } catch { /* fail-toward-honest: any error leaves the reach verdict unchanged */ }
       }
+      // EDIT-EFFECT REACH WITHOUT A LANDED SHA IS HOLLOW (self-dev close-goals, 2026-08-13).
+      // fs_edit/fs_write/fileEditResult/fileWriteResult are ADVERTISED-not-applied (see the
+      // UNRESOLVED_FS_EFFECT note at the credit gate below): local-tools exposes them but only a
+      // favorable-compose LANDS a sha (verdict.deterministic===true). A goal whose TARGET is one
+      // of these that "reached" with deterministic!==true never applied the edit — the reach was
+      // carried by an upstream ANALYTICAL satisfier standing in for the failed/missing write
+      // (observed: "Close substrate gap gap-env-gated-write-allowlist" reached green on the
+      // env_gate_scan output AFTER fs_edit returned HTTP 500 "path outside workspace root").
+      // The CREDIT gate already treats this as non-substance and WITHHOLDS alpha; make the VERDICT
+      // consistent so the gap is not falsely recorded closed and pathway-reuse is not trained on a
+      // phantom closure. NARROW BY DESIGN: keyed on TARGET (not any produced/incidental fs-effect
+      // shape) so a genuine reach is never flipped, and exempts deterministic (landed-sha) reaches
+      // — an fs-effect target with no sha did not apply, by construction, so this has zero
+      // genuine-reach false positives. The shellResult/echo standin class (a close-goal reaching
+      // via a shell count) needs a close-goal-class oracle and is deliberately left uncovered.
+      if (reached === true && verdict?.deterministic !== true) {
+        const _FS_EFFECT_TARGET = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
+        const _editTarget = [...target].filter((s) => _FS_EFFECT_TARGET.has(String(s)));
+        if (_editTarget.length > 0) {
+          reached = false;
+          const _er = `deterministic:edit-effect-not-landed — the goal targets an fs-effect shape (${JSON.stringify(_editTarget)}) but reached with no landed sha (deterministic!==true); fs_edit/fs_write is advertised-not-applied, so the edit never applied and the reach was carried by an analytical standin, not a real state change`;
+          if (verdict) { (verdict as GoalReachVerdict).reached = false; (verdict as GoalReachVerdict).reason = _er; }
+          goalReachReason = _er;
+          tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${_er}`);
+        }
+      }
       // Deterministic-oracle label feed: after every post-hoc correction above, so the
       // corpus records the FINAL ground-truth verdict (incl. wrong-derived-value flips).
       if (verdict) recordDeterministicLabel(goal, lastExecId, lastPick || undefined, verdict);
