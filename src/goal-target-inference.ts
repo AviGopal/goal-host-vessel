@@ -24,16 +24,23 @@ export type FetchLike = typeof fetch;
 // FNV-1a 32-bit. NOT Date.now()-based — same goal must map to the same key so the
 // cache actually deduplicates LLM calls across retries / re-dispatches.
 export function goalHashOf(goal: string): string {
-  // Normalize goal text to address semantic_reject behavior by ensuring consistent
-  // representation before hashing. NFC normalization handles Unicode equivalence.
-  const normalized = goal.normalize("NFC");
-  const lineCount = (normalized.match(/\n/g)?.length ?? 0) + 1;
+  // Key on WORK, not surface form (§12.6 step 5, 2026-08-14). Coalesce TRIVIAL rephrasings — case,
+  // whitespace runs, and line-wrapping — so identical work shares ONE cell instead of scattering
+  // across cells keyed by surface form. NFC handles Unicode equivalence; lowercase + whitespace
+  // collapse + trim strips variation that is NOT work.
+  //
+  // The prior form hashed the raw text AND suffixed the LINE COUNT — pure surface form — so
+  // "Produce a report" and "produce  a\nreport" keyed DIFFERENT cells for identical work. This is
+  // goal-host-LOCAL (inference cache, router-buffer ids, lexical-rebind donor key); activity-api
+  // keys its persistent per-goal posteriors from goal_text independently, so this does NOT re-key
+  // stored learning — it only sharpens local coalescing / rebind matching across rephrasings.
+  const normalized = goal.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim();
   let hash = 2166136261 >>> 0; // FNV-1a 32-bit offset basis
   for (let i = 0; i < normalized.length; i++) {
     hash ^= normalized.charCodeAt(i);
     hash = (hash * 16777619) >>> 0; // FNV prime
   }
-  return `${hash.toString(16).padStart(8, "0")}:${lineCount}`;
+  return hash.toString(16).padStart(8, "0");
 }
 
 const INFER_CACHE_MAX = 512;
