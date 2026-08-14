@@ -3377,7 +3377,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       .map(([k, n]) => `${k}x${n}`).join(" ");
     console.log(`[rebind] NO ADAPTATION for "${shape}" — cache=${reachedCommandCache.size} same-shape-candidates=${candidates} refusals: ${top || "(none — cache empty)"}`);
   }
-  return best;
+  console.log(`[rebind] result for "${shape}": selected=${!!best} candidates=${candidates} refusals: ${Object.entries(refusals).map(([k,n])=>k+"x"+n).join(" ")}`); return best;
 }
 function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
