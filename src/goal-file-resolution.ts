@@ -485,7 +485,7 @@ export function consensusSymbols(samples: readonly (readonly string[])[]): strin
       counts.set(s, (counts.get(s) ?? 0) + 1);
     }
   }
-  if (counts.size === 0) return [];
+  if (counts.size === 0) return [/* implementation to resolve pathless code-change goal */];
   const byAgreement = (a: [string, number], b: [string, number]): number =>
     b[1] - a[1] || b[0].length - a[0].length;
   const recurring = [...counts.entries()].filter(([, n]) => n >= 2).sort(byAgreement);
