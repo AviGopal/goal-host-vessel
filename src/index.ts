@@ -6820,8 +6820,23 @@ If one of those sibling shapes is the action that would create what the goal ask
               // about the REQUEST (400, "parameter", "invalid", "required", "unrecognized") is a
               // fact about the QUERY: the host answered, it read the request, and it said what was
               // wrong — that is the most valuable response of all, and it means KEEP THE HOST.
-              const _authRefusal = /unauthori[sz]ed|api[\s_-]?key|forbidden|\b40[13]\b|authentication|access denied|sign\s?up|subscribe/i.test(_probeTxt);
-              const _badRequest = !_authRefusal && /\b400\b|parameter|invalid|required|unrecogni[sz]ed|malformed|bad request|missing/i.test(_probeTxt);
+              // TRANSPORT FIRST — a host that never answered cannot be complaining about the query.
+              //
+              // Measured, and this is the same category error twice: the walk invented
+              // api.leonardodario.com, which does not resolve (curl http=000, exit 6), and the
+              // _badRequest branch below matched text in the probe envelope and told the walk to
+              // KEEP THE HOST AND FIX THE QUERY. Keep a host that does not exist. The original
+              // version of this block conflated 401 with 400; this one conflated "no host answered"
+              // with "the host answered and objected", two fixes later, in the same code.
+              //
+              // So establish that something answered BEFORE classifying what it said. curl reports
+              // a non-zero exit and an empty body when DNS fails or the connection is refused, and
+              // the shellResult envelope carries both. No answer means the HOST is wrong — that is
+              // disqualification territory, and it is emphatically not a hint to retry the query.
+              const _noAnswer = /"exit_code"\s*:\s*(?!0\b)\d+/.test(_probeTxt)
+                || /could not resolve|couldn't resolve|connection refused|name or service not known|failed to connect|no route to host|curl:\s*\(\d+\)/i.test(_probeTxt);
+              const _authRefusal = !_noAnswer && /unauthori[sz]ed|api[\s_-]?key|forbidden|\b40[13]\b|authentication|access denied|sign\s?up|subscribe/i.test(_probeTxt);
+              const _badRequest = !_noAnswer && !_authRefusal && /\b400\b|parameter|invalid|required|unrecogni[sz]ed|malformed|bad request|missing/i.test(_probeTxt);
               let _host = "that endpoint";
               try { const m = _fetchPart.match(/https?:\/\/([^\/'"\s]+)/i); if (m?.[1]) _host = m[1]; } catch { /* keep default */ }
               if (_badRequest) {
@@ -6842,7 +6857,11 @@ If one of those sibling shapes is the action that would create what the goal ask
               // credentials, so a host demanding them can never work, and every retry spent on it is
               // wasted. Name the host and forbid it. What replaces it is still the model's problem —
               // no endpoint is suggested, because finding one that needs no key IS the task.
-              if (_authRefusal) {
+              if (_noAnswer) {
+                if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
+                _bodyEvidence += `\n\nNOTHING ANSWERED AT ${_host}. That is not an error message from a server — the request never completed: the name did not resolve, or the connection was refused. A hostname that does not resolve is almost always one that was INVENTED because it sounded plausible. ${_host} is DISQUALIFIED and no change to the path, the query string or the parser can revive it. Name a provider you are genuinely confident EXISTS — one whose real query interface you know — or print UNKNOWN. An honest UNKNOWN is worth more than a fabricated hostname, because a hostname nobody can reach cannot be checked by anyone downstream.`;
+                console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" NO-ANSWER from ${_host} (unresolvable/refused) — disqualified, NOT treated as a query error`);
+              } else if (_authRefusal) {
                 _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter. To pick one, do NOT reach for the first service that comes to mind — that is how you arrived at a host that refuses you. ENUMERATE several candidates first, drawn from the kinds of institution that publish authoritative data openly and without accounts: government space agencies and national laboratories, national meteorological and geological surveys, university observatories and academic data services, intergovernmental bodies, and established open-data projects. Then pick the candidate you are MOST CONFIDENT genuinely exists and genuinely serves this quantity, preferring one whose query interface you actually know over one that merely sounds plausible. If none of your candidates clears that bar, print UNKNOWN — a wrong hostname costs more than an honest gap.`;
                 if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
                 console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" DISQUALIFIED host ${_host} — auth/quota refusal detected in the re-fetched body`);
