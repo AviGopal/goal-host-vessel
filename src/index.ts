@@ -6724,6 +6724,27 @@ If one of those sibling shapes is the action that would create what the goal ask
       // accepting 0 and wandering). Bounded by the retry cap, so a genuinely-zero
       // answer still returns after the retries exhaust.
       const _isMeasureGoal = /\b(count|number of|how many|length|words?|lines?|characters?|chars?)\b/i.test(goal);
+      // A RAW DUMP IS NOT AN ANSWER — and it is the last mile this walk keeps dying on.
+      //
+      // Measured end to end: the walk reached ssd.jpl.nasa.gov with a VALID request
+      // (COMMAND='Io' is correct Horizons syntax), the fetch returned real ephemeris text, and
+      // the correction loop stopped because `_degenerateReason` is satisfied by any non-empty
+      // output. The reach judge then refused it, correctly: "contains raw information without
+      // presenting the required measurement". The data was in hand and nobody extracted it.
+      //
+      // So say that a multi-kilobyte body with no stated value is not done. This does NOT judge
+      // whether an answer is right — that stays with the reach gate. It only denies "large blob"
+      // the status of "produced a value", which restarts the correction loop for ONE more turn —
+      // and that turn is already equipped: `_bodyEvidence` re-fetches the body and puts it in
+      // front of the model, the repair that has worked on first contact every time it fired.
+      // Extraction is exactly what a model can do when shown the bytes.
+      //
+      // Bounded to stay off the paths that legitimately return prose or artifacts: only for goals
+      // that ASK for a quantity, only above 800 chars, and only when no short line anywhere in the
+      // output already states a number — so a command that printed "6.2737" plus a banner passes
+      // untouched, and only an unmined dump is sent back.
+      const _asksForQuantity = _isMeasureGoal
+        || /\b(distance|range|separation|how far|price|value|measurement|temperature|units?)\b/i.test(goal);
       if (/^0+$/.test(st) && _isMeasureGoal) {
         return `the command returned "0" for a count/measure goal on a non-empty target — likely the wrong command or file path`;
       }
@@ -6750,6 +6771,16 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _nums = st.match(/(?<![\d.])\d+(?![\d.])/g) ?? [];
         if (_nums.length > 0 && _nums.every((n) => /^0+$/.test(n))) {
           return `every number the command printed is zero on a count/measure goal (${JSON.stringify(st.slice(0, 80))}) — a zero wrapped in the requested artifact is still a zero, and on a non-empty target that is almost always the wrong command or path`;
+        }
+      }
+      // UNMINED DUMP (see the note beside _asksForQuantity).
+      if (_asksForQuantity && st.length > 800) {
+        const _shortNumericLine = st.split("\n").some((l) => {
+          const t = l.trim();
+          return t.length > 0 && t.length <= 120 && /(?<![\w.])\d+(?:\.\d+)?(?![\w])/.test(t);
+        });
+        if (!_shortNumericLine) {
+          return `the command returned ${st.length} characters of raw body with no line that states a value — the DATA was fetched but the ANSWER was never extracted from it. Do not re-fetch: the body is shown above. Emit a command that parses the value the goal asks for OUT of that response and prints it alone`;
         }
       }
       return null;
