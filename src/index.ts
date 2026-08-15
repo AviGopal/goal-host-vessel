@@ -6759,6 +6759,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     let direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
     if (_isExecShape && !terminalShapes.has(shape)) {
       let _tries = 0;
+      // Hosts proven this dispatch to refuse us outright (401/403/quota). Populated from the
+      // re-fetched body, and ENFORCED below rather than merely stated in the prompt.
+      const _bannedHosts = new Set<string>();
+      const _hostOf = (cmd: string): string | null => { const m = cmd.match(/https?:\/\/([^\/'"\s]+)/i); return m?.[1]?.toLowerCase() ?? null; };
       let _deg = _degenerateReason(direct);
       while (_deg && _tries < 2) {
         _tries++;
@@ -6840,6 +6844,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               // no endpoint is suggested, because finding one that needs no key IS the task.
               if (_authRefusal) {
                 _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter.`;
+                if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
                 console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" DISQUALIFIED host ${_host} — auth/quota refusal detected in the re-fetched body`);
               }
               console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" re-fetched the eaten body for the corrector (${_probeTxt.length} chars)`);
@@ -6847,7 +6852,37 @@ If one of those sibling shapes is the action that would create what the goal ask
           }
         }
         const _corr = `Your previous ${shape} command ${_prevCmd ? JSON.stringify(_prevCmd) : "(none)"} was WRONG: ${_deg}.${_bodyEvidence} Synthesize a CORRECTED, self-contained, non-interactive command that actually PRODUCES the value the goal asks for: verify the exact file path the goal names, ensure the command PRINTS the number/result to stdout, and never print null. IF THE PREVIOUS COMMAND FETCHED OVER THE NETWORK (curl/wget), the failure is far more likely to be about the RESPONSE than about a file path — this container HAS outbound internet access, so the endpoint answered with something you did not expect: HTML, an error page, or plain text where you assumed JSON. A jq error such as "Invalid numeric literal" means exactly that, and the body is already lost because jq consumed it. Do NOT re-pipe into the same parser: first PRINT THE RAW RESPONSE (e.g. curl -s '<url>' | head -c 400) so the next attempt can see what actually came back, or request a format the endpoint really serves and parse that. Emit only the corrected command.`;
-        const _reSyn = await llmExtractPointerArgs(shape, _corr);
+        // ENFORCE THE BAN, DO NOT MERELY STATE IT.
+        //
+        // Measured: the correction prompt named the host in capitals — "do NOT call
+        // api.le-systeme-solaire.net again, and do not retry it with different parameters, a
+        // different path, or a different parser expression" — and the very next command was
+        //   curl -s 'https://api.le-systeme-solaire.net/…' | jq '.meanRadius / 149597870.7'
+        // the same banned host with a different field. On another dispatch the identical
+        // instruction DID move it to a new host. Same prompt, opposite behaviour: the constraint
+        // is sampled, not obeyed.
+        //
+        // This session's one repair that worked first time (re-fetching the response body) worked
+        // because it changed what the model SAW, not what it was TOLD. The same lesson applies one
+        // level up: a host known to refuse us can be checked in code, so check it in code. A
+        // re-synthesis that targets a banned host is never executed — running it would spend the
+        // attempt budget on a request whose answer is already known to be a refusal.
+        //
+        // Rejections do NOT consume `_tries`, because no command was run and nothing was learned;
+        // they are separately bounded so a model that will only ever emit the banned host cannot
+        // spin. The escalation states the ban as an accomplished fact rather than a request.
+        let _reSyn: Record<string, unknown> | null = null;
+        let _rejects = 0;
+        for (;;) {
+          const _escalation = _rejects === 0 ? "" : `\n\nYOUR LAST ANSWER WAS REJECTED WITHOUT BEING RUN. It targeted ${[..._bannedHosts].join(", ")}, which is already proven to refuse this container. That host is not a candidate and cannot become one by changing the path, the query string, or the parser. Name a DIFFERENT provider entirely — a public one that serves this data with no key and no account — or, if you genuinely know of none, emit a command that fetches nothing and prints the single word UNKNOWN so the failure is honest. Do not invent a plausible-looking domain: a hostname you are not sure exists is worse than UNKNOWN.`;
+          _reSyn = await llmExtractPointerArgs(shape, `${_corr}${_escalation}`);
+          if (!_reSyn) break;
+          const _cand = ["command", "cmd", "script", "sql"].map((k) => _reSyn![k]).find((v) => typeof v === "string") as string | undefined;
+          const _candHost = _cand ? _hostOf(_cand) : null;
+          if (!_candHost || !_bannedHosts.has(_candHost) || _rejects >= 2) break;
+          _rejects++;
+          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" REJECTED re-synthesis #${_rejects} — it targeted BANNED host ${_candHost}; not executing, re-synthesising`);
+        }
         if (!_reSyn) break;
         directArgsRaw = { ...directArgsRaw, ..._reSyn };
         directArgs = bindBody(directArgsRaw);
