@@ -6794,7 +6794,36 @@ If one of those sibling shapes is the action that would create what the goal ask
             const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 400` }));
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
             if (_probeTxt && _probeTxt.trim()) {
-              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected, READ IT before choosing a fix; if it is an authorisation error, a rate limit, an HTML page or anything other than the data you expected, then NO parser expression can fix it and you must change the ENDPOINT, not the filter):\n${_probeTxt.slice(0, 600)}`;
+              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected. READ IT and let it decide WHICH KIND of fix is needed, because the kinds are not interchangeable: a refusal to serve you at all means the HOST is wrong, while a complaint about the REQUEST means the host is fine and the QUERY is wrong):\n${_probeTxt.slice(0, 600)}`;
+              // TELL THE TWO 4xx FAMILIES APART — conflating them threw away a WORKING endpoint.
+              //
+              // Measured, and this one is a self-inflicted regression. This block originally said:
+              // "if it is an authorisation error, a rate limit, an HTML page or ANYTHING OTHER THAN
+              // THE DATA YOU EXPECTED … you must change the ENDPOINT, not the filter." Correct for a
+              // 401. Actively wrong for a 400.
+              //
+              // The walk had, unprompted and with no URL planted anywhere, synthesised a request
+              // against the CORRECT authoritative keyless ephemeris — ssd.jpl.nasa.gov/api/horizons
+              // — and got back:
+              //     {"message":"one or more query parameter was not recognized","code":"400"}
+              // because it passed a parameter that does not exist and omitted a required one. The
+              // host was right, the query was wrong, and the guidance above told it to change the
+              // HOST. It duly hopped to a keyed API (refused, 401), and then to a hallucinated
+              // domain. The single best endpoint it will ever find was discarded on advice.
+              //
+              // So classify. A refusal to serve (401/403, "api key", quota) is a fact about the
+              // HOST: no credentials exist here, so it can never work — disqualify it. A complaint
+              // about the REQUEST (400, "parameter", "invalid", "required", "unrecognized") is a
+              // fact about the QUERY: the host answered, it read the request, and it said what was
+              // wrong — that is the most valuable response of all, and it means KEEP THE HOST.
+              const _authRefusal = /unauthori[sz]ed|api[\s_-]?key|forbidden|\b40[13]\b|authentication|access denied|sign\s?up|subscribe/i.test(_probeTxt);
+              const _badRequest = !_authRefusal && /\b400\b|parameter|invalid|required|unrecogni[sz]ed|malformed|bad request|missing/i.test(_probeTxt);
+              let _host = "that endpoint";
+              try { const m = _fetchPart.match(/https?:\/\/([^\/'"\s]+)/i); if (m?.[1]) _host = m[1]; } catch { /* keep default */ }
+              if (_badRequest) {
+                _bodyEvidence += `\n\nTHAT IS THE HOST COMPLAINING ABOUT YOUR REQUEST, NOT REFUSING YOU. ${_host} IS REACHABLE, NEEDS NO CREDENTIALS, AND ANSWERED — it has told you precisely what is wrong with the query. DO NOT CHANGE THE HOST. Do not go looking for a different provider, and above all do not invent one: an endpoint that answers and explains its own error is worth far more than an unknown one. KEEP ${_host} and FIX THE QUERY — correct the parameter names to ones this API documents, supply any required parameter you omitted, and drop any you invented. If you are unsure of the parameter set, request the endpoint's own help/error text and read it.`;
+                console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" BAD-REQUEST on ${_host} — instructed to KEEP the host and fix the query`);
+              }
               // DISQUALIFY THE HOST MECHANICALLY — presenting the body is not enough on its own.
               //
               // Measured: with this same 401 text in front of it, one executor switched to printing
@@ -6809,9 +6838,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               // credentials, so a host demanding them can never work, and every retry spent on it is
               // wasted. Name the host and forbid it. What replaces it is still the model's problem —
               // no endpoint is suggested, because finding one that needs no key IS the task.
-              if (/unauthori[sz]ed|api[\s_-]?key|forbidden|\b40[13]\b|authentication|access denied|sign\s?up|subscribe/i.test(_probeTxt)) {
-                let _host = "that endpoint";
-                try { const m = _fetchPart.match(/https?:\/\/([^\/'"\s]+)/i); if (m?.[1]) _host = m[1]; } catch { /* keep default */ }
+              if (_authRefusal) {
                 _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter.`;
                 console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" DISQUALIFIED host ${_host} — auth/quota refusal detected in the re-fetched body`);
               }
