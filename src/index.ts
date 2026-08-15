@@ -9329,8 +9329,8 @@ async function runGoalWithRecovery(
         const _q3 = _terms.slice(0, 3).join(" ");
         const _q1 = _terms.slice(0, 1).join(" ");
         const [_r3, _r1] = await Promise.all([
-          _q3 ? recallConceptRows(_q3, 5, 4_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
-          _q1 && _q1 !== _q3 ? recallConceptRows(_q1, 5, 4_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
+          _q3 ? recallConceptRows(_q3, 5, 10_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
+          _q1 && _q1 !== _q3 ? recallConceptRows(_q1, 5, 10_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
         ]);
         // null from BOTH means concept-db could not be ASKED; that is not an empty store
         // and must not be logged as one.
