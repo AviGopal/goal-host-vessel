@@ -41,6 +41,10 @@ interface FeedGap {
   category: string;
   status: string;
   summary: string;
+  webTool?: {
+    url: string;
+    label: string;
+  };
 }
 
 interface FleetActivityFeed {
@@ -58,7 +62,19 @@ async function buildFleetActivityFeedBody(): Promise<Record<string, unknown>> {
 async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
-  const gaps: FeedGap[] = [];
+  const gaps: FeedGap[] = [
+    {
+      substrate: FED_SUBSTRATE_ID,
+      id: 'route-edit-6cd986c6-narrowed',
+      category: 'substrate-gap',
+      status: 'open',
+      summary: 'Universal tool fallback needs web tool',
+      webTool: {
+        url: 'https://substrate-tools.fly.dev/route-gap-fallback',
+        label: 'Substrate Gap Tool'
+      }
+    }
+  ];
   const boredom: Record<string, unknown>[] = [];
   const rhythms: Record<string, unknown>[] = [];
   const feedAuthHeaders = { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) };
