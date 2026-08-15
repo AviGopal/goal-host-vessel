@@ -6786,7 +6786,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       let _inspections = 0;
       const _isInspection = (cmd: string | undefined): boolean =>
         !!cmd && /\|\s*head\b/.test(cmd) && !/\|\s*(jq|awk|sed|python|bun|perl|cut|grep)\b/.test(cmd);
-      while (_deg && _tries < 2 + Math.min(_inspections, 2)) {
+      while (_deg && _tries < 3 + Math.min(_inspections, 3)) {
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
         // RECOVER THE RESPONSE BODY THE PIPELINE ATE — don't ask the model to go and look.
@@ -6981,7 +6981,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} WAS: ${JSON.stringify(_prevCmd ?? null)?.slice(0, 500)} -> NOW: ${JSON.stringify(_newCmd ?? null)?.slice(0, 500)}`);
         if (_isInspection(_newCmd)) {
           _inspections++;
-          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} was an INSPECTION (raw-body read, no parser) — crediting the turn back; budget now ${2 + Math.min(_inspections, 2)}`);
+          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} was an INSPECTION (raw-body read, no parser) — crediting the turn back; budget now ${3 + Math.min(_inspections, 3)}`);
         }
       }
       // RECOVERY BEFORE REFUSAL — a refusal that leaves NO artifact is not obviously
