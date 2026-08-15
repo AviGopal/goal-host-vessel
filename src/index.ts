@@ -6975,19 +6975,37 @@ If one of those sibling shapes is the action that would create what the goal ask
         // recalled from memory (5.204, 4.1999, 0.997 — all graded green earlier today) cannot pass
         // that check unless the authoritative response really contains it. If it does not occur,
         // nothing is bound and the normal correction path runs unchanged.
-        if (_deg && /raw body with no line that states a value/.test(_deg) && _probeBody && _probeBody.length > 200) {
-          const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_probeBody.slice(0, 12000)}`;
+        // THE DUMP IS ALREADY IN HAND — do not depend on the re-fetch probe for it.
+        //
+        // The first version of this step read `_probeBody`, which is only populated by the
+        // body-recovery probe, which only runs for a previous command containing a pipe whose
+        // fetch prefix is a lone curl. Measured: Z1 ran the `shell` executor, the probe never
+        // fired, `_probeBody` was empty, and this step silently declined — while the walk sat on
+        // 4000 characters of Horizons data it had already fetched. Every earlier run where the
+        // probe fired was `shellResult`. Two executors on one walk, different evidence, and a fix
+        // scoped to one of them: the sibling-call-site mistake, again.
+        //
+        // But the body the dump detector complained about IS the command's own stdout, sitting in
+        // `direct` right now. Read it from there and the step works for any executor, with no
+        // second network call — the value is extracted from the bytes the walk actually received.
+        const _dumpBody = (() => {
+          const o = (typeof direct === "object" && direct !== null) ? (direct as Record<string, unknown>) : null;
+          const _sout = o && "stdout" in o ? String(o["stdout"] ?? "") : (typeof direct === "string" ? String(direct) : "");
+          return _sout.trim() || _probeBody;
+        })();
+        if (_deg && /raw body with no line that states a value/.test(_deg) && _dumpBody && _dumpBody.length > 200) {
+          const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_dumpBody.slice(0, 12000)}`;
           const _xr = await ufExecuteTool("llm_completion_dispatch", { prompt: _xq, max_tokens: 60 }, new Set<string>(["llm_completion_dispatch"]));
           if (_xr.ok) {
             const _val = String(_xr.result).replace(/^[\s"'`]+|[\s"'`]+$/g, "").split(/\s+/)[0] ?? "";
             const _plausible = _val.length > 0 && _val !== "NONE" && /\d/.test(_val) && _val.length <= 40;
-            if (_plausible && _probeBody.includes(_val)) {
+            if (_plausible && _dumpBody.includes(_val)) {
               directArgsRaw = { ...directArgsRaw, command: `echo ${JSON.stringify(_val)}` };
               directArgs = bindBody(directArgsRaw);
               const _xre = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
               if (_xre != null) direct = _xre;
               _deg = _degenerateReason(direct);
-              tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" EXTRACTED ${JSON.stringify(_val)} from the fetched body (verified verbatim in ${_probeBody.length} bytes) — bound as echo, no re-fetch`);
+              tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" EXTRACTED ${JSON.stringify(_val)} from the fetched body (verified verbatim in ${_dumpBody.length} bytes) — bound as echo, no re-fetch`);
               if (!_deg) break;
             } else {
               console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extraction REJECTED (${_plausible ? "not found verbatim in the fetched body" : "not a plausible value"}: ${JSON.stringify(_val.slice(0, 40))}) — falling through to normal correction`);
