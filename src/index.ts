@@ -6845,6 +6845,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // `;`, no `&&`, no `>` redirect, no backgrounding — so this can never re-run a mutating
         // command as a side effect of diagnosing one.
         let _bodyEvidence = "";
+        let _probeBody = "";   // the bytes the endpoint actually returned, kept for extraction below
         if (_prevCmd && /\|/.test(_prevCmd)) {
           const _fetchPart = _prevCmd.slice(0, _prevCmd.indexOf("|")).trim();
           const _safe = /^(curl|wget)\b/.test(_fetchPart) && !/[;&>]|&&|\$\(|`/.test(_fetchPart);
@@ -6852,6 +6853,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 20000` }));
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
             if (_probeTxt && _probeTxt.trim()) {
+              _probeBody = _probeTxt;
               _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected. READ IT and let it decide WHICH KIND of fix is needed, because the kinds are not interchangeable: a refusal to serve you at all means the HOST is wrong, while a complaint about the REQUEST means the host is fine and the QUERY is wrong):\n${_probeTxt.length > 3000 ? `${_probeTxt.slice(0, 1500)}\n…[middle of a ${_probeTxt.length}-char response elided — THE DATA IS OFTEN BELOW THE PREAMBLE, so the tail follows]…\n${_probeTxt.slice(-1500)}` : _probeTxt}`;
               // TELL THE TWO 4xx FAMILIES APART — conflating them threw away a WORKING endpoint.
               //
@@ -6952,6 +6954,43 @@ If one of those sibling shapes is the action that would create what the goal ask
                 }
               }
               console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" re-fetched the eaten body for the corrector (${_probeTxt.length} chars)`);
+            }
+          }
+        }
+        // EXTRACT, DO NOT ASK FOR ANOTHER COMMAND.
+        //
+        // When the body is already in hand and only the VALUE is missing, asking for "a corrected
+        // command" is asking for the wrong thing, and measured behaviour proves it: shown 3547
+        // characters of real Horizons ephemeris and told in as many words "do not re-fetch, parse
+        // the value out of the body above", the model re-fetched with different parameters. Twice.
+        // The corrector's frame is command-synthesis, so a model asked for a command emits a fetch,
+        // because the last one was a fetch. Supplying evidence works when the evidence alone
+        // changes the answer; it fails when it must be paired with a behaviour request.
+        //
+        // So remove the request. Ask ONLY for the value, then bind it as `echo <value>` — the step
+        // cannot decide to re-fetch because emitting a command is no longer what it does.
+        //
+        // FABRICATION IS STRUCTURALLY IMPOSSIBLE HERE, not merely discouraged: the returned string
+        // is accepted ONLY if it occurs VERBATIM in the bytes that were actually fetched. A number
+        // recalled from memory (5.204, 4.1999, 0.997 — all graded green earlier today) cannot pass
+        // that check unless the authoritative response really contains it. If it does not occur,
+        // nothing is bound and the normal correction path runs unchanged.
+        if (_deg && /raw body with no line that states a value/.test(_deg) && _probeBody && _probeBody.length > 200) {
+          const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_probeBody.slice(0, 12000)}`;
+          const _xr = await ufExecuteTool("llm_completion_dispatch", { prompt: _xq, max_tokens: 60 }, new Set<string>(["llm_completion_dispatch"]));
+          if (_xr.ok) {
+            const _val = String(_xr.result).replace(/^[\s"'`]+|[\s"'`]+$/g, "").split(/\s+/)[0] ?? "";
+            const _plausible = _val.length > 0 && _val !== "NONE" && /\d/.test(_val) && _val.length <= 40;
+            if (_plausible && _probeBody.includes(_val)) {
+              directArgsRaw = { ...directArgsRaw, command: `echo ${JSON.stringify(_val)}` };
+              directArgs = bindBody(directArgsRaw);
+              const _xre = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+              if (_xre != null) direct = _xre;
+              _deg = _degenerateReason(direct);
+              tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" EXTRACTED ${JSON.stringify(_val)} from the fetched body (verified verbatim in ${_probeBody.length} bytes) — bound as echo, no re-fetch`);
+              if (!_deg) break;
+            } else {
+              console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extraction REJECTED (${_plausible ? "not found verbatim in the fetched body" : "not a plausible value"}: ${JSON.stringify(_val.slice(0, 40))}) — falling through to normal correction`);
             }
           }
         }
