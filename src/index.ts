@@ -6784,6 +6784,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the command really is a bare read of the response — a pipe into `head` with no parser —
       // which is exactly the shape the instruction requests.
       let _inspections = 0;
+      const _inspectedHosts = new Set<string>();
       const _isInspection = (cmd: string | undefined): boolean =>
         !!cmd && /\|\s*head\b/.test(cmd) && !/\|\s*(jq|awk|sed|python|bun|perl|cut|grep)\b/.test(cmd);
       while (_deg && _tries < 3 + Math.min(_inspections, 3)) {
@@ -6951,7 +6952,19 @@ If one of those sibling shapes is the action that would create what the goal ask
           if (!_reSyn) break;
           const _cand = ["command", "cmd", "script", "sql"].map((k) => _reSyn![k]).find((v) => typeof v === "string") as string | undefined;
           const _candHost = _cand ? _hostOf(_cand) : null;
-          if (!_candHost || !_bannedHosts.has(_candHost) || _rejects >= 2) break;
+          if (!_candHost || !_bannedHosts.has(_candHost)) break;
+          if (_rejects >= 2) {
+            // ABANDON, DO NOT FALL THROUGH AND RUN IT. This hatch existed to stop a model that
+            // will only ever emit the banned host from spinning, and it did that by breaking out
+            // of the loop — straight into the execute path, which RAN the banned command. Measured:
+            // after two refusals the walk reached api.le-systeme-solaire.net on the third try, so
+            // the guard defeated the enforcement it was guarding. A host proven to refuse us is
+            // still refusing us on attempt three; the honest outcome is no command, not a request
+            // whose answer is already known.
+            _reSyn = null;
+            console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" ABANDONED correction — ${_rejects + 1} syntheses in a row targeted banned host(s) ${[..._bannedHosts].join(", ")}; refusing to execute any of them`);
+            break;
+          }
           _rejects++;
           console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" REJECTED re-synthesis #${_rejects} — it targeted BANNED host ${_candHost}; not executing, re-synthesising`);
         }
@@ -6979,7 +6992,15 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _newCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 200) + ")" : "now produces a value"}`);
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} WAS: ${JSON.stringify(_prevCmd ?? null)?.slice(0, 500)} -> NOW: ${JSON.stringify(_newCmd ?? null)?.slice(0, 500)}`);
-        if (_isInspection(_newCmd)) {
+        // CREDIT ONCE PER HOST. The credit is meant to pay for the raw-body read the corrector is
+        // instructed to perform against a host it is trying to learn. Measured: it also refunded
+        // AIMLESS looking — S1 inspected a wrong Horizons subdomain, wandered back to the banned
+        // host, then inspected a third host, gaining budget each time, so drifting between
+        // providers became free and the budget rose faster than progress. Learning one API's
+        // schema is worth a turn; visiting a new host to look at it is not.
+        const _inspHost = _isInspection(_newCmd) ? (_newCmd ? _hostOf(_newCmd) : null) : null;
+        if (_inspHost && !_inspectedHosts.has(_inspHost)) {
+          _inspectedHosts.add(_inspHost);
           _inspections++;
           console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} was an INSPECTION (raw-body read, no parser) — crediting the turn back; budget now ${3 + Math.min(_inspections, 3)}`);
         }
