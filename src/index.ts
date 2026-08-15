@@ -6795,6 +6795,26 @@ If one of those sibling shapes is the action that would create what the goal ask
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
             if (_probeTxt && _probeTxt.trim()) {
               _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected, READ IT before choosing a fix; if it is an authorisation error, a rate limit, an HTML page or anything other than the data you expected, then NO parser expression can fix it and you must change the ENDPOINT, not the filter):\n${_probeTxt.slice(0, 600)}`;
+              // DISQUALIFY THE HOST MECHANICALLY — presenting the body is not enough on its own.
+              //
+              // Measured: with this same 401 text in front of it, one executor switched to printing
+              // the response (the fix working) and another appended `| tostring` to the very same
+              // failing command (the fix not working). And across FIVE dispatches the walk returned
+              // to the SAME keyed API every time. So the residual failure is not ignorance of the
+              // error — it is FIXATION on the first endpoint that came to mind, and a hint the model
+              // is free to read past cannot break a fixation.
+              //
+              // When the re-fetched body is recognisably an auth/quota refusal, that is a fact about
+              // the ENDPOINT, decidable here without asking the model: this container holds no
+              // credentials, so a host demanding them can never work, and every retry spent on it is
+              // wasted. Name the host and forbid it. What replaces it is still the model's problem —
+              // no endpoint is suggested, because finding one that needs no key IS the task.
+              if (/unauthori[sz]ed|api[\s_-]?key|forbidden|\b40[13]\b|authentication|access denied|sign\s?up|subscribe/i.test(_probeTxt)) {
+                let _host = "that endpoint";
+                try { const m = _fetchPart.match(/https?:\/\/([^\/'"\s]+)/i); if (m?.[1]) _host = m[1]; } catch { /* keep default */ }
+                _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter.`;
+                console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" DISQUALIFIED host ${_host} — auth/quota refusal detected in the re-fetched body`);
+              }
               console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" re-fetched the eaten body for the corrector (${_probeTxt.length} chars)`);
             }
           }
