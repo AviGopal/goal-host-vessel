@@ -6771,7 +6771,24 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
         if (_re != null) direct = _re;
         _deg = _degenerateReason(direct);
-        tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 80) + ")" : "now produces a value"}`);
+        // LOG THE COMMAND, NOT JUST THE COMPLAINT.
+        //
+        // This tap reported an 80-char slice of stderr and never the command that produced it,
+        // so a failing executor was undiagnosable from the outside: "produced only stderr: parse
+        // error: Invalid numeric literal at line 1" and "produced only stderr: [1]-  Done
+        // ( curl -s 'https" are the entire record of two different failures, and neither says
+        // what ran. Three separate investigations on 2026-08-15 stalled here, and two plausible
+        // root causes were proposed and then REFUTED by direct reproduction — both would have
+        // been shipped as fixes on the strength of a guess the log could not settle.
+        //
+        // `_prevCmd` is already in hand (the correction prompt quotes it) and the re-synthesised
+        // command is right there in `directArgsRaw`. Both are printed, so the pair that matters —
+        // what was tried, and what the retry changed it to — is finally readable. This is the
+        // check for "a retry that does not widen is not a retry": two attempts that log identical
+        // commands are now visibly a non-retry rather than an inferred one.
+        const _newCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
+        tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 200) + ")" : "now produces a value"}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} WAS: ${JSON.stringify(_prevCmd ?? null)?.slice(0, 500)} -> NOW: ${JSON.stringify(_newCmd ?? null)?.slice(0, 500)}`);
       }
       // RECOVERY BEFORE REFUSAL — a refusal that leaves NO artifact is not obviously
       // better than a wrong one, and right now it is the larger failure.
