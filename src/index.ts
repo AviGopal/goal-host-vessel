@@ -6421,6 +6421,18 @@ If one of those sibling shapes is the action that would create what the goal ask
     // COMMAND<->INTENT EVIDENCE (law 8): record the synthesized executable for this shape
     // ONLY when the resolve that USED it SUCCEEDS (called at each success return below), so
     // a failed command is never mis-attributed to content produced by another path.
+    // CALLED FROM EVERY CONTENT-RETURNING PATH, not just the direct one.
+    //
+    // Measured twice: the reach judge received `cmdEvidenceLen=0` for the `shell` executor while
+    // `shellResult` on the same walk supplied its command normally. The first repair widened the
+    // ARG KEYS this recogniser accepts — and the live run then showed the fallback firing for
+    // `code_modification_proposal` while `shell` stayed at zero, which proves the recogniser was
+    // never the problem on that path: the function was not being CALLED there at all. Patching the
+    // adjacent cause rather than the measured one.
+    //
+    // Rather than keep guessing which return a given shape exits through, record at all of them.
+    // Provenance is additive — it cannot change what is returned, only what the grader can see —
+    // so the safe move is total coverage instead of another single-path fix.
     const recordExecutorCommand = (args: Record<string, unknown>): void => {
       for (const k of ["command", "cmd", "script", "sql"]) {
         const val = args[k];
@@ -7226,6 +7238,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" persisted with an EMPTY body — not a genuine emit; treating as unsatisfied so reach is graded honestly (not a hollow green)`);
         // fall through: the terminal shape stays unsatisfied -> honest not-reached
       } else if (v !== null && "persisted" in v && v.persisted === true) {
+        recordExecutorCommand(directArgsRaw);
         return { content: v.content, effect: effectTupleOf(shape, ep?.endpoint, v.content) };
       } else if (v !== null && "persisted" in v && v.persisted === false) {
         tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
@@ -7358,10 +7371,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     // to the pool too (it's genuine output).
     addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`);
     const reread = await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs });
-    if (reread != null) return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) };
+    if (reread != null) { recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
     // Action succeeded but re-read empty — still genuine progress (the artifact was
     // created). Surface the action result as the target's content rather than null,
     // so the walk advances and the reach-gate can judge the real artifact.
+    recordExecutorCommand({ ...action.args });
     return { content: actionResult, effect: effectTupleOf(shape, ep?.endpoint, actionResult) };
   };
 
