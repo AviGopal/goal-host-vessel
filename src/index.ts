@@ -6764,7 +6764,29 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _bannedHosts = new Set<string>();
       const _hostOf = (cmd: string): string | null => { const m = cmd.match(/https?:\/\/([^\/'"\s]+)/i); return m?.[1]?.toLowerCase() ?? null; };
       let _deg = _degenerateReason(direct);
-      while (_deg && _tries < 2) {
+      // AN INSPECTION TURN IS NOT A FAILED ANSWER, SO IT MUST NOT COST ONE.
+      //
+      // The corrector is explicitly told, when a fetch fails, to PRINT THE RAW RESPONSE rather than
+      // re-pipe into the same parser — and that instruction works: measured, the walk emits
+      // `curl '<url>' | head -c 400`. But that command produces no value, so `_degenerateReason`
+      // marks it degenerate and it consumes one of only TWO attempts. The guidance and the budget
+      // were fighting each other: obeying the instruction left exactly one turn to learn an
+      // unfamiliar API's parameter set AND produce the answer, and the walk ran out mid-convergence
+      // having done everything right.
+      //
+      // Observed end-to-end on the run that finally reached the correct endpoint: disqualify the
+      // refusing host, search for candidates, select ssd.jpl.nasa.gov, inspect it with `head -c
+      // 400` — and stop, budget spent, with the 400 that names the bad parameters never acted on.
+      //
+      // So credit inspection turns back. They are cheap (one fetch, no parsing), they are what the
+      // system asked for, and they are the step that turns an unknown schema into a known one.
+      // Bounded at two so a model that only ever inspects still terminates, and counted only when
+      // the command really is a bare read of the response — a pipe into `head` with no parser —
+      // which is exactly the shape the instruction requests.
+      let _inspections = 0;
+      const _isInspection = (cmd: string | undefined): boolean =>
+        !!cmd && /\|\s*head\b/.test(cmd) && !/\|\s*(jq|awk|sed|python|bun|perl|cut|grep)\b/.test(cmd);
+      while (_deg && _tries < 2 + Math.min(_inspections, 2)) {
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
         // RECOVER THE RESPONSE BODY THE PIPELINE ATE — don't ask the model to go and look.
@@ -6957,6 +6979,10 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _newCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" cold-command self-correction attempt ${_tries} — ${_deg ? "still degenerate (" + _deg.slice(0, 200) + ")" : "now produces a value"}`);
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} WAS: ${JSON.stringify(_prevCmd ?? null)?.slice(0, 500)} -> NOW: ${JSON.stringify(_newCmd ?? null)?.slice(0, 500)}`);
+        if (_isInspection(_newCmd)) {
+          _inspections++;
+          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} was an INSPECTION (raw-body read, no parser) — crediting the turn back; budget now ${2 + Math.min(_inspections, 2)}`);
+        }
       }
       // RECOVERY BEFORE REFUSAL — a refusal that leaves NO artifact is not obviously
       // better than a wrong one, and right now it is the larger failure.
