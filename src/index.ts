@@ -6709,7 +6709,26 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (r == null) return "the command produced no result";
       const o = (typeof r === "object" && r !== null) ? (r as Record<string, unknown>) : null;
       const stdout = o && "stdout" in o ? String(o["stdout"] ?? "") : (typeof r === "string" ? String(r) : "");
-      const stderr = o && "stderr" in o ? String(o["stderr"] ?? "") : "";
+      // STRIP BASH JOB-CONTROL NOTICES BEFORE JUDGING STDERR.
+      //
+      // `groupBounded` runs every command under `set -m` so a timeout can kill the whole process
+      // group. With job control on, bash reports finished background jobs on stderr as
+      // `[1]-  Done   ( … )` / `[1]+  Exit 1  ( … )`. That is bookkeeping, not a diagnostic — but
+      // it lands in stderr, so a command whose stdout is empty for any reason is reported as
+      // "produced only stderr: [1]-  Done …", which tells the corrector nothing and burns a turn.
+      //
+      // Measured live via the extract-guard diagnostic: THREE of four correction turns in one
+      // dispatch died exactly this way, on 166 bytes of output. (I hypothesised this earlier, twice
+      // failed to reproduce it with a hand-written `( echo HELLO ) &`, and wrongly recorded it as
+      // refuted — the model's own commands carry background constructs a scratch script did not.
+      // The upstream question of whether `set -m` should be narrowed stays open; this filters the
+      // noise at the consumer, which is correct regardless of how that is answered.)
+      //
+      // Only the notice lines are dropped. A real error on stderr survives untouched, so this
+      // cannot hide a genuine failure — it only stops bookkeeping from impersonating one.
+      const _stripJobNotices = (e: string): string =>
+        e.split("\n").filter((l) => !/^\s*\[\d+\][-+]?\s+(Done|Exit \d+|Running|Terminated|Killed)\b/.test(l)).join("\n");
+      const stderr = o && "stderr" in o ? _stripJobNotices(String(o["stderr"] ?? "")) : "";
       const exit = o && ("exitCode" in o || "exit" in o) ? Number(o["exitCode"] ?? o["exit"]) : 0;
       const st = stdout.trim();
       if (exit && exit !== 0) return `the command exited ${exit}` + (stderr.trim() ? ` with stderr: ${stderr.slice(0, 200)}` : "");
@@ -6993,6 +7012,9 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _sout = o && "stdout" in o ? String(o["stdout"] ?? "") : (typeof direct === "string" ? String(direct) : "");
           return _sout.trim() || _probeBody;
         })();
+        // Diagnostic: this step declined twice with no trace of why, and two guesses at the
+        // cause were wrong. Print the guard's own inputs so the next run answers it directly.
+        console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extract-guard: degMatch=${_deg ? /raw body with no line that states a value/.test(_deg) : "no-deg"} dumpLen=${_dumpBody.length} probeLen=${_probeBody.length} deg=${JSON.stringify((_deg ?? "").slice(0, 90))}`);
         if (_deg && /raw body with no line that states a value/.test(_deg) && _dumpBody && _dumpBody.length > 200) {
           const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_dumpBody.slice(0, 12000)}`;
           const _xr = await ufExecuteTool("llm_completion_dispatch", { prompt: _xq, max_tokens: 60 }, new Set<string>(["llm_completion_dispatch"]));
