@@ -4143,7 +4143,27 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // that contradicts the truth), and fall back to the full evidence when it does not.
   const scratchpad = `${finalText}\n\n--- grounded tool outputs ---\n${observations.join("\n\n")}`.slice(0, 6000);
   const answerStatesAValue = /\d/.test(finalText);
-  const digest = authoredFinalAnswer && answerStatesAValue ? finalText.trim().slice(0, 6000) : scratchpad;
+  const _digestBase = authoredFinalAnswer && answerStatesAValue ? finalText.trim().slice(0, 6000) : scratchpad;
+  // TELL THE JUDGE WHEN NOTHING WAS RETRIEVED (2026-08-15).
+  //
+  // The reach judge reads the DIGEST. `taskSummary` already carries "0/0 tool call(s) OK" and the
+  // judge approved anyway — three times, each worse than the last: a fabricated eBay price, an
+  // Earth-Mars distance 16 days stale, and finally "Earth to Io distance: 5.204 AU (computed for
+  // the present epoch, J2000.0)" — Jupiter's SEMI-MAJOR AXIS, a textbook constant, against a true
+  // 6.2734 AU. All three graded reached:true. A fabrication that grades green is worse than an
+  // honest failure: it is invisible to every consumer and it poisons reuse-before-derive, which
+  // borrows pathways by their reached record.
+  //
+  // The fix is the judge's INPUT, not the reach boolean. The boolean's `||` is load-bearing: the
+  // agentic dispatch wrapper runs its tool loop internally and surfaces no client-side tool_calls,
+  // so a genuinely grounded answer legitimately arrives with groundedOk === 0 (verified: it answers
+  // a file line-count correctly and declines an un-fetchable web question honestly). Tightening the
+  // boolean would re-kill that path. Stating the absence of retrieval in the text the judge grades
+  // leaves the honest wrapper answers untouched and denies the fabricated ones their false
+  // authority — the judge can still reach, but it must do so knowing the numbers are unsourced.
+  const digest = (executed.length === 0 && groundedOk === 0)
+    ? `[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED. If this goal asked for a current, live or measured value from outside this repository, an unretrieved answer does not fulfil it however plausible the number looks.]\n\n${_digestBase}`
+    : _digestBase;
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`); if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
@@ -5767,7 +5787,15 @@ async function runGoalAsPoolWalk(
       // AND-matched: the long sentence this used to send ("... pointer arguments
       // payload fields how to invoke resolver") could only match a document containing
       // EVERY one of those words.
-      const rows = await recallConceptRows(`${shape} pointer payload`, 3, 4000);
+      // 12s, NOT 4s. The sibling walk-concepts recall was raised 4s -> 10s (b10c3f2) and this
+      // call site was missed. Measured 2026-08-15: the CHEAPEST possible concept-db query — a
+      // single term hitting on the first ladder rung — costs 8.8s, so a 4s budget expired before
+      // any payload guidance could ever arrive. Not "usually": by construction, 100% of the time.
+      // The comment on the walk-concepts recall reasons that recall is an optimisation the walk
+      // must never wait on; that tradeoff INVERTS here. A skipped concept costs slightly worse
+      // shape selection; skipped payload guidance costs the whole dispatch — observed as
+      // http_fetch resolving with `url: undefined` and returning HTTP 500 having contacted nothing.
+      const rows = await recallConceptRows(`${shape} pointer payload`, 3, 12_000);
       {
         const lines = (rows ?? []).map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 400)}`).filter((s) => s.length > 8);
         if (lines.length) howToGuidance = `PAYLOAD GUIDANCE for shape "${shape}" from the substrate's knowledge store — the correct pointer-arg field structure to emit (follow it EXACTLY, including any nested objects it names):\n${lines.join("\n")}\n\n`;
