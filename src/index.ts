@@ -6426,6 +6426,29 @@ If one of those sibling shapes is the action that would create what the goal ask
         const val = args[k];
         if (typeof val === "string" && val.trim()) { executorCommands.set(shape, val); return; }
       }
+      // NEVER LEAVE THE JUDGE WITHOUT PROVENANCE.
+      //
+      // This recogniser knows four key names. Measured live: for the `shell` and `bash` executors
+      // the reach judge received `cmdEvidenceLen=0` — it graded a bare number with NOTHING to check
+      // it against — while `shellResult` on the same walk supplied its command normally. That is
+      // how AA1 certified 45.938 AU as an Earth-Io range: the value came from
+      // `jq '.meanRadius / 149597870.7'` on EARTH, and the judge was never shown the command that
+      // would have made the mismatch obvious. The prompt asks it to check command<->intent
+      // alignment and then hands it no command.
+      //
+      // Third instance of the same asymmetry today — the body-recovery probe and the extraction
+      // step also cover `shellResult` and not its siblings. Rather than chase key names one
+      // executor at a time, fall back to a compact rendering of whatever string arguments the
+      // resolve actually used. Worse than a clean command, far better than silence, and it cannot
+      // conceal anything: the judge sees the real arguments either way.
+      const _fallback = Object.entries(args)
+        .filter(([, v]) => typeof v === "string" && v.trim().length > 0 && v.length < 2000)
+        .map(([k, v]) => `${k}=${String(v).slice(0, 400)}`)
+        .join(" ");
+      if (_fallback) {
+        executorCommands.set(shape, `(no command field; resolve args) ${_fallback}`);
+        console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" had no command/cmd/script/sql arg — recorded raw args as provenance so the reach judge is not graded blind`);
+      }
     };
     // COMPOSED-WRITE TITLE BINDING (composition last-mile): a derive->emit goal that
     // names an explicit title (e.g. ... a memory note titled "X") must carry that title
