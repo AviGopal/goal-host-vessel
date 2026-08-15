@@ -8665,6 +8665,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         .filter(([sh]) => producedShapes.has(sh))
         .map(([sh, cmd]) => `- ${sh} was produced by RUNNING: \`${String(cmd).slice(0, 1000)}\``)
         .join("\n");
+      // Diagnostic: eight false reaches this session, the last certifying 45.938 AU as an
+      // Earth-Io range from `jq '.meanRadius / 149597870.7'` on EARTH. The judge is supposed to
+      // receive that command under "COMMANDS THAT PRODUCED THE OUTPUT" and apply command<->intent
+      // scrutiny. Whether it did is undetermined and only observable here, so print exactly what
+      // the grader is handed: an empty commandEvidence means it graded a bare number with no
+      // provenance, which is a different defect from a judge that saw the provenance and shrugged.
+      console.log(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=${commandEvidence.length} shapes=${[...producedShapes].join(",").slice(0, 120)} digestLen=${(contentDigest ?? "").length} cmdEvidence=${JSON.stringify(commandEvidence.slice(0, 240))}`);
       const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [] };
       let verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv);
