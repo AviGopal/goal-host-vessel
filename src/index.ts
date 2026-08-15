@@ -6882,6 +6882,11 @@ If one of those sibling shapes is the action that would create what the goal ask
               // its motivating case and wrong for the neighbour, three times. Search results are
               // appended for the model to judge — nothing is auto-selected, no endpoint is named by
               // me, and if search returns nothing the prompt is exactly as it was.
+              if (_authRefusal) {
+                _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter. To pick one, do NOT reach for the first service that comes to mind — that is how you arrived at a host that refuses you. ENUMERATE several candidates first, drawn from the kinds of institution that publish authoritative data openly and without accounts: government space agencies and national laboratories, national meteorological and geological surveys, university observatories and academic data services, intergovernmental bodies, and established open-data projects. Then pick the candidate you are MOST CONFIDENT genuinely exists and genuinely serves this quantity, preferring one whose query interface you actually know over one that merely sounds plausible. If none of your candidates clears that bar, print UNKNOWN — a wrong hostname costs more than an honest gap.`;
+                if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
+                console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" DISQUALIFIED host ${_host} — auth/quota refusal detected in the re-fetched body`);
+              }
               if (_bannedHosts.size > 0) {
                 const _q = `public API no key required no authentication ${goal.slice(0, 120)}`;
                 const _srch = await ufExecuteTool("webSearchResult", { query: _q, max_results: 5 }, new Set<string>(["webSearchResult"]));
@@ -6891,10 +6896,6 @@ If one of those sibling shapes is the action that would create what the goal ask
                 } else {
                   console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" candidate search unavailable (${_srch.ok ? "empty" : _srch.error}) — corrector proceeds without candidates`);
                 }
-              } else if (_authRefusal) {
-                _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter. To pick one, do NOT reach for the first service that comes to mind — that is how you arrived at a host that refuses you. ENUMERATE several candidates first, drawn from the kinds of institution that publish authoritative data openly and without accounts: government space agencies and national laboratories, national meteorological and geological surveys, university observatories and academic data services, intergovernmental bodies, and established open-data projects. Then pick the candidate you are MOST CONFIDENT genuinely exists and genuinely serves this quantity, preferring one whose query interface you actually know over one that merely sounds plausible. If none of your candidates clears that bar, print UNKNOWN — a wrong hostname costs more than an honest gap.`;
-                if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
-                console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" DISQUALIFIED host ${_host} — auth/quota refusal detected in the re-fetched body`);
               }
               console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" re-fetched the eaten body for the corrector (${_probeTxt.length} chars)`);
             }
