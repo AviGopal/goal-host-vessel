@@ -6861,6 +6861,36 @@ If one of those sibling shapes is the action that would create what the goal ask
                 if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
                 _bodyEvidence += `\n\nNOTHING ANSWERED AT ${_host}. That is not an error message from a server — the request never completed: the name did not resolve, or the connection was refused. A hostname that does not resolve is almost always one that was INVENTED because it sounded plausible. ${_host} is DISQUALIFIED and no change to the path, the query string or the parser can revive it. Name a provider you are genuinely confident EXISTS — one whose real query interface you know — or print UNKNOWN. An honest UNKNOWN is worth more than a fabricated hostname, because a hostname nobody can reach cannot be checked by anyone downstream.`;
                 console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" NO-ANSWER from ${_host} (unresolvable/refused) — disqualified, NOT treated as a query error`);
+              }
+              // SUPPLY CANDIDATE PROVIDERS FROM THE SUBSTRATE'S OWN WEB SEARCH.
+              //
+              // Once a host is disqualified the walk needs a DIFFERENT provider, and measured
+              // behaviour is that it cannot produce one on demand: asked directly it returned the
+              // banned host again, and when the ban was enforced it printed UNKNOWN. Yet an earlier
+              // dispatch had named ssd.jpl.nasa.gov unprompted. The knowledge is in the model and is
+              // not retrievable at the moment of need, and restructuring the request (enumerate
+              // candidates by institution type, then choose) did not recover it.
+              //
+              // The read-at-use-time channel built for exactly this — concept-db — is masked and
+              // 34 hours stale. But the substrate serves `webSearchResult` through local-tools, and
+              // it WORKS: it is where the Earth-Mars snippet came from. So use the capability that
+              // is up to answer the question the capability that is down was supposed to answer.
+              //
+              // Chosen shape deliberately: this SUPPLIES EVIDENCE, it does not encode a decision.
+              // Every evidence-supplying repair this session worked on first contact (re-fetching
+              // the eaten body, logging the command); every decision rule I encoded was right for
+              // its motivating case and wrong for the neighbour, three times. Search results are
+              // appended for the model to judge — nothing is auto-selected, no endpoint is named by
+              // me, and if search returns nothing the prompt is exactly as it was.
+              if (_bannedHosts.size > 0) {
+                const _q = `public API no key required no authentication ${goal.slice(0, 120)}`;
+                const _srch = await ufExecuteTool("webSearchResult", { query: _q, max_results: 5 }, new Set<string>(["webSearchResult"]));
+                if (_srch.ok && _srch.result && _srch.result.trim()) {
+                  _bodyEvidence += `\n\nCANDIDATE PROVIDERS — the substrate ran a web search for you (query: ${JSON.stringify(_q)}) because the host you tried is disqualified. These are UNVERIFIED search results, not endorsements: read the titles, urls and snippets, and use them to pick a provider that plainly EXISTS and serves this data without a key. Prefer a url whose host appears here over one you recall, because a host you can see is one you did not invent. If none of them fits, print UNKNOWN.\n${_srch.result.slice(0, 2000)}`;
+                  console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" supplied ${_srch.result.length} chars of web-search candidates after disqualifying ${[..._bannedHosts].join(", ")}`);
+                } else {
+                  console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" candidate search unavailable (${_srch.ok ? "empty" : _srch.error}) — corrector proceeds without candidates`);
+                }
               } else if (_authRefusal) {
                 _bodyEvidence += `\n\nTHAT RESPONSE IS AN AUTHORISATION OR QUOTA REFUSAL, NOT DATA. ${_host} REQUIRES CREDENTIALS THIS CONTAINER DOES NOT HAVE AND WILL NEVER HAVE. It is DISQUALIFIED: do NOT call ${_host} again, and do not retry it with different parameters, a different path, or a different parser expression — every one of those will return the same refusal. Choose a DIFFERENT PROVIDER that serves this data with NO key and NO account. Change the host, not the filter. To pick one, do NOT reach for the first service that comes to mind — that is how you arrived at a host that refuses you. ENUMERATE several candidates first, drawn from the kinds of institution that publish authoritative data openly and without accounts: government space agencies and national laboratories, national meteorological and geological surveys, university observatories and academic data services, intergovernmental bodies, and established open-data projects. Then pick the candidate you are MOST CONFIDENT genuinely exists and genuinely serves this quantity, preferring one whose query interface you actually know over one that merely sounds plausible. If none of your candidates clears that bar, print UNKNOWN — a wrong hostname costs more than an honest gap.`;
                 if (_host !== "that endpoint") _bannedHosts.add(_host.toLowerCase());
