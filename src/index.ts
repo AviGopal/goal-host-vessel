@@ -6817,10 +6817,10 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _fetchPart = _prevCmd.slice(0, _prevCmd.indexOf("|")).trim();
           const _safe = /^(curl|wget)\b/.test(_fetchPart) && !/[;&>]|&&|\$\(|`/.test(_fetchPart);
           if (_safe) {
-            const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 400` }));
+            const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 20000` }));
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
             if (_probeTxt && _probeTxt.trim()) {
-              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected. READ IT and let it decide WHICH KIND of fix is needed, because the kinds are not interchangeable: a refusal to serve you at all means the HOST is wrong, while a complaint about the REQUEST means the host is fine and the QUERY is wrong):\n${_probeTxt.slice(0, 600)}`;
+              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected. READ IT and let it decide WHICH KIND of fix is needed, because the kinds are not interchangeable: a refusal to serve you at all means the HOST is wrong, while a complaint about the REQUEST means the host is fine and the QUERY is wrong):\n${_probeTxt.length > 3000 ? `${_probeTxt.slice(0, 1500)}\n…[middle of a ${_probeTxt.length}-char response elided — THE DATA IS OFTEN BELOW THE PREAMBLE, so the tail follows]…\n${_probeTxt.slice(-1500)}` : _probeTxt}`;
               // TELL THE TWO 4xx FAMILIES APART — conflating them threw away a WORKING endpoint.
               //
               // Measured, and this one is a self-inflicted regression. This block originally said:
