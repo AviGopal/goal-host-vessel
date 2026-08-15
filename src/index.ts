@@ -6763,7 +6763,43 @@ If one of those sibling shapes is the action that would create what the goal ask
       while (_deg && _tries < 2) {
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
-        const _corr = `Your previous ${shape} command ${_prevCmd ? JSON.stringify(_prevCmd) : "(none)"} was WRONG: ${_deg}. Synthesize a CORRECTED, self-contained, non-interactive command that actually PRODUCES the value the goal asks for: verify the exact file path the goal names, ensure the command PRINTS the number/result to stdout, and never print null. IF THE PREVIOUS COMMAND FETCHED OVER THE NETWORK (curl/wget), the failure is far more likely to be about the RESPONSE than about a file path — this container HAS outbound internet access, so the endpoint answered with something you did not expect: HTML, an error page, or plain text where you assumed JSON. A jq error such as "Invalid numeric literal" means exactly that, and the body is already lost because jq consumed it. Do NOT re-pipe into the same parser: first PRINT THE RAW RESPONSE (e.g. curl -s '<url>' | head -c 400) so the next attempt can see what actually came back, or request a format the endpoint really serves and parse that. Emit only the corrected command.`;
+        // RECOVER THE RESPONSE BODY THE PIPELINE ATE — don't ask the model to go and look.
+        //
+        // Measured 2026-08-15. The walk synthesised, unprompted and with no URL planted anywhere,
+        //   curl -s 'https://api.le-systeme-solaire.net/rest/bodies/earth' | jq '.semimajorAxis / 149597870.7'
+        // against a real astronomy API. That endpoint replies
+        //   Unauthorized (API key is missing. Ask your API key on …)        HTTP 401
+        // as PLAIN TEXT, so jq dies with "Invalid numeric literal at line 1, column 13" — and the
+        // 401 text is gone, because curl wrote it to stdout and jq consumed it. The corrector
+        // therefore saw only jq's complaint and tuned the FILTER (.semimajorAxis -> .meanRadius)
+        // twice while the request was being rejected outright. The one fact that identifies the
+        // failure never reached the moment of use.
+        //
+        // The advisory version of this fix is already in the prompt below and DEMONSTRABLY DOES
+        // NOT WORK: it says in as many words "print the raw response, do not re-pipe into the same
+        // parser", the model read it, and tweaked the jq filter anyway. Guidance loses to habit,
+        // so the repair has to be structural — put the body in front of the corrector instead of
+        // asking it to fetch one.
+        //
+        // Bounded deliberately. Only fires when the failed command actually piped a fetch into
+        // something; only the segment BEFORE the first pipe is re-run, which for `curl … | jq …`
+        // is the fetch alone; and the prefix is refused unless it is a lone read-only fetch — no
+        // `;`, no `&&`, no `>` redirect, no backgrounding — so this can never re-run a mutating
+        // command as a side effect of diagnosing one.
+        let _bodyEvidence = "";
+        if (_prevCmd && /\|/.test(_prevCmd)) {
+          const _fetchPart = _prevCmd.slice(0, _prevCmd.indexOf("|")).trim();
+          const _safe = /^(curl|wget)\b/.test(_fetchPart) && !/[;&>]|&&|\$\(|`/.test(_fetchPart);
+          if (_safe) {
+            const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 400` }));
+            const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
+            if (_probeTxt && _probeTxt.trim()) {
+              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected, READ IT before choosing a fix; if it is an authorisation error, a rate limit, an HTML page or anything other than the data you expected, then NO parser expression can fix it and you must change the ENDPOINT, not the filter):\n${_probeTxt.slice(0, 600)}`;
+              console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" re-fetched the eaten body for the corrector (${_probeTxt.length} chars)`);
+            }
+          }
+        }
+        const _corr = `Your previous ${shape} command ${_prevCmd ? JSON.stringify(_prevCmd) : "(none)"} was WRONG: ${_deg}.${_bodyEvidence} Synthesize a CORRECTED, self-contained, non-interactive command that actually PRODUCES the value the goal asks for: verify the exact file path the goal names, ensure the command PRINTS the number/result to stdout, and never print null. IF THE PREVIOUS COMMAND FETCHED OVER THE NETWORK (curl/wget), the failure is far more likely to be about the RESPONSE than about a file path — this container HAS outbound internet access, so the endpoint answered with something you did not expect: HTML, an error page, or plain text where you assumed JSON. A jq error such as "Invalid numeric literal" means exactly that, and the body is already lost because jq consumed it. Do NOT re-pipe into the same parser: first PRINT THE RAW RESPONSE (e.g. curl -s '<url>' | head -c 400) so the next attempt can see what actually came back, or request a format the endpoint really serves and parse that. Emit only the corrected command.`;
         const _reSyn = await llmExtractPointerArgs(shape, _corr);
         if (!_reSyn) break;
         directArgsRaw = { ...directArgsRaw, ..._reSyn };
