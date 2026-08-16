@@ -10043,7 +10043,21 @@ async function runGoalWithRecovery(
         }
         const _hitWidth = (_r3 && _r3.length > 0) ? 3 : 1;
         const recalled = _rows
-          .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
+          // 300 CHARACTERS CUTS THE ANSWER OFF. A lesson's load-bearing part is usually the
+          // concrete artifact — a working command, a parameter set, an exact field path — and that
+          // sits AFTER the sentence explaining it. Truncating at 300 delivered the explanation and
+          // dropped the artifact.
+          //
+          // Measured on the Earth-to-Io range. The recalled lesson contained a verified-working
+          // Horizons curl with its extraction pipeline; the walk received the first 300 characters
+          // of prose and the drafter went on inventing parameters (id=501&obj=10&range_au) that do
+          // not exist. Recall reported success, the log said "1 concept(s) recalled", and the one
+          // fact worth recalling never crossed the boundary.
+          //
+          // 1600 is enough for a command plus the constraints around it, still bounded, and the
+          // whole block is capped downstream — the concept store's own token_estimate for these
+          // lessons is ~430, so this carries a full one rather than a fragment.
+          .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 1600)}`)
           .filter((s) => s.length > 8);
         if (recalled.length > 0) {
           walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
