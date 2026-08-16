@@ -1153,6 +1153,24 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
   // fix and they were indistinguishable at the point where the fact was known.
   const url = await conceptDbUrl();
   if (!url) { console.log(`[walk-concepts] recall SKIPPED — discovery named no concept-db row (neither a local http row nor a libp2p peer row)`); return null; }
+
+  // RETRY ONCE: THE RELAY FAILS ~40% OF THE TIME AND A SUCCESS COSTS ~1s (2026-08-16).
+  //
+  // Measured, five identical egress calls through the libp2p circuit to the hub's concept-db:
+  //
+  //   try1 http=000  30s      try2 http=502  19s      try3 http=200  1s
+  //   try4 http=200   0s      try5 http=200   1s      -> ok=3 fail=2
+  //
+  // The distribution is bimodal, not slow: successes return in 0-1s, failures burn the entire
+  // budget and then some. That matters because the caching above only helps a REPEAT query — a
+  // first-time lesson lookup, which is exactly the case the walk needs, had a single attempt and
+  // a ~40% chance of returning null. `chars=0 via=hash-fallback` in the arg-synthesis log is what
+  // that looks like downstream: the drafter synthesising a URL with no lesson to copy.
+  //
+  // One retry takes ~40% down to ~16%, and two to ~6%, at a marginal cost of one fast round trip
+  // when it works. The budget is per-attempt and the total stays bounded; a null still reads as a
+  // null, so an outage is still an outage.
+  const _attempt = async (): Promise<Array<{ summary?: string; content?: string }> | null> => {
   try {
     const r = await fetch(url, {
       method: "POST",
@@ -1180,6 +1198,21 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
     console.log(`[walk-concepts] recall FAILED ${String(err?.name ?? "Error")}: ${String(err?.message ?? e).slice(0, 160)} url=${url.slice(0, 120)} budget=${timeoutMs}ms`);
     return null;
   }
+  };
+
+  const RECALL_ATTEMPTS = 3;
+  for (let i = 0; i < RECALL_ATTEMPTS; i++) {
+    const rows = await _attempt();
+    // A non-null result is authoritative, INCLUDING an empty array: the store answered and had
+    // nothing. Only a null (could-not-ask) is worth retrying — retrying an honest empty would
+    // turn "no lesson exists" into three round trips and still no lesson.
+    if (rows !== null) {
+      if (i > 0) console.log(`[walk-concepts] recall SUCCEEDED on attempt ${i + 1}/${RECALL_ATTEMPTS} — the relay leg is intermittent (~40% measured), not down`);
+      return rows;
+    }
+    if (i + 1 < RECALL_ATTEMPTS) console.log(`[walk-concepts] recall attempt ${i + 1}/${RECALL_ATTEMPTS} could not ask — retrying`);
+  }
+  return null;
 }
 
 // Goal-reaching verification (2026-06-22). status=completed only means the
