@@ -6946,7 +6946,41 @@ If one of those sibling shapes is the action that would create what the goal ask
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
             if (_probeTxt && _probeTxt.trim()) {
               _probeBody = _probeTxt;
-              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (first 400 bytes, re-fetched for you — this is the body your parser rejected. READ IT and let it decide WHICH KIND of fix is needed, because the kinds are not interchangeable: a refusal to serve you at all means the HOST is wrong, while a complaint about the REQUEST means the host is fine and the QUERY is wrong):\n${_probeTxt.length > 3000 ? `${_probeTxt.slice(0, 1500)}\n…[middle of a ${_probeTxt.length}-char response elided — THE DATA IS OFTEN BELOW THE PREAMBLE, so the tail follows]…\n${_probeTxt.slice(-1500)}` : _probeTxt}`;
+              // SHOW THE DATA, NOT THE HEADER AND THE FOOTER. The elision used to keep the first
+              // and last 1500 chars on the stated assumption that "THE DATA IS OFTEN BELOW THE
+              // PREAMBLE, so the tail follows". That holds for a response that ends with its data
+              // and fails completely for one that ends with notes.
+              //
+              // Measured on the Earth-to-Io range: the JPL Horizons reply is 5738 chars, its data
+              // block starts at line 40, and the last 1500 chars contain no data row at all — a
+              // trailer of usage notes follows the ephemeris. So the corrector was handed a header
+              // and a footer and asked to write a parser for numbers it could not see, and it
+              // failed three times running while the URL it had built was completely correct.
+              //
+              // Centre the window on the data instead, found generically: the longest run of lines
+              // that begin with a digit — which is what a data row looks like in an ephemeris, a
+              // CSV, a table or a fixed-width report — with the head kept for context. Falls back
+              // to the old head+tail when no such run exists, so a response that really is prose
+              // or an error page is unaffected.
+              const _window = (txt: string): string => {
+                if (txt.length <= 3000) return txt;
+                const _lines = txt.split("\n");
+                let _bestStart = -1, _bestLen = 0, _runStart = -1, _runLen = 0;
+                for (let i = 0; i < _lines.length; i++) {
+                  if (/^\s*\d/.test(_lines[i] ?? "")) {
+                    if (_runStart < 0) { _runStart = i; _runLen = 0; }
+                    _runLen++;
+                    if (_runLen > _bestLen) { _bestLen = _runLen; _bestStart = _runStart; }
+                  } else { _runStart = -1; _runLen = 0; }
+                }
+                if (_bestLen >= 2) {
+                  const _from = Math.max(0, _bestStart - 6);
+                  const _dataBlock = _lines.slice(_from, _bestStart + _bestLen + 3).join("\n").slice(0, 2500);
+                  return `${txt.slice(0, 1200)}\n…[middle of a ${txt.length}-char response elided; THE DATA ROWS AND THE HEADER THAT LABELS THEIR COLUMNS FOLLOW — parse these]…\n${_dataBlock}`;
+                }
+                return `${txt.slice(0, 1500)}\n…[middle of a ${txt.length}-char response elided — no data-shaped rows were found, so the tail follows]…\n${txt.slice(-1500)}`;
+              };
+              _bodyEvidence = `\n\nWHAT THE ENDPOINT ACTUALLY RETURNED (re-fetched for you — this is the body your parser rejected. READ IT and let it decide WHICH KIND of fix is needed, because the kinds are not interchangeable: a refusal to serve you at all means the HOST is wrong, while a complaint about the REQUEST means the host is fine and the QUERY is wrong):\n${_window(_probeTxt)}`;
               // TELL THE TWO 4xx FAMILIES APART — conflating them threw away a WORKING endpoint.
               //
               // Measured, and this one is a self-inflicted regression. This block originally said:
