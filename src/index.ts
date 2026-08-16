@@ -7316,11 +7316,25 @@ If one of those sibling shapes is the action that would create what the goal ask
         //
         // Narrow on purpose: a TOP-LEVEL `error` string is a machine-readable claim of failure by
         // the service itself, not prose that happens to contain the word.
+        // LOOK INSIDE THE ENVELOPE, NOT AT IT. The first version of this check read `error` off the
+        // top level of what the resolver returned and was INERT for the case it was written for:
+        // the http_fetch resolver wraps the fetched payload as
+        // {success, shape:"httpResponse", body:{url, status, bodyText, bodyJson}}, so a service's
+        // own error lands at body.bodyJson.error and the envelope's top level says success:true.
+        // Verified against the live service rather than assumed — JPL Horizons with equal dates
+        // answers 200 with {"signature":…, "error":"Bad dates -- start must be earlier than stop",
+        // "result":…}, nested one level below where the check was looking.
+        const _errOf = (v: unknown): string => {
+          const _e = (v as { error?: unknown } | null)?.error;
+          return typeof _e === "string" && _e.trim().length > 0 ? _e.trim().slice(0, 300) : "";
+        };
         let _svcError = "";
         try {
-          const _b = typeof direct === "string" ? JSON.parse(direct) : direct;
-          const _e = (_b as { error?: unknown } | null)?.error;
-          if (typeof _e === "string" && _e.trim().length > 0) _svcError = _e.trim().slice(0, 300);
+          const _b: any = typeof direct === "string" ? JSON.parse(direct) : direct;
+          const _inner = _b?.body ?? _b;
+          let _text: unknown = undefined;
+          try { _text = typeof _inner?.bodyText === "string" ? JSON.parse(_inner.bodyText) : undefined; } catch { /* body is not JSON */ }
+          _svcError = _errOf(_b) || _errOf(_inner) || _errOf(_inner?.bodyJson) || _errOf(_text);
         } catch { /* not JSON, or no such field — nothing declared, nothing to correct */ }
         if (_svcError) {
           let _req = "";
