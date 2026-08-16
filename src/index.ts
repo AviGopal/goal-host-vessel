@@ -17,6 +17,7 @@
  */
 
 import { repairSignatureOf, classifyFailure } from './repair-signature';
+import { betaSample } from './beta-sample';
 import { Config } from './config';
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
@@ -5633,7 +5634,7 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   const numOr = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const alpha = numOr(x.alpha ?? x.thompson_alpha ?? x.metrics?.thompson_alpha);
   const beta = numOr(x.beta ?? x.thompson_beta ?? x.metrics?.thompson_beta);
-  const sampledScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score ?? x.composition_score) ?? (typeof alpha === 'number' && typeof beta === 'number' ? (Math.random() ** (1 / alpha)) / (Math.random() ** (1 / beta)) : undefined);
+  const sampledScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score ?? x.composition_score) ?? (typeof alpha === 'number' && typeof beta === 'number' ? betaSample(alpha, beta) : undefined);
   const sampleCount = numOr(x.sample_count ?? x.sampleCount ?? x.metrics?.sample_count);
   return {
     id, inputShapes, outputShapes,
