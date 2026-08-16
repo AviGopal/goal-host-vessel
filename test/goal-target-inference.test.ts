@@ -384,3 +384,72 @@ describe("shortcut decisions populate the decision cache", () => {
     expect(d.shapes.length).toBeGreaterThan(0);
   });
 });
+
+// A QUESTION ABOUT THE PRESENT STATE OF THE WORLD IS NOT A PROSE QUESTION (2026-08-16).
+//
+// "What is the distance from Earth to Io right now, in astronomical units?" matched the
+// explanatory lead on "what is" and nothing in NOT_PROSE_RE, so it routed deterministically to
+// llm_completion_dispatch — "ask a model" — for 45+ dispatches. A model cannot know a
+// time-varying physical quantity: that answer is a MEASUREMENT. The walk had a working
+// trust-gated fetcher the whole time and never reached it, because inference had already
+// decided the goal was definitional.
+//
+// The discrimination is temporal deixis, NOT subject matter. These tests pin both directions,
+// because a guard that swallowed genuine prose questions would trade one failure for another.
+describe("inferGoalTargetDecision — live-measurement questions are not prose questions", () => {
+  const KM = ["shellResult", "web_resource", "http_response", "llm_completion_dispatch"];
+  const throwLLM = (async () => { throw new Error("LLM should not be needed to classify these"); }) as unknown as typeof fetch;
+
+  it("does NOT route the Io distance question to the prose target", async () => {
+    const { fetchImpl } = fakeLLM(["shellResult"]);
+    const out = await inferGoalTargetDecision(
+      "What is the distance from Earth to Io right now, in astronomical units?",
+      KM,
+      { llmEndpoint: "http://llm.test", fetchImpl },
+    );
+    expect(out.shapes).not.toEqual(["llm_completion_dispatch"]);
+  });
+
+  it("catches the temporal-deixis variants that all mean 'measure it now'", async () => {
+    for (const goal of [
+      "What is the distance from Earth to Mars currently?",
+      "What is the current distance from Earth to Jupiter?",
+      "What is Io's position at this moment?",
+      "What is the temperature in Reykjavik right now?",
+    ]) {
+      const { fetchImpl } = fakeLLM(["shellResult"]);
+      const out = await inferGoalTargetDecision(goal, KM, { llmEndpoint: "http://llm.test", fetchImpl });
+      expect(out.shapes).not.toEqual(["llm_completion_dispatch"]);
+    }
+  });
+
+  it("catches a measurement noun paired with a unit, even without a time word", async () => {
+    const { fetchImpl } = fakeLLM(["shellResult"]);
+    const out = await inferGoalTargetDecision(
+      "What is the distance from Earth to Io in astronomical units?",
+      KM,
+      { llmEndpoint: "http://llm.test", fetchImpl },
+    );
+    expect(out.shapes).not.toEqual(["llm_completion_dispatch"]);
+  });
+
+  // THE OTHER DIRECTION. A genuine definitional question must still take the prose route —
+  // deterministically, without an LLM call — or this guard has simply broken a working path.
+  it("STILL routes a genuine definitional question to the prose target, with no LLM call", async () => {
+    const out = await inferGoalTargetDecision(
+      "Explain what an ephemeris is.",
+      KM,
+      { llmEndpoint: "http://llm.test", fetchImpl: throwLLM },
+    );
+    expect(out.shapes).toEqual(["llm_completion_dispatch"]);
+  });
+
+  it("STILL routes 'what is X' about a concept, not a measurement", async () => {
+    const out = await inferGoalTargetDecision(
+      "What is an astronomical unit?",
+      KM,
+      { llmEndpoint: "http://llm.test", fetchImpl: throwLLM },
+    );
+    expect(out.shapes).toEqual(["llm_completion_dispatch"]);
+  });
+});

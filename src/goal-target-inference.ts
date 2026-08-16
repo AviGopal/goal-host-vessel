@@ -409,8 +409,24 @@ export async function inferGoalTargetDecision(
     : (knownShapes.includes("llm_completion") ? "llm_completion" : null);
   if (_proseTarget) {
     const EXPLANATORY_RE = /\b(explain|describe|define|summar\w*|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
+    // A QUESTION ABOUT THE PRESENT STATE OF THE WORLD IS NOT A PROSE QUESTION (2026-08-16).
+    //
+    // "What is the distance from Earth to Io right now, in astronomical units?" matched
+    // EXPLANATORY_RE on "what is" and nothing in NOT_PROSE_RE, so it routed to
+    // llm_completion_dispatch — "ask a model" — for 45+ dispatches. But a model cannot know a
+    // time-varying physical quantity: the answer is a MEASUREMENT that must be fetched, and the
+    // walk had a working trust-gated fetcher (web_resource / http_response) it never reached
+    // because inference had already decided the goal was definitional.
+    //
+    // The tell is the temporal deixis, not the subject: "right now", "currently", "today",
+    // "at the moment", "as of". "What is an ephemeris" is genuinely a prose question and still
+    // routes here; "what is X right now" is a retrieval question wearing a prose lead. Also
+    // added: distance/position/temperature-style measurement nouns paired with a unit
+    // ("in astronomical units", "in km"), which is how a request for a NUMBER announces itself.
     const NOT_PROSE_RE = /\b(count|how many|how much|number of|sum|total|bytes?|line count|lines?|digest|sha-?\d|hash|checksum|list|report the current|running|status|analy[sz]e|review|audit|problem_detection|code_quality|refactor|implement|fix|edit|patch|write (a|the)? ?(note|file|concept)|save|store|persist|fetch|download|curl|scrape|repos\/[\w.-]+\/)\b|https?:\/\//i;
-    if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal)) {
+    // Temporal deixis: the answer depends on WHEN it is asked, so it cannot come from weights.
+    const LIVE_MEASUREMENT_RE = /\b(right now|currently|at (the|this) moment|as of (today|now)|today'?s|at present|present(ly)?|latest|current)\b|\b(distance|position|coordinates|altitude|azimuth|magnitude|velocity|temperature|price|rate)\b[\s\S]{0,60}\bin\s+(astronomical units?|au\b|km\b|kilometres?|kilometers?|miles?|degrees?|celsius|fahrenheit)/i;
+    if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal) && !LIVE_MEASUREMENT_RE.test(goal)) {
       return remember({ shapes: [_proseTarget], confidence: 0.7, alternatives: [] });
     }
   }
