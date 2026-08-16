@@ -9980,7 +9980,30 @@ async function runGoalWithRecovery(
         // null from BOTH means concept-db could not be ASKED; that is not an empty store
         // and must not be logged as one.
         const _asked = _r3 !== null || _r1 !== null;
-        const _rows = (_r3 && _r3.length > 0) ? _r3 : (_r1 ?? []);
+        // UNION THE TWO QUERIES INSTEAD OF LETTING THE NARROW ONE VETO THE BROAD ONE.
+        //
+        // Both queries already run in parallel and both are already paid for. Taking _r3 whenever
+        // it returns ANY row throws away _r1 entirely — so a precise query matching ONE concept
+        // beats a broad query matching five, and the recall budget of five goes unspent.
+        //
+        // Measured on the Earth-to-Io range. Two lessons were stored: a parameter contract, and the
+        // working shell pipeline that includes the EXTRACTION the drafter kept getting wrong. The
+        // 3-term query "astronomical horizons observer" matched only the contract, so the pipeline
+        // lesson — the one that would have answered the open question — was discarded unread on
+        // every dispatch, while the log honestly reported "1 concept(s) recalled" and looked fine.
+        //
+        // Precise first, then the broader hits that are not already present, capped at the limit
+        // that was requested anyway. Strictly more information at the moment of use, no extra call.
+        const _seenIds = new Set<string>();
+        const _key = (k: { summary?: string; content?: string }) => `${k.summary ?? ""}::${(k.content ?? "").slice(0, 80)}`;
+        const _rows: Array<{ summary?: string; content?: string }> = [];
+        for (const _row of [...(_r3 ?? []), ...(_r1 ?? [])]) {
+          const _k = _key(_row);
+          if (_seenIds.has(_k)) continue;
+          _seenIds.add(_k);
+          _rows.push(_row);
+          if (_rows.length >= 5) break;
+        }
         const _hitWidth = (_r3 && _r3.length > 0) ? 3 : 1;
         const recalled = _rows
           .map((k) => `- ${String(k.summary ?? "").slice(0, 120)}: ${String(k.content ?? "").slice(0, 300)}`)
