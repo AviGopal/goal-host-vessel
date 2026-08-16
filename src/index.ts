@@ -246,6 +246,7 @@ import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, g
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
+import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { consensusSymbols } from "./goal-file-resolution";
@@ -3270,19 +3271,40 @@ const REACHED_CMD_CACHE_MAX_LOAD = 2000;
 function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }): void {
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
 }
+
+// TOMBSTONE (2026-08-16). The store above is append-only and the loader is last-N-wins, so an
+// in-memory `delete` did not survive a restart: a command banked from a reach that later graded
+// FALSE was resurrected byte-identical on the next boot and replayed by the next similar goal.
+// There was no path from "this never worked" to "stop replaying it" that outlived the process.
+//
+// Observed live this session: a compositional goal reached with a fabricated subject, the reach
+// judge graded it true, and the command entered this library. A `reached:false` verdict must be
+// able to REMOVE an entry as durably as a `reached:true` verdict added one — otherwise the library
+// is monotonically accumulating, which is the same one-way-ratchet shape as the counterfeit
+// sampler this session fixed.
+//
+// A tombstone rather than a rewrite: the file is append-only by design (cheap, crash-safe, no
+// read-modify-write race between concurrent walks), so eviction appends a marker and the loader
+// applies it in order. Last-N-wins then does the right thing for free — a later re-bank after a
+// genuine reach overrides an earlier tombstone, and a later tombstone overrides an earlier bank.
+function evictReachedCommand(hash: string, reason: string): void {
+  const had = reachedCommandCache.delete(hash);
+  appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, tombstone: true, reason }) + "\n")
+    .catch(() => { /* fail-open: the in-process delete already happened */ });
+  console.log(`[goal-host-vessel] reached-command cache: EVICTED ${hash} (${reason})${had ? "" : " — not in memory; tombstone persisted so a prior boot's entry cannot resurrect"}`);
+}
 async function loadReachedCommandCache(): Promise<void> {
   try {
     const raw = await readFile(REACHED_CMD_CACHE_PATH, "utf-8").catch(() => "");
     if (!raw) return;
     const lines = raw.split("\n").filter((l) => l.trim());
-    let n = 0;
-    for (const line of lines.slice(-REACHED_CMD_CACHE_MAX_LOAD)) { // last-N wins on dedup by hash (most recent verified command)
-      try {
-        const e = JSON.parse(line) as { hash?: string; command?: string; field?: string; shape?: string; targetShapes?: string[]; goalText?: string };
-        if (e.hash && e.command && e.field && e.shape) { reachedCommandCache.set(e.hash, { command: e.command, field: e.field, shape: e.shape, targetShapes: e.targetShapes ?? [], goalText: e.goalText ?? "" }); n++; }
-      } catch { /* skip malformed line */ }
-    }
-    console.log(`[goal-host-vessel] reached-command cache: loaded ${reachedCommandCache.size} persisted commands (${n} lines) from ${REACHED_CMD_CACHE_PATH}`);
+    // Replay semantics (including tombstones) live in reached-command-store.ts so they are
+    // testable — this loader used to inline them, which is how the resurrect-on-boot defect
+    // went unnoticed. last-N wins on dedup by hash (most recent verified command).
+    const { entries, applied, tombstoned } = applyReachedCommandLines(lines.slice(-REACHED_CMD_CACHE_MAX_LOAD));
+    reachedCommandCache.clear();
+    for (const [k, v] of entries) reachedCommandCache.set(k, v);
+    console.log(`[goal-host-vessel] reached-command cache: loaded ${reachedCommandCache.size} persisted commands (${applied} lines applied, ${tombstoned} tombstone(s)) from ${REACHED_CMD_CACHE_PATH}`);
   } catch { /* fail-open: start empty */ }
 }
 // ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24; multi-slot 2026-07-25) ──
@@ -6492,7 +6514,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (_plu) {
         const ids = await resolveShapeProducers(_plu.shape);
         if (ids !== null) {
-          reachedCommandCache.delete(goalHashOf(goal));
+          evictReachedCommand(goalHashOf(goal), "deterministic producer-lookup superseded a confabulated source-grep");
           tap(`[goal-host-vessel] walk: DETERMINISTIC shape-producer lookup for "${_plu.shape}" via authed discovery resolve (${ids.length} producer(s)) \u2014 SKIPPED cache + command synthesis`);
           return { content: ids.length
             ? `${ids.length} vessel(s) advertise the shape "${_plu.shape}" in the discovery registry: ${ids.join(", ")}`
@@ -14078,6 +14100,12 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // an execution it actually ran. Delivery, retry and every skip reason live in
       // deliverReachVerdict so the throw path can report its verdict too.
       deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete");
+      // A FALSE verdict must be able to un-bank what a TRUE verdict banked. Without this the
+      // known-command library only ever grows: a command from a reach that later graded false
+      // stayed on disk and was replayed by the next similar goal after every restart.
+      if (record.reached === false && typeof record.goal === "string" && record.goal) {
+        evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String(record.goalReachReason ?? "no reason recorded").slice(0, 120)}`);
+      }
       record.learning = learningSink;
       if (seek.answerBody) record.answerBody = seek.answerBody;
       persistDispatchStore();
