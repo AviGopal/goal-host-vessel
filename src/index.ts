@@ -8922,6 +8922,29 @@ If one of those sibling shapes is the action that would create what the goal ask
             try { _cs = typeof _imp.content === "string" ? _imp.content : JSON.stringify(_imp.content); } catch { _cs = String(_imp.content); }
             tap(`[goal-host-vessel] walk(${opts.surface}): REACH-CONTENT ${_rs} (${_cs.length} chars) = ${_cs.slice(0, 600)}`);
           }
+          // ALSO LOG THE EVIDENCE THAT GROUNDED THE ANSWER, not only the completion shapes.
+          //
+          // Measured on the first correct answer this system produced: "Give me the live Earth-Io
+          // separation, in AU" returned 6.276 AU against a Horizons oracle of 6.27585 — right to
+          // the precision given. The walk resolved `web_search` TWICE and the answer arrived as
+          // `llm_completion_result`. But `web_search` was not among `completion_shapes`, so its
+          // content was never logged, and the dispatch record + hub trace together cannot show
+          // whether the number came from the retrieved page or from the model.
+          //
+          // A correct answer and a lucky one are then indistinguishable after the fact — the same
+          // defect as a false reach cached as a recipe, or a grader handed no command: the artefact
+          // survives and the evidence for it does not. Log the retrieval-bearing shapes in the pool
+          // alongside the completion shapes so any reach can be audited later by someone who was
+          // not watching it happen. Observability only; it cannot change a verdict.
+          const _EVIDENCE_SHAPES = /^(web_search|webSearchResult|shellResult|shell|bash|http_fetch|http_response|fs_read|source_code|codeSearchResult)$/i;
+          for (const _im of poolImpulses) {
+            const _sh = (_im.metadata as { shape?: string } | undefined)?.shape;
+            if (!_sh || !_EVIDENCE_SHAPES.test(_sh) || _reachedShapes.includes(_sh)) continue;
+            let _es: string;
+            try { _es = typeof _im.content === "string" ? _im.content : JSON.stringify(_im.content); } catch { _es = String(_im.content); }
+            if (!_es || _es.length < 2) continue;
+            tap(`[goal-host-vessel] walk(${opts.surface}): REACH-EVIDENCE ${_sh} (${_es.length} chars) = ${_es.slice(0, 900)}`);
+          }
         } catch { /* observability only — never affect the reach verdict */ }
         // SYMMETRIC CREDIT (mirror of the HOLLOW β-penalty at :3247), gated on SUBSTANCE:
         // a landed/deterministic reach OR a genuine IN-CHAIN producer→consumer edge carried an
