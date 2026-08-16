@@ -10042,10 +10042,23 @@ async function runGoalWithRecovery(
         // minutes. The walk still never BLOCKS on recall — the budget bounds it — it just no longer
         // gives up before a working route can answer.
         const _recallBudgetMs = Number(process.env.RECALL_BUDGET_MS ?? 25_000);
-        const [_r3, _r1] = await Promise.all([
-          _q3 ? recallConceptRows(_q3, 5, _recallBudgetMs) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
-          _q1 && _q1 !== _q3 ? recallConceptRows(_q1, 5, _recallBudgetMs) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
-        ]);
+        // TWO PARALLEL LEGS ARE WORSE THAN ONE THEN MAYBE ANOTHER, ONCE THE VESSEL IS REMOTE.
+        //
+        // Parallelism was correct when concept-db answered over loopback: the earlier sequential
+        // 3→2→1 ladder awaited each width and cost up to ~20s before inference began. Over the
+        // libp2p relay the arithmetic inverts. Measured today, same query, same minute: served
+        // SERIALLY it returns in 3.0s and 6.7s; issued as two concurrent legs both exceed a 25s
+        // budget and the walk proceeds with no lessons at all.
+        //
+        // The relay is the scarce resource, not the wall clock — the hub's store sits at ~600% CPU
+        // and degrades sharply with concurrency. So spend one call, and only spend the second when
+        // the first found nothing, which is exactly the case the broader query exists for. Worst
+        // case is two serial calls inside the same budget; the common case halves the load that
+        // makes recall fail.
+        const _r3 = _q3 ? await recallConceptRows(_q3, 5, _recallBudgetMs) : [];
+        const _r1 = (_r3 === null || (_r3 && _r3.length === 0)) && _q1 && _q1 !== _q3
+          ? await recallConceptRows(_q1, 5, _recallBudgetMs)
+          : [];
         // null from BOTH means concept-db could not be ASKED; that is not an empty store
         // and must not be logged as one.
         const _asked = _r3 !== null || _r1 !== null;
