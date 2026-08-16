@@ -7231,7 +7231,20 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (direct != null && !(_isExecShape && !terminalShapes.has(shape))) {
       const _dishonest = _degenerateReason(direct, await _honestyPolicy());
       if (_dishonest) {
-        tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" resolved a DISHONEST body — ${_dishonest.slice(0, 200)} — refusing to satisfy (no pool entry, no synthetic completed trace); grading reach honestly`);
+        // LOG WHAT WAS ASKED, NOT ONLY WHAT CAME BACK. For a retrieval shape the request IS half
+        // the evidence: when http_fetch came back 404 on the Earth-to-Io range there was no way to
+        // tell whether the walk had reconstructed a JPL Horizons query and lost it to one wrong
+        // parameter — a near-miss worth building on — or had never found the host at all, which is
+        // a different problem entirely. Same question the earlier Horizons near-miss turned on.
+        // REACH-EVIDENCE records the response; nothing recorded the request, so a 404 was
+        // uninterpretable. Bounded and stringified defensively so a large or circular arg object
+        // cannot break the log line it is meant to inform.
+        let _reqSummary = "";
+        try {
+          const _a = JSON.stringify(directArgs ?? {});
+          if (_a && _a !== "{}") _reqSummary = ` — REQUEST WAS ${_a.length > 400 ? `${_a.slice(0, 400)}…[+${_a.length - 400}]` : _a}`;
+        } catch { _reqSummary = " — REQUEST WAS <unstringifiable>"; }
+        tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" resolved a DISHONEST body — ${_dishonest.slice(0, 200)}${_reqSummary} — refusing to satisfy (no pool entry, no synthetic completed trace); grading reach honestly`);
         lastRawResolveReason = _dishonest.slice(0, 200);
         direct = null;
       }
