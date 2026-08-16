@@ -5905,6 +5905,29 @@ async function runGoalAsPoolWalk(
       // the current day ("today", "tonight", "daily note") and names no explicit
       // date itself, force any YYYY-MM-DD substring in string args — and any "date"
       // arg — to the actual current date.
+      // `$$` FOLLOWED BY A LETTER IS A LITERAL MARKER, NOT THE SHELL'S PID.
+      //
+      // A synthesized extraction command wrote grep -A 20 "$$SOE" to find the start-of-ephemeris
+      // marker in a JPL Horizons response. Inside DOUBLE quotes bash expands `$$` to its own pid,
+      // so the pattern became `31337SOE`, matched nothing, and the command exited 0 with empty
+      // stdout — a silent failure that looks identical to "the data was not there".
+      //
+      // The model cannot see this. It reads back its own command text, which still says `$$SOE`,
+      // and the run reports success, so every self-correction round after this one is spent
+      // rewriting a filter that was never the problem. That burned the whole 3-attempt budget on a
+      // dispatch whose URL was otherwise completely correct.
+      //
+      // Repaired deterministically rather than explained, because `$$` immediately followed by a
+      // letter is never a pid reference — a real pid use is bare `$$` or `$$` before punctuation.
+      // Escaping is safe under both quotings: `\$\$SOE` is the literal in double quotes and
+      // unchanged inside single quotes.
+      for (const k of Object.keys(args)) {
+        const v = args[k];
+        if (typeof v === "string" && /\$\$(?=[A-Za-z])/.test(v)) {
+          args[k] = v.replace(/(?<!\\)\$\$(?=[A-Za-z])/g, "\\$\\$");
+          tap(`[goal-host-vessel] walk: repaired "$$" -> "\\$\\$" in synthesized arg "${k}" — inside double quotes bash expands $$ to its pid, so a literal marker like $$SOE silently matches nothing and the command exits 0 empty`);
+        }
+      }
       const todayStr = new Date().toISOString().slice(0, 10);
       const goalImpliesToday = /\btoday\b|\btonight\b|\bdaily[- _]?note\b/i.test(goal) && !/\b\d{4}-\d{2}-\d{2}\b/.test(goal);
       if (goalImpliesToday) {
