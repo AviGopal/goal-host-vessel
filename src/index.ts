@@ -5920,6 +5920,7 @@ async function runGoalAsPoolWalk(
         // that decide whether a well-formed request asks the right question. A recalled lesson
         // that only reaches the shape choice cannot stop COMMAND='499' (Mars) being sent for a
         // goal about Io.
+        ...(((): string[] => { const _l = _recalledLessons.get(goalHashOf(goal)) ?? ""; console.log(`[goal-host-vessel] arg-synthesis lessons: goalHash=${goalHashOf(goal)} chars=${_l.length} shape=${shape}`); return []; })()),
         ...((_recalledLessons.get(goalHashOf(goal)) ?? "").length > 0
           ? [`\nRECALLED LESSONS (the substrate's own notes for this goal — if one states a parameter contract, an id, or a required ordering for the service you are calling, FOLLOW IT over your own recollection):\n${_recalledLessons.get(goalHashOf(goal))}`]
           : []),
