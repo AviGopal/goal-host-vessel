@@ -1008,6 +1008,16 @@ const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://1
 // nothing. Callers must not collapse those two — they are different facts.
 let _conceptDbUrl: string | null = null;
 let _conceptDbResolvedAt = 0;
+// Lessons recalled for a goal, keyed by goal hash, so the request builder can read what the shape
+// chooser was shown. Bounded: a walk touches a handful of goals and entries are cheap, but an
+// unbounded map in a long-lived vessel is a leak, so the oldest are dropped past a cap.
+const _recalledLessons = new Map<string, string>();
+function _rememberLessons(hash: string, text: string): void {
+  if (_recalledLessons.size > 200) {
+    for (const k of [..._recalledLessons.keys()].slice(0, 100)) _recalledLessons.delete(k);
+  }
+  _recalledLessons.set(hash, text);
+}
 async function conceptDbUrl(): Promise<string | null> {
   if (_conceptDbUrl && Date.now() - _conceptDbResolvedAt < 300_000) return _conceptDbUrl;
   try {
@@ -5868,6 +5878,14 @@ async function runGoalAsPoolWalk(
         ...(priorFindings && priorFindings.length > 0
           ? [`\nPRIOR FINDINGS (from preceding walk steps — use these to fill required fields not explicit in the goal text, e.g. gap class, entity name):\n${priorFindings}`]
           : []),
+        // The lessons the shape chooser was shown, delivered where the REQUEST is written. These
+        // carry the parameter contracts — body ids, required orderings, which field means what —
+        // that decide whether a well-formed request asks the right question. A recalled lesson
+        // that only reaches the shape choice cannot stop COMMAND='499' (Mars) being sent for a
+        // goal about Io.
+        ...((_recalledLessons.get(goalHashOf(goal)) ?? "").length > 0
+          ? [`\nRECALLED LESSONS (the substrate's own notes for this goal — if one states a parameter contract, an id, or a required ordering for the service you are calling, FOLLOW IT over your own recollection):\n${_recalledLessons.get(goalHashOf(goal))}`]
+          : []),
       ];
       const prompt = promptParts.join("\n\n");
     try {
@@ -9828,6 +9846,21 @@ async function runGoalWithRecovery(
           .filter((s) => s.length > 8);
         if (recalled.length > 0) {
           walkConceptContext = `Recalled substrate concepts relevant to this goal (consider them when choosing target shapes):\n${recalled.join("\n")}\n\n`;
+          // CARRY THE LESSONS PAST THE SHAPE CHOICE. Until this line, everything recalled here was
+          // consumed at exactly ONE site — goal_target_inference — so the substrate read its own
+          // lessons when deciding WHICH shape to produce and had forgotten them by the time it
+          // built the REQUEST. That is law 8 delivering one step short of the moment of use.
+          //
+          // Evidenced on the Earth-to-Io range: recall was live and correct, inference chose
+          // http_fetch at 0.9, and the arg synthesis then wrote
+          // COMMAND='499' (Mars) with START_TIME equal to STOP_TIME — against a stored lesson
+          // saying Io is '501' and that start must be strictly earlier than stop. The fact was in
+          // the store, retrieved, and shown to the only reader that could not act on it.
+          //
+          // Keyed by goal hash rather than threaded through the signature so the arg synthesiser —
+          // a different function, several call layers away — can read it without a second recall
+          // on the hot path (recall costs seconds; the walk must never pay it twice).
+          _rememberLessons(goalHashOf(goal), recalled.join("\n").slice(0, 4000));
           tap(`[walk-concepts] consulted concept-db via discovery: ${recalled.length} concept(s) recalled at ${_hitWidth} term(s) "${_terms.slice(0, _hitWidth).join(" ")}" for goal_hash=${goalHashOf(goal)}`);
         } else if (!_asked) {
           tap(`[walk-concepts] concept-db could not be asked (no producer or transport error) — recall unavailable, NOT an empty result`);
