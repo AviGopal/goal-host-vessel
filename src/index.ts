@@ -10011,9 +10011,24 @@ async function runGoalWithRecovery(
         // because recall is an optimisation and the walk must never wait on it.
         const _q3 = _terms.slice(0, 3).join(" ");
         const _q1 = _terms.slice(0, 1).join(" ");
+        // THE BUDGET ASSUMED A LOCAL VESSEL. 10s was generous when concept-db answered over
+        // loopback. With the vessel owned by the hub, a spoke reaches it over the libp2p relay,
+        // which measures ~2s idle and EXCEEDS 10s under concurrent load — so the walk lost its
+        // lessons precisely when the substrate was busy, and proceeded blind.
+        //
+        // Measured, end to end: both legs logged "recall FAILED TimeoutError budget=10000ms", and
+        // the arg synthesiser then logged "lessons: chars=0". The drafter invented Horizons
+        // parameters that do not exist while the verified-working command sat in the store,
+        // reachable, and unread. A budget that silently converts a slow dependency into an absent
+        // one is worse than a slower walk.
+        //
+        // Raised with the successful-recall cache alongside it: pay the relay once, keep it for ten
+        // minutes. The walk still never BLOCKS on recall — the budget bounds it — it just no longer
+        // gives up before a working route can answer.
+        const _recallBudgetMs = Number(process.env.RECALL_BUDGET_MS ?? 25_000);
         const [_r3, _r1] = await Promise.all([
-          _q3 ? recallConceptRows(_q3, 5, 10_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
-          _q1 && _q1 !== _q3 ? recallConceptRows(_q1, 5, 10_000) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
+          _q3 ? recallConceptRows(_q3, 5, _recallBudgetMs) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
+          _q1 && _q1 !== _q3 ? recallConceptRows(_q1, 5, _recallBudgetMs) : Promise.resolve([] as Array<{ summary?: string; content?: string }>),
         ]);
         // null from BOTH means concept-db could not be ASKED; that is not an empty store
         // and must not be logged as one.
