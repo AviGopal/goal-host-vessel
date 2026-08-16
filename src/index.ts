@@ -244,6 +244,8 @@ import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
+import { resolveWalkBudget } from "./walk-budget";
+import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { consensusSymbols } from "./goal-file-resolution";
@@ -986,7 +988,7 @@ function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 // CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
@@ -14459,6 +14461,29 @@ async function handleResolve(req: Request): Promise<Response> {
       return Response.json({ resolved: false, shape: "bodyHonestyPolicy", error: "no body-honesty policy configured — consumer keeps its literal fallback" }, { status: 404 });
     }
     return Response.json({ resolved: true, shape: "bodyHonestyPolicy", body: _pol });
+  }
+  // walkBudget (2026-08-16): the floor resolves this on every entry and has been logging a
+  // law-1 fallback since the reader shipped without a producer. Same contract as
+  // bodyHonestyPolicy — serve the STORED budget so it is editable data; serve nothing when
+  // none is stored so the consumer keeps its documented literals and keeps logging.
+  if (type === "walkBudget") {
+    const _wb = await resolveWalkBudget();
+    if (!_wb) {
+      return Response.json({ resolved: false, shape: "walkBudget", error: "no walk budget configured — consumer keeps its literal fallback" }, { status: 404 });
+    }
+    return Response.json({ resolved: true, shape: "walkBudget", body: _wb });
+  }
+  // lessonExecutionPolicy (2026-08-16): the reader (lessonVerbatimAllowed) FAILS CLOSED, and
+  // resolving null here is what keeps it closed. Serving this shape does not enable anything —
+  // only a stored file carrying the literal `verbatimCommands: true` does, and deleting that
+  // file revokes it with no restart. See lesson-execution-policy.ts for what it gates and why
+  // the blast radius is worth stating out loud.
+  if (type === "lessonExecutionPolicy") {
+    const _lep = await resolveLessonExecutionPolicy();
+    if (!_lep) {
+      return Response.json({ resolved: false, shape: "lessonExecutionPolicy", error: "verbatim lesson execution not enabled — consumer stays fail-closed" }, { status: 404 });
+    }
+    return Response.json({ resolved: true, shape: "lessonExecutionPolicy", body: _lep });
   }
         if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
