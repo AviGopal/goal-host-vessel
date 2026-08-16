@@ -6981,7 +6981,25 @@ If one of those sibling shapes is the action that would create what the goal ask
         let _probeBody = "";   // the bytes the endpoint actually returned, kept for extraction below
         if (_prevCmd && /\|/.test(_prevCmd)) {
           const _fetchPart = _prevCmd.slice(0, _prevCmd.indexOf("|")).trim();
-          const _safe = /^(curl|wget)\b/.test(_fetchPart) && !/[;&>]|&&|\$\(|`/.test(_fetchPart);
+          // CHECK FOR METACHARACTERS OUTSIDE QUOTES, NOT INSIDE THEM.
+          //
+          // This guard exists to refuse re-running anything that could chain a second command. It
+          // tested the raw string for `&`, `;`, `>` — and a query URL is FULL of `&`, sitting
+          // harmlessly inside single quotes where the shell never sees it as an operator. So the
+          // guard refused every multi-parameter API call, which is every real retrieval command,
+          // and the body-recovery evidence it protects never fired for the one situation it was
+          // built for.
+          //
+          // Measured on the Earth-to-Io range: six consecutive self-correction turns, every one
+          // reporting only "the command produced empty stdout", while the corrector kept grepping
+          // for an `R.A._(ICRF)` header that a QUANTITIES='20' table does not contain. It could not
+          // see that, because the response was never shown to it. The URL by then was correct.
+          //
+          // Strip quoted spans first, then look for operators in what remains — that is where a
+          // metacharacter would actually be interpreted. An unbalanced quote leaves its tail in the
+          // remainder and so still fails closed.
+          const _unquoted = _fetchPart.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+          const _safe = /^(curl|wget)\b/.test(_fetchPart) && !/[;&>|]|\$\(|`/.test(_unquoted);
           if (_safe) {
             const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 20000` }));
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
