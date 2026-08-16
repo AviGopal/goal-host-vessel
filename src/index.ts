@@ -5604,6 +5604,19 @@ async function runGoalAsPoolWalk(
     learningSink?: LearningConsequences;
     /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
     suppressSatisfierShapes?: string[];
+    // The lessons recalled for THIS dispatch, passed explicitly rather than looked up.
+    //
+    // These were previously handed over through a module-level map keyed by goalHashOf(goal), on
+    // the assumption that the recall site and the argument synthesiser see the same goal string.
+    // They do not: the synthesiser runs under a reframed or sub-goal, so the two hash different
+    // values. Measured over twenty minutes the key sets were DISJOINT — stored under b9454bb8 and
+    // daad8c4e, read under 17d1bf62, 8b7d5234, 9e533f92, d2510f82 — and the prompt received
+    // chars=0 on every dispatch, including ones where recall had plainly succeeded.
+    //
+    // A side channel keyed on a value neither end controls fails silently, because a Map miss and
+    // "no lessons for this goal" are the same `undefined`. Passing it down the call chain makes the
+    // dependency visible and impossible to mis-key.
+    recalledLessons?: string;
     /** EVALUABILITY (per-dispatch, shape-driven; L1/L12): ablate the learned pathway so a floor/counterfactual arm can be run and RECORDED. disableReuse/forceFloor suppress the reached-command cache + lexical rebind (cold derivation); pinnedPriors/seed reserved for seeded selection. */
     ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
     /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
@@ -5920,9 +5933,9 @@ async function runGoalAsPoolWalk(
         // that decide whether a well-formed request asks the right question. A recalled lesson
         // that only reaches the shape choice cannot stop COMMAND='499' (Mars) being sent for a
         // goal about Io.
-        ...(((): string[] => { const _l = _recalledLessons.get(goalHashOf(goal)) ?? ""; console.log(`[goal-host-vessel] arg-synthesis lessons: goalHash=${goalHashOf(goal)} chars=${_l.length} shape=${shape}`); return []; })()),
-        ...((_recalledLessons.get(goalHashOf(goal)) ?? "").length > 0
-          ? [`\nRECALLED LESSONS (the substrate's own notes for this goal — if one states a parameter contract, an id, or a required ordering for the service you are calling, FOLLOW IT over your own recollection):\n${_recalledLessons.get(goalHashOf(goal))}`]
+        ...(((): string[] => { const _l = opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal)) ?? ""; console.log(`[goal-host-vessel] arg-synthesis lessons: chars=${_l.length} via=${opts.recalledLessons ? "opts" : "hash-fallback"} shape=${shape}`); return []; })()),
+        ...(((opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal)) ?? "").length > 0)
+          ? [`\nRECALLED LESSONS (the substrate's own notes for this goal — if one states a parameter contract, an id, or a required ordering for the service you are calling, FOLLOW IT over your own recollection, and prefer a command it gives verbatim):\n${opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal))}`]
           : []),
       ];
       const prompt = promptParts.join("\n\n");
@@ -9944,6 +9957,9 @@ async function runGoalWithRecovery(
   let seededOutputShapes = opts.expectedOutputShapes;
   let terminalOutputShapes: string[] | undefined;
   let goalTargetDecision: GoalTargetDecision | null = null;
+  // Lessons recalled for this dispatch, passed explicitly into every walk below.
+  // See opts.recalledLessons for why the previous goal-hash key silently never matched.
+  let _dispatchLessons = "";
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -10091,7 +10107,8 @@ async function runGoalWithRecovery(
           // Keyed by goal hash rather than threaded through the signature so the arg synthesiser —
           // a different function, several call layers away — can read it without a second recall
           // on the hot path (recall costs seconds; the walk must never pay it twice).
-          _rememberLessons(goalHashOf(goal), recalled.join("\n").slice(0, 4000));
+          _dispatchLessons = recalled.join("\n").slice(0, 4000);
+          _rememberLessons(goalHashOf(goal), _dispatchLessons);
           tap(`[walk-concepts] consulted concept-db via discovery: ${recalled.length} concept(s) recalled at ${_hitWidth} term(s) "${_terms.slice(0, _hitWidth).join(" ")}" for goal_hash=${goalHashOf(goal)}`);
         } else if (!_asked) {
           tap(`[walk-concepts] concept-db could not be asked (no producer or transport error) — recall unavailable, NOT an empty result`);
@@ -10651,6 +10668,7 @@ async function runGoalWithRecovery(
         }
       }
       let walk = await runGoalAsPoolWalk(goal, {
+        recalledLessons: _dispatchLessons,
         variables: opts.variables,
         tags: opts.tags,
         parentExecutionId: opts.parentExecutionId,
@@ -10707,6 +10725,7 @@ async function runGoalWithRecovery(
         const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
         if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
         const retryWalk = await runGoalAsPoolWalk(goal, {
+          recalledLessons: _dispatchLessons,
           variables: opts.variables,
           tags: opts.tags,
           parentExecutionId: opts.parentExecutionId,
@@ -10751,6 +10770,7 @@ async function runGoalWithRecovery(
         if (altShapes !== null) {
           tap(`[goal-host-vessel] ${opts.surface}: walk: re-framing to alternative target shapes ${JSON.stringify(altShapes)} after no-pick/hollow termination`);
           const altWalkResult = await runGoalAsPoolWalk(goal, {
+            recalledLessons: _dispatchLessons,
             variables: opts.variables,
             tags: opts.tags,
             parentExecutionId: opts.parentExecutionId,
