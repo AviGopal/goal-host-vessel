@@ -5938,6 +5938,41 @@ async function runGoalAsPoolWalk(
           ? [`\nRECALLED LESSONS (the substrate's own notes for this goal — if one states a parameter contract, an id, or a required ordering for the service you are calling, FOLLOW IT over your own recollection, and prefer a command it gives verbatim):\n${opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal))}`]
           : []),
       ];
+      // VERBATIM LESSON COMMAND — INERT UNLESS EXPLICITLY ENABLED.
+      //
+      // Measured over 45 dispatches of one goal: handed a verified working command in a recalled
+      // lesson, the drafter reproduced it correctly zero times. It froze the example timestamps,
+      // dropped the %27 quoting around a space-containing time, substituted a different host,
+      // changed format=text to json, and invented parameters (OBJ_TYPE, HORIZONS_ID). Each rewrite
+      // of the lesson removed one failure surface and the next appeared elsewhere. The information
+      // was delivered every time — "arg-synthesis lessons: chars=1687 via=opts" — so this is
+      // reproduction fidelity, not missing context, and no further wording addresses it.
+      //
+      // Running the lesson's command as written removes the synthesis step where the mutation
+      // enters. It is DEFAULT OFF because it changes the trust model: the substrate already
+      // executes LLM-synthesized shell, and recalled lessons already steer that synthesis, so
+      // concept-db text already reaches the shell — but with a model in between. Executing it
+      // directly makes an injected concept deterministic rather than persuasion-dependent, and
+      // concept-db is written autonomously and reachable by any vessel. That is an operator's
+      // call, not a default.
+      //
+      // Narrow when enabled: an executor shape only, a single fenced command, and the same
+      // quoting-aware validator used for body recovery — bare curl/wget, no operator outside
+      // quotes. Every use is logged with the command actually taken.
+      const _verbatimOn = process.env.LESSON_VERBATIM_COMMANDS === "1";
+      if (_verbatimOn && execField) {
+        const _lesson = opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal)) ?? "";
+        const _cand = (_lesson.match(/^\s*((?:curl|wget)\s+[^\n]{20,600})$/m) ?? [])[1]?.trim();
+        if (_cand) {
+          const _unq = _cand.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+          const _safe = /^(curl|wget)\b/.test(_cand) && !/[;&>]|\$\(|`/.test(_unq.replace(/\|\s*(sed|awk|head|tail|cut|tr|jq|grep)\b/g, ""));
+          if (_safe) {
+            console.log(`[goal-host-vessel] lesson-verbatim: executing the recalled command AS WRITTEN for "${shape}" (synthesis skipped) — ${_cand.slice(0, 160)}`);
+            return { [execField]: _cand } as Record<string, unknown>;
+          }
+          console.log(`[goal-host-vessel] lesson-verbatim: REFUSED a recalled command for "${shape}" — failed the metacharacter guard`);
+        }
+      }
       const prompt = promptParts.join("\n\n");
     try {
       const rr = await routedComplete(goalHashOf(goal), "pointer_arg_extraction", {
