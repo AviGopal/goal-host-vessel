@@ -1454,6 +1454,111 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
 // not textually present, a complex/absent field, or an unreadable file all fail OPEN -> LLM). For
 // field VALUES the executor root (/workspace/git/super-repo) and the deployed mirror (/vessels) agree,
 // so there is no dir-ambiguity (unlike count-files).
+// INDEPENDENT EPHEMERIS ORACLE (2026-08-16) — grade a live astronomical distance against JPL
+// Horizons instead of an LLM reading a search snippet.
+//
+// WHY THIS EXISTS, measured. Three dispatches of ONE goal class ("distance from Earth to <body>
+// right now, in astronomical units"), same phrasing, three different bodies:
+//
+//   Io       -> target shellResult @0.90  -> 6.26946016292196   EXACT (verified by hand)
+//   Europa   -> target shellResult @0.95  -> 6.26699189304474   EXACT (verified by hand)
+//   Ganymede -> target web_search  @0.90  -> "approximately 1.49e+8 km (0.993 AU)"  FALSE REACH
+//
+// The Ganymede run was graded `reached: true` with the reason "the first result directly answering
+// the query". The first result was a content farm printing what looks like the Earth-Sun distance:
+// 0.993 AU against a true 6.264 AU, off by 6.3x and physically impossible — Ganymede orbits
+// Jupiter at ~5.2 AU and can never be 1 AU from Earth. No AU value appeared anywhere in the trace.
+//
+// The judge could not tell 0.993 from 6.264 and nothing in the substrate could, because this
+// family had no oracle. That is the regime the trace-retention note records at 20/20 reached and
+// 0/20 correct: reach grading collapses to plausibility exactly where no independent check exists.
+// Every deterministic catch this session (a port number 8090 read as a vessel count, a
+// confabulated 127) came from a registry query that could be re-issued. This does the same for an
+// ephemeris: re-issue the query and compare.
+//
+// ABSTAIN RATHER THAN GUESS, throughout. Unknown body, unreachable Horizons, unparseable
+// response, no number in the output — every one returns null and hands the goal to the LLM judge.
+// A wrong deterministic verdict is worse than no deterministic verdict, because it carries the
+// authority of a measurement.
+const HORIZONS_NAIF_IDS: Record<string, string> = {
+  // Galilean moons — the family this was built for.
+  io: "501", europa: "502", ganymede: "503", callisto: "504",
+  // Planets (barycentre-free body ids), the Moon and the Sun.
+  mercury: "199", venus: "299", mars: "499", jupiter: "599",
+  saturn: "699", uranus: "799", neptune: "899", pluto: "999",
+  moon: "301", luna: "301", sun: "10",
+  // A few frequently-named moons beyond Jupiter.
+  titan: "606", enceladus: "602", phobos: "401", deimos: "402", triton: "801",
+};
+
+async function verifyEphemerisDistanceReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const g = goal.toLowerCase();
+  // Tight guard: an ASTRONOMICAL DISTANCE question about a NAMED body, asked about NOW. A goal
+  // about orbital mechanics generally, or a distance in some other domain, must not land here.
+  const asksDistance = /(distance|how far|range)/.test(g);
+  const asksAu = /(astronomical units?|au)/.test(g);
+  const asksNow = /(right now|currently|now|today|at (the|this) moment|as of (now|today))/.test(g);
+  if (!asksDistance || !asksAu || !asksNow) return null;
+  // "from Earth to X" — Earth-centred only; a different observer is a different query.
+  if (!/earth/.test(g)) return null;
+
+  const body = Object.keys(HORIZONS_NAIF_IDS).find((b) => new RegExp(`\\b${b}\\b`, "i").test(g) && b !== "earth");
+  if (!body) return null;                                  // unknown body -> cannot verify -> LLM
+  const naif = HORIZONS_NAIF_IDS[body];
+  if (!naif) return null;
+
+  // Ask Horizons for the same instant the dispatch is being graded at. A 30-minute window at
+  // 30-minute steps yields the current hour's row; the value moves in the 4th decimal per hour,
+  // far below the tolerance below, so clock skew between walk and grade cannot flip a verdict.
+  const now = new Date();
+  const hh = now.toISOString().slice(0, 13);              // YYYY-MM-DDTHH
+  const url = `https://ssd.jpl.nasa.gov/api/horizons.api?format=text&COMMAND=${naif}` +
+    `&OBJ_DATA=NO&MAKE_EPHEM=YES&EPHEM_TYPE=OBSERVER&CENTER=500@399&QUANTITIES=20` +
+    `&START_TIME=${hh}:00&STOP_TIME=${hh}:30&STEP_SIZE=30m`;
+  let text = "";
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) return null;                                // Horizons refused -> cannot verify -> LLM
+    text = await r.text();
+  } catch { return null; }                                 // unreachable -> cannot verify -> LLM
+
+  // The data block is delimited by the literal markers $$SOE / $$EOE; the first column after the
+  // timestamp is the observer range in AU.
+  const soe = text.indexOf("$$SOE");
+  const eoe = text.indexOf("$$EOE");
+  if (soe < 0 || eoe < 0 || eoe <= soe) return null;
+  const row = text.slice(soe + 5, eoe).split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+  if (!row) return null;
+  const expected = parseFloat((row.match(/\s(\d+\.\d{4,})/) ?? [])[1] ?? "");
+  if (!Number.isFinite(expected)) return null;             // unparseable -> cannot verify -> LLM
+
+  // Harvest candidate AU values from the produced output, ignoring ids and timestamps.
+  const cleaned = dig
+    .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?\b/g, " ");
+  const claimed = [...new Set((cleaned.match(/\d+\.\d+/g) ?? []).map(parseFloat))].filter((n) => Number.isFinite(n));
+  if (claimed.length === 0) return null;                   // no number produced -> cannot verify -> LLM
+
+  // 0.5% tolerance: comfortably wider than intra-hour motion and any rounding a correct answer
+  // might carry, far tighter than the 6.3x error this was built to catch.
+  const tol = Math.abs(expected) * 0.005;
+  const hit = claimed.find((n) => Math.abs(n - expected) <= tol);
+  if (hit !== undefined) {
+    return {
+      reached: true,
+      reason: `deterministic:verified-ephemeris — independently queried JPL Horizons (COMMAND=${naif}, ${body}) for this hour: ${expected} AU; the produced output reports ${hit} AU, within 0.5%`,
+      deterministic: true,
+      completion_shapes: [],
+    };
+  }
+  const nearest = claimed.reduce((a, b) => (Math.abs(b - expected) < Math.abs(a - expected) ? b : a));
+  return {
+    reached: false,
+    reason: `deterministic:wrong-ephemeris — independently queried JPL Horizons (COMMAND=${naif}, ${body}) for this hour: ${expected} AU, but the output's nearest value is ${nearest} AU (off by ${(Math.abs(nearest - expected) / expected * 100).toFixed(1)}%). A live astronomical distance cannot be answered from a search snippet or from model memory; it must be measured.`,
+    completion_shapes: [],
+  };
+}
+
 async function verifyExtractFieldReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
   const fileM = goal.match(/repos\/[\w.-]+\/[\w.\/-]+\.json\b/);
   if (!fileM) return null;
@@ -3064,6 +3169,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const regV = await verifyRegistryInventoryReach(goal, dig);
     if (regV) return regV;
+  }
+
+  // INDEPENDENT EPHEMERIS ORACLE — grade a live astronomical distance against JPL Horizons
+  // rather than an LLM reading a search snippet (see verifyEphemerisDistanceReach for the
+  // measured false reach that motivated it).
+  {
+    const ephV = await verifyEphemerisDistanceReach(goal, dig);
+    if (ephV) return ephV;
   }
 
   // INDEPENDENT EXTRACT-FIELD ORACLE — confirm a field value against the FILE itself, not the
