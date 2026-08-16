@@ -5,6 +5,7 @@
 // serving nothing. Most of these tests are therefore about REFUSING to serve.
 import { describe, expect, test } from "bun:test";
 import {
+  DEFAULT_BODY_HONESTY_POLICY,
   bodyHonestyPolicyPath,
   isUsablePolicy,
   resolveBodyHonestyPolicy,
@@ -64,12 +65,38 @@ describe("resolveBodyHonestyPolicy", () => {
     expect(p?.truthyDenialFields).toEqual(["deferred", "unreachable"]);
   });
 
-  test("returns null when absent, so the consumer keeps its logged fallback", async () => {
-    // ABSENT MUST NOT LOOK LIKE AN EMPTY POLICY. The consumer's documented
-    // behaviour on no-producer is to fall back and log; null preserves exactly
-    // that, which is why this producer does not invent a default.
-    const p = await resolveBodyHonestyPolicy("/ws", async () => { throw new Error("ENOENT"); });
-    expect(p).toBeNull();
+  // AMENDED 2026-08-16. This test previously asserted `null` on absence, on the reasoning that
+  // absence must not look like an empty policy. That reasoning is still right about EMPTY, and
+  // the corrupt/unusable cases below still return null for exactly it. But it was wrong about
+  // ABSENT: the file has not existed since 8f8e87e7 untracked it on 2026-08-02, so "absent" was
+  // not a transient pre-seed state — it was permanent, and the shape was unservable forever while
+  // the walk logged its law-1 fallback on every step for two weeks. Self-healing to the documented
+  // default is what makes the shape real; the default is a verbatim copy of the consumer's own
+  // literal list, so writing it changes no behaviour.
+  test("SELF-HEALS when absent: writes the documented default and serves it", async () => {
+    const writes: Array<{ path: string; data: string }> = [];
+    const p = await resolveBodyHonestyPolicy(
+      "/ws",
+      async () => { throw new Error("ENOENT"); },
+      async (path, data) => { writes.push({ path, data }); },
+    );
+    expect(p).toEqual(DEFAULT_BODY_HONESTY_POLICY);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]!.path).toBe("/ws/policies/body-honesty-policy.json");
+    expect(JSON.parse(writes[0]!.data)).toEqual(DEFAULT_BODY_HONESTY_POLICY);
+  });
+
+  test("the provisioned default is itself usable — it must pass the same gate a stored file does", () => {
+    expect(isUsablePolicy(DEFAULT_BODY_HONESTY_POLICY)).toBe(true);
+  });
+
+  test("a failed write still serves the default rather than breaking the walk", async () => {
+    const p = await resolveBodyHonestyPolicy(
+      "/ws",
+      async () => { throw new Error("ENOENT"); },
+      async () => { throw new Error("EROFS: read-only file system"); },
+    );
+    expect(p).toEqual(DEFAULT_BODY_HONESTY_POLICY);
   });
 
   test("returns null on unparseable JSON", async () => {
