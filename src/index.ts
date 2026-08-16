@@ -1014,7 +1014,7 @@ let _conceptDbResolvedAt = 0;
 const _recalledLessons = new Map<string, string>();
 // Successful concept recalls, keyed by query. Bounded and short-lived: long enough to survive a
 // busy patch on the relay, short enough that a lesson edited on the hub reaches the walk promptly.
-const RECALL_CACHE_TTL_MS = Number(process.env.RECALL_CACHE_TTL_MS ?? 600_000);
+// TTL is read per-call below so a shaped change takes effect without a restart.
 const _recallCache = new Map<string, { at: number; rows: Array<{ summary?: string; content?: string }> }>();
 function _rememberLessons(hash: string, text: string): void {
   if (_recalledLessons.size > 200) {
@@ -1049,6 +1049,33 @@ async function conceptDbUrl(): Promise<string | null> {
     return _conceptDbUrl;
   } catch { return null; }
 }
+// THE WALK'S OWN BUDGETS, READ FROM THE SHAPE THAT ALREADY CARRIES THEM.
+//
+// Three budgets added during this session were gated on env vars — RECALL_BUDGET_MS,
+// EXECUTOR_CORRECTION_BUDGET, RECALL_CACHE_TTL_MS — which is the same law-1 violation as the
+// verbatim flag below, and arguably worse: a budget is exactly the kind of thing the system should
+// be able to LEARN. A walk that keeps losing its lessons to a recall timeout should be able to
+// observe that and widen; frozen at process start it cannot, and no trace records why one machine
+// gives up sooner than another.
+//
+// Extends the EXISTING `walkBudget` shape rather than minting a sibling (law 3: reuse before mint).
+// Same resolver, same fallback discipline as the floor's read — clamp each value to a sane range,
+// keep the literal default when the shape is absent or the field unusable, and say which happened.
+let _wbCache: { at: number; body: Record<string, unknown> | null } | null = null;
+async function shapedBudget(key: string, fallback: number, lo: number, hi: number): Promise<number> {
+  if (!_wbCache || Date.now() - _wbCache.at > 60_000) {
+    let body: Record<string, unknown> | null = null;
+    try {
+      const b = await ufExecuteTool("walkBudget", {}, new Set<string>(["walkBudget"]));
+      if (b.ok) body = JSON.parse(b.result) as Record<string, unknown>;
+    } catch { body = null; }
+    _wbCache = { at: Date.now(), body };
+  }
+  const v = _wbCache.body?.[key];
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : fallback;
+}
+
 // WHETHER A RECALLED LESSON'S COMMAND MAY BE RUN AS WRITTEN — a SHAPE, not an env var.
 //
 // This was first written as `LESSON_VERBATIM_COMMANDS=1`, which is a law-1 violation: an env var is
@@ -1112,7 +1139,8 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
   // cached, so an outage still reads as an outage and never masquerades as an empty store.
   const _cacheKey = `${query}::${limit}`;
   const _hit = _recallCache.get(_cacheKey);
-  if (_hit && Date.now() - _hit.at < RECALL_CACHE_TTL_MS) return _hit.rows;
+  const _ttl = await shapedBudget("recall_cache_ttl_ms", 600_000, 30_000, 3_600_000);
+  if (_hit && Date.now() - _hit.at < _ttl) return _hit.rows;
   // SAY WHY RECALL FAILED. Every failure here returned a bare null, and the one caller turns that
   // into "concept-db could not be asked (no producer or transport error)" — a message that names
   // three possible causes and distinguishes none of them. Diagnosing a dark recall therefore meant
@@ -7084,7 +7112,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // wall clock and the walk's own deadline still bound the dispatch, and the inspection credit
       // that funds schema discovery is unchanged. A goal that is going to fail still fails — it just
       // fails after the corrector has had enough turns to be wrong about more than one thing.
-      const _correctionBudget = Number(process.env.EXECUTOR_CORRECTION_BUDGET ?? 6);
+      const _correctionBudget = await shapedBudget("executor_correction_budget", 6, 1, 20);
       while (_deg && _tries < _correctionBudget + Math.min(_inspections, 3)) {
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
@@ -10141,7 +10169,7 @@ async function runGoalWithRecovery(
         // Raised with the successful-recall cache alongside it: pay the relay once, keep it for ten
         // minutes. The walk still never BLOCKS on recall — the budget bounds it — it just no longer
         // gives up before a working route can answer.
-        const _recallBudgetMs = Number(process.env.RECALL_BUDGET_MS ?? 25_000);
+        const _recallBudgetMs = await shapedBudget("recall_budget_ms", 25_000, 5_000, 60_000);
         // TWO PARALLEL LEGS ARE WORSE THAN ONE THEN MAYBE ANOTHER, ONCE THE VESSEL IS REMOTE.
         //
         // Parallelism was correct when concept-db answered over loopback: the earlier sequential
