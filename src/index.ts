@@ -4184,7 +4184,27 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // The id carries a timestamp: the old goalHash-only form collided across every re-run
   // of the same goal, so repeat executions would have overwritten each other's outcome.
   const floorExecId = `universal-tool-fallback-${goalHashOf(goal)}-${Date.now()}`;
-  const floorReached = verdict?.reached === true && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0);
+  // A TOOL TRANSCRIPT THIS RUN DOES NOT HAVE IS A FABRICATION, and it is checkable without knowing
+  // anything about the subject. Observed on "the distance from Earth to Io right now": the floor
+  // answered 4.2 AU (JPL Horizons said 6.276) by writing a `get_distance_to_io()` call it never made
+  // and a `{"distance": "4.2 AU"}` response it never received, and the reach gate passed it.
+  //
+  // The gate had already been TOLD. When zero tools run, the digest above prepends, in these words,
+  // that no external data was retrieved and that an unretrieved answer does not fulfil a live-value
+  // goal however plausible the number looks. The judge read that and reached anyway — which is the
+  // session-long asymmetry at its sharpest: evidence-supplying fixes land, instruction-at-the-point-
+  // of-use fixes do not. So this is the deterministic form of the same fact rather than a stronger
+  // wording of it.
+  //
+  // Deliberately narrow. It fires only when the answer CLAIMS a retrieval that provably did not
+  // happen, so an honest answer stating a recalled constant is untouched (verified against the Io
+  // mean-radius control, which reaches by searching and states its value plainly), and so is the
+  // agentic dispatch wrapper, whose genuinely-grounded answers arrive with no client-side tool_calls
+  // and do not narrate tool responses.
+  const _claimsToolUse = /\btool\s+(?:call|response|output|result)\b/i.test(finalText);
+  const _fabricatedTranscript = _claimsToolUse && executed.length === 0;
+  if (_fabricatedTranscript) console.log(`[goal-host-vessel] floor: FABRICATED TOOL TRANSCRIPT goalHash=${goalHashOf(goal)} — the answer narrates a tool call/response but ZERO tools executed; refusing the reach`);
+  const floorReached = verdict?.reached === true && !_fabricatedTranscript && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0);
   if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
     await persistSatisfierTrace({
       id: floorExecId,
@@ -4254,7 +4274,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   }
   // Reach when the reach gate passes on a SUBSTANTIVE answer — grounded either by CLIENT-executed
   // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
-  if (verdict?.reached && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
+  if (verdict?.reached && !_fabricatedTranscript && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
     console.log(`[goal-host-vessel] universal ReAct fallback REACHED goal (${groundedOk} grounded read(s), ${executedOk}/${executed.length} tool(s) OK)`);
     // Carry the answer the floor actually produced. This return used to drop
     // `finalText` on the floor: the ReAct loop reasoned over real tool output,
@@ -10381,12 +10401,40 @@ async function runGoalWithRecovery(
         const suppressedShape = walk.selectedTemplateId.slice("satisfier:".length);
         console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
         tap(`[goal-host-vessel] ${opts.surface}: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes`);
+        // A RETRY THAT DOES NOT WIDEN IS NOT A RETRY. This retry used to re-run with the same
+        // expectedOutputShapes it started with while suppressing the ONLY producer of that shape,
+        // which is unsatisfiable by construction: the walk logged "no pick — missing shapes
+        // [<the suppressed one>] have no producer or constructible payload; terminating walk" and
+        // the dispatch fell through to the floor.
+        //
+        // That sequence decided three goals in one batch. On "the distance from Earth to Io right
+        // now" the hollow verdict was CORRECT — "does not provide the requested distance … instead
+        // providing a range" — and the walk still ended up letting the floor answer 4.2 AU from
+        // model memory. A correctly-detected hollow verdict became a confident wrong number
+        // because the retry had nowhere to go.
+        //
+        // When the suppressed shape is the WHOLE target, widen to the retrieval shapes so the retry
+        // can go and get the value. Conditioned three ways so this cannot launder a different
+        // failure into a reach: the suppressed shape must be the entire expected output (a goal
+        // expecting other shapes keeps them), it must not be a write/edit shape (otherwise a hollow
+        // write would "reach" by fetching bytes, which the edit-intent gate below catches for
+        // repo edits but nothing catches for a memoryNote write), and the widening is announced in
+        // the walk log so a reader can see the target changed under the retry.
+        const _suppressedLc = suppressedShape.toLowerCase();
+        const _suppressedIsWrite = /(write|persist|save|edit|commit|apply|insert|update|delete)/.test(_suppressedLc);
+        const _suppressedIsWholeTarget =
+          Array.isArray(seededOutputShapes) &&
+          seededOutputShapes.length > 0 &&
+          seededOutputShapes.every((s) => String(s).toLowerCase() === _suppressedLc);
+        const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;
+        const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
+        if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
         const retryWalk = await runGoalAsPoolWalk(goal, {
           variables: opts.variables,
           tags: opts.tags,
           parentExecutionId: opts.parentExecutionId,
           compositionChain: opts.compositionChain,
-          expectedOutputShapes: seededOutputShapes,
+          expectedOutputShapes: _retryOutputShapes,
           terminalOutputShapes,
           surface: opts.surface,
           stepSink: opts.stepSink,
