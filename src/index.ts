@@ -1049,6 +1049,54 @@ async function conceptDbUrl(): Promise<string | null> {
     return _conceptDbUrl;
   } catch { return null; }
 }
+// WHETHER A RECALLED LESSON'S COMMAND MAY BE RUN AS WRITTEN — a SHAPE, not an env var.
+//
+// This was first written as `LESSON_VERBATIM_COMMANDS=1`, which is a law-1 violation: an env var is
+// frozen at process start, invisible to the trace and the walk, and unlearnable. The substrate
+// cannot observe it, cannot grade a dispatch differently because of it, and cannot change it
+// without a restart — so the one behaviour whose risk most deserves to be visible was the one thing
+// no trace could show.
+//
+// Read at use time from the `lessonExecutionPolicy` shape, exactly as bodyHonestyPolicy is read.
+// FAILS CLOSED: when discovery advertises no such shape, or it resolves to nothing usable, verbatim
+// execution stays OFF. So the default deployment is unchanged and enabling it is a shaped decision
+// the fleet can see, audit and revoke without touching a process.
+let _lepCache: { at: number; on: boolean } | null = null;
+async function lessonVerbatimAllowed(): Promise<boolean> {
+  if (_lepCache && Date.now() - _lepCache.at < 60_000) return _lepCache.on;
+  let on = false;
+  try {
+    const vr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "lessonExecutionPolicy" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (vr.ok) {
+      const vj = await vr.json() as { content?: { vessels?: Array<Record<string, unknown>> } };
+      const row = (vj?.content?.vessels ?? []).find((x) => x?.["protocol"] !== "libp2p" && x?.["endpoint"]);
+      if (row) {
+        const re = String(row["resolve_endpoint"] ?? "/v2/impulses/resolve");
+        const url = (re.startsWith("http://") || re.startsWith("https://"))
+          ? re
+          : `${String(row["endpoint"]).replace(/\/$/, "")}${re.startsWith("/") ? re : `/${re}`}`;
+        const r = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify({ impulse: { pointer: { type: "lessonExecutionPolicy" } } }),
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (r.ok) {
+          const j = await r.json() as any;
+          const body = j?.content?.body ?? j?.body ?? j?.content ?? j;
+          on = body?.verbatimCommands === true;
+        }
+      }
+    }
+  } catch { on = false; }
+  _lepCache = { at: Date.now(), on };
+  return on;
+}
 async function recallConceptRows(query: string, limit: number, timeoutMs = 10_000): Promise<Array<{ summary?: string; content?: string }> | null> {
   // A SUCCESSFUL RECALL IS WORTH KEEPING, BECAUSE THE ROUTE TO IT IS UNRELIABLE.
   //
@@ -5959,7 +6007,7 @@ async function runGoalAsPoolWalk(
       // Narrow when enabled: an executor shape only, a single fenced command, and the same
       // quoting-aware validator used for body recovery — bare curl/wget, no operator outside
       // quotes. Every use is logged with the command actually taken.
-      const _verbatimOn = process.env.LESSON_VERBATIM_COMMANDS === "1";
+      const _verbatimOn = execField ? await lessonVerbatimAllowed() : false;
       if (_verbatimOn && execField) {
         const _lesson = opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal)) ?? "";
         const _cand = (_lesson.match(/^\s*((?:curl|wget)\s+[^\n]{20,600})$/m) ?? [])[1]?.trim();
