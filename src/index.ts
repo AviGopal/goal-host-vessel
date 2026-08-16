@@ -3176,7 +3176,14 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // measured false reach that motivated it).
   {
     const ephV = await verifyEphemerisDistanceReach(goal, dig);
-    if (ephV) return ephV;
+    // SAY WHETHER IT RAN. The first live test of this oracle produced no log line at all, which
+    // is indistinguishable from "never reached" — the same silent-refusal defect the rebind tally
+    // was added to fix. One line either way: a verdict, or the abstain that let the LLM grade it.
+    if (ephV) {
+      console.log(`[ephemeris-oracle] VERDICT reached=${ephV.reached} — ${String(ephV.reason).slice(0, 160)}`);
+      return ephV;
+    }
+    console.log(`[ephemeris-oracle] ABSTAINED for goal_hash=${goalHashOf(goal)} — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one`);
   }
 
   // INDEPENDENT EXTRACT-FIELD ORACLE — confirm a field value against the FILE itself, not the
