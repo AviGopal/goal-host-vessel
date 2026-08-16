@@ -7295,8 +7295,42 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
         // fall through to action-then-read / bridge / escalate
       } else {
-        recordExecutorCommand(directArgsRaw);
-        return { content: direct, effect: effectTupleOf(shape, ep?.endpoint, direct) };
+        // A SERVICE THAT DECLARES ITS OWN ERROR HAS NOT ANSWERED, WHATEVER THE HTTP STATUS.
+        //
+        // The arg-correction loop below runs only when lastRawResolveReason is set, and that was
+        // set only by the dishonest-ENVELOPE path. An upstream API that answers 200 with an error
+        // in the body therefore sailed through here as success: pooled, returned, and noticed only
+        // by the reach judge — long after the moment when the REQUEST could still be fixed.
+        //
+        // Evidenced on the Earth-to-Io range. JPL Horizons returns 200 with
+        // {"error": "Bad dates -- start must be earlier than stop"} when START_TIME equals
+        // STOP_TIME, which is exactly what the arg synthesis kept emitting. The walk had the
+        // error, the reach judge quoted it verbatim in three separate hollow verdicts, and no
+        // correction round ever ran, because nothing upstream classified a 200 as a failure.
+        //
+        // Worth stating why this is a body check and not a better prompt: the same run had the
+        // correct rule recalled from concept-db and injected into the arg-synthesis prompt —
+        // "START_TIME must be STRICTLY EARLIER than STOP_TIME", with a working example URL — and
+        // the builder emitted equal dates anyway. Telling the model did not work. Handing it the
+        // service's own refusal, and the request that earned it, is the form that has.
+        //
+        // Narrow on purpose: a TOP-LEVEL `error` string is a machine-readable claim of failure by
+        // the service itself, not prose that happens to contain the word.
+        let _svcError = "";
+        try {
+          const _b = typeof direct === "string" ? JSON.parse(direct) : direct;
+          const _e = (_b as { error?: unknown } | null)?.error;
+          if (typeof _e === "string" && _e.trim().length > 0) _svcError = _e.trim().slice(0, 300);
+        } catch { /* not JSON, or no such field — nothing declared, nothing to correct */ }
+        if (_svcError) {
+          let _req = "";
+          try { const _a = JSON.stringify(directArgs ?? {}); if (_a && _a !== "{}") _req = ` REQUEST WAS ${_a.slice(0, 400)}`; } catch { /* unstringifiable */ }
+          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" returned HTTP success carrying a SERVICE-DECLARED ERROR — "${_svcError}" —${_req} — routing to arg-correction instead of pooling it as an answer`);
+          lastRawResolveReason = `The service answered with an error rather than data: "${_svcError}".${_req}. Emit corrected args that satisfy that complaint specifically.`;
+        } else {
+          recordExecutorCommand(directArgsRaw);
+          return { content: direct, effect: effectTupleOf(shape, ep?.endpoint, direct) };
+        }
       }
     }
     if (lastRawResolveReason) {
