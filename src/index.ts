@@ -9127,6 +9127,23 @@ If one of those sibling shapes is the action that would create what the goal ask
         // every trace of a no-oracle refusal read as a penalty that was never applied. The
         // code was right and the log was wrong, which is the worse way round: the log is
         // what the reach-gate lessons, the judge, and every after-the-fact analysis read.
+        // LOG WHAT THE JUDGE REJECTED, NOT ONLY THAT IT REJECTED. REACH-CONTENT prints the
+        // produced content on REACH, and nothing prints it on HOLLOW — so a verdict like "the
+        // output provides a numerical value but lacks contextual description" names a value that
+        // exists nowhere an operator can read: not in the journal, and not in the persisted trace,
+        // which stores no output for the step. Observed on the Earth-to-Io range, where that was
+        // the closest any dispatch came and the number could not be recovered afterwards to tell a
+        // correct answer rejected on presentation from a wrong one rejected on substance. Those
+        // need opposite fixes. Bounded and observability-only.
+        try {
+          for (const _hs of (verdict.completion_shapes ?? []).map(String)) {
+            const _hi = poolImpulses.find((im) => (im.metadata as { shape?: string } | undefined)?.shape === _hs);
+            if (!_hi) continue;
+            let _hc: string;
+            try { _hc = typeof _hi.content === "string" ? _hi.content : JSON.stringify(_hi.content); } catch { _hc = String(_hi.content); }
+            if (_hc && _hc.trim().length > 0) tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW-CONTENT ${_hs} (${_hc.length} chars) = ${_hc.slice(0, 400)}`);
+          }
+        } catch { /* observability only — never break the verdict path */ }
         tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
