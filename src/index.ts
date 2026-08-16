@@ -10519,11 +10519,39 @@ async function runGoalWithRecovery(
           const origTarget = Array.isArray(goalTargetDecision.shapes) ? goalTargetDecision.shapes.map((sh) => String(sh)) : [];
           const origWantedDerived = origTarget.some((sh) => !RAW_INPUT.has(sh) && !PUNT_OR_MECHANICS.has(sh));
           const altOnlyRawInput = altSubstantive.length > 0 && altSubstantive.every((sh) => RAW_INPUT.has(sh));
-          const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput);
+          // THE MIRROR OF THE GUARD ABOVE: retrieval was PLANNED and the reframe answered
+          // without retrieving anything.
+          //
+          // Above catches a reframe that reached on raw source when the goal wanted a derived
+          // answer. This catches the opposite, and it is how the Earth-to-Io range was certified
+          // at 4.2 AU against a JPL Horizons oracle of 6.276. The walk did everything right up to
+          // the last step: recall was live, target inference chose `http_fetch`, and it declared
+          // `derivation-intent intermediates {intermediate_shapes: ["http_fetch"]}`. The fetch
+          // then failed, and the reframe reached on a bare `llm_completion` that COMPUTED the
+          // distance from a remembered Jupiter distance. Plausible prose, no retrieval, wrong
+          // number — and nothing downstream could tell, because the shapes all looked fine.
+          //
+          // The walk states its own plan at the moment it makes it. When that plan names a
+          // retrieval shape, an answer produced without any retrieval shape has not carried it
+          // out, however well the prose reads. Deliberately generous about what counts as
+          // retrieval — a shell curl, a search and a file read all qualify — so this only fires
+          // when NOTHING was fetched, read or searched. Fails closed, adds no capability.
+          const RETRIEVAL_EVIDENCE = new Set([
+            ...RAW_INPUT,
+            "shellResult", "shell_result", "shell", "bash",
+            "web_search", "webSearchResult", "web_search_result", "fs_read",
+          ]);
+          const plannedRetrieval = (seededOutputShapes ?? []).map((sh) => String(sh)).filter((sh) => RAW_INPUT.has(sh));
+          const altRetrieved = altProduced.some((sh) => RETRIEVAL_EVIDENCE.has(sh));
+          const altSkippedPlannedRetrieval = plannedRetrieval.length > 0 && !altRetrieved;
+          const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput) && !altSkippedPlannedRetrieval;
           if (altWalkResult.reached && altHasSubstance) {
             walk = altWalkResult;
           } else if (altWalkResult.reached) {
-            tap(`[goal-host-vessel] ${opts.surface}: walk: reframe REJECTED — ${altOnlyRawInput ? "raw-input-only for a derived-answer goal (derivation-over-source)" : "punt-only hand-off"} ${JSON.stringify(altProduced)}; original goal NOT reached (fails closed)`);
+            const why = altSkippedPlannedRetrieval
+              ? `answered WITHOUT retrieving anything though the walk planned ${JSON.stringify(plannedRetrieval)} — an authored value is not a fetched one`
+              : altOnlyRawInput ? "raw-input-only for a derived-answer goal (derivation-over-source)" : "punt-only hand-off";
+            tap(`[goal-host-vessel] ${opts.surface}: walk: reframe REJECTED — ${why} ${JSON.stringify(altProduced)}; original goal NOT reached (fails closed)`);
           }
         }
       }
