@@ -6933,7 +6933,25 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _inspectedHosts = new Set<string>();
       const _isInspection = (cmd: string | undefined): boolean =>
         !!cmd && /\|\s*head\b/.test(cmd) && !/\|\s*(jq|awk|sed|python|bun|perl|cut|grep)\b/.test(cmd);
-      while (_deg && _tries < 3 + Math.min(_inspections, 3)) {
+      // BUDGET ENOUGH TURNS TO FIX MORE THAN ONE MISTAKE.
+      //
+      // Three corrections is enough to repair a single fault and not enough to repair three, and a
+      // retrieval command routinely carries three independent ones: a wrong parameter, a wrong
+      // extraction, and a shell-quoting slip that makes a working command look empty.
+      //
+      // Measured on the Earth-to-Io range. Attempt 13 logged "cold-command self-correction attempt
+      // 3 — now produces a value": it began succeeding on the LAST turn it had, having spent the
+      // first two discovering the response's structure, and was cut off still carrying a wrong
+      // QUANTITIES set. The run before it spent its whole budget rewriting a filter that was never
+      // the fault, because `"$$SOE"` had silently expanded to a pid. In both cases the URL was
+      // already correct and the remaining work was mechanical.
+      //
+      // Raised to six rather than made unbounded: each turn is one LLM call plus one command, the
+      // wall clock and the walk's own deadline still bound the dispatch, and the inspection credit
+      // that funds schema discovery is unchanged. A goal that is going to fail still fails — it just
+      // fails after the corrector has had enough turns to be wrong about more than one thing.
+      const _correctionBudget = Number(process.env.EXECUTOR_CORRECTION_BUDGET ?? 6);
+      while (_deg && _tries < _correctionBudget + Math.min(_inspections, 3)) {
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
         // RECOVER THE RESPONSE BODY THE PIPELINE ATE — don't ask the model to go and look.
@@ -7242,7 +7260,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (_inspHost && !_inspectedHosts.has(_inspHost)) {
           _inspectedHosts.add(_inspHost);
           _inspections++;
-          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} was an INSPECTION (raw-body read, no parser) — crediting the turn back; budget now ${3 + Math.min(_inspections, 3)}`);
+          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" attempt ${_tries} was an INSPECTION (raw-body read, no parser) — crediting the turn back; budget now ${_correctionBudget + Math.min(_inspections, 3)}`);
         }
       }
       // RECOVERY BEFORE REFUSAL — a refusal that leaves NO artifact is not obviously
