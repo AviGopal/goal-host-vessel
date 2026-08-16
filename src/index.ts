@@ -1012,6 +1012,10 @@ let _conceptDbResolvedAt = 0;
 // chooser was shown. Bounded: a walk touches a handful of goals and entries are cheap, but an
 // unbounded map in a long-lived vessel is a leak, so the oldest are dropped past a cap.
 const _recalledLessons = new Map<string, string>();
+// Successful concept recalls, keyed by query. Bounded and short-lived: long enough to survive a
+// busy patch on the relay, short enough that a lesson edited on the hub reaches the walk promptly.
+const RECALL_CACHE_TTL_MS = Number(process.env.RECALL_CACHE_TTL_MS ?? 600_000);
+const _recallCache = new Map<string, { at: number; rows: Array<{ summary?: string; content?: string }> }>();
 function _rememberLessons(hash: string, text: string): void {
   if (_recalledLessons.size > 200) {
     for (const k of [..._recalledLessons.keys()].slice(0, 100)) _recalledLessons.delete(k);
@@ -1046,6 +1050,21 @@ async function conceptDbUrl(): Promise<string | null> {
   } catch { return null; }
 }
 async function recallConceptRows(query: string, limit: number, timeoutMs = 10_000): Promise<Array<{ summary?: string; content?: string }> | null> {
+  // A SUCCESSFUL RECALL IS WORTH KEEPING, BECAUSE THE ROUTE TO IT IS UNRELIABLE.
+  //
+  // With concept-db owned by the hub, a spoke reaches it over the libp2p relay. Measured today that
+  // egress answers in ~2s idle and exceeds the 10s recall budget under concurrent load — so the
+  // same lesson is fetched from scratch on every dispatch and, whenever the substrate is busy,
+  // fetched not at all. Recall is deliberately given a short budget because the walk must never
+  // wait on it; the consequence was that the walk usually proceeded with no lessons at all, which
+  // is precisely when it guesses a completion shape instead of a retrieval one.
+  //
+  // Caching the SUCCESSES makes an intermittent route usable: pay the relay once, reuse for a few
+  // minutes. Only successful, non-empty results are cached — a null (could-not-ask) is never
+  // cached, so an outage still reads as an outage and never masquerades as an empty store.
+  const _cacheKey = `${query}::${limit}`;
+  const _hit = _recallCache.get(_cacheKey);
+  if (_hit && Date.now() - _hit.at < RECALL_CACHE_TTL_MS) return _hit.rows;
   // SAY WHY RECALL FAILED. Every failure here returned a bare null, and the one caller turns that
   // into "concept-db could not be asked (no producer or transport error)" — a message that names
   // three possible causes and distinguishes none of them. Diagnosing a dark recall therefore meant
@@ -1071,6 +1090,10 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
       ? (j.content as { body?: unknown }).body : undefined;
     const rows = [j.content, inner, j.body].find((x) => Array.isArray(x)) as
       Array<{ summary?: string; content?: string }> | undefined;
+    if (rows && rows.length > 0) {
+      if (_recallCache.size > 300) for (const k of [..._recallCache.keys()].slice(0, 150)) _recallCache.delete(k);
+      _recallCache.set(_cacheKey, { at: Date.now(), rows });
+    }
     return rows ?? [];
   } catch (e) {
     const err = e as Error;
