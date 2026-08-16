@@ -1046,8 +1046,14 @@ async function conceptDbUrl(): Promise<string | null> {
   } catch { return null; }
 }
 async function recallConceptRows(query: string, limit: number, timeoutMs = 10_000): Promise<Array<{ summary?: string; content?: string }> | null> {
+  // SAY WHY RECALL FAILED. Every failure here returned a bare null, and the one caller turns that
+  // into "concept-db could not be asked (no producer or transport error)" — a message that names
+  // three possible causes and distinguishes none of them. Diagnosing a dark recall therefore meant
+  // reproducing the call by hand, and the same message covered a vessel that was merely SLOW, a
+  // vessel that was absent, and a federated route that resolved but refused. Each needs a different
+  // fix and they were indistinguishable at the point where the fact was known.
   const url = await conceptDbUrl();
-  if (!url) return null;
+  if (!url) { console.log(`[walk-concepts] recall SKIPPED — discovery named no concept-db row (neither a local http row nor a libp2p peer row)`); return null; }
   try {
     const r = await fetch(url, {
       method: "POST",
@@ -1055,14 +1061,22 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
       body: JSON.stringify({ impulse: { pointer: { type: "concept", query, limit } } }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      let _b = ""; try { _b = (await r.text()).slice(0, 200); } catch { /* body unreadable */ }
+      console.log(`[walk-concepts] recall REFUSED http=${r.status} url=${url.slice(0, 120)} body=${_b}`);
+      return null;
+    }
     const j = await r.json() as { content?: unknown; body?: unknown };
     const inner = (j.content && typeof j.content === "object" && !Array.isArray(j.content))
       ? (j.content as { body?: unknown }).body : undefined;
     const rows = [j.content, inner, j.body].find((x) => Array.isArray(x)) as
       Array<{ summary?: string; content?: string }> | undefined;
     return rows ?? [];
-  } catch { return null; }
+  } catch (e) {
+    const err = e as Error;
+    console.log(`[walk-concepts] recall FAILED ${String(err?.name ?? "Error")}: ${String(err?.message ?? e).slice(0, 160)} url=${url.slice(0, 120)} budget=${timeoutMs}ms`);
+    return null;
+  }
 }
 
 // Goal-reaching verification (2026-06-22). status=completed only means the
