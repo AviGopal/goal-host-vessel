@@ -45,6 +45,7 @@ export function goalHashOf(goal: string): string {
 }
 
 const INFER_CACHE_MAX = 512;
+const MAX_TARGET_SHAPES = 3;
 
 export interface GoalTargetDecision {
   shapes: string[];
@@ -188,7 +189,7 @@ Respond with ONLY JSON: {"target_shapes": ["<shape from KNOWN list>"]}`;
               : s,
           ),
       ),
-    ).slice(0, 3) as string[];
+  ).slice(0, MAX_TARGET_SHAPES) as string[];
     if (cache) {
       if (cache.size >= INFER_CACHE_MAX) {
         const first = cache.keys().next().value;
