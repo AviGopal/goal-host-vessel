@@ -245,6 +245,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
+import { registryFieldFor, registryCountCommandFor } from "./registry-field";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
@@ -1413,11 +1414,7 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
   if (!isRegistryCtx || !isCountAsk) return null;
   // Map the goal's counted entity to the ONLY fields the registry reports.
-  const counted = /\b(?:how many|number of|total)\s+(\w+)/i.exec(g)?.[1]?.toLowerCase() ?? "";
-  const field = /^vessels?$/.test(counted) ? "totalVessels"
-    : /^shapes?$/.test(counted) ? "totalShapes"
-    : /\bhealthy\b/.test(g) && /^vessels?$/.test(counted) ? "healthyCount"
-    : null;
+  const field = registryFieldFor(g);
   let stats: Record<string, unknown> | null = null;
   try {
     const r = await fetch(`${DISCOVERY_ENDPOINT}/registry/stats`, { signal: AbortSignal.timeout(4000) });
@@ -6209,6 +6206,28 @@ async function runGoalAsPoolWalk(
           ? [`\nRECALLED LESSONS (the substrate's own notes for this goal — if one states a parameter contract, an id, or a required ordering for the service you are calling, FOLLOW IT over your own recollection, and prefer a command it gives verbatim):\n${opts.recalledLessons ?? _recalledLessons.get(goalHashOf(goal))}`]
           : []),
       ];
+      // SOURCE+FIELD BINDING — deterministic, ahead of synthesis.
+      //
+      // A registry-count goal names both the source and the quantity, and both are
+      // machine-decidable, so there is nothing for a model to infer. Measured 2026-08-17:
+      // asked how many SHAPES the discovery registry advertises (true 368), the walk
+      // answered 12 — the health report's own advertised_shapes length — and after a
+      // prompt fix answered 13, the registry's VESSEL count. It reached the right source
+      // and read the wrong column. A prohibition and a worked example both left the rate
+      // unchanged, which is why this is a binding rather than more guidance.
+      //
+      // The field comes from registryFieldFor, the SAME function the verifier uses, so the
+      // producer and the oracle cannot disagree about what the goal asked for. It abstains
+      // (null) whenever the goal carries no counting clause or names an entity the registry
+      // does not report, leaving synthesis untouched for every other goal.
+      if (execField) {
+        const _regCmd = registryCountCommandFor(goal, DISCOVERY_ENDPOINT);
+        if (_regCmd) {
+          console.log(`[goal-host-vessel] source+field binding for "${shape}": ${_regCmd} (synthesis skipped — field chosen by the same rule the verifier applies)`);
+          return { [execField]: _regCmd } as Record<string, unknown>;
+        }
+      }
+
       // VERBATIM LESSON COMMAND — INERT UNLESS EXPLICITLY ENABLED.
       //
       // Measured over 45 dispatches of one goal: handed a verified working command in a recalled
