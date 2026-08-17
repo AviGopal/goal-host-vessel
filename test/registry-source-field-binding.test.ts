@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { registryFieldFor, registryCountCommandFor } from "../src/registry-field";
+import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "../src/registry-field";
 
 // WHY THIS IS A BINDING AND NOT MORE PROMPT TEXT (2026-08-17).
 //
@@ -199,5 +199,69 @@ describe("registryFieldFor — compositional goals abstain", () => {
     expect(registryFieldFor("In a health report for the vessel goal-host, how many shapes does the registry advertise?")).toBe(
       "totalShapes",
     );
+  });
+});
+
+// THE COMPOSITIONAL PRODUCER — the other half of the abstention.
+//
+// Abstaining stopped the false reach but left the goal with NO producer: the measured re-run
+// walked, found nothing local, selected webSearchResult and died on credits — for a quotient
+// answerable by one command against an endpoint it had queried seconds earlier. A fix that
+// only removes a wrong answer converts a false reach into a guaranteed miss.
+describe("registryRatioFor — the quotient case has a producer", () => {
+  const E = "http://127.0.0.1:8100";
+
+  it("THE MEASURED GOAL: emits one command computing the quotient", () => {
+    const goal =
+      "Compute the average number of shapes per vessel in the discovery registry: divide the registry total shape count by the registry total vessel count and report the quotient.";
+    expect(registryRatioCommandFor(goal, E)).toBe(
+      `curl -s ${E}/registry/stats | jq '.totalShapes / .totalVessels'`,
+    );
+    // And the single-field path must still abstain, or the wrong answer comes back.
+    expect(registryCountCommandFor(goal, E)).toBeNull();
+  });
+
+  it("numerator is the entity named FIRST, across phrasings", () => {
+    expect(registryRatioFor("ratio of registry shapes to vessels")).toEqual({
+      numerator: "totalShapes", denominator: "totalVessels",
+    });
+    expect(registryRatioFor("ratio of registry vessels to shapes")).toEqual({
+      numerator: "totalVessels", denominator: "totalShapes",
+    });
+    expect(registryRatioFor("average shapes per vessel in the registry")).toEqual({
+      numerator: "totalShapes", denominator: "totalVessels",
+    });
+  });
+
+  it("healthy binds the healthy denominator", () => {
+    expect(registryRatioFor("average shapes per healthy vessel in the registry")).toEqual({
+      numerator: "totalShapes", denominator: "healthyCount",
+    });
+  });
+
+  it("needs BOTH entities — one alone is not a quotient", () => {
+    expect(registryRatioFor("how many shapes does the registry advertise on average")).toBeNull();
+    expect(registryRatioFor("divide the registry shape count by four")).toBeNull();
+  });
+
+  it("DIVISION ONLY — difference and percentage stay abstained, not answered", () => {
+    // A producer whose oracle cannot check it is how a false reach is manufactured. These
+    // remain abstained until each has its verifier.
+    expect(registryRatioFor("the difference between registry shapes and vessels")).toBeNull();
+    expect(registryRatioFor("what percentage of registry vessels are healthy")).toBeNull();
+    expect(registryCountCommandFor("the difference between registry shapes and vessels", E)).toBeNull();
+  });
+
+  it("non-registry goals are untouched", () => {
+    expect(registryRatioFor("average lines per file in repos/foo/src")).toBeNull();
+  });
+
+  it("the emitted jq actually computes the quotient, not an operand", () => {
+    const cmd = registryRatioCommandFor("shapes per vessel in the registry", E)!;
+    expect(cmd).toContain("/");
+    expect(cmd).toContain(".totalShapes / .totalVessels");
+    // Guards the exact regression: a command that selects one field would re-create the
+    // false reach with the oracle now blessing it.
+    expect(cmd).not.toMatch(/jq '?\.totalShapes'?$/);
   });
 });

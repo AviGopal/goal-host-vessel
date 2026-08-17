@@ -245,7 +245,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
-import { registryFieldFor, registryCountCommandFor } from "./registry-field";
+import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
@@ -1421,6 +1421,37 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
     if (r.ok) stats = await r.json() as Record<string, unknown>;
   } catch { return null; }
   if (!stats) return null;                              // registry unreachable -> cannot verify -> LLM
+
+  // COMPOSITIONAL: a quotient of two registry counts. Checked BEFORE the single-field paths
+  // because registryFieldFor deliberately abstains on these goals, and an abstention here
+  // would hand a verifiable arithmetic answer to the LLM judge — the judge that graded six
+  // fabricated ephemeris values as correct. The quotient is recomputed from THIS fetch, so
+  // the command's stdout is evidence, never authority.
+  const ratio = registryRatioFor(goal);
+  if (ratio) {
+    const nRaw = (stats as Record<string, number>)[ratio.numerator];
+    const dRaw = (stats as Record<string, number>)[ratio.denominator];
+    if (typeof nRaw !== "number" || typeof dRaw !== "number" || dRaw === 0) return null;
+    const expectedQ = nRaw / dRaw;
+    // Same strip passes as the count path: a loopback endpoint in the body yields 127.0 and
+    // 0.1 as candidate decimals, and this oracle compares by TOLERANCE, so an unstripped
+    // address can match a true quotient outright — a false REACH, not a bad message.
+    const cleanedQ = dig
+      .replace(/\bhttps?:\/\/[^\s"'<>]+/gi, " ")
+      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, " ")
+      .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ");
+    const cands = [...new Set((cleanedQ.match(/\d+(?:\.\d+)?/g) ?? []).map(Number))].filter(Number.isFinite);
+    if (cands.length === 0) return null;               // nothing numeric produced -> LLM
+    // 0.5% relative tolerance: the quotient is irrational in general and the walk may round.
+    // Tight enough that the neighbouring integer operands (368, 13) cannot satisfy it.
+    const tol = Math.abs(expectedQ) * 0.005;
+    const hit = cands.find((c) => Math.abs(c - expectedQ) <= tol);
+    if (hit !== undefined) {
+      return { reached: true, reason: `deterministic:verified-registry-ratio — independently queried ${DISCOVERY_ENDPOINT}/registry/stats and computed ${ratio.numerator}/${ratio.denominator} = ${nRaw}/${dRaw} = ${expectedQ}; the produced output reports ${hit}, which matches within 0.5%`, deterministic: true, completion_shapes: [] };
+    }
+    return { reached: false, reason: `deterministic:wrong-registry-ratio — independently computed ${ratio.numerator}/${ratio.denominator} = ${nRaw}/${dRaw} = ${expectedQ}, but the output reports ${cands[0]}. Reporting an OPERAND (${nRaw} or ${dRaw}) instead of the quotient is the measured failure this check exists to catch`, completion_shapes: [] };
+  }
+
   if (field === null) {
     // The goal counts an entity the registry does NOT track (only vessels/shapes/healthy exist).
     // There is no such category, so any specific count is a confabulation — honest failure.
@@ -6811,6 +6842,22 @@ If one of those sibling shapes is the action that would create what the goal ask
       // that is only sound when the shared rule answers the question the GOAL asked, and
       // stating the scope is what makes a wrong shared assumption visible in the log.
       tap(`[goal-host-vessel] walk: DETERMINISTIC file-count command for "${shape}" (super-repo rooted, scope=${TOP_LEVEL_FILE_SCOPE.test(goal) ? "top-level" : "recursive"}, filter=${parseFileExtension(goal) ? "*." + parseFileExtension(goal) : "ALL FILES"}) \u2014 shares verifyCountFilesReach's parse; SKIPPED reuse-cache + pointer_arg synthesis`);
+    } else if (shape === "shellResult" && registryRatioCommandFor(goal, DISCOVERY_ENDPOINT) !== null) {
+      // THE COMPOSITIONAL REGISTRY CASE — a quotient of two counts, measured 2026-08-17.
+      //
+      // Ahead of the single-field branch below because that branch now ABSTAINS on these
+      // goals (it must: answering "shapes / vessels" with totalShapes was graded reached with
+      // alpha +2). Abstention alone left the goal with no producer: the re-run walked, found
+      // nothing local, picked webSearchResult and died on credits — for a quotient answerable
+      // by ONE command against an endpoint it had queried seconds earlier.
+      //
+      // Same shared-parse construction as its siblings: this command and verifyRegistryReach
+      // both derive their fields from registryRatioFor, so they cannot disagree about which
+      // quotient the goal asked for — and the oracle recomputes it from its OWN fetch rather
+      // than trusting this stdout.
+      directArgsRaw = { command: registryRatioCommandFor(goal, DISCOVERY_ENDPOINT)! };
+      const _rr = registryRatioFor(goal)!;
+      tap(`[goal-host-vessel] walk: DETERMINISTIC registry-RATIO command for "${shape}" (${_rr.numerator} / ${_rr.denominator}, shared with the verifier)`);
     } else if (shape === "shellResult" && registryCountCommandFor(goal, DISCOVERY_ENDPOINT) !== null) {
       // SOURCE+FIELD BINDING, and deliberately AHEAD of the reached-command cache.
       //

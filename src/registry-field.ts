@@ -23,7 +23,9 @@
  * report. Abstaining costs an LLM judgement; guessing poisons the posterior of an arm that
  * was right.
  */
-export function registryFieldFor(goal: string): "totalVessels" | "totalShapes" | "healthyCount" | null {
+export type RegistryField = "totalVessels" | "totalShapes" | "healthyCount";
+
+export function registryFieldFor(goal: string): RegistryField | null {
   const g = goal.toLowerCase();
 
   // ABSTAIN WHEN THE GOAL IS COMPOSITIONAL — measured false reach, 2026-08-17.
@@ -79,4 +81,50 @@ export function registryCountCommandFor(goal: string, endpoint: string): string 
   if (!/\bregistry\b/i.test(goal)) return null;
   const field = registryFieldFor(goal);
   return field ? `curl -s ${endpoint}/registry/stats | jq .${field}` : null;
+}
+
+/**
+ * THE COMPOSITIONAL CASE: a QUOTIENT of two registry counts.
+ *
+ * Abstaining (above) stopped the substrate answering "shapes ÷ vessels" with `totalShapes`
+ * and being graded reached for it. But abstention alone leaves the goal with no producer at
+ * all: the measured re-run walked, found nothing local, selected webSearchResult, and died on
+ * credits — a goal answerable by ONE command against an endpoint it had already queried
+ * seconds earlier.
+ *
+ * `registry/stats` returns every field in a single response, so the quotient needs no second
+ * fetch and no cross-source join — the composition is arithmetic over one body. This returns
+ * the fields for it; the caller emits `jq '.a / .b'` and the oracle recomputes the same
+ * quotient from its own independent fetch.
+ *
+ * Numerator is the entity mentioned FIRST. That reads correctly for every phrasing measured
+ * — "shapes per vessel", "divide the total shape count by the total vessel count", "ratio of
+ * shapes to vessels" — because English puts the dividend first in all three.
+ *
+ * DIVISION ONLY, deliberately. Differences and percentages are recognised by the abstention
+ * above and stay abstained: each needs its own verifier, and a producer whose oracle cannot
+ * check it is how a false reach gets manufactured. Widen only with the matching oracle.
+ */
+export function registryRatioFor(goal: string): { numerator: RegistryField; denominator: RegistryField } | null {
+  const g = goal.toLowerCase();
+  if (!/\b(registr(?:y|ies|ered|ration)|discovery)\b/.test(g)) return null;
+  // Only the division family; "difference"/"percentage" deliberately absent.
+  if (!/\b(?:divide[ds]?|division|quotient|ratio|average|mean|per)\b/.test(g)) return null;
+
+  const shapeAt = g.search(/\bshapes?\b/);
+  const vesselAt = g.search(/\bvessels?\b/);
+  if (shapeAt < 0 || vesselAt < 0) return null;      // needs BOTH entities to be a quotient
+
+  const healthy = /\bhealthy\b/.test(g);
+  const shapeField: RegistryField = "totalShapes";
+  const vesselField: RegistryField = healthy ? "healthyCount" : "totalVessels";
+  return shapeAt < vesselAt
+    ? { numerator: shapeField, denominator: vesselField }
+    : { numerator: vesselField, denominator: shapeField };
+}
+
+/** The one command that answers a registry quotient, from the single stats body. */
+export function registryRatioCommandFor(goal: string, endpoint: string): string | null {
+  const r = registryRatioFor(goal);
+  return r ? `curl -s ${endpoint}/registry/stats | jq '.${r.numerator} / .${r.denominator}'` : null;
 }
