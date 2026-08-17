@@ -96,23 +96,32 @@ describe("parseTwoSourceCompare — deployed /vessels trees", () => {
     expect(p!.ext).toBe("ts");
   });
 
-  it("THE FALSE REACH: a goal scoped to \"directly inside\" must ABSTAIN", () => {
-    // Measured 2026-08-17. This exact goal (true answer 58 + 2 = 60) was answered
-    // 65 + 7 = 72 — counted RECURSIVELY — graded deterministic:verified-two-source-combined,
-    // and ALPHA-CREDITED. TwoSrcParse has no scope field, so builder and verifier agreed by
-    // construction on a question the goal did not ask. Abstaining hands it to the walk, which
-    // answered it correctly.
+  it("THE FALSE REACH: a scoped goal is now REPRESENTED, not silently widened", () => {
+    // Measured 2026-08-17. This exact goal (true 58 + 2 = 60) was answered 65 + 7 = 72 —
+    // counted RECURSIVELY — graded deterministic:verified-two-source-combined, and
+    // ALPHA-CREDITED. The parse had no scope field, so builder and verifier shared an
+    // assumption the goal contradicted and agreed by construction on the wrong question.
     const p = parseTwoSourceCompare(
       `Count the .ts files directly inside ${VA}, then count the .ts files directly inside ${VB}, then report the SUM of those two counts as a single number.`,
-    );
-    expect(p).toBeNull();
+    )!;
+    expect(p).not.toBeNull();
+    expect(p.topLevel).toBe(true);
+    expect(p.output).toBe("combined");
   });
 
-  it("every top-level scope phrasing abstains, not just the measured one", () => {
+  it("an unscoped goal stays recursive — the default must not flip", () => {
+    const p = parseTwoSourceCompare(
+      `the combined number of .ts files across ${VA} and ${VB}`,
+    )!;
+    expect(p.topLevel).toBe(false);
+  });
+
+  it("every top-level phrasing sets the scope, not just the measured one", () => {
     for (const scope of ["directly inside", "directly in", "directly under", "top-level", "non-recursive", "at the root of"]) {
-      expect(
-        parseTwoSourceCompare(`the combined number of .ts files ${scope} ${VA} and ${scope} ${VB}`),
-      ).toBeNull();
+      const p = parseTwoSourceCompare(
+        `the combined number of .ts files ${scope} ${VA} and ${scope} ${VB}`,
+      );
+      expect(p?.topLevel).toBe(true);
     }
   });
 

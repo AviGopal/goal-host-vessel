@@ -20,27 +20,19 @@ export const LANG_EXT: Record<string, string> = {
   json: "json", rust: "rs", go: "go", shell: "sh", bash: "sh",
 };
 
-export interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value" | "combined"; dir: "more" | "fewer" }
+/** `topLevel` is the SCOPE dimension. It exists because omitting it produced a false reach:
+ *  a goal saying "directly inside" was counted recursively by both the builder and the
+ *  verifier, which therefore agreed on the wrong number and alpha-credited it. A shared parse
+ *  is safe only while it represents every dimension the goal can vary; the sharing was never
+ *  the defect, the missing field was. */
+export interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value" | "combined"; dir: "more" | "fewer"; topLevel: boolean }
 export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
-  // ABSTAIN ON A SCOPED GOAL — measured FALSE REACH, 2026-08-17, caused by this module.
-  //
-  // TwoSrcParse has no scope field: this family always counts RECURSIVELY. A goal saying
-  // "directly inside" is asking for the immediate directory only, and nothing here can
-  // represent that. Measured: "count the .ts files directly inside /vessels/goal-host-vessel/src
-  // … and /vessels/ribosome-vessel/src … report the SUM" (true answer 58 + 2 = 60) was answered
-  // 65 + 7 = 72 and graded `deterministic:verified-two-source-combined`, then ALPHA-CREDITED.
-  //
-  // Builder and verifier share this parse, so they agreed BY CONSTRUCTION on a different
-  // question than the goal asked — the identical self-confirming failure the single-source
-  // oracle documents ("because generator and grader shared -maxdepth 1 they agreed by
-  // construction … a wrong answer promoted to positive learning signal"). Enabling this family
-  // for /vessels paths exposed a defect that was latent for every scoped two-source goal.
-  //
-  // Declining hands the goal to the walk, which answered it CORRECTLY (60) via the floor.
-  // An honest miss the learner can grade beats a confident wrong answer it cannot.
-  // Widening this to honour scope needs a scope field carried through BOTH the command builder
-  // and the verifier; until then, abstaining is the only answer that cannot be wrong.
-  if (/\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:in|under|inside)|non[-\s]?recursive|not\s+recursive|shallow|at\s+the\s+root\s+of)\b/i.test(goal)) return null;
+  // SCOPE, carried rather than abstained. Measured false reach 2026-08-17: "count the .ts
+  // files DIRECTLY INSIDE A … and B … report the SUM" (true 58 + 2 = 60) was answered
+  // 65 + 7 = 72 and alpha-credited, because this family always counted recursively and the
+  // verifier shared that assumption. The first fix abstained, which was correct but left the
+  // goal unverifiable; representing the dimension is what lets it be both answered and checked.
+  const topLevel = /\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:in|under|inside)|non[-\s]?recursive|not\s+recursive|shallow|at\s+the\s+root\s+of)\b/i.test(goal);
 
   // Accept `vessels/<v>/...` alongside `repos/<v>/...`. The sibling single-source oracle's
   // path pattern has always allowed both; this one did not, so a two-source goal naming two
@@ -113,5 +105,5 @@ export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\b/i);
   const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
-  return { op, relA: uniq[0]!, relB: uniq[1]!, ext, output, dir: more ? "more" : "fewer" };
+  return { op, relA: uniq[0]!, relB: uniq[1]!, ext, output, dir: more ? "more" : "fewer", topLevel };
 }

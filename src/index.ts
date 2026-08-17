@@ -2751,9 +2751,13 @@ function buildTwoSourceCompareCommand(goal: string): string | null {
   if (!p) return null;
   const rootA = shellRootExpr(p.relA), rootB = shellRootExpr(p.relB);
   const nameSel = p.ext ? ` -name '*.${p.ext}'` : "";
+  // -maxdepth 1 when the goal scoped itself to the immediate directory. The verifier reads the
+  // SAME p.topLevel, which is safe precisely because the parse now represents the dimension:
+  // when it did not, both sides silently assumed "recursive" and agreed on the wrong number.
+  const depthSel = p.topLevel ? " -maxdepth 1" : "";
   const agg = (root: string) => p.op === "total_lines"
-    ? `find ${root} -type f${nameSel} -exec cat {} + | wc -l`
-    : `find ${root} -type f${nameSel} | wc -l`;
+    ? `find ${root}${depthSel} -type f${nameSel} -exec cat {} + | wc -l`
+    : `find ${root}${depthSel} -type f${nameSel} | wc -l`;
   // dir=more -> the LARGER side wins; dir=fewer -> the SMALLER side wins.
   const [wAlarger, wBlarger] = p.dir === "more" ? [p.relA, p.relB] : [p.relB, p.relA];
   // A combination asks for ONE number across both sources, so the command emits the sum
@@ -2773,7 +2777,10 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
   const aggregate = async (rel: string): Promise<number | null> => {
     try {
       const rootDir = await resolveAuthoritativeRoot(rel);
-      const entries = await readdir(rootDir, { recursive: true, withFileTypes: true });
+      // recursive: !p.topLevel — the verifier must walk exactly the tree the goal named.
+      // Hardcoding `true` here is what let a "directly inside" goal be graded against a
+      // recursive count and credited.
+      const entries = await readdir(rootDir, { recursive: !p.topLevel, withFileTypes: true });
       const files = entries.filter((e) => e.isFile())
         .filter((e) => !p.ext || e.name.toLowerCase().endsWith("." + p.ext))
         .map((e) => `${(e as unknown as { parentPath?: string; path?: string }).parentPath ?? (e as unknown as { path?: string }).path ?? rootDir}/${e.name}`);
