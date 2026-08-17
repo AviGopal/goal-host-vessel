@@ -25,9 +25,45 @@
  */
 export function registryFieldFor(goal: string): "totalVessels" | "totalShapes" | "healthyCount" | null {
   const g = goal.toLowerCase();
-  const counted = /\b(?:how many|number of|total)\s+(\w+)/i.exec(g)?.[1]?.toLowerCase() ?? "";
-  if (/^vessels?$/.test(counted)) return /\bhealthy\b/.test(g) ? "healthyCount" : "totalVessels";
-  if (/^shapes?$/.test(counted)) return "totalShapes";
+
+  // ABSTAIN WHEN THE GOAL IS COMPOSITIONAL — measured false reach, 2026-08-17.
+  //
+  // "Divide the registry total shape count by the registry total vessel count and report the
+  // quotient" (true answer ~28.5) fired this fast path, which answered `totalShapes` = 368.
+  // The deterministic oracle then CONFIRMED it — correctly, for its own question — and the
+  // arm took alpha +2. The substrate answered a simpler question than the one asked and was
+  // rewarded for it.
+  //
+  // A single-field lookup cannot answer a goal that combines two counts, so returning a field
+  // here is not a partial answer, it is a WRONG one that the verifier is guaranteed to bless:
+  // both sides derive from this same function, so a mistake here is confirmed rather than
+  // caught. That shared-source property is what makes agreement cheap and this abstention
+  // load-bearing.
+  //
+  // This is the invariant recorded on 2026-08-16 — "if both count, abstain" — which had been
+  // written down and never implemented. Abstaining routes the goal back to the walk, which is
+  // where composition happens; the cost is an LLM judgement, and the alternative is teaching
+  // the learner that a dropped operand is a success.
+  // Scan a short window after the counting trigger rather than the single next word: "how
+  // many HEALTHY vessels" puts an adjective there, and taking it literally made this abstain
+  // on a goal it should answer. Surfaced by a test written for the abstention above, which
+  // asserted healthyCount and got null — the limitation predates that change.
+  const counted = [...g.matchAll(/\b(?:how many|number of|total)\s+((?:\w+\s+){0,2}\w+)/gi)]
+    .map((m) => m[1]!.toLowerCase().split(/\s+/).find((w) => /^(?:vessels?|shapes?)$/.test(w)))
+    .filter((w): w is string => Boolean(w));
+  const distinctEntities = new Set(counted.map((w) => (w.startsWith("vessel") ? "vessel" : "shape")));
+  if (distinctEntities.size > 1) return null;
+
+  // Arithmetic over the count is the same failure wearing different words — "shapes per
+  // vessel" names one counted entity but still needs two numbers. Caught separately so a
+  // rephrasing cannot slip past the entity check above.
+  if (/\b(?:divide[ds]?|division|quotient|ratio|average|mean|per\s+vessel|per\s+shape|fraction|percentage|percent|difference|subtract|multiplied|times)\b/.test(g)) {
+    return null;
+  }
+
+  const first = counted[0] ?? "";
+  if (/^vessels?$/.test(first)) return /\bhealthy\b/.test(g) ? "healthyCount" : "totalVessels";
+  if (/^shapes?$/.test(first)) return "totalShapes";
   return null;
 }
 

@@ -142,3 +142,62 @@ describe("the oracle defers to the shared rule, unconditionally", () => {
     expect(src).not.toMatch(/\?\s*"totalShapes"\s*:\s*registryFieldFor/);
   });
 });
+
+// COMPOSITIONAL GOALS MUST ABSTAIN — the measured false reach of 2026-08-17.
+//
+// Dispatch 7983461a asked: "Compute the average number of shapes per vessel in the discovery
+// registry: divide the registry total shape count by the registry total vessel count and
+// report the quotient." True answer ~28.5 (370 shapes / 13 vessels).
+//
+// The walk inferred shellResult, this fast path produced
+// `curl .../registry/stats | jq .totalShapes`, the command returned 368, and the
+// deterministic oracle graded it REACHED — correctly for its own question, which was not the
+// question asked. alpha +2 to satisfier:shellResult for dropping an operand.
+//
+// A false reach is worse than a miss here: it becomes a cached recipe and teaches the learner
+// that answering a simpler sub-question is success. It is also self-confirming, because the
+// oracle and the synthesiser share this function — the property that makes them agree makes
+// an error here invisible.
+describe("registryFieldFor — compositional goals abstain", () => {
+  const COMPOSITIONAL = [
+    "Compute the average number of shapes per vessel in the discovery registry: divide the registry total shape count by the registry total vessel count and report the quotient.",
+    "What is the ratio of registry shapes to registry vessels?",
+    "How many shapes per vessel does the registry advertise on average?",
+    "What percentage of registry vessels are healthy?",
+    "Report the difference between the registry total shape count and the registry total vessel count.",
+  ];
+
+  for (const goal of COMPOSITIONAL) {
+    it(`abstains: ${goal.slice(0, 58)}…`, () => {
+      expect(registryFieldFor(goal)).toBeNull();
+      // The command builder must abstain too, or the walk still runs the wrong lookup.
+      expect(registryCountCommandFor(goal, "http://127.0.0.1:8100")).toBeNull();
+    });
+  }
+
+  it("THE REGRESSION: the exact dispatched goal no longer yields a single-field command", () => {
+    const goal =
+      "Compute the average number of shapes per vessel in the discovery registry: divide the registry total shape count by the registry total vessel count and report the quotient.";
+    // Before the fix this returned `curl -s .../registry/stats | jq .totalShapes`.
+    expect(registryCountCommandFor(goal, "http://127.0.0.1:8100")).toBeNull();
+  });
+
+  it("simple counting goals still bind — abstention must not swallow the working case", () => {
+    // The fast path exists because two prompt interventions failed to stop the walk reading
+    // the wrong column. Abstaining on everything would restore that failure.
+    expect(registryFieldFor("How many shapes does the registry advertise?")).toBe("totalShapes");
+    expect(registryFieldFor("How many vessels are in the registry?")).toBe("totalVessels");
+    expect(registryFieldFor("How many healthy vessels does the registry report?")).toBe("healthyCount");
+    expect(registryCountCommandFor("How many shapes does the registry advertise?", "http://x")).toContain(
+      "jq .totalShapes",
+    );
+  });
+
+  it("a goal naming a vessel in passing while counting shapes still binds shapes", () => {
+    // Guards the earlier fix this abstention sits on top of: mentioning "vessel" outside the
+    // counting clause must not change the field, and must not now trigger abstention either.
+    expect(registryFieldFor("In a health report for the vessel goal-host, how many shapes does the registry advertise?")).toBe(
+      "totalShapes",
+    );
+  });
+});
