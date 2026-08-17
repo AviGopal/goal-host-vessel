@@ -1,3 +1,4 @@
+import { registryFieldFor } from "./registry-field";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -598,12 +599,28 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
           .filter((s): s is string => s !== null),
       ),
     ).slice(0, opts.maxTargetShapes ?? 3);
+    // A NAMED SOURCE REQUIRES ITS PRODUCER IN THE TARGET SET.
+    //
+    // Binding a fact's field is useless if the step that fetches it never runs. Measured
+    // 2026-08-17: with the registry command bound, dispatches where the walk SELECTED
+    // shellResult answered correctly (4 of 5, no substitutions), and the one dispatch that
+    // never selected it composed the note from prior findings instead and stated 12 — the
+    // vessel's own advertised_shapes length — against a true 368. Same defect, reached by
+    // the path the binding does not sit on.
+    //
+    // So when the goal asks for a quantity the registry reports, the producer is added to
+    // the target set rather than left to inference, which drops it a measured fraction of
+    // the time. registryFieldFor is the same rule the producer and the verifier use, so all
+    // three agree on when this applies.
+    const requiredProducers = registryFieldFor(goal) !== null && known.has("shellResult")
+      ? ["shellResult"] : [];
+    const withRequired = Array.from(new Set([...filteredShapes, ...requiredProducers.filter((r) => !filteredShapes.includes(r))]));
     const rawConf = parsed?.confidence;
     const confidence = Math.min(1, Math.max(0,
       typeof rawConf === "number" && Number.isFinite(rawConf) ? rawConf : 0.5,
     ));
     const rawAlts = Array.isArray(parsed?.alternatives) ? parsed.alternatives as unknown[] : [];
-    const primaryKey = filteredShapes.slice().sort().join(",");
+    const primaryKey = withRequired.slice().sort().join(",");
     const alternatives: string[][] = [];
     for (const alt of rawAlts) {
       if (!Array.isArray(alt)) continue;
@@ -628,7 +645,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
     // (shellResult already sits in its alternatives). shellResult is the UNIVERSAL EXECUTOR
     // — it curls AND computes in one op. Promote it over the fetch-only terminal. Never
     // fires for prose summarize/analyze/persist goals (a shell cannot do those).
-    let outShapes = filteredShapes;
+    let outShapes = withRequired;   // withRequired, not filteredShapes: the required producer must survive to the RETURN, not merely to the cache key
     // Fire whether shellResult must be PROMOTED (absent) or is already CO-PRESENT
     // alongside a fetch-only shape. The co-present case is the load-bearing one:
     // when upstream emits [http_fetch, shellResult] together, derivation-split

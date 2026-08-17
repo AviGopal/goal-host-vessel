@@ -74,3 +74,38 @@ describe("registryCountCommandFor — binds source AND field", () => {
     }
   });
 });
+
+// A NAMED SOURCE REQUIRES ITS PRODUCER IN THE TARGET SET (added 2026-08-17).
+//
+// Binding the field is useless if the fetching step never runs. Measured: with the registry
+// command bound, dispatches where the walk SELECTED shellResult answered correctly (4 of 5,
+// zero substitutions); the one dispatch that never selected it composed the note from prior
+// findings and stated 12 — the vessel's own advertised_shapes length — against a true 368.
+// Same defect, reached by the path the binding does not sit on.
+//
+// These pin the RULE (registryFieldFor decides when a producer is required) rather than the
+// inference plumbing, which needs an LLM. The plumbing bug this caught is worth recording:
+// the required producer was first added to a local `withRequired` that fed only the cache
+// key, while the returned value still came from `filteredShapes` — typecheck-clean and
+// completely inert.
+
+describe("required producer — a named source implies its fetching step", () => {
+  it("a registry-count goal requires a producer; the rule that decides is registryFieldFor", () => {
+    const goal = "Produce a health report for the vessel goal-host-vessel. Then determine how many shapes the discovery registry advertises in total.";
+    expect(registryFieldFor(goal)).toBe("totalShapes");   // non-null ⇒ producer required
+  });
+
+  it("a goal naming no countable registry quantity requires nothing", () => {
+    expect(registryFieldFor("produce a health report for the vessel goal-host-vessel")).toBeNull();
+  });
+
+  it("THE PLUMBING REGRESSION: the required producer reaches the RETURN, not just the cache key", async () => {
+    // Reads the shipped source. `outShapes` is what the decision returns; it must be seeded
+    // from the list that includes required producers. Seeding it from `filteredShapes` — the
+    // pre-injection list — typechecks and silently drops the producer, which is exactly the
+    // bug this assertion exists to catch.
+    const src = await Bun.file(new URL("../src/goal-target-inference.ts", import.meta.url)).text();
+    expect(src).toContain("let outShapes = withRequired;");
+    expect(src).not.toContain("let outShapes = filteredShapes;");
+  });
+});
