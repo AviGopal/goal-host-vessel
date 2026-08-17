@@ -120,3 +120,56 @@ describe("numeric sanitiser — the measured failure does not recur", () => {
     expect(claimed("localhost:8090 reported 42", 7)).toContain("8090");
   });
 });
+
+// THE EPHEMERIS ORACLE IS THE DANGEROUS ONE (added 2026-08-17).
+//
+// The registry and git-commit oracles compare by SET MEMBERSHIP — `claimed.includes(expected)` —
+// so a contaminant can only corrupt the failure message, never the verdict. The ephemeris oracle
+// compares by TOLERANCE:
+//
+//     const hit = claimed.find((n) => Math.abs(n - expected) <= tol);
+//
+// and it harvests decimals with /\d+\.\d+/. So "http://127.0.0.1:8210" yields the candidates
+// 127.0 and 0.1, and a goal whose true answer is near 0.1 AU MATCHES on a loopback address that
+// carries no measurement at all. That is a false REACH, not a bad message — the failure mode this
+// whole document argues is the worse one, because a false green teaches the learner that a
+// composition worked.
+
+/** Mirrors the ephemeris scan after the fix: strip, then harvest decimals. */
+function auCandidates(dig: string): number[] {
+  const cleaned = dig
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/gi, " ")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, " ")
+    .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?\b/g, " ");
+  return [...new Set((cleaned.match(/\d+\.\d+/g) ?? []).map(parseFloat))].filter((n) => Number.isFinite(n));
+}
+
+const WITH_ENDPOINT = 'report {"endpoint":"http://127.0.0.1:8210"} distance 6.264 AU';
+
+describe("ephemeris oracle — a loopback address is not a measurement", () => {
+  it("the ephemeris scan carries both strip passes", async () => {
+    const src = await Bun.file(SRC).text();
+    const idx = src.indexOf(String.raw`(cleaned.match(/\d+\.\d+/g)`);
+    expect(idx).toBeGreaterThan(-1);
+    const block = src.slice(Math.max(0, idx - 700), idx);
+    expect(block).toContain(URL_STRIP);
+    expect(block).toContain(IPV4_STRIP);
+  });
+
+  it("THE FALSE REACH: 0.1 no longer matches on 127.0.0.1 alone", () => {
+    // Before the fix, auCandidates included 0.1 and 127.0 from the endpoint, so a goal whose
+    // true answer was near 0.1 AU reached on a string containing no measurement.
+    const tol = 0.1 * 0.005;
+    expect(auCandidates(WITH_ENDPOINT).some((n) => Math.abs(n - 0.1) <= tol)).toBe(false);
+  });
+
+  it("the real measurement still matches", () => {
+    const tol = 6.264 * 0.005;
+    expect(auCandidates(WITH_ENDPOINT).some((n) => Math.abs(n - 6.264) <= tol)).toBe(true);
+  });
+
+  it("timestamps are still stripped, as the earlier fix established", () => {
+    expect(auCandidates("at 2026-08-17T08:12 the range was 6.264 AU")).toEqual([6.264]);
+  });
+});

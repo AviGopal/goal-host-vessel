@@ -1535,8 +1535,16 @@ async function verifyEphemerisDistanceReach(goal: string, dig: string): Promise<
   const expected = parseFloat((row.match(/\s(\d+\.\d{4,})/) ?? [])[1] ?? "");
   if (!Number.isFinite(expected)) return null;             // unparseable -> cannot verify -> LLM
 
-  // Harvest candidate AU values from the produced output, ignoring ids and timestamps.
+  // Harvest candidate AU values from the produced output, ignoring ids, timestamps and
+  // addresses. URLs and bare IPv4 go FIRST and matter more here than at the sibling
+  // oracles: those compare by set membership, so a contaminant can only corrupt the
+  // failure message, but this one compares by TOLERANCE — so "http://127.0.0.1:8210"
+  // yields the candidates 127.0 and 0.1, and a goal whose true answer is near 0.1 AU
+  // false-MATCHES on a loopback address that carries no measurement at all. Verified
+  // 2026-08-17: expected 0.1 against that endpoint string alone returns a match.
   const cleaned = dig
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/gi, " ")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, " ")
     .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
     .replace(/\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?)?\b/g, " ");
   const claimed = [...new Set((cleaned.match(/\d+\.\d+/g) ?? []).map(parseFloat))].filter((n) => Number.isFinite(n));
