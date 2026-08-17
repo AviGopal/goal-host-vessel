@@ -1212,7 +1212,22 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
     // nothing. Only a null (could-not-ask) is worth retrying — retrying an honest empty would
     // turn "no lesson exists" into three round trips and still no lesson.
     if (rows !== null) {
-      if (i > 0) console.log(`[walk-concepts] recall SUCCEEDED on attempt ${i + 1}/${RECALL_ATTEMPTS} — the relay leg is intermittent (~40% measured), not down`);
+      // EVERY OUTCOME LOGS, INCLUDING A FIRST-ATTEMPT SUCCESS. This previously logged only
+      // when i > 0, so a clean recall left no trace at all — and the consequence is that the
+      // channel's success RATE has never been measurable. Counting log lines gave
+      // 67 FAILED / 31 REFUSED / 6 SUCCEEDED, which reads like a near-dead leg, but every
+      // one of those 6 is a RETRY save and first-attempt successes are silent. The
+      // denominator was missing, so both "it barely works" and "it mostly works" fit the
+      // same evidence. A channel you cannot measure is one you cannot tune: the retry budget
+      // here is 3 attempts x 25s, up to 75s of walk latency on what is only an optimisation,
+      // and nobody can say whether that is worth paying without this line.
+      //
+      // Deliberately NOT paired with a circuit breaker in this change. The obvious move —
+      // "it always fails, short-circuit it" — was the hypothesis I came in with, and the
+      // refuting query killed it: the retry demonstrably rescues real recalls. Changing the
+      // retry policy on statistics this incomplete would be tuning against an artifact.
+      // Measure first, then decide.
+      console.log(`[walk-concepts] recall SUCCEEDED on attempt ${i + 1}/${RECALL_ATTEMPTS} (rows=${rows.length})${i > 0 ? " — the retry rescued this one; the relay leg is intermittent, not down" : ""}`);
       return rows;
     }
     if (i + 1 < RECALL_ATTEMPTS) console.log(`[walk-concepts] recall attempt ${i + 1}/${RECALL_ATTEMPTS} could not ask — retrying`);
