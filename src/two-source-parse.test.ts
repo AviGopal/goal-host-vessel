@@ -86,14 +86,34 @@ describe("parseTwoSourceCompare — deployed /vessels trees", () => {
   const VA = "/vessels/goal-host-vessel/src";
   const VB = "/vessels/ribosome-vessel/src";
 
-  it("THE MEASURED GOAL: a two-source sum over /vessels paths now parses", () => {
+  it("an UNSCOPED two-source sum over /vessels paths parses", () => {
     const p = parseTwoSourceCompare(
-      `Count the .ts files directly inside ${VA}, then count the .ts files directly inside ${VB}, then report the SUM of those two counts as a single number.`,
+      `Count the .ts files under ${VA}, then count the .ts files under ${VB}, then report the SUM of those two counts as a single number.`,
     );
     expect(p).not.toBeNull();
     expect(p!.output).toBe("combined");
     expect(p!.op).toBe("file_count");
     expect(p!.ext).toBe("ts");
+  });
+
+  it("THE FALSE REACH: a goal scoped to \"directly inside\" must ABSTAIN", () => {
+    // Measured 2026-08-17. This exact goal (true answer 58 + 2 = 60) was answered
+    // 65 + 7 = 72 — counted RECURSIVELY — graded deterministic:verified-two-source-combined,
+    // and ALPHA-CREDITED. TwoSrcParse has no scope field, so builder and verifier agreed by
+    // construction on a question the goal did not ask. Abstaining hands it to the walk, which
+    // answered it correctly.
+    const p = parseTwoSourceCompare(
+      `Count the .ts files directly inside ${VA}, then count the .ts files directly inside ${VB}, then report the SUM of those two counts as a single number.`,
+    );
+    expect(p).toBeNull();
+  });
+
+  it("every top-level scope phrasing abstains, not just the measured one", () => {
+    for (const scope of ["directly inside", "directly in", "directly under", "top-level", "non-recursive", "at the root of"]) {
+      expect(
+        parseTwoSourceCompare(`the combined number of .ts files ${scope} ${VA} and ${scope} ${VB}`),
+      ).toBeNull();
+    }
   });
 
   it("the leading slash is normalised away so roots resolve consistently", () => {

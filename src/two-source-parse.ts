@@ -22,6 +22,26 @@ export const LANG_EXT: Record<string, string> = {
 
 export interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value" | "combined"; dir: "more" | "fewer" }
 export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
+  // ABSTAIN ON A SCOPED GOAL — measured FALSE REACH, 2026-08-17, caused by this module.
+  //
+  // TwoSrcParse has no scope field: this family always counts RECURSIVELY. A goal saying
+  // "directly inside" is asking for the immediate directory only, and nothing here can
+  // represent that. Measured: "count the .ts files directly inside /vessels/goal-host-vessel/src
+  // … and /vessels/ribosome-vessel/src … report the SUM" (true answer 58 + 2 = 60) was answered
+  // 65 + 7 = 72 and graded `deterministic:verified-two-source-combined`, then ALPHA-CREDITED.
+  //
+  // Builder and verifier share this parse, so they agreed BY CONSTRUCTION on a different
+  // question than the goal asked — the identical self-confirming failure the single-source
+  // oracle documents ("because generator and grader shared -maxdepth 1 they agreed by
+  // construction … a wrong answer promoted to positive learning signal"). Enabling this family
+  // for /vessels paths exposed a defect that was latent for every scoped two-source goal.
+  //
+  // Declining hands the goal to the walk, which answered it CORRECTLY (60) via the floor.
+  // An honest miss the learner can grade beats a confident wrong answer it cannot.
+  // Widening this to honour scope needs a scope field carried through BOTH the command builder
+  // and the verifier; until then, abstaining is the only answer that cannot be wrong.
+  if (/\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:in|under|inside)|non[-\s]?recursive|not\s+recursive|shallow|at\s+the\s+root\s+of)\b/i.test(goal)) return null;
+
   // Accept `vessels/<v>/...` alongside `repos/<v>/...`. The sibling single-source oracle's
   // path pattern has always allowed both; this one did not, so a two-source goal naming two
   // DEPLOYED trees did not parse here at all and fell through to a builder that answers one
