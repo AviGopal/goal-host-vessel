@@ -9967,10 +9967,31 @@ If one of those sibling shapes is the action that would create what the goal ask
         void persistSatisfierTrace(st);
       }
       if (satisfierOnlyTrace) {
+        // GRADE AT INSERT, not by a later patch. Measured 2026-08-17: a CORRECT
+        // two-source compositional reach (58+2=60, verified by hand against ground truth
+        // captured before dispatch) returned `alphaBetaDelta: []` and
+        // `oracleLabelWritten: false`, and the registry-ratio reach logged
+        // "reach-patch MATCHED NO ROW … verdict NOT persisted" — 2 of 6 patches in a
+        // 30-minute window. The system composed correctly and learned nothing from it.
+        //
+        // The store's classifyReach reads TAGS. This trace carried only `status`, so it
+        // landed ungraded and its verdict depended entirely on a cross-network POST /reach
+        // arriving after the row existed. The floor path hit this exact failure and fixed
+        // it the same way (see universal-tool-fallback above: "Grading at insert makes
+        // credit independent of a cross-network patch that measurably drops verdicts").
+        // Reusing that proven shape rather than inventing a second one.
+        //
+        // The patch still fires and is now belt-and-braces: if it lands it agrees, and if
+        // it matches no row the verdict is already durable. Tag order matches the floor's
+        // so a single reader grades both tiers identically.
+        const _existingTags = Array.isArray((lastTrace as { tags?: unknown }).tags)
+          ? ((lastTrace as { tags?: string[] }).tags ?? []).filter((t) => !/^reached:/.test(t))
+          : [];
         const durableTrace: ExecutionTrace = {
           ...lastTrace,
           status: reached ? "completed" : "failed",
           reason: reached ? lastTrace.reason : (goalReachReason ?? lastTrace.reason),
+          tags: [..._existingTags, reached ? "reached:true" : "reached:false"],
         };
         void persistSatisfierTrace(durableTrace);
       }
