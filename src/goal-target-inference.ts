@@ -1,4 +1,4 @@
-import { registryFieldFor } from "./registry-field";
+import { registryFieldFor, registryRatioFor } from "./registry-field";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -278,12 +278,60 @@ function deterministicEnvGateRoute(goal: string, knownShapes: string[]): GoalTar
   if (!ENV_GATE.test(goal)) return null;
   return { shapes: ["env_gate_scan"], confidence: 0.7, alternatives: knownShapes.includes("shellResult") ? [["shellResult"]] : [] };
 }
+/**
+ * IF THE SHARED REGISTRY MATCHER CAN ANSWER THE GOAL, THE TARGET IS shellResult.
+ *
+ * MEASURED 2026-08-17 by a controlled re-run — same code, two wordings, minutes apart:
+ *
+ *   "How many shapes are in the discovery registry?"       -> ["shellResult"] @0.6 -> REACHED
+ *   "Report the totalShapes value from the discovery ..."  -> []            @0    -> failed
+ *
+ * The verb regex below is a list of conversational counting phrases. "report the VALUE" is
+ * not among them ("report the number|count|result|digest" is), and "totalShapes" is a single
+ * token, so the precise phrasing fell through to empty and the walk had nothing to aim at.
+ *
+ * I ALREADY "FIXED" THIS ONCE, IN THE WRONG COMPONENT. Teaching registryFieldFor the
+ * canonical field names made the MATCHER understand `totalShapes` and changed nothing,
+ * because the matcher is consulted downstream of the target decision — and this function is
+ * what makes that decision. A fix landing in the component that shares the defect's
+ * VOCABULARY is not thereby in the component that shares its CONTROL FLOW. The tell was a
+ * live probe of the matcher returning the right answer while the live walk kept failing.
+ *
+ * Reusing registryFieldFor/registryRatioFor rather than widening the verb regex is
+ * deliberate (law 3): they are the SAME rule the command builder and the reach oracle
+ * share, so a goal routed here is one the producer can definitely build and the verifier can
+ * definitely check. Widening the regex would route goals no producer serves.
+ *
+ * Their abstentions come along for free, and that is the safety property: a two-operand or
+ * two-entity goal returns null from BOTH, so this declines to route and the goal falls
+ * through to the LLM inferrer. The abstention that stopped a false reach earlier today
+ * cannot be reopened by this new door.
+ */
+function deterministicRegistryRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  if (!knownShapes.includes("shellResult")) return null;
+  // A COMPUTE-THEN-EMIT GOAL IS NOT A LOOKUP. "how many vessels are registered? store the
+  // answer in <X>" asks for a count AND a write; routing it to shellResult alone answers
+  // half and drops the rest — the dropped-operand failure that cost an alpha +2 earlier
+  // today, arriving through this new door. An existing suite guard caught exactly this on
+  // the first version of this function, which is the guard doing its job.
+  //
+  // registryFieldFor cannot see it: the counting clause is well-formed and names one
+  // entity, so it answers correctly about the part of the goal it CAN represent. Same
+  // lesson as the two-source scope defect — a matcher must not be trusted past the
+  // dimension it models, and the emit clause is a dimension it does not model at all.
+  if (/\b(store|save|write|persist|record|emit|append|insert|create|file|note|commit|publish|send|post)\b/i.test(goal)) return null;
+  if (registryFieldFor(goal) === null && registryRatioFor(goal) === null) return null;
+  // 0.6 matches what the conversational phrasing already earns for the identical question —
+  // the two wordings ask the same thing and must not be graded differently.
+  return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
+}
+
 export async function inferGoalTargetDecision(
   goal: string,
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<GoalTargetDecision> {
-  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
+  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
