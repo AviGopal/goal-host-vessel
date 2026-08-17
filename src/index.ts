@@ -1879,7 +1879,13 @@ async function verifyGitCommitCountReach(goal: string, dig: string): Promise<Goa
   if (expected === null || expected <= 0) return null;
   // Harvest candidate numbers the way the sibling oracles do, minus ids: hyphens are word
   // boundaries, so every digit run inside a dispatch uuid reads as a claimed count.
+  // URLs and bare IPv4 go first: a vessel_health_report body always carries
+  // "endpoint":"http://127.0.0.1:8210", and the registry oracle read 127 out of it and
+  // failed correct compositions until ae39e6cf. This site carried the identical partial
+  // sanitiser and the same latent defect. Stripping whole URLs removes the port too.
   const digIds = dig
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/gi, " ")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, " ")
     .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
     .replace(/\b[0-9a-f]{16,}\b/gi, " ");
   const claimed = [...new Set((digIds.match(/\b\d{1,9}\b/g) ?? []))];
