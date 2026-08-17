@@ -5256,7 +5256,20 @@ async function creditReachedTemplate(activityId: string, reason: string): Promis
     });
     if (!res.ok) console.warn(`[goal-host-vessel] alpha-credit REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; credit not applied`);
     return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: 0 };
-  } catch { /* non-fatal, symmetric with penaliseHollowTemplate */ }
+  } catch (e) {
+    // A SWALLOWED CREDIT IS A REACH THAT TEACHES NOTHING, AND THIS CATCH SAID NOTHING.
+    //
+    // Measured 2026-08-17: a correct compositional reach (59+2+6=67, oracle-verified)
+    // returned dAlpha:0 with NO "REJECTED" line anywhere — because the POST threw rather
+    // than answering, and this catch was `catch { /* non-fatal */ }`. Non-fatal to the
+    // dispatch, yes; fatal to the learning signal, silently. The store never heard that the
+    // arm worked.
+    //
+    // Worse, the caller logs "alpha-credited last pick ..." unconditionally after this
+    // returns, so the journal actively asserted the opposite of what happened. A silent
+    // failure under a success message is harder to find than a silent failure alone.
+    console.warn(`[goal-host-vessel] alpha-credit LOST for '${activityId}' — the feedback POST to ${ACTIVITY_API_ENDPOINT} threw (${(e as Error)?.message ?? String(e)}); this reach earned nothing and the arm learns nothing from it`);
+  }
   return { templateId: activityId, dAlpha: 0, dBeta: 0 };
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
@@ -9676,7 +9689,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (verdict.deterministic === true || (!editEffectReach && consumedInChain.size > 0)) {
           const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
           opts.learningSink?.alphaBetaDelta.push(_abCredit);
-          tap(`[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (substance-honest reach: ${verdict.reason})`);
+          // Report what HAPPENED, not what was attempted. This line used to fire
+          // unconditionally, so a credit that was rejected or lost still read as
+          // "alpha-credited" in the journal — the log asserting the opposite of the delta
+          // it had just been handed.
+          tap(_abCredit.dAlpha > 0
+            ? `[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (+${_abCredit.dAlpha}) (substance-honest reach: ${verdict.reason})`
+            : `[goal-host-vessel] walk(${opts.surface}): alpha-credit NOT APPLIED for ${lastPick} (dAlpha=0) despite a substance-honest reach: ${verdict.reason}`);
         } else if (consumedInChain.size === 0) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); } else if (consumedInChain.size > 0 && editEffectReach) {
           tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit for ${lastPick} — edit-effect reach via in-chain edge only (no landed sha); fileEditResult/fileWriteResult is advertised-not-applied, not substance`);
         }
