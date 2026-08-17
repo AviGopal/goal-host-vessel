@@ -1436,6 +1436,8 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   // reads as a claimed count, and the FIRST such run is what the failure message
   // reports — which is how a verdict came to say "the output reports 8551".
   const digIds = dig
+    .replace(/\bhttps?:\/\/[^\s"'<>]+/gi, " ")
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, " ")
     .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
     .replace(/\b[0-9a-f]{16,}\b/gi, " ");
   const claimed = [...new Set((digIds.match(/\b\d{1,7}\b/g) ?? []))];
