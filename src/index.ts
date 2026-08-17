@@ -1413,9 +1413,10 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
   if (!isRegistryCtx || !isCountAsk) return null;
   // Map the goal's counted entity to the ONLY fields the registry reports.
-  const field = /\bvessels?\b/.test(g) ? "totalVessels"
-    : /\bshapes?\b/.test(g) ? "totalShapes"
-    : /\bhealthy\b/.test(g) ? "healthyCount"
+  const counted = /\b(?:how many|number of|total)\s+(\w+)/i.exec(g)?.[1]?.toLowerCase() ?? "";
+  const field = /^vessels?$/.test(counted) ? "totalVessels"
+    : /^shapes?$/.test(counted) ? "totalShapes"
+    : /\bhealthy\b/.test(g) && /^vessels?$/.test(counted) ? "healthyCount"
     : null;
   let stats: Record<string, unknown> | null = null;
   try {
