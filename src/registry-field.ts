@@ -50,16 +50,49 @@ export function registryFieldFor(goal: string): RegistryField | null {
   // many HEALTHY vessels" puts an adjective there, and taking it literally made this abstain
   // on a goal it should answer. Surfaced by a test written for the abstention above, which
   // asserted healthyCount and got null — the limitation predates that change.
-  const counted = [...g.matchAll(/\b(?:how many|number of|total)\s+((?:\w+\s+){0,2}\w+)/gi)]
+  // ZERO-WIDTH CAPTURE. The lookahead is what makes overlapping counting clauses findable:
+  // the match consumes only the trigger ("how many "), never the nouns after it, so matchAll
+  // resumes INSIDE the previous capture window and the next trigger is still reachable.
+  const counted = [...g.matchAll(/\b(?:how many|number of|total)\s+(?=((?:\w+\s+){0,2}\w+))/gi)]
     .map((m) => m[1]!.toLowerCase().split(/\s+/).find((w) => /^(?:vessels?|shapes?)$/.test(w)))
     .filter((w): w is string => Boolean(w));
+
   const distinctEntities = new Set(counted.map((w) => (w.startsWith("vessel") ? "vessel" : "shape")));
   if (distinctEntities.size > 1) return null;
+
+  // WHY THE GUARD ABOVE DID NOT FIRE, AND WHAT ACTUALLY FIXED IT. Audited 2026-08-17 and
+  // reproduced on HEAD: "how many shapes and how many vessels are there?" was answered
+  // `totalShapes` and then BLESSED, because the reach oracle derives its field from this
+  // same function.
+  //
+  // The capture `((?:\w+\s+){0,2}\w+)` was greedy AND CONSUMING. The first match ate
+  // "shapes and how", matchAll resumed after that span, and the SECOND "how many" was
+  // already inside it — so `counted` was ["shapes"], size 1, and the two-entity guard was
+  // structurally unreachable for the exact input it exists to catch. Wrapping the capture in
+  // a lookahead makes it zero-width; the trigger is consumed, the nouns are not.
+  //
+  // ⚠ MY FIRST FIX FOR THIS WAS WRONG AND THE SUITE CAUGHT IT. I replaced the windowed scan
+  // with "does the goal mention both nouns anywhere" — which abstains on
+  // "In a health report for the vessel goal-host, how many shapes does the registry
+  // advertise?", a goal registry-source-field-binding.test.ts:196 deliberately pins as
+  // answerable, in a test whose comment says a passing mention "must not now trigger
+  // abstention either". Broadening the guard would have re-broken the sixth recurrence of
+  // the noun-binding defect to fix the first of this one. The window is CORRECT; it was the
+  // consumption that was wrong.
 
   // Arithmetic over the count is the same failure wearing different words — "shapes per
   // vessel" names one counted entity but still needs two numbers. Caught separately so a
   // rephrasing cannot slip past the entity check above.
+  //
+  // COMPARATIVE AND DISTRIBUTIVE PHRASINGS ADDED after the same audit: "how many MORE shapes
+  // THAN vessels" and "how many shapes FOR EVERY vessel" are two-operand goals that name no
+  // arithmetic verb at all, so the original list missed both. (They are also caught by the
+  // two-entity scan above once its capture was fixed; kept here so a single-entity rephrasing — "how many more shapes than
+  // last week" — still abstains rather than silently answering a delta with a total.)
   if (/\b(?:divide[ds]?|division|quotient|ratio|average|mean|per\s+vessel|per\s+shape|fraction|percentage|percent|difference|subtract|multiplied|times)\b/.test(g)) {
+    return null;
+  }
+  if (/\bmore\b[\s\S]{0,40}\bthan\b|\bfewer\b[\s\S]{0,40}\bthan\b|\bfor\s+every\b|\bper\s+each\b|\bcompared\s+(?:to|with)\b/.test(g)) {
     return null;
   }
 
