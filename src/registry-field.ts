@@ -66,6 +66,41 @@ export function registryFieldFor(goal: string): RegistryField | null {
   const first = counted[0] ?? "";
   if (/^vessels?$/.test(first)) return /\bhealthy\b/.test(g) ? "healthyCount" : "totalVessels";
   if (/^shapes?$/.test(first)) return "totalShapes";
+
+  // NAMING THE FIELD EXACTLY WAS THE ONE PHRASING THAT DID NOT WORK.
+  //
+  // Measured 2026-08-17. "Report the totalShapes value from the discovery registry at
+  // <url> as a single number" returned null here, so the walk got no deterministic
+  // producer, inferred `webSearchResult` for a goal carrying an explicit localhost URL,
+  // and the resolver rejected it ("query is required"). Meanwhile the vaguer "how many
+  // shapes does the registry have" matched and answered correctly.
+  //
+  // Everything above keys on CONVERSATIONAL counting phrases — "how many", "number of",
+  // "total <noun>". None of them fires on `totalShapes`, because that is a single token
+  // and the pattern needs `total` followed by whitespace. So a goal that names the
+  // registry's OWN published field — strictly more specific, unambiguous, and exactly
+  // what the API returns — was strictly LESS likely to be understood.
+  //
+  // That inverts law 13. The operator is supposed to be able to send natural language and
+  // have the system own the decomposition; here the system understood the loose phrasing
+  // and rejected the precise one, which teaches an operator to write vaguer goals. Reading
+  // the canonical names costs nothing and closes the gap in the direction the law points.
+  //
+  // The abstentions above still bind, and that ordering is deliberate: this runs AFTER the
+  // two-entity and arithmetic checks, so "divide totalShapes by totalVessels" abstains
+  // exactly as before rather than matching a field name and manufacturing the false reach
+  // those checks exist to prevent. Being reachable by a second route must not make a goal
+  // reachable by a WRONG route.
+  const named = [...g.matchAll(/\b(totalshapes|totalvessels|healthycount)\b/g)].map((m) => m[1]!);
+  const distinctNamed = new Set(named);
+  // Two different fields named is the same ambiguity as two counted entities: abstain
+  // rather than pick the first and let the shared-source verifier bless it.
+  if (distinctNamed.size === 1) {
+    const only = named[0]!;
+    if (only === "totalshapes") return "totalShapes";
+    if (only === "totalvessels") return "totalVessels";
+    return "healthyCount";
+  }
   return null;
 }
 
