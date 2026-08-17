@@ -1414,7 +1414,7 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
   const isCountAsk = /\b(how many|how much|number of|count|are there)\b/.test(g);
   if (!isRegistryCtx || !isCountAsk) return null;
   // Map the goal's counted entity to the ONLY fields the registry reports.
-  const field = /\bvessel\b/.test(g) ? "totalVessels" : registryFieldFor(g);
+  const field = registryFieldFor(g);
   let stats: Record<string, unknown> | null = null;
   try {
     const r = await fetch(`${DISCOVERY_ENDPOINT}/registry/stats`, { signal: AbortSignal.timeout(4000) });

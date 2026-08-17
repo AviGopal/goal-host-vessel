@@ -109,3 +109,36 @@ describe("required producer — a named source implies its fetching step", () =>
     expect(src).not.toContain("let outShapes = filteredShapes;");
   });
 });
+
+// THE SEVENTH INSTANCE, AND THE FIRST AUTHORED BY THE SUBSTRATE (2026-08-17).
+//
+// Commit 31f1d67 "substrate-authored: apply route-edit-9e22ff28-compose-report via mitosis
+// cutover" did exactly one thing:
+//
+//   -  const field = registryFieldFor(g);
+//   +  const field = /\bvessel\b/.test(g) ? "totalVessels" : registryFieldFor(g);
+//
+// reinstating the vessel-anywhere test whose removal was the whole point. It typechecked, it
+// passed the semantic gate, and it silently regraded every "how many SHAPES" goal that also
+// names a vessel — which is every compositional goal about the fleet — against totalVessels.
+// Four hours of deep-batch failures traced back to this line.
+//
+// The tests above did not catch it because they pin registryFieldFor, the RULE. Nothing
+// asserted that the ORACLE still calls it unconditionally. A shared rule is only shared while
+// every caller actually defers to it, so that is what this pins — against the shipped source,
+// because the defect is a caller wrapping the rule rather than changing it.
+
+describe("the oracle defers to the shared rule, unconditionally", () => {
+  it("field selection is registryFieldFor alone — no predicate in front of it", async () => {
+    const src = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    expect(src).toContain("const field = registryFieldFor(g);");
+  });
+
+  it("THE REGRESSION: no vessel-anywhere test may shadow the rule", async () => {
+    const src = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    // The exact reintroduction, and the general shape of it: any ternary choosing a registry
+    // field before consulting registryFieldFor is the same defect wearing different syntax.
+    expect(src).not.toMatch(/test\(g\)\s*\?\s*"totalVessels"/);
+    expect(src).not.toMatch(/\?\s*"totalShapes"\s*:\s*registryFieldFor/);
+  });
+});
