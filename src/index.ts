@@ -4358,7 +4358,31 @@ async function runGroundedToolLoop(
     const iterBudgetMs = Math.max(5_000, Math.min(ITER_TIMEOUT_MS, deadline - Date.now()));
     try {
       const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(iterBudgetMs) });
-      if (!r.ok) { console.log(`[goal-host-vessel] floor: dispatch FAILED http=${r.status} iter=${iter} — loop aborts with no observations`); break; }
+      if (!r.ok) {
+        // A 5xx IS EVIDENCE ABOUT THE ACTION; A 4xx IS EVIDENCE ABOUT THE CHANNEL.
+        //
+        // This used to break on ANY !r.ok, justified (in the catch below) as symmetric with a
+        // connection refusal that "will recur identically on the next turn". A 500 is not
+        // symmetric with a refusal: the endpoint answered, so the channel works — it is a
+        // server-side hiccup of exactly the kind a retry clears. Measured 2026-08-17: 15
+        // aborts in three hours, and the compositional ladder's rung died at **iter=0**, so
+        // the ReAct floor produced not one act-observe cycle. Every rung graded not-reached
+        // was graded on a floor that never ran.
+        //
+        // This is the same correction the timeout path already received, one branch over: a
+        // failure that says something about this attempt becomes the OBSERVE step and the
+        // loop continues; only a failure that says the channel itself is unusable breaks.
+        // 4xx stays a break — a malformed request or a rejected credential reproduces
+        // identically next turn and can never yield an observation.
+        //
+        // The wall-clock deadline and MAX_ITERS remain the only unconditional terminators,
+        // so a permanently-500ing endpoint costs a bounded number of turns, not a hang.
+        const transient = r.status >= 500;
+        console.log(`[goal-host-vessel] floor: dispatch FAILED http=${r.status} iter=${iter} — ${transient ? "5xx is server-side; recording it as an observation and CONTINUING" : "4xx is a channel fault; loop aborts with no observations"}`);
+        if (!transient) break;
+        observations.push(`[dispatch error] the model endpoint returned HTTP ${r.status} on turn ${iter + 1}. This is a server-side failure, not a result. Do not treat it as evidence about the goal; retry the step or choose a different tool.`);
+        continue;
+      }
       const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
     } catch (e) {
       // This was a bare `catch { break; }`. A per-iteration TIMEOUT killed the floor with ZERO log
