@@ -153,3 +153,53 @@ describe("parseTwoSourceCompare — deployed /vessels trees", () => {
     expect(p.relB).toBe("vessels/ribosome-vessel/src");
   });
 });
+
+// N-SOURCE SUMS (2026-08-17). A three-source sum reached CORRECTLY via the floor
+// (58 + 2 + 6 = 66, exact, -maxdepth 1 honoured on all three) and credit was WITHHELD because
+// nothing could verify it. Correct-and-uncredited is the right resting state while a verifier
+// is INCOMPLETE — but not once one can be made complete, because a class that cannot be
+// verified never banks a donor and never compounds.
+//
+// A comparison is defined on two operands and cannot be represented over three, so >2 is
+// admitted for SUMS ONLY and declined otherwise — answering a three-path comparative on two of
+// its operands is the partial-answer failure this module already documents twice.
+describe("parseTwoSourceCompare — N-source sums", () => {
+  const A = "/vessels/goal-host-vessel/src";
+  const B = "/vessels/ribosome-vessel/src";
+  const C = "/vessels/discovery-vessel/src";
+
+  it("THE MEASURED GOAL: a three-source sum parses and carries all three roots", () => {
+    const p = parseTwoSourceCompare(
+      `Count the .ts files directly inside ${A}, the .ts files directly inside ${B}, and the .ts files directly inside ${C}, then report the SUM of those three counts as a single number.`,
+    );
+    expect(p).not.toBeNull();
+    expect(p!.output).toBe("combined");
+    expect(p!.rels).toEqual([
+      "vessels/goal-host-vessel/src",
+      "vessels/ribosome-vessel/src",
+      "vessels/discovery-vessel/src",
+    ]);
+    // Scope must survive the generalisation — this is the dimension whose absence caused the
+    // 72-vs-60 false reach.
+    expect(p!.topLevel).toBe(true);
+  });
+
+  it("a two-source sum still carries exactly two roots — N=2 is just an instance", () => {
+    const p = parseTwoSourceCompare(`the combined number of .ts files across ${A} and ${B}`)!;
+    expect(p.rels).toHaveLength(2);
+    expect(p.relA).toBe(p.rels[0]);
+    expect(p.relB).toBe(p.rels[1]);
+  });
+
+  it("a THREE-path COMPARISON declines — it is not representable", () => {
+    // dir/winner_value/which_diff are defined on two operands. Answering this on two of three
+    // would be a partial answer wearing a reach verdict.
+    expect(parseTwoSourceCompare(`Which has more .ts files, ${A}, ${B} or ${C}?`)).toBeNull();
+  });
+
+  it("two-path comparisons are untouched by the generalisation", () => {
+    const p = parseTwoSourceCompare(`Which has more TypeScript files, ${A} or ${B}?`)!;
+    expect(p.output).toBe("which_diff");
+    expect(p.rels).toHaveLength(2);
+  });
+});

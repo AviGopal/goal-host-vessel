@@ -2763,7 +2763,14 @@ function buildTwoSourceCompareCommand(goal: string): string | null {
   // A combination asks for ONE number across both sources, so the command emits the sum
   // rather than a winner. Without this the builder had no way to express the goal at all.
   if (p.output === "combined") {
-    return `[ -d ${rootA} ] && [ -d ${rootB} ] || { echo "missing source"; exit 1; }; A=$(${agg(rootA)}); B=$(${agg(rootB)}); echo $((A+B))`;
+    // N ROOTS. The verifier sums over p.rels, so this must too — summing only relA/relB while
+    // the parse admitted three would answer two-thirds of the goal and the grader, reading the
+    // same p.rels, would mark it wrong. Asymmetry between these two is the 14:04 false reach.
+    const roots = p.rels.map((r) => shellRootExpr(r));
+    const guards = roots.map((r) => `[ -d ${r} ]`).join(" && ");
+    const parts = roots.map((r, i) => `N${i}=$(${agg(r)})`).join("; ");
+    const sum = roots.map((_, i) => `N${i}`).join("+");
+    return `${guards} || { echo "missing source"; exit 1; }; ${parts}; echo $((${sum}))`;
   }
   const emit = p.output === "which_diff"
     ? `D=$(( A>B ? A-B : B-A )); if [ "$A" -eq "$B" ]; then echo "tie: 0"; elif [ "$A" -gt "$B" ]; then echo "${wAlarger}: $D"; else echo "${wBlarger}: $D"; fi`
@@ -2788,19 +2795,26 @@ async function verifyTwoSourceCompareReach(goal: string, dig: string): Promise<G
       let T = 0; for (const fp of files) T += countNl(await Bun.file(fp).text()); return T;
     } catch { return null; }                                   // missing root -> fail open (never a fabricated 0)
   };
-  const A = await aggregate(p.relA), B = await aggregate(p.relB);
-  if (A === null || B === null) return null;
   if (p.output === "combined") {
-    // A COMBINATION IS VALID WHEN THE TWO SIDES ARE EQUAL, so this runs BEFORE the tie
-    // return below — a tie only defeats a comparison.
-    const total = A + B;
+    // Recompute EVERY root independently. Reading p.rels (not relA/relB) is what makes the
+    // three-source case verifiable at all; a two-root sum is just the N=2 instance.
+    const vals: number[] = [];
+    for (const rel of p.rels) {
+      const v = await aggregate(rel);
+      if (v === null) return null;                              // missing root -> fail open
+      vals.push(v);
+    }
+    const total = vals.reduce((a, b) => a + b, 0);
     const cNums = [...new Set((dig.match(/\b\d{1,9}\b/g) ?? []).map(Number))];
     const cUnit = p.op === "total_lines" ? "total line(s)" : "file(s)";
+    const shown = p.rels.map((r, i) => `${r}=${vals[i]}`).join(" + ");
     if (cNums.includes(total)) {
-      return { reached: true, reason: `deterministic:verified-two-source-combined — ${p.relA}=${A} + ${p.relB}=${B} = ${total} ${cUnit}; the produced output reports that total`, deterministic: true, completion_shapes: [] };
+      return { reached: true, reason: `deterministic:verified-multi-source-combined — ${shown} = ${total} ${cUnit}; the produced output reports that total`, deterministic: true, completion_shapes: [] };
     }
-    return { reached: false, reason: `deterministic:two-source-combined-mismatch — authoritative combined total is ${total} (${p.relA}=${A}, ${p.relB}=${B}); the produced output does not report it`, deterministic: true, completion_shapes: [], preferredEndpoint: "" };
+    return { reached: false, reason: `deterministic:wrong-multi-source-combined — independently counted ${shown} = ${total} ${cUnit}, but the output does not report that total. Reporting one operand instead of the sum is the measured failure this checks`, completion_shapes: [] };
   }
+  const A = await aggregate(p.relA), B = await aggregate(p.relB);
+  if (A === null || B === null) return null;
   if (A === B) return null;                                    // tie -> not a deterministic comparison; LLM
   const winnerRel = (p.dir === "more" ? A > B : A < B) ? p.relA : p.relB;
   const winnerVal = Math.max(A, B) === (winnerRel === p.relA ? A : B) ? (winnerRel === p.relA ? A : B) : (winnerRel === p.relA ? A : B);

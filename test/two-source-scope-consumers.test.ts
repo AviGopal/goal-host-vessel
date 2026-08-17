@@ -77,3 +77,30 @@ describe("two-source scope — the two consumers cannot drift apart", () => {
     expect(builderUses).toBe(true);
   });
 });
+
+describe("N-source sums — both consumers read p.rels, not relA/relB", () => {
+  it("the builder sums over every root", async () => {
+    const src = await source();
+    const idx = src.indexOf("function buildTwoSourceCompareCommand");
+    const block = src.slice(idx, idx + 2400);
+    // Summing only relA/relB while the parse admitted three answers two-thirds of the goal,
+    // and the grader — reading the same p.rels — would mark it wrong. Same asymmetry class
+    // as the scope defect, one dimension over.
+    expect(block).toContain("p.rels.map");
+  });
+
+  it("the verifier recomputes every root", async () => {
+    const src = await source();
+    expect(src).toContain("for (const rel of p.rels)");
+    expect(src).toContain("deterministic:verified-multi-source-combined");
+  });
+
+  it("neither consumer reads a root list the other ignores", async () => {
+    const src = await source();
+    const idx = src.indexOf("function buildTwoSourceCompareCommand");
+    const builderUsesRels = /p\.rels/.test(src.slice(idx, idx + 2400));
+    const verifierUsesRels = src.includes("for (const rel of p.rels)");
+    expect(builderUsesRels).toBe(verifierUsesRels);
+    expect(builderUsesRels).toBe(true);
+  });
+});

@@ -25,7 +25,7 @@ export const LANG_EXT: Record<string, string> = {
  *  verifier, which therefore agreed on the wrong number and alpha-credited it. A shared parse
  *  is safe only while it represents every dimension the goal can vary; the sharing was never
  *  the defect, the missing field was. */
-export interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value" | "combined"; dir: "more" | "fewer"; topLevel: boolean }
+export interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value" | "combined"; dir: "more" | "fewer"; topLevel: boolean; rels: string[] }
 export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   // SCOPE, carried rather than abstained. Measured false reach 2026-08-17: "count the .ts
   // files DIRECTLY INSIDE A … and B … report the SUM" (true 58 + 2 = 60) was answered
@@ -41,7 +41,22 @@ export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   // (58 + 2 = 60, hand-verified) but no oracle could confirm it, so it earned no credit.
   const paths = [...goal.matchAll(/\/?(?:repos|vessels)\/[\w.-]+\/[\w./-]+/g)].map((m) => m[0].replace(/^\//, "").replace(/[.,;:]+$/, ""));
   const uniq = [...new Set(paths)].filter((p) => !/\.\w{1,6}$/.test(p));
-  if (uniq.length !== 2) return null;                         // needs EXACTLY two distinct dir roots
+  // N ROOTS, not exactly two — but only for a pure SUM (2026-08-17).
+  //
+  // A COMPARISON is defined on two operands: "which has more, A or B" has no meaning over
+  // three, and `dir`/`winner_value`/`which_diff` cannot represent it. A SUM generalises
+  // cleanly, and every dimension it needs (ext, op, scope) is already carried.
+  //
+  // Measured: a three-source sum reached CORRECTLY via the floor (58 + 2 + 6 = 66, exact,
+  // with -maxdepth 1 honoured on all three) and credit was WITHHELD, because nothing could
+  // verify it. Correct-and-uncredited is the right resting state while a verifier is
+  // incomplete — but it is not the right resting state once one can be made complete, because
+  // a class that cannot be verified can never bank a donor and never compounds.
+  //
+  // The >2 case is admitted ONLY when the goal is a combination, and rejected otherwise, so a
+  // three-path comparative declines here rather than being answered on two of its operands —
+  // which is the partial-answer failure this module already documents twice.
+  if (uniq.length < 2) return null;
   // Accept "than" as well as "or". The comparative arrives in two common phrasings —
   // "which has more, A or B?" and "how many more ... in A than in B?" — and requiring "or"
   // silently rejected the second. Measured 2026-08-06 with a precomputed oracle: the goal
@@ -79,8 +94,10 @@ export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   // those two counts", which none of the existing markers matched ("sum of both" is close but
   // not what was written), so a pure two-source sum declined here and fell to a single-source
   // builder that answered one operand. The added alternatives require the explicit "two", so
-  // they cannot fire on a single-source "sum of the lines in X".
-  const _combined = /\bcombined\b|\baltogether\b|\bacross both\b|\bsum of both\b|\band (?:the )?total\b|\btotal (?:across|of) both\b|\b(?:sum|total) of (?:those|these|the)?\s*two\b/i.test(goal);
+  // they cannot fire on a single-source "sum of the lines in X". The multiplicity is
+  // generalised past "two" because the three-source goal says "the SUM of those THREE counts";
+  // an explicit count word is still required, so single-source phrasings stay excluded.
+  const _combined = /\bcombined\b|\baltogether\b|\bacross both\b|\bsum of both\b|\band (?:the )?total\b|\btotal (?:across|of) both\b|\b(?:sum|total) of (?:those|these|the)?\s*(?:two|three|four|five|six|\d+)\b/i.test(goal);
   // COMPARE + COMBINED still declines, for the reason above: this builder emits one value
   // and would answer a single conjunct while the verifier certified it.
   //
@@ -105,5 +122,9 @@ export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   const extLit = goal.match(/\.(\w{1,6})\s+files?\b/i);
   const extLang = goal.match(/\b(typescript|javascript|python|markdown|json|rust|go|shell|bash)\b/i);
   const ext = extLit ? extLit[1]!.toLowerCase() : extLang ? (LANG_EXT[extLang[1]!.toLowerCase()] ?? null) : null;
-  return { op, relA: uniq[0]!, relB: uniq[1]!, ext, output, dir: more ? "more" : "fewer", topLevel };
+  // A comparison over more than two roots is not representable — decline rather than answer
+  // a sub-goal. Placed after `output` is computed so the check reads on the resolved intent,
+  // not on a phrasing guess.
+  if (uniq.length > 2 && output !== "combined") return null;
+  return { op, relA: uniq[0]!, relB: uniq[1]!, ext, output, dir: more ? "more" : "fewer", topLevel, rels: uniq };
 }
