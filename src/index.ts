@@ -248,6 +248,7 @@ import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
 import { multiQuantityNote } from "./multi-quantity";
 import { blendEdgeScore, type EdgeEvidence } from "./edge-blend";
+import { psiInputs } from "./psi-inputs";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
@@ -5537,7 +5538,7 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, targetShapes) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) return null;
@@ -8333,7 +8334,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _pr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...missingForSatisfier], exclude_activities: chain, limit: 12, min_success_rate: 0, ...(_psig ? { state_signature: _psig } : {}) }),
+            body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...missingForSatisfier], exclude_activities: chain, limit: 12, min_success_rate: 0, ...(_psig ? { state_signature: _psig } : {}), ...psiInputs(_psig, missingForSatisfier) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (_pr.ok) {
@@ -8579,7 +8580,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        body: JSON.stringify({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
+        // `state_signature` is the cts lookup key; `signature` + `completion_shapes` are what
+        // the ψ readout guard destructures. Both are needed — see psi-inputs.ts.
+        body: JSON.stringify({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...(_sig1 ? { state_signature: _sig1 } : {}), ...psiInputs(_sig1, target) }),
         signal: AbortSignal.timeout(20_000),
       });
       if (r.ok) {
@@ -8596,7 +8599,10 @@ If one of those sibling shapes is the action that would create what the goal ask
         const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())!.signature_hash } : {}) }),
+          // /recommend destructures `completion_shapes` for the ψ look-ahead and
+          // `expected_output_shapes` for goal enrichment — two separate fields, no aliasing.
+          // Sending only the latter left R empty and ⟨ψ,R⟩ zero on every recommendation.
+          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())!.signature_hash } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
           signal: AbortSignal.timeout(20_000),
         });
         if (r.ok) {
@@ -8630,7 +8636,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const fr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingT, include_scores: true, mode: "forward", limit: 50 }),
+            body: JSON.stringify({ required_shapes: missingT, include_scores: true, mode: "forward", limit: 50, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (fr.ok) {
@@ -8760,7 +8766,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: [T], include_scores: true, mode: "forward", limit: 50 }),
+            body: JSON.stringify({ required_shapes: [T], include_scores: true, mode: "forward", limit: 50, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
@@ -8962,7 +8968,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...(_sig2 ? { state_signature: _sig2 } : {}) }),
+            body: JSON.stringify({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...(_sig2 ? { state_signature: _sig2 } : {}), ...psiInputs(_sig2, target) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
@@ -12484,6 +12490,10 @@ function registerBuiltinResolvers(): void {
       };
       if (goal) body.goal = goal;
       if (requiredShape) body.expected_output_shapes = [requiredShape];
+      // A key-by-key builder emits ONLY the keys it names — no error, no failing test for
+      // the ones it forgets. `expected_output_shapes` and `completion_shapes` are separate
+      // fields on /recommend; naming the first and not the second is how ⟨ψ,R⟩ stayed zero.
+      Object.assign(body, psiInputs((await getCachedStateSignature())?.signature_hash, requiredShape ? [requiredShape] : []));
 
       // ITER-4 fix: manual timer cleanup + body drain.
       const recCtrl = new AbortController();
@@ -14010,7 +14020,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           "Content-Type": "application/json",
           Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}`,
         },
-        body: JSON.stringify({ task_description: goal, ...(expectedOutputShapes?.length ? { expected_output_shapes: expectedOutputShapes } : {}) }),
+        body: JSON.stringify({ task_description: goal, ...(expectedOutputShapes?.length ? { expected_output_shapes: expectedOutputShapes } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, expectedOutputShapes) }),
       });
       if (!preRec.ok) {
         const errText = await preRec.text().catch(() => "");
