@@ -1440,7 +1440,7 @@ async function verifyRegistryInventoryReach(goal: string, dig: string): Promise<
     .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, " ")
     .replace(/\b[0-9a-f]{4,}(?:-[0-9a-f]{4,}){2,}\b/gi, " ")
     .replace(/\b[0-9a-f]{16,}\b/gi, " ");
-  const claimed = [...new Set((digIds.match(/\b\d{1,7}\b/g) ?? []))];
+  const claimed = [...new Set((digIds.match(/\b\d{1,9}\b/g) ?? []))];
   if (claimed.length === 0) return null;                // no number produced -> cannot verify -> LLM
   if (claimed.includes(expected)) {
     return { reached: true, reason: `deterministic:verified-registry-count — independently queried ${DISCOVERY_ENDPOINT}/registry/stats.${field}=${expected}; the produced output matches the authoritative registry`, deterministic: true, completion_shapes: [] };
