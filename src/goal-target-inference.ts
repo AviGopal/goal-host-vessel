@@ -553,7 +553,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list):
 ${JSON.stringify(knownShapes)}
 
-Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-3 shapes from the KNOWN list.${editRule}${shellRule}
+Return the 1-3 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}
 
 COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}.
 
