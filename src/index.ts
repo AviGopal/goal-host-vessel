@@ -10566,6 +10566,7 @@ async function runGoalWithRecovery(
     // return something, so the measurement stays composable either way.
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         decisionCache: inferredTargetDecisionCache,
+        maxTargetShapes: 6,
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
         complete: (prompt) =>
