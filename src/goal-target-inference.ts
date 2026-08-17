@@ -57,6 +57,7 @@ export interface InferGoalTargetShapesOpts {
   llmEndpoint?: string;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: FetchLike;
+  maxTargetShapes?: number;
   /** In-process cache keyed by goal_hash; pass a shared Map to persist across calls. */
   cache?: Map<string, string[]>;
   model?: string;
@@ -596,7 +597,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
           .map(filterShape)
           .filter((s): s is string => s !== null),
       ),
-    ).slice(0, 3);
+    ).slice(0, opts.maxTargetShapes ?? 3);
     const rawConf = parsed?.confidence;
     const confidence = Math.min(1, Math.max(0,
       typeof rawConf === "number" && Number.isFinite(rawConf) ? rawConf : 0.5,
