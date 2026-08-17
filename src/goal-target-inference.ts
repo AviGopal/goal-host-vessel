@@ -13,6 +13,7 @@
  * the result is filtered against that vocabulary so hallucinated shapes are dropped.
  * Returns [] on LLM-down / parse-fail / empty (caller falls back to opportunistic).
  *
+const MAX_TARGET_SHAPES = 3;
  * Extracted into its own module (not inlined in index.ts) so it is unit-testable
  * without booting the vessel's HTTP server, and so `fetch` can be injected.
  */
