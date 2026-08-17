@@ -22,7 +22,12 @@ export const LANG_EXT: Record<string, string> = {
 
 export interface TwoSrcParse { op: "total_lines" | "file_count"; relA: string; relB: string; ext: string | null; output: "which_diff" | "winner_value" | "combined"; dir: "more" | "fewer" }
 export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
-  const paths = [...goal.matchAll(/repos\/[\w.-]+\/[\w./-]+/g)].map((m) => m[0].replace(/[.,;:]+$/, ""));
+  // Accept `vessels/<v>/...` alongside `repos/<v>/...`. The sibling single-source oracle's
+  // path pattern has always allowed both; this one did not, so a two-source goal naming two
+  // DEPLOYED trees did not parse here at all and fell through to a builder that answers one
+  // operand. Measured 2026-08-17: the two-source sum over /vessels paths reached correctly
+  // (58 + 2 = 60, hand-verified) but no oracle could confirm it, so it earned no credit.
+  const paths = [...goal.matchAll(/\/?(?:repos|vessels)\/[\w.-]+\/[\w./-]+/g)].map((m) => m[0].replace(/^\//, "").replace(/[.,;:]+$/, ""));
   const uniq = [...new Set(paths)].filter((p) => !/\.\w{1,6}$/.test(p));
   if (uniq.length !== 2) return null;                         // needs EXACTLY two distinct dir roots
   // Accept "than" as well as "or". The comparative arrives in two common phrasings —
@@ -58,7 +63,12 @@ export function parseTwoSourceCompare(goal: string): TwoSrcParse | null {
   // "Which has more total lines, A or B?" and "How many total lines are under X?" all still
   // parse. `\band (?:the )?total\b` requires 'and' immediately before 'total', so the
   // comparator phrase "more total lines" is not a match.
-  const _combined = /\bcombined\b|\baltogether\b|\bacross both\b|\bsum of both\b|\band (?:the )?total\b|\btotal (?:across|of) both\b/i.test(goal);
+  // `sum/total of those two` added 2026-08-17. The measured goal said "report the SUM of
+  // those two counts", which none of the existing markers matched ("sum of both" is close but
+  // not what was written), so a pure two-source sum declined here and fell to a single-source
+  // builder that answered one operand. The added alternatives require the explicit "two", so
+  // they cannot fire on a single-source "sum of the lines in X".
+  const _combined = /\bcombined\b|\baltogether\b|\bacross both\b|\bsum of both\b|\band (?:the )?total\b|\btotal (?:across|of) both\b|\b(?:sum|total) of (?:those|these|the)?\s*two\b/i.test(goal);
   // COMPARE + COMBINED still declines, for the reason above: this builder emits one value
   // and would answer a single conjunct while the verifier certified it.
   //

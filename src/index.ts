@@ -1686,6 +1686,15 @@ const TOP_LEVEL_FILE_SCOPE = /\b(top[-\s]?level|immediate(?:ly)?|directly\s+(?:i
  */
 function authoritativeRoots(rel: string): [string, ...string[]] {
   const superRepo = `/workspace/git/super-repo/${rel}`;
+  // A goal naming `vessels/<v>/...` (or `/vessels/<v>/...`) means the DEPLOYED tree, which
+  // lives at that absolute path in the container. Without this case the rel resolved to a
+  // super-repo path that does not exist, the count came back null, and every oracle over such
+  // a goal ABSTAINED — measured 2026-08-17: a correct two-source reach over two /vessels
+  // paths could not be verified, so its credit was withheld (correctly, since nothing could
+  // check it) and the class could never bank a verified donor. The counting helpers already
+  // read /vessels for their deployed cross-check; only root resolution was missing it.
+  const dep = rel.match(/^\/?vessels\/([^/]+)(?:\/(.*))?$/);
+  if (dep?.[1]) return [`/vessels/${dep[1]}${dep[2] ? `/${dep[2]}` : ""}`, superRepo];
   const m = rel.match(/^repos\/([^/]+)(?:\/(.*))?$/);
   if (!m?.[1]) return [superRepo];
   return [`/workspace/git/vessels/${m[1]}${m[2] ? `/${m[2]}` : ""}`, superRepo];

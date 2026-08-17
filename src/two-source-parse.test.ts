@@ -74,3 +74,53 @@ describe("parseTwoSourceCompare — pure combination (the new case)", () => {
     expect(parseTwoSourceCompare(`What is the combined number of lines across ${A} and ${B}?`)?.op).toBe("total_lines");
   });
 });
+
+// DEPLOYED-TREE PATHS (2026-08-17). The measured two-source SUM goal named two /vessels
+// paths and did not parse here at all — this pattern accepted only `repos/`. It fell through
+// to a single-source builder, and although the walk produced the correct answer (58 + 2 = 60,
+// hand-verified against ground truth captured before dispatch), NO oracle could confirm it.
+// The credit gate then correctly withheld alpha, because it requires a deterministic verdict
+// or a real producer→consumer edge and had neither. A class with no verifier can never bank a
+// verified donor, so the rung reached and taught nothing.
+describe("parseTwoSourceCompare — deployed /vessels trees", () => {
+  const VA = "/vessels/goal-host-vessel/src";
+  const VB = "/vessels/ribosome-vessel/src";
+
+  it("THE MEASURED GOAL: a two-source sum over /vessels paths now parses", () => {
+    const p = parseTwoSourceCompare(
+      `Count the .ts files directly inside ${VA}, then count the .ts files directly inside ${VB}, then report the SUM of those two counts as a single number.`,
+    );
+    expect(p).not.toBeNull();
+    expect(p!.output).toBe("combined");
+    expect(p!.op).toBe("file_count");
+    expect(p!.ext).toBe("ts");
+  });
+
+  it("the leading slash is normalised away so roots resolve consistently", () => {
+    const p = parseTwoSourceCompare(`the combined number of TypeScript files across ${VA} and ${VB}`)!;
+    expect(p.relA).toBe("vessels/goal-host-vessel/src");
+    expect(p.relB).toBe("vessels/ribosome-vessel/src");
+  });
+
+  it("comparisons over /vessels trees parse too", () => {
+    const p = parseTwoSourceCompare(`Which has more TypeScript files, ${VA} or ${VB}?`)!;
+    expect(p.output).toBe("which_diff");
+  });
+
+  it("repos/ goals are unchanged — the existing family must not shift", () => {
+    const p = parseTwoSourceCompare(
+      "the combined number of TypeScript modules across repos/boredom-vessel/src and repos/llm-resolver-vessel/src",
+    )!;
+    expect(p.output).toBe("combined");
+    expect(p.relA).toBe("repos/boredom-vessel/src");
+  });
+
+  it("a mixed repos//vessels pair still needs exactly two distinct roots", () => {
+    const p = parseTwoSourceCompare(
+      `the combined number of TypeScript files across repos/boredom-vessel/src and ${VB}`,
+    )!;
+    expect(p).not.toBeNull();
+    expect(p.relA).toBe("repos/boredom-vessel/src");
+    expect(p.relB).toBe("vessels/ribosome-vessel/src");
+  });
+});
