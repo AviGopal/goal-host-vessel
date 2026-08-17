@@ -5723,7 +5723,19 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
       costUsd: trace.costUsd ?? 0,
       templateId: trace.templateId ?? "",
       templateName: trace.templateId ?? "",
-      templateAuthor: "",
+      // RECURSION SAFETY (2026-08-13 audit defect 4, still live 2026-08-17).
+      //
+      // The ribosome's extraction gate skips executions whose templateAuthor is in the
+      // ribosome family — that check is what stops it extracting learned templates FROM
+      // learned templates. Passing "" here bypassed it, producing learned-of-learned nesting
+      // up to 7 deep (one such family: 202 executions, 0 successes, still being selected).
+      //
+      // The author is inferable without a fetch because the ribosome mints deterministic ids:
+      // its synthesis rule is `learned-<parent-slug>` and explicitly forbids any random or
+      // timestamped suffix, so `learned-` prefixed ids are exactly the ribosome-authored set.
+      // Deriving it here beats threading an author through the trace, which would need a
+      // store round-trip on a hot path — and beats leaving the gate disarmed.
+      templateAuthor: (trace.templateId ?? "").startsWith("learned-") ? "ribosome-pattern" : "",
       outputShapes,
       depth: Array.isArray(trace.compositionChain) ? trace.compositionChain.length : 0,
       impulseCount: trace.outputImpulseIds?.length ?? 0,
