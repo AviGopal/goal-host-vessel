@@ -247,6 +247,7 @@ import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
 import { multiQuantityNote } from "./multi-quantity";
+import { blendEdgeScore, type EdgeEvidence } from "./edge-blend";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
@@ -5002,7 +5003,7 @@ async function fileReachabilityGap(shape: string, goal: string, goalTargets: str
     const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ required_shapes: [shape], mode: "forward" }),
+      body: JSON.stringify({ required_shapes: [shape], include_scores: true, mode: "forward" }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!pr.ok) {
@@ -5903,8 +5904,23 @@ function readCandidateShapes(x: any): WalkCandidate | null {
   const numOr = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
   const alpha = numOr(x.alpha ?? x.thompson_alpha ?? x.metrics?.thompson_alpha);
   const beta = numOr(x.beta ?? x.thompson_beta ?? x.metrics?.thompson_beta);
-  const sampledScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score ?? x.composition_score) ?? (typeof alpha === 'number' && typeof beta === 'number' ? betaSample(alpha, beta) : undefined);
+  // `x.composition_score` used to sit in this ?? chain, but the store emits it as an OBJECT
+  // ({alpha,beta,sample_count,predecessor_id}) and numOr requires a number — so it always
+  // yielded undefined and per-edge evidence could never influence a pick. Read it as what it is.
+  const globalScore = numOr(x.sampled_score ?? x.sampledScore ?? x.thompson_score ?? x.score) ?? (typeof alpha === 'number' && typeof beta === 'number' ? betaSample(alpha, beta) : undefined);
   const sampleCount = numOr(x.sample_count ?? x.sampleCount ?? x.metrics?.sample_count);
+
+  // PER-EDGE EVIDENCE, BLENDED BY HOW MUCH OF IT THERE IS. Math and rationale in
+  // edge-blend.ts, extracted so the weighting is unit-testable without booting this server.
+  const edge = x.composition_score as EdgeEvidence | null | undefined;
+  const _ea = numOr(edge?.alpha);
+  const _eb = numOr(edge?.beta);
+  const sampledScore = blendEdgeScore(
+    globalScore,
+    edge,
+    _ea !== undefined && _eb !== undefined ? betaSample(_ea, _eb) : undefined,
+  );
+
   return {
     id, inputShapes, outputShapes,
     ...(alpha !== undefined ? { alpha } : {}),
@@ -8550,7 +8566,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        body: JSON.stringify({ required_shapes: [...producedShapes], mode: "backward", limit: 50, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
+        body: JSON.stringify({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}) }),
         signal: AbortSignal.timeout(20_000),
       });
       if (r.ok) {
@@ -8601,7 +8617,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const fr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingT, mode: "forward", limit: 50 }),
+            body: JSON.stringify({ required_shapes: missingT, include_scores: true, mode: "forward", limit: 50 }),
             signal: AbortSignal.timeout(20_000),
           });
           if (fr.ok) {
@@ -8731,7 +8747,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: [T], mode: "forward", limit: 50 }),
+            body: JSON.stringify({ required_shapes: [T], include_scores: true, mode: "forward", limit: 50 }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
@@ -8933,7 +8949,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingTargets, mode: "forward", limit: 50, ...(_sig2 ? { state_signature: _sig2 } : {}) }),
+            body: JSON.stringify({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...(_sig2 ? { state_signature: _sig2 } : {}) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
