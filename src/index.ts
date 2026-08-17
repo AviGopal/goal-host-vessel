@@ -249,6 +249,7 @@ import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRa
 import { multiQuantityNote } from "./multi-quantity";
 import { blendEdgeScore, type EdgeEvidence } from "./edge-blend";
 import { psiInputs } from "./psi-inputs";
+import { resolveSelectionTuning, SELECTION_TUNING_DEFAULTS } from "./selection-tuning";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
@@ -5903,7 +5904,10 @@ function buildHumanPresentation(a: { goal: string; reachState: "reached" | "pend
   return { headline: a.goal.replace(/\s+/g, " ").trim().slice(0, 160), blocks, grounding_state: a.grounded ? "grounded" : "unverified", reach_state: a.reachState, source_shape: a.sourceShape, relevance: Math.max(0, Math.min(1, a.relevance)) };
 }
 
-function readCandidateShapes(x: any): WalkCandidate | null {
+/** `k` is the edge-blend half-life, RESOLVED BY THE CALLER at use time (selection-tuning.ts).
+ *  It defaults to the compiled-in value so a caller that has not been threaded yet behaves
+ *  exactly as before — an unthreaded call site is inert, not silently mis-tuned. */
+function readCandidateShapes(x: any, k: number = SELECTION_TUNING_DEFAULTS.edgeBlendK): WalkCandidate | null {
   const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
   if (!id) return null;
   const norm = (arr: unknown): string[] =>
@@ -5933,6 +5937,7 @@ function readCandidateShapes(x: any): WalkCandidate | null {
     globalScore,
     edge,
     _ea !== undefined && _eb !== undefined ? betaSample(_ea, _eb) : undefined,
+    k,
   );
 
   return {
@@ -8267,6 +8272,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
   };
   while (chain.length < MAX_STEPS && !targetMet()) {
+    // Edge-blend half-life, resolved from the policy volume at USE TIME (law 1) rather
+    // than read from a compiled-in constant. Unconfigured -> the previous literal, so
+    // this is inert until a value is authored. TTL-cached, so re-resolving per
+    // iteration costs one map lookup.
+    const _blendK = (await resolveSelectionTuning()).edgeBlendK;
     drainInjectedImpulses();
     mirrorWalkState();
     const iterPoolBefore = [...producedShapes];
@@ -8341,7 +8351,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             const _pj: any = await _pr.json();
             const _precs = _pj?.recommendations ?? _pj?.body?.recommendations ?? [];
             preferComposition = (Array.isArray(_precs) ? _precs : [])
-              .map(readCandidateShapes)
+              .map((c: any) => readCandidateShapes(c, _blendK))
               .some((c: WalkCandidate | null) =>
                 c !== null &&
                 !exclude.has(normActivityId(c.id)) && !chain.includes(c.id) &&
@@ -8589,7 +8599,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const j: any = await r.json();
         const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
         candidates = (Array.isArray(rows) ? rows : [])
-          .map(readCandidateShapes)
+          .map((c: any) => readCandidateShapes(c, _blendK))
           .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
       }
     } catch { /* discover failed — candidates stays empty */ }
@@ -8609,7 +8619,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const j: any = await r.json();
           const recs = j?.recommendations ?? j?.body?.recommendations ?? [];
           candidates = (Array.isArray(recs) ? recs : [])
-            .map(readCandidateShapes)
+            .map((c: any) => readCandidateShapes(c, _blendK))
             .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
         }
       } catch { /* recommend failed too */ }
@@ -8643,7 +8653,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             const fj: any = await fr.json();
             const frows = fj?.activities ?? fj?.matches ?? fj?.body?.activities ?? fj?.results ?? [];
             const seen = new Set(candidates.map((c) => normActivityId(c.id)));
-            for (const c of (Array.isArray(frows) ? frows : []).map(readCandidateShapes)) {
+            for (const c of (Array.isArray(frows) ? frows : []).map((c: any) => readCandidateShapes(c, _blendK))) {
               if (c && !seen.has(normActivityId(c.id)) && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id)) {
                 candidates.push(c); seen.add(normActivityId(c.id));
               }
@@ -8772,7 +8782,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           if (r.ok) {
             const j: any = await r.json();
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
-            forward = (Array.isArray(rows) ? rows : []).map(readCandidateShapes).filter((c): c is WalkCandidate => c !== null);
+            forward = (Array.isArray(rows) ? rows : []).map((c: any) => readCandidateShapes(c, _blendK)).filter((c): c is WalkCandidate => c !== null);
           }
         } catch { /* discover failed */ }
         const seen = new Set<string>();
@@ -8975,7 +8985,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             const j: any = await r.json();
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
             const producers = (Array.isArray(rows) ? rows : [])
-              .map(readCandidateShapes)
+              .map((c: any) => readCandidateShapes(c, _blendK))
               .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id))
               // Drop hollow scaffolds for bridge-authorable targets so the walk
               // bridge-authors a genuine producer instead of reusing a scaffold.

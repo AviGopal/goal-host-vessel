@@ -35,8 +35,18 @@
  */
 
 /** Edge-evidence half-life: at K samples on an A->B edge, the per-edge posterior carries half
- *  the weight of the candidate's global posterior. A tuning constant in the same sense as the
- *  walk's MAX_STEPS. */
+ *  the weight of the candidate's global posterior.
+ *
+ *  THIS IS THE DEFAULT, NOT THE SETTING. It was originally justified here as "a tuning
+ *  constant in the same sense as the walk's MAX_STEPS" — which law 1 forbids for anything
+ *  behavioural, and K is behavioural: it decides how fast specific evidence overtakes
+ *  general. Citing MAX_STEPS did not license it, it identified a second violation.
+ *
+ *  The live value is resolved at use time from the policy volume by selection-tuning.ts,
+ *  which imports this as its fallback so the unconfigured path is byte-for-byte what
+ *  shipped before. Keep the number HERE (the math lives here) and the resolution THERE;
+ *  declaring it in both places is two constants that drift the first time either is
+ *  tuned. */
 export const EDGE_BLEND_K = 10;
 
 export interface EdgeEvidence {
