@@ -47,11 +47,44 @@
  * silent-partial-payload failure this module exists to end. When either input is missing
  * the result is empty and the request is honestly ψ-less.
  */
+/**
+ * ψ cells are keyed by the SHAPE-SPACE signature, and nothing else is interchangeable with it.
+ *
+ * MEASURED BY AUDIT, 2026-08-17 — this module's first version passed
+ * `getCachedStateSignature()?.signature_hash`, which is a different identifier entirely:
+ *
+ *              ψ row key (activity-api)              what this module sent
+ *   algorithm  sha256                                sha1
+ *   width      digest().slice(0,8) -> 16 hex chars   hex.slice(0,8) -> 8 hex chars
+ *   over       shapes | provenance | missing         load average, memory, trace counters
+ *
+ * Not a truncation mismatch — two unrelated identifiers that happen to share the word
+ * "signature". No width fix could make them meet.
+ *
+ * ⚠ THE HARM WAS NOT THE MISS, IT WAS THE SHAPE OF THE MISS. discover-by-shapes gated only on
+ * `signature.length > 0`, so the wrong-namespace value PASSED, every cell lookup missed, and
+ * every candidate came back `successor_value: {value: 0}` — indistinguishable from "ψ looked
+ * and found zero occupancy toward this goal". A lookup that could not be performed was
+ * reported as a measurement of zero. That is the n=0-is-not-evidence class, manufactured by
+ * my own fix.
+ *
+ * `/recommend` already had the answer and this reuses it (law 3): it validates the same
+ * `^[0-9a-f]{16}$` and, when the caller supplies nothing usable, derives the signature
+ * SERVER-SIDE from the shape pool "byte-identical to the write path". So the correct client
+ * behaviour when we hold no shape-space signature is to send NOTHING and let the server
+ * derive it — never to substitute a plausible-looking value from another namespace.
+ */
+const SHAPE_SPACE_SIGNATURE = /^[0-9a-f]{16}$/;
+
 export function psiInputs(
   signatureHash: string | null | undefined,
   targetShapes: Iterable<string> | null | undefined,
 ): { signature: string; completion_shapes: string[] } | Record<string, never> {
   if (typeof signatureHash !== "string" || signatureHash.length === 0) return {};
+  // Refuse anything that is not a shape-space signature. Emitting a foreign identifier here
+  // does not degrade ψ, it FABRICATES a zero — worse than omitting it, because the caller
+  // cannot tell the two apart downstream.
+  if (!SHAPE_SPACE_SIGNATURE.test(signatureHash)) return {};
   if (targetShapes == null) return {};
   const completion_shapes = [...targetShapes].filter(
     (s): s is string => typeof s === "string" && s.length > 0,
