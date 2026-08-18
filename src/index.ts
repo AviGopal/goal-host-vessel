@@ -95,6 +95,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
       endedAt: r.endedAt ?? null,
       selectedTemplateId: r.selectedTemplateId ?? null,
       executionId: r.executionId ?? null,
+      answerBody: r.answerBody ?? null,
     }));
   members.push({ substrate: "local", reachable: true, dispatches: localDispatches });
 
@@ -124,7 +125,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
             signal: AbortSignal.timeout(8_000),
           });
           const fedJ = (await fedR.json()) as { content?: { body?: { dispatches?: Array<Record<string, unknown>> } }; body?: { dispatches?: Array<Record<string, unknown>> } };
-          members.push({ substrate, reachable: fedR.ok ? true : null, dispatches: fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? [] });
+          members.push({ substrate, reachable: fedR.ok ? true : null, dispatches: (fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? []).map((d) => ({ ...d, answerBody: d.answerBody ?? null })) });
         } catch {
           members.push({ substrate, reachable: null, dispatches: [] });
         }
