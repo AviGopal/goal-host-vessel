@@ -53,7 +53,7 @@ export function registryFieldFor(goal: string): RegistryField | null {
   // ZERO-WIDTH CAPTURE. The lookahead is what makes overlapping counting clauses findable:
   // the match consumes only the trigger ("how many "), never the nouns after it, so matchAll
   // resumes INSIDE the previous capture window and the next trigger is still reachable.
-  const counted = [...g.matchAll(/\b(?:how many|number of|total|count of|quantity of)\s+(?=((?:\w+\s+){0,2}\w+))/gi)]
+  const counted = [...g.matchAll(/\b(?:how many|number of|total|count of|quantity of|how much)\s+(?=((?:\w+\s+){0,2}\w+))/gi)]
     .map((m) => m[1]!.toLowerCase().split(/\s+/).find((w) => /^(?:vessels?|shapes?)$/.test(w)))
     .filter((w): w is string => Boolean(w));
 
