@@ -15521,6 +15521,20 @@ server = Bun.serve({
         error: record.error,
         walkLog: record.walkLog,
         learning: record.learning ?? null,
+        // THE ANSWER. This response is built KEY BY KEY, and every key not named here is
+        // dropped silently — no error, no warning, no failing test, because omitting an
+        // optional field is legal. answerBody was missing, so the human surface rendered a
+        // green "reached" row for a run whose answer the record was holding all along.
+        //
+        // MEASURED 2026-08-18. "What is 17 percent of 4850?" reached, and the stored record
+        // carried "Final answer: 824". The surface showed the verdict and no answer. Same for
+        // "Who wrote the novel Piranesi?" (Susanna Clarke) and "How many kilometres are there
+        // in 12 nautical miles?" (22.224 km) — all three correct, none deliverable.
+        //
+        // The sibling goalWalkState response HAS carried answerBody all along, so the Obsidian
+        // panel received answers this endpoint could not. One surface got the product and the
+        // other got only the process, from the same record, for the same run.
+        answerBody: (record as { answerBody?: string }).answerBody ?? null,
       });
     }
 
