@@ -5241,7 +5241,32 @@ function isGroundedHonestReach(
 ): boolean {
   if (!v || v.reached !== true) return false;
   if (v.deterministic === true) return true;
-  if ((ev.commandEvidence ?? "").trim().length > 0) return true;
+
+  // COMMAND EVIDENCE WAS DROPPED FROM THE α GATE AND LEFT IN THIS ONE.
+  //
+  // The credit gate (search "A COMMAND HAVING RUN IS NOT EVIDENCE THE ANSWER IS RIGHT")
+  // removed this exact arm on measurement: across 80 goals in four classes with no
+  // deterministic verifier, 72/80 graded REACHED and only 23/80 were correct — 68% of
+  // reaches were hollow — and EVERY one of those false reaches had run a command, because
+  // shelling out is how that family produces its wrong number. ext_variety was 20/20
+  // reached and 0/20 correct.
+  //
+  // So the system refused to LEARN from this evidence and went on MINTING on it. That is
+  // the worse direction of the two. Law 3: "A wrong mint is negative value, not zero" — a
+  // duplicate or hollow mint is a fresh uninformed cell that splits selection traffic and
+  // raises the growth rate the learning loop must outpace. DYNAMICS §3 states the same
+  // thing as an inequality: minting on evidence too weak to move λ₁ raises ρ_grow, and
+  // λ₁ ≳ ρ_grow is the condition for the system to keep tracking at all. Crediting a hollow
+  // reach corrupts one posterior; minting from one adds a permanent cell that must then be
+  // out-learned.
+  //
+  // Keeping the two arms that are real substance — a deterministic verdict, or a genuine
+  // in-chain producer→consumer edge — makes this gate agree with the credit gate, which is
+  // the property that matters: two gates reading the same evidence to opposite conclusions
+  // is how a rejected reach still leaves structure behind.
+  //
+  // This deliberately REDUCES mint volume. That is the point; mint count is not progress
+  // (law 7), and the mints being dropped are precisely those with no verifier behind them.
   if ((ev.consumedInChain ?? 0) > 0 && !ev.editEffectReach) return true;
   return false;
 }
