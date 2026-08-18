@@ -9612,11 +9612,52 @@ If one of those sibling shapes is the action that would create what the goal ask
         // pathway that may have been perfectly good, which is the "a right answer punished
         // is worse than a wrong one credited" failure with an extra step.
         const _noOracle = /^deterministic:no-oracle-for-goal-class\b/.test(verdict.reason ?? "");
-        if (!_noOracle) {
+
+        // β MUST BE GATED BY THE SAME EVIDENCE STANDARD AS α, OR THE ARM CAN ONLY LOSE.
+        //
+        // Audited 2026-08-17. The α gate below requires
+        //     verdict.deterministic === true || (!editEffectReach && consumedInChain.size > 0)
+        // and `consumedInChain` only grows when a step declares INPUT shapes an earlier step
+        // produced. All three satisfier sites call `ledgerStep(undefined, [...])` — a
+        // vessel-resolve satisfier genuinely consumes nothing in-chain — so a satisfier pick
+        // can NEVER contribute an edge.
+        //
+        // For an LLM-judged (non-deterministic) verdict on a satisfier-dominated chain that
+        // makes the two outcomes asymmetric:
+        //     reached=false -> β applied
+        //     reached=true  -> α withheld
+        // The pick's posterior can therefore only move DOWN, at a rate set by how often it is
+        // selected rather than by how well it performs. Over 72h, 57/57 alpha credits named a
+        // `satisfier:*` id — this is the dominant step kind, not an edge case.
+        //
+        // The principle is not new here; it is argued two lines below for the no-oracle case:
+        // "Penalising the arm here would teach the learner to avoid a pathway that may have
+        // been perfectly good." Missing-edge is the same situation with a different cause —
+        // the evidence needed to reward is absent, so the evidence needed to punish is absent
+        // too. MDP §2.1 specifies the symmetric conjugate update (α ← α + r, β ← β + (1−r));
+        // a gate that admits only the β half is not that update.
+        //
+        // DELIBERATELY NARROW. This withholds β only where α was structurally impossible for
+        // the SAME verdict — a deterministic verdict still penalises normally, and so does any
+        // chain that actually formed an edge. It removes an asymmetry; it does not soften
+        // grading.
+        const _alphaWasReachable =
+          verdict.deterministic === true || consumedInChain.size > 0;
+        const _betaWithheldForSymmetry = !_noOracle && !_alphaWasReachable;
+
+        if (!_noOracle && !_betaWithheldForSymmetry) {
           const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
           opts.learningSink?.alphaBetaDelta.push(_abDelta);
-        } else {
+        } else if (_noOracle) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
+        } else {
+          // TWO REASONS NOW REACH THIS BRANCH, AND THEY ARE DIFFERENT GAPS. The comment below
+          // records that this line once printed "β-penalised" unconditionally, including on a
+          // branch that withheld it — "the code was right and the log was wrong, which is the
+          // worse way round". Collapsing two withholding reasons into one message would be
+          // that defect again, one level down: the no-oracle gap is a missing VERIFIER, this
+          // one is a missing EDGE, and they call for different repairs.
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising would let this arm only ever lose; the gap is the missing producer→consumer edge, not the pathway`);
         }
         // Say which of the two actually happened. This line printed "β-penalised last pick"
         // unconditionally, including on the branch immediately above that WITHHOLDS β — so
