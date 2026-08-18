@@ -56,5 +56,5 @@ export function pinnableHead(activities: readonly unknown[] | null | undefined):
   if (!Array.isArray(activities) || activities.length === 0) return undefined;
   const head = activities[0];
   if (typeof head !== "string" || head.length === 0) return undefined;
-  return isSatisfierPseudoId(head) ? undefined : head;
+  return isSatisfierPseudoId(head) || head === "universal-tool-fallback" ? undefined : head;
 }
