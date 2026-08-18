@@ -53,7 +53,7 @@ export function registryFieldFor(goal: string): RegistryField | null {
   // ZERO-WIDTH CAPTURE. The lookahead is what makes overlapping counting clauses findable:
   // the match consumes only the trigger ("how many "), never the nouns after it, so matchAll
   // resumes INSIDE the previous capture window and the next trigger is still reachable.
-  const counted = [...g.matchAll(/\b(?:how many|number of|total)\s+(?=((?:\w+\s+){0,2}\w+))/gi)]
+  const counted = [...g.matchAll(/\b(?:how many|number of|total|count of)\s+(?=((?:\w+\s+){0,2}\w+))/gi)]
     .map((m) => m[1]!.toLowerCase().split(/\s+/).find((w) => /^(?:vessels?|shapes?)$/.test(w)))
     .filter((w): w is string => Boolean(w));
 
@@ -124,14 +124,14 @@ export function registryFieldFor(goal: string): RegistryField | null {
   // exactly as before rather than matching a field name and manufacturing the false reach
   // those checks exist to prevent. Being reachable by a second route must not make a goal
   // reachable by a WRONG route.
-  const named = [...g.matchAll(/\b(totalshapes|totalvessels|healthycount|count of)\b/g)].map((m) => m[1]!);
+  const named = [...g.matchAll(/\b(totalshapes|totalvessels|healthycount)\b/g)].map((m) => m[1]!);
   const distinctNamed = new Set(named);
   // Two different fields named is the same ambiguity as two counted entities: abstain
   // rather than pick the first and let the shared-source verifier bless it.
   if (distinctNamed.size === 1) {
     const only = named[0]!;
     if (only === "totalshapes") return "totalShapes";
-    if (only === "totalvessels" || only === "count of") return "totalVessels";
+    if (only === "totalvessels") return "totalVessels";
     return "healthyCount";
   }
   return null;
