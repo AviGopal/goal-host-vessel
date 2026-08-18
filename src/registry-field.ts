@@ -177,7 +177,7 @@ export function registryRatioFor(goal: string): { numerator: RegistryField; deno
   const g = goal.toLowerCase();
   if (!/\b(registr(?:y|ies|ered|ration)|discovery)\b/.test(g)) return null;
   // Only the division family; "difference"/"percentage" deliberately absent.
-  if (!/\b(?:divide[ds]?|division|quotient|ratio|average|mean|per)\b/.test(g)) return null;
+  if (!/\b(?:divide[ds]?|division|quotient|ratio|average|mean|per|headcount of)\b/.test(g)) return null;
 
   const shapeAt = g.search(/\bshapes?\b/);
   const vesselAt = g.search(/\bvessels?\b/);
