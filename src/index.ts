@@ -9832,7 +9832,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // obsidian question carries a decision-ready markdown answerBody the vault can
         // render, and a produced goal_answer pool shape. The reach-judge rationale
         // prose is an acceptable seed; the produced pool content is the basis.
-        if (isQuestionGoal && reached === true) {
+        if (reached === true) {
           answerBody = [
             `# ${goal.slice(0, 200)}`,
             "",
