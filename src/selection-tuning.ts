@@ -56,11 +56,48 @@ export interface SelectionTuning {
   /** Edge-evidence half-life: at K samples on an A->B edge, the per-edge posterior carries
    *  half the weight of the candidate's global posterior. */
   edgeBlendK: number;
+  /** Maximum steps in one walk. Bounds what the walk can reach, so it is behaviour, not
+   *  plumbing — a goal needing 6 steps is unreachable at 5 and the trace shows only a
+   *  no-progress stop, never the ceiling that caused it. */
+  maxWalkSteps: number;
+  /** Horizontal fan-out width. Credit is later DIVIDED by this, so it scales every posterior
+   *  update on a fanned step — the most behavioural constant of the three. */
+  horizontalK: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
   edgeBlendK: EDGE_BLEND_K,
+  maxWalkSteps: 40,
+  horizontalK: 4,
 });
+
+/** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
+ *  authored row -> env -> in-code default. Dropping the env tier would be a behaviour change
+ *  disguised as a law-1 fix — every deployment currently setting these would silently revert
+ *  to the default. Law 1 objects to a value being FROZEN AND UNOBSERVABLE, not to env existing
+ *  as a fallback beneath a readable one. */
+const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
+  edgeBlendK: undefined,
+  maxWalkSteps: process.env["GOAL_HOST_WALK_MAX_STEPS"],
+  horizontalK: process.env["GOAL_HOST_HORIZONTAL_K"],
+};
+
+function resolveField(key: keyof SelectionTuning, authored: unknown): number {
+  if (isUsablePositive(authored)) return authored;
+  const env = ENV_FALLBACK[key];
+  if (env !== undefined && env !== "") {
+    const parsed = Number(env);
+    if (isUsablePositive(parsed)) return parsed;
+  }
+  return SELECTION_TUNING_DEFAULTS[key];
+}
+
+/** Finite and > 0. A zero or negative walk budget stops every walk before its first step; a
+ *  zero fan-out width divides credit by zero. Both are worse than the default, so an
+ *  unusable authored value falls through rather than taking effect. */
+export function isUsablePositive(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0;
+}
 
 /**
  * A stored value is usable only if it can't silently disable or invert the blend.
@@ -107,9 +144,19 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
     const k = parsed["edgeBlendK"];
     // Field-by-field, so one bad field cannot discard a good one — and so adding a field
     // later cannot silently drop the others (the explicit-projection class, one layer up).
-    value = { edgeBlendK: isUsableEdgeBlendK(k) ? k : SELECTION_TUNING_DEFAULTS.edgeBlendK };
+    value = {
+      edgeBlendK: isUsableEdgeBlendK(k) ? k : SELECTION_TUNING_DEFAULTS.edgeBlendK,
+      maxWalkSteps: resolveField("maxWalkSteps", parsed["maxWalkSteps"]),
+      horizontalK: resolveField("horizontalK", parsed["horizontalK"]),
+    };
   } catch {
-    value = SELECTION_TUNING_DEFAULTS;
+    // No policy file is the shipped state, and it must still honour the env tier — otherwise
+    // introducing this module would silently reset every deployment that sets these vars.
+    value = {
+      edgeBlendK: SELECTION_TUNING_DEFAULTS.edgeBlendK,
+      maxWalkSteps: resolveField("maxWalkSteps", undefined),
+      horizontalK: resolveField("horizontalK", undefined),
+    };
   }
 
   cache = { value, expiresAt: now + SELECTION_TUNING_TTL_MS };

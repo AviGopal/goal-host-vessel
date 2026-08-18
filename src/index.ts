@@ -6112,7 +6112,12 @@ async function runGoalAsPoolWalk(
       return { result: null, status: "failed", selectedTemplateId: "secret-extraction-refused", completionShapes: null, attempts: 0, reached: false, goalReachReason: "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated." };
     }
   }
-  const MAX_STEPS = parseInt(process.env.GOAL_HOST_WALK_MAX_STEPS ?? "40", 10);
+  // Resolved from the policy volume at USE TIME (law 1), env kept as the middle tier so no
+  // deployment silently reverts. MAX_STEPS bounds what the walk can REACH: a goal needing 6
+  // steps is unreachable at 5, and the trace shows a no-progress stop rather than the ceiling
+  // that caused it — which is exactly the kind of behaviour law 1 says must be observable and
+  // learnable rather than frozen at process start.
+  const MAX_STEPS = (await resolveSelectionTuning()).maxWalkSteps;
   // Terminal emit targets to DEFER until intermediates are produced (composition).
   const terminalShapes = new Set<string>(opts.terminalOutputShapes ?? []);
 
@@ -8867,7 +8872,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       // (which bridge-authors / backward-chains a genuine producer instead).
       const genuineOrEdge = orEdge.filter((c) => !isHollowScaffold(c.id));
       if (genuineOrEdge.length >= 2) {
-        const K = Math.min(orEdge.length, parseInt(process.env.GOAL_HOST_HORIZONTAL_K ?? "4", 10));
+        // Credit is later DIVIDED by K, so this scales every posterior update on a fanned
+        // step — the most behavioural of the three constants, and the least visible.
+        const K = Math.min(orEdge.length, (await resolveSelectionTuning()).horizontalK);
         const bundle = orEdge.slice(0, K);
         const bundleParentExecId = lastExecId;
         // Fan out: run each producer of T as a sibling (SAME parent/chain). Per-branch
