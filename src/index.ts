@@ -14133,7 +14133,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // to accomplish something operational. Async (run inside the dispatch
   // promise) so the immediate 202 response isn't delayed.
   const autoDraft = async (): Promise<void> => {
-    if (process.env.SUBSTRATE_AUTO_DRAFT_ENABLED === "0") return;
+    if (process.env.SUBSTRATE_AUTO_DRAFT_ENABLED === "0" || process.env.SUBSTRATE_AUTO_DRAFT_ENABLED === undefined) return;
     if (!goal || targetTemplateId) return;
     const threshold = parseFloat(process.env.SUBSTRATE_AUTO_DRAFT_THRESHOLD ?? "0.3");
     try {
