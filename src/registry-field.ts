@@ -124,14 +124,14 @@ export function registryFieldFor(goal: string): RegistryField | null {
   // exactly as before rather than matching a field name and manufacturing the false reach
   // those checks exist to prevent. Being reachable by a second route must not make a goal
   // reachable by a WRONG route.
-  const named = [...g.matchAll(/\b(totalshapes|totalvessels|healthycount)\b/g)].map((m) => m[1]!);
+  const named = [...g.matchAll(/\b(totalshapes|totalvessels|healthycount|count of)\b/g)].map((m) => m[1]!);
   const distinctNamed = new Set(named);
   // Two different fields named is the same ambiguity as two counted entities: abstain
   // rather than pick the first and let the shared-source verifier bless it.
   if (distinctNamed.size === 1) {
     const only = named[0]!;
     if (only === "totalshapes") return "totalShapes";
-    if (only === "totalvessels") return "totalVessels";
+    if (only === "totalvessels" || only === "count of") return "totalVessels";
     return "healthyCount";
   }
   return null;
