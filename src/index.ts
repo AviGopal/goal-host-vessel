@@ -9714,7 +9714,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_hc && _hc.trim().length > 0) tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW-CONTENT ${_hs} (${_hc.length} chars) = ${_hc.slice(0, 400)}`);
           }
         } catch { /* observability only — never break the verdict path */ }
-        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
         // shape has NO live resolver (a true CAPABILITY gap — not a selection
