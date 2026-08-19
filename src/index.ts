@@ -5123,7 +5123,7 @@ async function mintGovernorAllows(shape: string): Promise<boolean> {
     return true;
   }
 }
-async function penaliseHollowTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
+async function penaliseHollowTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> { let _betaApplied = false;
   try {
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
@@ -5131,7 +5131,7 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
       body: JSON.stringify({ activity_id: activityId, direction: "negative", intensity: 2, reason: `hollow completion (goal not reached): ${reason}`.slice(0, 200) }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) console.warn(`[goal-host-vessel] beta-penalty REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; penalty not applied`);
+    if (!res.ok) console.warn(`[goal-host-vessel] beta-penalty REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; penalty not applied`); else _betaApplied = true;
   } catch { /* non-fatal */ }
   // REACH-GATE FAILURE-CLASS CONCEPT (2026-07-04): mirror each hollow verdict to
   // concept-db at CLASS grain — stable content only (no goal text, execution ids,
@@ -5193,7 +5193,7 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
   // The feedback POST above is direction:"negative", intensity:2 — a β penalty on
   // the hollow template (no α change). Return the delta so terminalization can
   // surface it in DispatchRecord.learning (decision-transparency, 2026-07-07).
-  return { templateId: activityId, dAlpha: 0, dBeta: 2 };
+  return { templateId: activityId, dAlpha: 0, dBeta: _betaApplied ? 2 : 0 };
 }
 // Read a satisfier's GRADED Thompson posterior so the walk can PREFER an earned pathway over a
 // satisfier the learner has already condemned (§12.6 step 3, 2026-08-14). Fail-open: ANY error /
