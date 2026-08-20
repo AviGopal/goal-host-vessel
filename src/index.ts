@@ -5201,20 +5201,49 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
 // selection proceeds exactly as before (inert-by-default). GET /v2/activities/:id/variant-scores
 // returns the graded posterior (getVariantScores overlays getCanonicalPosteriors) as JSON
 // { scores: [{ activity_id, alpha, beta, total_executions }] }.
+/**
+ * A satisfier's graded posterior, read from where posteriors actually live.
+ *
+ * WAS: `GET /v2/activities/:id/variant-scores`, which returned
+ * `{"scores":[],"total":0,"path":"new"}` for every satisfier id — so this always
+ * returned null and `satisfierProvenBad` never fired. The gate was dead, silently,
+ * for as long as it has existed.
+ *
+ * The endpoint was not broken for satisfiers specifically; it is empty for
+ * `feature_compose` too, an arm with α 92.87 / β 32.12 over 165 executions
+ * (measured against the live hub). `variant-scores` answers a different question:
+ * it resolves a variant FAMILY out of the `activity` table via getVariantFamily,
+ * and returns [] when there is no base row. Satisfiers are synthetic pseudo-arms
+ * with no `activity` row at all, so no amount of repair to that endpoint would
+ * ever answer this question. Asking it was the defect.
+ *
+ * The posterior lives in variant_performance_metrics and is served by the
+ * `thompson_posterior` shape — the same read the selector and the operator use.
+ * `posterior_source` (added 2026-08-19) is what makes this safe: a key miss now
+ * reports "untried"/"unknown" instead of a fabricated Beta(1,1), which as a
+ * reliability signal would have read as a maximally-explorable arm.
+ */
 async function fetchSatisfierReliability(shape: string): Promise<{ alpha: number; beta: number; samples: number } | null> {
   try {
     const id = shape.startsWith("satisfier:") ? shape : `satisfier:${shape}`;
-    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/${encodeURIComponent(id)}/variant-scores`, {
-      method: "GET",
-      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "thompson_posterior", activity_id: id } } }),
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return null;
-    const j = await res.json() as { scores?: Array<{ activity_id?: string; alpha?: number; beta?: number; total_executions?: number }> };
-    const scores = Array.isArray(j?.scores) ? j.scores : [];
-    const row = scores.find((s) => String(s.activity_id ?? "").endsWith(id)) ?? scores[0];
-    if (!row || typeof row.alpha !== "number" || typeof row.beta !== "number") return null;
-    return { alpha: row.alpha, beta: row.beta, samples: typeof row.total_executions === "number" ? row.total_executions : (row.alpha + row.beta) };
+    const j = await res.json() as { content?: unknown };
+    const parsed = typeof j?.content === "string" ? JSON.parse(j.content) : j?.content;
+    const body = (parsed as { content?: Record<string, unknown> } | undefined)?.content;
+    if (!body) return null;
+    // A PRIOR IS NOT A MEASUREMENT. Without this check a never-graded satisfier
+    // returns Beta(1,1), and any reliability floor computed from it is a verdict
+    // on a fabrication.
+    if (body["posterior_source"] !== undefined && body["posterior_source"] !== "stored") return null;
+    const alpha = body["alpha"], beta = body["beta"], n = body["sample_count"];
+    if (typeof alpha !== "number" || typeof beta !== "number") return null;
+    return { alpha, beta, samples: typeof n === "number" ? n : alpha + beta };
   } catch { return null; }
 }
 // A reach is SUBSTANCE-HONEST iff the CODE-authored `deterministic` flag is set
@@ -8397,11 +8426,42 @@ If one of those sibling shapes is the action that would create what the goal ask
       // producer win instead of the penalised satisfier. Fail-open: fetch null / too-few-samples
       // => proven-bad=false => the satisfier fires exactly as before (inert-by-default; the reach
       // floor is untouched, and a covering producer must EXIST for the swap, so reach cannot break).
+      // ─────────────────────────────────────────────────────────────────────────
+      // TEMPORARY INTERLOCK — and it is a real one, not caution theatre.
+      //
+      // This gate has been DEAD since it was written: fetchSatisfierReliability read
+      // /variant-scores, which returns [] for every satisfier id, so proven-bad never
+      // fired. Repairing that read (same commit) makes it fire for the first time —
+      // against posteriors that the satellite mis-grading bug spent months poisoning.
+      //
+      // Measured on the live hub at the moment of this change:
+      //   satisfier:shellResult      α 52.5 / β 506.8, 3,625 exec -> reliability 0.094
+      //   satisfier:webSearchResult  α  2.1 / β 185.2,   189 exec -> reliability 0.011
+      //                              ...of which 167 SUCCEEDED.
+      // Both sit far under the 0.3 floor, so switching the read on would suppress the
+      // walk's workhorse satisfiers on evidence that is an artifact of the defect
+      // fixed in this same change.
+      //
+      // Fixing the stamp stops NEW poisoning; it does not heal accumulated β, and the
+      // 3-day decay half-life will not clear a 10:1 deficit on any useful timescale.
+      // So the honest state is: read repaired, suppression held until the satisfier
+      // posteriors are re-baselined. That is a precondition, not a preference —
+      // gap-mt0skq5k's sibling gap tracks the re-baseline.
+      //
+      // This is deliberately NOT law-1 shaped: it is an interlock with a defined
+      // removal condition, not a behaviour knob the system should learn to steer. It
+      // should be DELETED, not tuned, once the re-baseline lands. Until then the gate
+      // is explicitly disabled rather than accidentally dead — which is the whole
+      // difference between "declared" and "running".
+      const SATISFIER_SUPPRESSION_ARMED = process.env["SATISFIER_PROVEN_BAD_ARMED"] === "1";
       const _provenBadShapes = new Set<string>();
       if (missingForSatisfier.length === 1) {
         const _s0 = String(missingForSatisfier[0]);
         const _rel = await fetchSatisfierReliability(_s0);
-        if (_rel && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
+        if (_rel && !SATISFIER_SUPPRESSION_ARMED && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" would be PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) but suppression is HELD pending satisfier re-baseline — the read now works and the verdict is observable; the action is not armed`);
+        }
+        if (_rel && SATISFIER_SUPPRESSION_ARMED && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
           _provenBadShapes.add(_s0);
           tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) — probing for an earned producer to prefer over the penalised satisfier (step 3)`);
         }
@@ -8621,11 +8681,29 @@ If one of those sibling shapes is the action that would create what the goal ask
             // hollow reuse the substance gate at :7026 exists to prevent, arriving by a
             // different door.
             //
-            // reached:false is the honest local claim: this step is not, by itself, a
-            // reached goal. The walk's own verdict is computed later over the whole
-            // chain and recorded on the walk execution; if it reaches, the credit
-            // belongs there, not to an individual satisfier hop.
-            tags: [...(opts.tags ?? []), "reached:false", `satisfier_shape:${satisfiableNow}`],
+            // ...AND NOT TAGGED reached:false EITHER. That was the original wording of
+            // this note, and it cost the learner dearly. `reached:false` is not a
+            // neutral "not yet"; it is a VERDICT, and activity-api's classifyReach
+            // tests it BEFORE its own isHollowSatellite guard (reach-classify.ts:52-54),
+            // so the guard built for exactly these traces was unreachable and every
+            // satellite landed a β penalty. Measured live: satisfier:webSearchResult
+            // α 2.12 / β 185.22 over 189 executions of which 167 SUCCEEDED. The
+            // mis-grade is permanent — POST /reach only grades rows whose pre-verdict
+            // is `ungraded`, so the walk's later honest verdict is discarded as
+            // already-graded.
+            //
+            // Carrying NO reach tag is the honest local claim: this step has not been
+            // judged, in either direction. Both consumers then do the right thing —
+            // the ribosome extracts on `reached:true` only, so an untagged satellite is
+            // still never minted from (the whole point of the note above), and
+            // classifyReach falls through to isHollowSatellite and returns `ungraded`,
+            // which is SKIP rather than penalise. These traces match that guard on both
+            // of its predicates: id `walk-satisfier-…` and activity_id `satisfier:…`.
+            //
+            // The walk's own verdict is computed later over the whole chain and recorded
+            // on the walk execution; if it reaches, the credit belongs there, not to an
+            // individual satisfier hop.
+            tags: [...(opts.tags ?? []), "satellite:non_terminal", `satisfier_shape:${satisfiableNow}`],
             metadata: { satisfier: true, shape: satisfiableNow },
           };
           satisfierTraces.push(synthTrace);
@@ -9204,11 +9282,11 @@ If one of those sibling shapes is the action that would create what the goal ask
                     tasks: [{ taskId: "satisfier-resolve", description: `resolve ${missingShape} via connected vessel`, resolverId: missingShape, resolverTier: "pattern", inputImpulseIds: [], outputImpulseIds: [], outputShapes: [missingShape], success: true }],
                     costUsd: 0,
                     durationMs: 0,
-                    // Same explicit not-reached tag as the satisfier site above — see the
-                    // note there. Both construction sites must carry it: a tag applied at
+                    // Same treatment as the satisfier site above — see the long note
+                    // there. Both construction sites must agree: a verdict tag applied at
                     // one of two is worse than none, because the family then looks handled
-                    // while half of it still arrives ungraded.
-                    tags: [...(opts.tags ?? []), "reached:false", `satisfier_shape:${missingShape}`],
+                    // while half of it is still being β-penalised for existing.
+                    tags: [...(opts.tags ?? []), "satellite:non_terminal", `satisfier_shape:${missingShape}`],
                     metadata: { satisfier: true, shape: missingShape },
                   };
                   satisfierTraces.push(_vrSynthTrace);
