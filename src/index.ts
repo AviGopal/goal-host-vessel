@@ -11220,8 +11220,12 @@ async function runGoalWithRecovery(
               const editPostOk = earlyLandedSha ? await verifyEditPostState(goal ?? "", earlyEditFile, earlyLandedSha) : null;
               const editHollow = editPostOk === false;      // landed, but the symbol is not there
               const earlyReached = !!earlyLandedSha && !editHollow;
-              if (!earlyLandedSha) { await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed"); }
-              else if (editHollow) { await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol"); }
+              // Record the grade, do not just apply it. `alphaBetaDelta` is the
+              // decision-transparency surface; six of eight grading sites discarded
+              // the return, so a dispatch that WAS graded reported [] and obsidian
+              // rendered "This run taught the system nothing" off exactly that.
+              if (!earlyLandedSha) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); }
+              else if (editHollow) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol")); }
               return {
                 result: null,
                 status: earlyReached ? ("completed" as const) : ("failed" as const),
@@ -11785,7 +11789,7 @@ async function runGoalWithRecovery(
               } catch { /* durable edit-intent trace is best-effort */ }
               // SUBSTANCE GRADE: reached iff a real landing occurred (landedSha set only on
               // push_status==="pushed" + new_git_sha). "staged FAVORABLE" is not a reach.
-              if (!landedSha) { await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed"); }
+              if (!landedSha) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); }
               return {
                 result: null,
                 status: landedSha ? "completed" : "failed",
@@ -11958,7 +11962,7 @@ async function runGoalWithRecovery(
                   // posterior learns the truth and escalation can fire. Fail-CLOSED: staged is
                   // itself proof of not-landed, so no git check is needed here.
                   tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools STAGED (NOT landed) mitosis for ${editFile} (${String(pwtBody["mitosis_version_id"] ?? "")}) — grading staged-not-landed`);
-                  await penaliseHollowTemplate("patch_with_tools", "staged-not-landed");
+                  opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("patch_with_tools", "staged-not-landed"));
                   return {
                     result: null,
                     status: "failed",
@@ -12226,11 +12230,11 @@ async function runGoalWithRecovery(
         if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
-          await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached", goal);
+          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached", goal));
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-          if (isSubstanceHonestReach(verdict)) { await creditReachedTemplate(selId, verdict.reason ?? "goal reached"); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
+          if (isSubstanceHonestReach(verdict)) { opts.learningSink?.alphaBetaDelta.push(await creditReachedTemplate(selId, verdict.reason ?? "goal reached")); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
           if (opts.learningMode !== "observe") void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
