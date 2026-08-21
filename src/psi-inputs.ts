@@ -79,16 +79,37 @@ const SHAPE_SPACE_SIGNATURE = /^[0-9a-f]{16}$/;
 export function psiInputs(
   signatureHash: string | null | undefined,
   targetShapes: Iterable<string> | null | undefined,
-): { signature: string; completion_shapes: string[] } | Record<string, never> {
-  if (typeof signatureHash !== "string" || signatureHash.length === 0) return {};
-  // Refuse anything that is not a shape-space signature. Emitting a foreign identifier here
-  // does not degrade ψ, it FABRICATES a zero — worse than omitting it, because the caller
-  // cannot tell the two apart downstream.
-  if (!SHAPE_SPACE_SIGNATURE.test(signatureHash)) return {};
+): { signature?: string; completion_shapes?: string[] } | Record<string, never> {
   if (targetShapes == null) return {};
   const completion_shapes = [...targetShapes].filter(
     (s): s is string => typeof s === "string" && s.length > 0,
   );
   if (completion_shapes.length === 0) return {};
-  return { signature: signatureHash, completion_shapes };
+
+  // THE REFUSAL IS SCOPED TO `signature`, NOT TO THE WHOLE PAYLOAD.
+  //
+  // The invariant this module exists to protect is: never emit a
+  // foreign-namespace identifier as a shape-space signature. Emitting one does
+  // not degrade ψ, it FABRICATES a zero. That still holds, and `signature` is
+  // still withheld unless it is genuinely shape-space.
+  //
+  // But withholding `completion_shapes` as well was collateral damage. Every
+  // caller in goal-host holds only an 8-hex `signature_hash` from another
+  // namespace, so this returned {} at all nine call sites — and
+  // `completion_shapes` is a CONJUNCT of the server's ψ guard
+  // (activities.ts:6841). Measured: 0 blends in 476 recommends, with SF_BLEND
+  // being only one of two independently-sufficient causes.
+  //
+  // completion_shapes is the goal's target shapes — it needs no signature to be
+  // meaningful, and the server derives its own signature on the /recommend
+  // path. Sending R without a fabricated s is strictly more information than
+  // sending nothing, and it cannot fabricate anything.
+  const usableSignature =
+    typeof signatureHash === "string" &&
+    signatureHash.length > 0 &&
+    SHAPE_SPACE_SIGNATURE.test(signatureHash);
+
+  return usableSignature
+    ? { signature: signatureHash as string, completion_shapes }
+    : { completion_shapes };
 }

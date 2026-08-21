@@ -25,13 +25,32 @@ describe("psiInputs — the exact key names the store destructures", () => {
   });
 });
 
-describe("psiInputs — all-or-nothing", () => {
-  it("emits NOTHING when the signature is missing", () => {
-    // A payload with completion_shapes and no signature fails the store's guard silently
-    // while reading, to a human, as though ψ were requested.
-    expect(psiInputs(undefined, ["a"])).toEqual({});
-    expect(psiInputs(null, ["a"])).toEqual({});
-    expect(psiInputs("", ["a"])).toEqual({});
+describe("psiInputs — the refusal is scoped to `signature`", () => {
+  it("emits completion_shapes WITHOUT a signature when none is usable", () => {
+    // NARROWED 2026-08-21 (seam L3-psi-08). This previously asserted {} — the
+    // whole payload withheld whenever the signature was unusable. That was too
+    // broad, and it was load-bearing: every goal-host call site holds only an
+    // 8-hex hash from another namespace, so psiInputs returned {} at all nine,
+    // and `completion_shapes` is a CONJUNCT of the server's ψ guard
+    // (activities.ts:6841). Measured consequence: 0 blends in 476 recommends.
+    //
+    // The invariant being protected is "never emit a foreign identifier AS a
+    // shape-space signature" — see the WRONG NAMESPACE block below, which still
+    // holds. completion_shapes carries no such risk: it is the goal's target
+    // shapes, it needs no signature to mean what it means, and the server
+    // derives its own signature on this path. Sending R without a fabricated s
+    // is strictly more information than sending nothing.
+    expect(psiInputs(undefined, ["a"])).toEqual({ completion_shapes: ["a"] });
+    expect(psiInputs(null, ["a"])).toEqual({ completion_shapes: ["a"] });
+    expect(psiInputs("", ["a"])).toEqual({ completion_shapes: ["a"] });
+  });
+
+  it("NEVER emits a signature key when the signature is unusable", () => {
+    // The property that must not regress: no fabricated s reaches the store.
+    for (const bad of [undefined, null, "", "5282e725", "ZZZZ", "0123456789abcdefff"]) {
+      const out = psiInputs(bad as string | null | undefined, ["a"]);
+      expect("signature" in out).toBe(false);
+    }
   });
 
   it("emits NOTHING when the direction is missing or empty", () => {
@@ -68,9 +87,12 @@ describe("psiInputs — a signature from the WRONG NAMESPACE is refused, not tru
    * candidate came back `successor_value: {value: 0}` — reported as a measurement of zero
    * occupancy rather than as a lookup that never happened.
    */
-  it("THE REGRESSION: an 8-hex host-load hash is refused", () => {
-    // The exact live value observed on this fleet.
-    expect(psiInputs("5282e725", ["shapeA"])).toEqual({});
+  it("THE REGRESSION: an 8-hex host-load hash is refused AS A SIGNATURE", () => {
+    // The exact live value observed on this fleet. The signature must not be
+    // emitted; the direction R still is (see the scoping block above).
+    const out = psiInputs("5282e725", ["shapeA"]);
+    expect("signature" in out).toBe(false);
+    expect(out).toEqual({ completion_shapes: ["shapeA"] });
   });
 
   it("a 16-hex shape-space signature is accepted", () => {
@@ -89,22 +111,31 @@ describe("psiInputs — a signature from the WRONG NAMESPACE is refused, not tru
       "0123456789abcdeg",            // non-hex
       "activity:0123456789abcdef",   // wrapped
     ]) {
-      expect(psiInputs(bad, ["shapeA"])).toEqual({});
+      // Refused AS A SIGNATURE. The direction R still ships — see the scoping
+      // block above (seam L3-psi-08).
+      expect(psiInputs(bad, ["shapeA"])).toEqual({ completion_shapes: ["shapeA"] });
     }
   });
 
   it("NEGATIVE CONTROL: the validator can accept as well as reject", () => {
     // Without this, replacing the body with `return {}` passes every assertion above and
     // silently disables psi wiring altogether.
-    expect(psiInputs("aaaaaaaaaaaaaaaa", ["s"])).not.toEqual({});
-    expect(psiInputs("aaaaaaaa", ["s"])).toEqual({});
+    expect(psiInputs("aaaaaaaaaaaaaaaa", ["s"])).toEqual({
+      signature: "aaaaaaaaaaaaaaaa",
+      completion_shapes: ["s"],
+    });
+    // ...and still rejects the foreign one, without swallowing the direction.
+    expect("signature" in psiInputs("aaaaaaaa", ["s"])).toBe(false);
   });
 
-  it("sending NOTHING is the correct fallback, and it is what refusal produces", () => {
-    // POST /recommend derives the signature server-side from the shape pool, "byte-identical
-    // to the write path", whenever the caller supplies nothing usable. So an empty object is
-    // not a degraded request — it is the request that lets the server be correct.
+  it("omitting the signature lets the server derive its own — and R still ships", () => {
+    // POST /recommend derives the signature server-side from the shape pool,
+    // "byte-identical to the write path", whenever the caller supplies nothing
+    // usable. That is precisely why withholding `completion_shapes` too was
+    // unnecessary: the server can be correct about s on its own, but it cannot
+    // invent R. Omitting only the signature is what lets it be correct AND
+    // leaves the ψ guard satisfiable.
     const out = psiInputs("5282e725", ["shapeA"]);
-    expect(Object.keys(out)).toEqual([]);
+    expect(Object.keys(out)).toEqual(["completion_shapes"]);
   });
 });
