@@ -10983,8 +10983,22 @@ async function runGoalWithRecovery(
       // UNION, not override: inference keeps whatever it inferred (a count-and-record goal
       // still needs its note shape), and shellResult is appended so the walk CAN compose the
       // measurement. Appended last so it never displaces an inferred primary target.
+      // ...EXCEPT when the goal named an advertised producer and inference picked
+      // it. Then the count is already coming from a resolver, and appending
+      // shellResult manufactures a guaranteed failure: the walk runs the SHAPE
+      // NAME as a bash command. Measured on dispatch 1b8fba06 — docs_align_tick
+      // resolved correctly with docs_scanned=63, shellResult reported
+      // "docs_align_tick: command not found", and the judge sank the whole output
+      // because an error sat beside the right answer. The append exists to make a
+      // measurement composable when nothing else can produce it; a resolver that
+      // already produces it is not that case.
+      const namedProducerInferred = !!(
+        seededOutputShapes &&
+        seededOutputShapes.some((sh) => sh !== "shellResult" && new RegExp(`(^|[^a-z0-9_])${sh}([^a-z0-9_]|$)`, "i").test(goal))
+      );
       if (
         isCountableQuestion(goal) &&
+        !namedProducerInferred &&
         knownShapes && knownShapes.includes("shellResult") &&
         seededOutputShapes && seededOutputShapes.length > 0 &&
         !seededOutputShapes.includes("shellResult")
