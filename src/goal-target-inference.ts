@@ -326,12 +326,47 @@ function deterministicRegistryRoute(goal: string, knownShapes: string[]): GoalTa
   return { shapes: ["shellResult"], confidence: 0.6, alternatives: [] };
 }
 
+/**
+ * THE GOAL NAMED A SHAPE, AND THAT SHAPE IS ADVERTISED — SO IT IS THE PRODUCER.
+ *
+ * The countable-phrasing fallback below routes "how many / count / number of" to
+ * shellResult before the LLM sees the goal. That is right when nothing more
+ * specific fits, and wrong when the goal NAMES a shape the registry advertises:
+ * the answer already has a producer, and shell can only guess at it.
+ *
+ * Measured 2026-08-21 across four dispatches on one capability. docs_align_tick is
+ * advertised by development-vessel (present in /registry/shapes among 383). Asked
+ * "report how many documents it scanned", inference appended shellResult and the
+ * walk ran the SHAPE NAME as a bash command — "docs_align_tick: command not found"
+ * — beside a correct resolve carrying docs_scanned=63, and the judge sank the
+ * verdict over the error. Reworded to "resolve ... and return its report", it
+ * inferred shellResult as PRIMARY at 0.92 and burned five cold-command
+ * self-corrections guessing curl invocations, never resolving the shape at all.
+ *
+ * This is the monoculture the block above documents (98.5% of reached commands are
+ * shellResult) reaching the one place that fix did not cover: the deterministic
+ * pre-LLM route. A named, advertised shape is the strongest producer signal a goal
+ * can carry, so honour it before falling back to the universal executor.
+ */
+function namedAdvertisedShape(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  if (!goal || knownShapes.length === 0) return null;
+  // Longest first: "docs_align_tick" must win over a substring like "docs_align".
+  const named = knownShapes
+    .filter((s) => /^[a-z][a-z0-9_]{4,}$/i.test(s))
+    .filter((s) => new RegExp(`(^|[^a-z0-9_])${s}([^a-z0-9_]|$)`, "i").test(goal))
+    .sort((a, b) => b.length - a.length);
+  if (named.length === 0) return null;
+  const primary = named[0];
+  if (!primary || primary === "shellResult") return null;
+  return { shapes: [primary], confidence: 0.9, alternatives: named.slice(1, 3).map((s) => [s]) };
+}
+
 export async function inferGoalTargetDecision(
   goal: string,
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<GoalTargetDecision> {
-  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
+  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? namedAdvertisedShape(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
