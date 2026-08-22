@@ -5627,7 +5627,27 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
 // fresh candidate remains (exhausted = honest failure). Paired with the reach
 // gate this turns goal-seeking into try → check → alter → retry, so the trace of
 // the attempt that finally REACHES is what the ribosome mints into a new activity.
-async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null): Promise<string | null> {
+// SELECTION-TO-OUTCOME CORRELATION. `/recommend` mints a `correlation_id` per
+// recommendation (activities.ts:7126) and writes it to thompson_selection_log, and the
+// trace-store route accepts it back on the execution ("Selection-to-execution correlation
+// (from /recommend endpoint)"). Both ends were built; nothing carried the value between
+// them, because this function returned the template id alone and dropped the rest of the
+// recommendation on the floor.
+//
+// Measured consequence 2026-08-22: `correlation_id` populated on 0 of 8,650 non-auth
+// executions, and v_selection_outcomes holding 226 rows of which NOT ONE carries an
+// outcome field — a table named for a join that was never made. So Thompson's own choices
+// could never be graded AS choices: credit reaches arms (keyed on activity_id) but never
+// reaches decisions, which is precisely the counterfactual-at-decision-time record law 12
+// asks for.
+//
+// `correlationId` rides out on the existing prefixed-tag provenance channel the walk
+// already uses (`dispatcher_used:`, `state_signature:`, `satisfier_shape:`,
+// `edit_intent:`) rather than a new field, so it needs no schema change and lands on the
+// execution through the same `tags` path already threaded to host.runGoal.
+type RecommendPick = { id: string; correlationId: string | null };
+
+async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null): Promise<RecommendPick | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
@@ -5647,10 +5667,25 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
       const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
       const recShapes = (Array.isArray(x?.output_shapes) ? x.output_shapes : Array.isArray(x?.outputShapes) ? x.outputShapes : []) as string[];
       if (targetShapes && targetShapes.length && recShapes.length && !recShapes.some((s) => targetShapes.includes(String(s)))) continue;
-      if (id && !excludedNorm.has(norm(id))) return id;
+      if (id && !excludedNorm.has(norm(id))) {
+        // Carry the correlation id of THE RECOMMENDATION WE ACTUALLY PICKED — not the
+        // first in the list. Picking one arm and reporting another's id would attribute
+        // the outcome to a decision that was never taken, which is worse than no link.
+        const correlationId = typeof x?.correlation_id === "string" && x.correlation_id.length > 0
+          ? x.correlation_id
+          : null;
+        return { id, correlationId };
+      }
     }
     return null;
   } catch { return null; }
+}
+
+/** Tag form for the selection→outcome link. Read side: strip the `correlation:` prefix. */
+function correlationTag(correlationId: string | null | undefined): string[] {
+  return typeof correlationId === "string" && correlationId.length > 0
+    ? [`correlation:${correlationId}`]
+    : [];
 }
 // Reach → mint (operator: "the traces of the working attempts will be minted as
 // the beginnings of new activities"). When a goal genuinely REACHES, dispatch the
@@ -12193,6 +12228,8 @@ async function runGoalWithRecovery(
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
+  // Correlation id of the recommendation actually selected for THIS attempt.
+  let pickCorrelationId: string | null = null;
   if (!nextTarget && goal) {
     // Already consulted before the pool walk — reuse that result rather than
     // re-querying, so one dispatch means one lookup and both planes agree.
@@ -12234,14 +12271,17 @@ async function runGoalWithRecovery(
     }
   }
   if (!nextTarget && goal && seededOutputShapes && seededOutputShapes.length > 0) {
-    nextTarget = (await recommendExcluding(goal, [], null, seededOutputShapes)) ?? undefined;
+    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes);
+    nextTarget = firstPick?.id ?? undefined;
+    pickCorrelationId = firstPick?.correlationId ?? null;
     if (!nextTarget && goalTargetDecision) {
       for (const alt of goalTargetDecision.alternatives) {
         const altPick = await recommendExcluding(goal, [], null, alt);
         if (altPick) {
           console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
           seededOutputShapes = alt;
-          nextTarget = altPick;
+          nextTarget = altPick.id;
+          pickCorrelationId = altPick.correlationId;
           break;
         }
       }
@@ -12264,7 +12304,8 @@ async function runGoalWithRecovery(
     result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {
       variables: opts.variables,
       targetTemplateId: nextTarget,
-      tags: opts.tags,
+      // correlation:<id> links this execution back to the Thompson draw that chose it.
+      tags: [...(opts.tags ?? []), ...correlationTag(pickCorrelationId)],
       parentExecutionId: opts.parentExecutionId,
       compositionChain: opts.compositionChain,
       expectedOutputShapes: seededOutputShapes ?? opts.expectedOutputShapes,
@@ -12360,7 +12401,11 @@ async function runGoalWithRecovery(
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
       const repairKey = await repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
-        const alt = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
+        const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
+      const alt = altPickRetry?.id ?? null;
+      // Re-stamp per attempt: each retry is a NEW selection with its own correlation id,
+      // so carrying the first attempt's would attribute this outcome to a prior decision.
+      pickCorrelationId = altPickRetry?.correlationId ?? null;
       if (!alt) {
         // WS5 solicitation-on-recovery: before declaring honest failure, ask a
         // present human (a vault advertising human_input). An answered
