@@ -11370,6 +11370,26 @@ async function runGoalWithRecovery(
                 executionId: earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined,
               };
             }
+            // CAPACITY IS TRANSIENT, NOT A CAPABILITY VERDICT. When compose refuses for capacity
+            // (BUSY / draining), do NOT fall through to the walk: the walk cannot serve an edit
+            // goal at all — every target shape it infers for this class (fs_edit, fileEditResult,
+            // code_modification_proposal) has no producer — so it evicts as "no template produces
+            // the inferred target shapes" and files a phantom capability gap. The identical goal
+            // then succeeds or fails on lane timing rather than merit, and the honest reason
+            // (saturated, retry) is replaced by a misleading one. Refuse retryably instead.
+            // Measured 2026-08-23; closes compose-busy-falls-through-to-a-walk-that-cannot-edit.
+            if (/^(BUSY|DRAINING|CAPACITY)/i.test(earlyVerdict)) {
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict} — capacity, NOT falling through to a walk that cannot edit; refusing retryably`);
+              return {
+                result: null,
+                status: "failed" as const,
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["fileEditResult"],
+                attempts: 1,
+                goalReachReason: `RETRYABLE CAPACITY: edit-intent routed to feature_compose but the compose lane is at capacity (verdict=${earlyVerdict}). This is a transient capacity condition, not a capability gap: retry when the lane is free. The walk is deliberately NOT consulted — it cannot serve an edit goal and would mint a phantom capability gap for an unproducible shape.`,
+                reached: false,
+              };
+            }
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
           } else {
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — falling through to walk`);
