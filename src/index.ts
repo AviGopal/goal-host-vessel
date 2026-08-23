@@ -66,6 +66,17 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const gaps: FeedGap[] = [
     {
       substrate: FED_SUBSTRATE_ID,
+      id: 'route-edit-2951ebb0-narrowed',
+      category: 'substrate-gap',
+      status: 'open',
+      summary: 'Edit repos/goal-host-vessel/src/index.ts',
+      webTool: {
+        url: 'https://substrate-tools.fly.dev/route-gap-fallback',
+        label: 'Substrate Gap Tool'
+      }
+    },
+    {
+      substrate: FED_SUBSTRATE_ID,
       id: 'route-edit-6cd986c6-narrowed',
       category: 'substrate-gap',
       status: 'open',
