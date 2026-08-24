@@ -63,5 +63,19 @@ export function goalDemandsLandedEdit(goal: string | undefined): boolean {
   const asksForCodeChange =
     /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal) || isPathlessCodeChangeGoal(goal);
   if (!asksForCodeChange) return false;
-  return /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow)\b/i.test(goal);
+  const mutationVerb =
+    /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow)\b/i.test(goal);
+  if (mutationVerb) return true;
+  // A goal that CREATES a new source file also demands landing evidence. The verb list above
+  // was mutation-only, so "Create/Author the file repos/…/x.ts" did NOT demand a landed edit
+  // and fell through to the LLM judge, which greens it on narrative ("The system successfully
+  // created the specified file") while nothing lands. Measured: dispatch 7a8811bb graded
+  // reached:true with the file absent from disk and origin — a persisted false reach in the
+  // β-pump class, the SAME failure this block's 2026-08-11 widening set out to stop, just via
+  // a creation verb the list omitted. EXCLUDES a durable-artifact NOTE write: those have their
+  // own sink/delivery path and need not produce a git sha, so demanding one would falsely
+  // reject a note that WAS written (a false rejection is worse than the hole it closes).
+  const createsCodeFile =
+    /\b(create|creates|creating|write|writes|writing|author|authors|authoring|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal);
+  return createsCodeFile && !goalRequestsDurableArtifact(goal);
 }
