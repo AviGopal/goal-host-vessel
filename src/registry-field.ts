@@ -179,6 +179,29 @@ export function registryRatioFor(goal: string): { numerator: RegistryField; deno
   // Only the division family; "difference"/"percentage" deliberately absent.
   if (!/\b(?:divide[ds]?|division|quotient|ratio|average|mean|per|headcount of|counted)\b/.test(g)) return null;
 
+  // First, try to extract explicit field names (same tokens registryFieldFor recognizes)
+  const fieldMatches = [...g.matchAll(/\b(totalshapes|totalvessels|healthycount)\b/g)];
+  const namedFields = fieldMatches.map((m) => m[1]!);
+  const seen = new Set<string>();
+  const distinctInOrder: string[] = [];
+  for (const name of namedFields) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      distinctInOrder.push(name);
+    }
+  }
+  if (distinctInOrder.length === 2) {
+    const toRegistryField = (name: string): RegistryField =>
+      name === "totalshapes" ? "totalShapes"
+      : name === "totalvessels" ? "totalVessels"
+      : "healthyCount";
+    return {
+      numerator: toRegistryField(distinctInOrder[0]!),
+      denominator: toRegistryField(distinctInOrder[1]!)
+    };
+  }
+
+  // Fall back to conversational entity detection
   const shapeAt = g.search(/\bshapes?\b/);
   const vesselAt = g.search(/\bvessels?\b/);
   if (shapeAt < 0 || vesselAt < 0) return null;      // needs BOTH entities to be a quotient
