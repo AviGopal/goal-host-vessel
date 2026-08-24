@@ -99,3 +99,30 @@ describe("isCountableQuestion — domain-independent, which is the point", () =>
     expect(isQuantitativeRepoQuestion(g)).toBe(false);
   });
 });
+
+describe("isCountableQuestion — a creation goal is NOT a countable question", () => {
+  // MEASURED LIVE (dispatch f14c4b94): the recompute oracle graded a CREATION goal reached:true
+  // on `find|wc -l`=0 — a count of 0 is proof the file does NOT exist, i.e. the goal FAILED,
+  // yet two authors agreed on 0 and it was persisted as a reach (crediting the fallback arm,
+  // recording a reusable reached goal-path). A false reach in the β-pump class. A goal whose
+  // deliverable is a new file/module must fall to a grader that checks EXISTENCE, not a count.
+  it("THE FIX: the verbatim goal that false-reached is no longer countable", () => {
+    const g = "Create the new file repos/development-vessel/src/seed/detect-calibration-drift.ts. It should define and export a single-task detector template, modeled on the existing detect-* seed detector templates in that same directory, whose task queries the activity-api endpoint /v2/activities/execution-traces/decision-calibration and yields a report identifying any activity arm whose calibration_error is high with a sufficient number of decisions (posterior-mean predicted success far from actual reach rate). Follow the established detector template shape used by its siblings so it is selectable and graded like they are.";
+    expect(isCountableQuestion(g)).toBe(false);
+  });
+
+  it("excludes create/write/author of a file, a new artifact, or a single-file repos path", () => {
+    expect(isCountableQuestion("Create repos/dev/src/seed/detect-x.ts with a detector that counts the number of arms")).toBe(false);
+    expect(isCountableQuestion("author a new detector template with the total number of miscalibrated arms")).toBe(false);
+    expect(isCountableQuestion("write a file listing how many resolvers exist")).toBe(false);
+  });
+
+  it("MATCHES THE ASK, NOT THE VOCABULARY: legit countables with a creation verb stay countable", () => {
+    // Over-exclusion here only drops to the LLM judge (not the refusal gate), but a report is a
+    // prose deliverable, not a file — its count is still recompute-gradable. "write a FILE" is
+    // excluded; "write a REPORT on how many" is not.
+    expect(isCountableQuestion("write a report on how many resolvers exist")).toBe(true);
+    expect(isCountableQuestion("how many files were created this week")).toBe(true);
+    expect(isCountableQuestion("How many files are under repos/x/src")).toBe(true);
+  });
+});

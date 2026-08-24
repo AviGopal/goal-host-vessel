@@ -45,6 +45,20 @@ export function isCountableQuestion(goal: string): boolean {
   if (!countable && !superlative) return false;
   if (/\b(summar(?:y|ise|ize)|explain|describe|purpose of|overview|gist|walk me through)\b/i.test(goal)) return false;
   if (/\b(edit|insert|append|modify|replace|refactor)\b/i.test(goal)) return false;
+  // DELIVERABLE-IS-A-NEW-ARTIFACT. A goal whose deliverable is a new file/module is not a
+  // countable question, even when it says "number of" while DESCRIBING that artifact. Its
+  // success is the artifact EXISTING (graded by the landing / fs path), not a count — and a
+  // count of 0 for "create X" is proof it FAILED, which the recompute path misreads as an
+  // agreed answer. Measured live: "Create the new file ...detect-calibration-drift.ts. ...a
+  // sufficient number of decisions..." matched `number of`, ran `find|wc -l`=0, and TWO authors
+  // agreed on 0 → reached:TRUE, crediting the fallback arm and recording a reusable reached
+  // goal-path — a false reach in the β-pump class (wrong-sign credit into the posterior).
+  // Match the ASK, not the vocabulary (the same lesson goal-file-resolution learned with
+  // "count"): a create/write/author verb BOUND to a file, a "new <artifact>", or a single-file
+  // repos path. Over-exclusion here is the SAFE direction — it drops to the LLM judge (status
+  // quo), NOT the refusal gate — so a legitimate count-and-record ("write a report on how many
+  // resolvers") stays countable while "write a file listing how many resolvers" does not.
+  if (/\b(creat|writ|author|scaffold|generat)\w*\b[^.;!?]{0,30}\b(new\s+[a-z]+|file|repos\/[\w./-]+\.\w{1,6})\b/i.test(goal)) return false;
   return true;
 }
 
