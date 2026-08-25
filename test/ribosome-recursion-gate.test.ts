@@ -54,9 +54,19 @@ describe("ribosome recursion gate — the lifecycle payload carries a real autho
     // If the prompt's skip-list is ever renamed, deriving "ribosome-pattern" here silently
     // stops matching — the two sides must be checked together, which is the write-key/read-key
     // discipline this session has paid for repeatedly.
-    const tmpl = await Bun.file(
+    //
+    // CROSS-REPO CHECKOUT GUARD (2026-08-25): the read half lives in the SIBLING repo
+    // ias-executor-ts. In an isolated single-vessel worktree — e.g. a feature_compose clone,
+    // which checks out only the target vessel — that sibling is absent, so this read threw
+    // ENOENT and failed the whole suite, rolling back otherwise-FAVORABLE composes to
+    // goal-host (a checkout-scope fact misread as drift; measured live 2026-08-25). Skip when
+    // the sibling is not present: the two-sided consistency check is only meaningful, and only
+    // runs, in the full super-repo (CI), which is where a real skip-list rename would surface.
+    const tmplFile = Bun.file(
       new URL("../../ias-executor-ts/src/templates/lifecycle/ribosome-extract.json", import.meta.url),
-    ).text();
+    );
+    if (!(await tmplFile.exists())) return;
+    const tmpl = await tmplFile.text();
     expect(tmpl).toContain("ribosome-pattern");
     expect(tmpl).toContain("recursion-safety");
   });
