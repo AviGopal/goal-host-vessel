@@ -953,6 +953,58 @@ const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
  * 60% never even attempted and NOTHING said why. A silent guard is indistinguishable
  * from a working one.
  */
+// Durable reach-verdict spool. Transport failures used to DROP the verdict after ~17s
+// of retries (measured ~13% loss — 30 LOST vs 200 delivered — on "Unable to connect",
+// i.e. activity-api briefly unreachable, e.g. mid-restart), leaving the arm ungraded.
+// Spool a lost verdict to a durable file and re-drain it opportunistically after any
+// later successful delivery, so a transient outage DELAYS a verdict instead of losing
+// it. This is delivery reliability only — grading semantics are unchanged.
+const REACH_SPOOL_PATH = process.env.REACH_VERDICT_SPOOL_PATH ?? "/workspace/.reach-verdict-spool.jsonl";
+let _reachSpoolDraining = false;
+async function spoolReachVerdict(body: string): Promise<void> {
+  try {
+    const { appendFile } = await import("node:fs/promises");
+    await appendFile(REACH_SPOOL_PATH, body + "\n");
+    console.warn(`[goal-host-vessel] reach-verdict SPOOLED for later redelivery (transport lost)`);
+  } catch (e) {
+    console.warn(`[goal-host-vessel] reach-spool append failed: ${(e as Error)?.message}`);
+  }
+}
+async function drainReachSpool(): Promise<void> {
+  if (_reachSpoolDraining) return;
+  _reachSpoolDraining = true;
+  try {
+    const { readFile, writeFile } = await import("node:fs/promises");
+    let raw = "";
+    try { raw = await readFile(REACH_SPOOL_PATH, "utf8"); } catch { return; }
+    const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length === 0) { await writeFile(REACH_SPOOL_PATH, ""); return; }
+    const stillFailing: string[] = [];
+    for (const line of lines) {
+      let retire = false;
+      try {
+        const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: line,
+          signal: AbortSignal.timeout(30_000),
+        });
+        // A 2xx (even updated:0 — a matched-no-row will never land later either) or a
+        // definitive rejection both retire the entry; only a transport throw keeps it.
+        retire = true;
+        if (r.ok) { const j = await r.json().catch(() => null) as { updated?: number } | null; if (j && j.updated === 0) console.warn(`[goal-host-vessel] reach-spool: drained entry matched no row (retired)`); }
+      } catch { retire = false; }
+      if (!retire) stillFailing.push(line);
+    }
+    await writeFile(REACH_SPOOL_PATH, stillFailing.length ? stillFailing.join("\n") + "\n" : "");
+    if (lines.length !== stillFailing.length) console.log(`[goal-host-vessel] reach-spool drained ${lines.length - stillFailing.length}/${lines.length}; ${stillFailing.length} still pending`);
+  } catch (e) {
+    console.warn(`[goal-host-vessel] reach-spool drain failed: ${(e as Error)?.message}`);
+  } finally {
+    _reachSpoolDraining = false;
+  }
+}
+
 function deliverReachVerdict(
   executionId: string | undefined,
   reached: unknown,
@@ -996,13 +1048,17 @@ function deliverReachVerdict(
         if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response (${origin}) for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
         if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW (${origin}) for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); return; }
         console.log(`[goal-host-vessel] reach-patch ok (${origin}): ${_reachId} reached=${_reachVerdict} rows=${j.updated} attempts=${attempt + 1}`);
+        // A live connection just proved activity-api is reachable — opportunistically
+        // redeliver any verdicts a prior transient outage spooled.
+        void drainReachSpool();
         return;
       } catch (e) {
         lastErr = (e as Error)?.message ?? String(e);
       }
     }
     // Only reachable when every attempt threw — i.e. transport, not rejection.
-    console.warn(`[goal-host-vessel] reach-patch LOST (${origin}) after ${BACKOFF_MS.length + 1} attempts for ${_reachId} (reached=${_reachVerdict}): ${lastErr} — verdict computed and never delivered; this execution stays ungraded and its arm learns nothing from it`);
+    console.warn(`[goal-host-vessel] reach-patch LOST (${origin}) after ${BACKOFF_MS.length + 1} attempts for ${_reachId} (reached=${_reachVerdict}): ${lastErr} — spooling to ${REACH_SPOOL_PATH} for opportunistic redelivery`);
+    void spoolReachVerdict(_reachBody);
   })();
 }
 
