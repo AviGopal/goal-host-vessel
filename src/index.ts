@@ -4573,6 +4573,38 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     }
   }
 
+  // INVESTIGATION SEED (2026-08-27). A code-origin investigation lands HERE (the floor) via the
+  // satisfier-suppression, but the floor was CONFABULATING a root cause instead of grounding
+  // (observed live: tools=0/0, finalTextLen=1579, graded 'does not provide information about
+  // exec_test_1'). Hand it the actual grep of the symbol(s) the goal names, as an OBSERVATION it must
+  // ground on — the same discipline as recipeSeed above: this supplies the evidence a ReAct agent
+  // would have gathered so the floor can synthesise a CITED root cause instead of narrating from
+  // memory. Verification (the citation oracle, change B) re-reads the cited file, so a confabulated
+  // citation fails closed.
+  let investigationSeed = "";
+  if (isCodeInvestigationGoal(goal)) {
+    // Code-symbol-like tokens worth grepping: contain a '_' or an internal capital or a digit and are
+    // >=4 chars (identifiers/strings). Plain English words are excluded; a few common goal words too.
+    const syms = [...new Set((goal.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? [])
+      .filter((t) => /[_0-9]/.test(t) || /[a-z][A-Z]/.test(t))
+      .filter((t) => !/^(https?|repos|codebase|configured|investigate|execution|dispatches?|creates?)$/i.test(t)))]
+      .slice(0, 4);
+    if (syms.length) {
+      const pat = syms.map((s) => s.replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).join("|");
+      const cmd = `grep -rn -E '(${pat})' /workspace/git/vessels/ --include='*.ts' --include='*.js' 2>/dev/null | head -c 2000`;
+      const shell = await ufExecuteTool("shellResult", { command: cmd }, new Set<string>(["shellResult"]));
+      if (shell.ok) {
+        let out = shell.result;
+        try { const j = JSON.parse(shell.result); if (j && typeof j === "object" && "stdout" in j) out = String(j.stdout ?? ""); } catch { /* plain */ }
+        const matches = String(out).trim().slice(0, 1800);
+        if (matches) {
+          investigationSeed = `\n\nSOURCE-SEARCH EVIDENCE already gathered for you (grep of the symbol(s) [${syms.join(", ")}] across the repositories):\n${matches}\n\nGround your answer STRICTLY on these matches: name the specific file:line that creates/defines/configures the thing the goal asks about, and explain the root cause from what the matched code shows (if a match is a test fixture, config, or seed, say so). Every claim MUST cite a file:line present above — do NOT answer from memory.`;
+          console.log(`[goal-host-vessel] floor: SEEDED code-investigation with grep evidence for [${syms.join(",")}] (${matches.length} chars)`);
+        }
+      }
+    }
+  }
+
   const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
   const tools: any[] = [...UNIVERSAL_READ_TOOLS];
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
@@ -4581,7 +4613,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // was right and its ARGUMENT was incomplete, and the retry then walked away from that
   // producer entirely. Supplying the computed fact costs one line and cannot compose wrongly.
   const _mqNote = multiQuantityNote(goal);
-  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The available shell interpreters are bash, jq, and bun ONLY (no python, python3, node, or bc in this container). The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. OUTBOUND INTERNET ACCESS IS AVAILABLE from this container: to answer anything about the world outside this repository — live prices, current measurements, external facts — RETRIEVE it with curl through the shellResult tool (public HTTP APIs are reachable and are far more reliable than scraping HTML). Stating such a value from your own knowledge instead of retrieving it is an INVALID answer; if retrieval fails, say so plainly rather than supplying a remembered number. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}${recipeSeed}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The available shell interpreters are bash, jq, and bun ONLY (no python, python3, node, or bc in this container). The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. OUTBOUND INTERNET ACCESS IS AVAILABLE from this container: to answer anything about the world outside this repository — live prices, current measurements, external facts — RETRIEVE it with curl through the shellResult tool (public HTTP APIs are reachable and are far more reliable than scraping HTML). Stating such a value from your own knowledge instead of retrieving it is an INVALID answer; if retrieval fails, say so plainly rather than supplying a remembered number. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult, run commands with shellResult, and query substrate data (e.g. gaps) with the matching read tool.${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
   // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
