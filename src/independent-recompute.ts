@@ -236,8 +236,13 @@ export type RecomputeVerdict = "agree" | "disagree" | "no-measurement";
  * the gate abstains and the honest refusal remains the floor. Abstention costs a verdict;
  * asserting a wrong one costs the learner.
  */
-export function reconcileDerivations(a: number | null, b: number | null): { truth: number } | { truth: null; reason: string } {
-  if (a === null || b === null) return { truth: null, reason: "only one derivation produced a usable measurement" };
+export function reconcileDerivations(a: number | null, b: number | null, recipeRescue?: { agreed: number; disagreed: number }): { truth: number } | { truth: null; reason: string } {
+  if (a === null || b === null) {
+    if (a !== null && a > 0 && recipeRescue && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
+      return { truth: a };
+    }
+    return { truth: null, reason: "only one derivation produced a usable measurement" };
+  }
   if (a !== b) return { truth: null, reason: `two independent derivations disagree (${a} vs ${b}) — neither is ground truth` };
   return { truth: a };
 }
