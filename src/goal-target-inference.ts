@@ -361,6 +361,20 @@ function namedAdvertisedShape(goal: string, knownShapes: string[]): GoalTargetDe
   return { shapes: [primary], confidence: 0.9, alternatives: named.slice(1, 3).map((s) => [s]) };
 }
 
+// Code-origin investigation predicate (2026-08-27). Shared by the pre-LLM CODE-INVESTIGATION route
+// (below) AND the walk's satisfier-suppression in index.ts, so both key off the SAME goal shape: a
+// goal whose deliverable is an EXPLANATION/root-cause of where something originates in the SOURCE,
+// not a value/count/edit. index.ts uses this to pre-suppress the raw shellResult satisfier for such
+// goals so they fall to the grounded FLOOR (which greps as a TOOL and synthesizes) instead of the
+// satisfier terminating on a raw grep or the hollow-retry widening to web search.
+const _CODE_INVESTIGATE = /\bsearch\s+(?:the\s+|through\s+)?(?:code\s?base|source(?:\s+code)?|repo(?:sitory)?)\b|\b(?:find|locate|identify|trace|determine|figure\s+out)\b[^.]{0,70}?\b(?:what|which|where|how)\b[^.]{0,70}?\b(?:creat\w*|produc\w*|emit\w*|writ\w*|configur\w*|generat\w*|dispatch\w*|instantiat\w*|declar\w*|defin\w*)\b|\bwhere\b[^.]{0,55}?\b(?:defined|declared|configured|set|created|produced|emitted|instantiated|comes?\s+from)\b|\broot[-\s]?cause\b|\b(?:what|which)\s+(?:code|function|module|file|resolver|class|part)\b[^.]{0,60}?\b(?:creat\w*|produc\w*|emit\w*|writ\w*|configur\w*|generat\w*|dispatch\w*|defin\w*)\b/i;
+const _CODE_TARGET = /\b(?:code\s?base|source(?:\s+code)?|\bcode\b|module|function|resolver|class|symbol|identifier|the\s+source|which\s+file|what\s+file|\.ts\b|\.tsx\b|\.js\b|repos?\/)\b/i;
+const _NOT_CODE = /\b(?:how many|number of|\bcount\b|how much|implement|\bfix\b|\bedit\b|patch|refactor|rewrite|explain|describe|\bwhat\s+is\b|summar\w*|registered\s+vessels?|how many vessels)\b/i;
+export function isCodeInvestigationGoal(goal: string): boolean {
+  return !!goal && !_COMPOSITION_WRITE_CLAUSE.test(goal)
+    && _CODE_INVESTIGATE.test(goal) && _CODE_TARGET.test(goal) && !_NOT_CODE.test(goal);
+}
+
 export async function inferGoalTargetDecision(
   goal: string,
   knownShapes: string[],
@@ -608,14 +622,11 @@ export async function inferGoalTargetDecision(
   // code-origin-search VERB + CODE/SOURCE context, and NOT a count/edit/explain/registry ask (those
   // keep their own routes / the LLM edit path). shellResult offered as the fallback alternative.
   if (knownShapes.includes("codeSearchResult") || knownShapes.includes("source_code") || knownShapes.includes("code_find_function")) {
-    const CODE_INVESTIGATE = /\bsearch\s+(?:the\s+|through\s+)?(?:code\s?base|source(?:\s+code)?|repo(?:sitory)?)\b|\b(?:find|locate|identify|trace|determine|figure\s+out)\b[^.]{0,70}?\b(?:what|which|where|how)\b[^.]{0,70}?\b(?:creat\w*|produc\w*|emit\w*|writ\w*|configur\w*|generat\w*|dispatch\w*|instantiat\w*|declar\w*|defin\w*)\b|\bwhere\b[^.]{0,55}?\b(?:defined|declared|configured|set|created|produced|emitted|instantiated|comes?\s+from)\b|\broot[-\s]?cause\b|\b(?:what|which)\s+(?:code|function|module|file|resolver|class|part)\b[^.]{0,60}?\b(?:creat\w*|produc\w*|emit\w*|writ\w*|configur\w*|generat\w*|dispatch\w*|defin\w*)\b/i;
-    const CODE_TARGET = /\b(?:code\s?base|source(?:\s+code)?|\bcode\b|module|function|resolver|class|symbol|identifier|the\s+source|which\s+file|what\s+file|\.ts\b|\.tsx\b|\.js\b|repos?\/)\b/i;
-    // NOTE: do NOT exclude on "vessel(s)" here — investigation goals routinely name a vessel
-    // (e.g. "goal-host-vessel"), and matching the vessel NAME wrongly suppressed the shortcut
-    // (observed live: dispatch 8e64b30d fell through to the LLM). Registry/vessel-COUNT goals are
-    // already excluded by how-many/count/registry AND handled by the registry route placed above.
-    const NOT_CODE = /\b(?:how many|number of|\bcount\b|how much|implement|\bfix\b|\bedit\b|patch|refactor|rewrite|explain|describe|\bwhat\s+is\b|summar\w*|registered\s+vessels?|how many vessels)\b/i;
-    if (!isCompositionAsk && CODE_INVESTIGATE.test(goal) && CODE_TARGET.test(goal) && !NOT_CODE.test(goal)) {
+    // Predicate extracted to isCodeInvestigationGoal (module scope) so index.ts keys its
+    // satisfier-suppression off the SAME goal shape. (Does NOT exclude on "vessel(s)": investigation
+    // goals routinely name a vessel like "goal-host-vessel"; registry/vessel-COUNT goals are excluded
+    // by how-many/count and handled by the registry route above.)
+    if (!isCompositionAsk && isCodeInvestigationGoal(goal)) {
       // PREFER shellResult (a `grep -rn '<symbol>' <repo-root>`) as the primary. The structured
       // codeSearchResult/code_search resolver REQUIRES path+pattern args the walk cannot synthesize
       // (observed live: "resolver rejected — path and pattern are required"; it confabulated a

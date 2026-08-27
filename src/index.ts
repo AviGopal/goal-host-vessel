@@ -254,7 +254,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, type GoalTargetDecision } from "./goal-target-inference";
+import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
@@ -11554,6 +11554,18 @@ async function runGoalWithRecovery(
         learningMode: opts.learningMode,
         preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
+          // CODE-INVESTIGATION → FLOOR (2026-08-27). A code-origin investigation goal's deliverable is
+          // an EXPLANATION synthesised from evidence, not a raw value. If the shellResult satisfier
+          // claims it, the walk terminates on a raw grep dump the reach-gate correctly hollows, and the
+          // hollow-satisfier retry WIDENS to [shellResult,httpResponse,webSearchResult] — sending a
+          // CODE investigation to WEB SEARCH. Pre-suppress the raw satisfiers for exactly the goals the
+          // routing shortcut sends to code-search (same isCodeInvestigationGoal predicate), so the walk
+          // falls to the grounded FLOOR, which runs the grep as a TOOL, observes it, and SYNTHESISES a
+          // cited answer — the ReAct loop. Scoped tightly to this predicate; every other goal is
+          // untouched, so the 63.5%-of-steps satisfier hot path is not broadly rejected.
+          suppressSatisfierShapes: isCodeInvestigationGoal(goal)
+            ? ["shellResult", "codeSearchResult", "code_search", "source_code", "code_find_function"]
+            : undefined,
       });
       // IN-DISPATCH SATISFIER RETRY: a HOLLOW verdict reached via a vessel-resolve
       // satisfier means the satisfier resolved but produced nothing goal-satisfying —
