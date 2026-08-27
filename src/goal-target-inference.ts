@@ -616,12 +616,20 @@ export async function inferGoalTargetDecision(
     // already excluded by how-many/count/registry AND handled by the registry route placed above.
     const NOT_CODE = /\b(?:how many|number of|\bcount\b|how much|implement|\bfix\b|\bedit\b|patch|refactor|rewrite|explain|describe|\bwhat\s+is\b|summar\w*|registered\s+vessels?|how many vessels)\b/i;
     if (!isCompositionAsk && CODE_INVESTIGATE.test(goal) && CODE_TARGET.test(goal) && !NOT_CODE.test(goal)) {
-      const primary = knownShapes.includes("codeSearchResult") ? "codeSearchResult"
-        : (knownShapes.includes("source_code") ? "source_code" : "code_find_function");
+      // PREFER shellResult (a `grep -rn '<symbol>' <repo-root>`) as the primary. The structured
+      // codeSearchResult/code_search resolver REQUIRES path+pattern args the walk cannot synthesize
+      // (observed live: "resolver rejected — path and pattern are required"; it confabulated a
+      // placeholder path your_project_path/execute_functions.ts) — whereas the universal shell
+      // executor already greps/finds the repo tree reliably (the file-count route proves it). This
+      // is exactly what a ReAct agent does. The structured code-search shapes are kept as
+      // alternatives for when a producer can bind them.
+      const primary = knownShapes.includes("shellResult") ? "shellResult"
+        : (knownShapes.includes("codeSearchResult") ? "codeSearchResult"
+          : (knownShapes.includes("source_code") ? "source_code" : "code_find_function"));
       const alts: string[][] = [];
-      if (knownShapes.includes("source_code") && primary !== "source_code") alts.push(["source_code"]);
-      if (knownShapes.includes("code_find_function") && primary !== "code_find_function") alts.push(["code_find_function"]);
-      if (knownShapes.includes("shellResult")) alts.push(["shellResult"]);
+      for (const s of ["codeSearchResult", "source_code", "code_find_function"]) {
+        if (knownShapes.includes(s) && primary !== s) alts.push([s]);
+      }
       return remember({ shapes: [primary], confidence: 0.7, alternatives: alts });
     }
   }
