@@ -9636,8 +9636,21 @@ If one of those sibling shapes is the action that would create what the goal ask
       .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
       .map((imp) => {
         const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
+        // An executable-result shape (shellResult, ...) arrives as {stdout, stderr, exit_code, ...}.
+        // Rendering the whole object pushes the digest line past the 160-char guard in
+        // extractEmittedNumbers / the file-count grader (stderr echoes the full command), so the
+        // measured value sitting in stdout is discarded and a countable recipe goal abstains with
+        // "measured N but the walk emitted no measurable value" — verified live by diagnostic
+        // 2026-08-27 (content held stdout:"1\n" but the JSON line was >160 chars, so it was dropped
+        // and reachContentDigests was empty). Render stdout itself: short, and exactly where the
+        // grader reads the count. Fail open to the JSON for any content without a string stdout.
         let c: string;
-        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        const co = imp.content as { stdout?: unknown } | null | undefined;
+        if (co && typeof co === "object" && !Array.isArray(co) && typeof co.stdout === "string") {
+          c = String(co.stdout).trim();
+        } else {
+          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        }
         return `- ${s}: ${c.slice(0, 1500)}`;
       })
       .join("\n");
