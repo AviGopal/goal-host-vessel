@@ -4107,7 +4107,7 @@ ${nth === "second" ? "- Use a DIFFERENT method from the most obvious one. If the
 Respond with ONLY JSON: {"command": "<the command>"}`;
 
   // Author and run ONE derivation. Returns null at every failure so the caller can abstain.
-  const derive = async (nth: "first" | "second"): Promise<{ value: number | null; token: string | null; command: string } | null> => {
+  const derive = async (nth: "first" | "second", attempt: number = 1): Promise<{ value: number | null; token: string | null; command: string } | null> => {
     let command = "";
     try {
       // Distinct buffer keys per derivation. Sharing goalHashOf(goal) for both made the two
@@ -4115,7 +4115,7 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
       // unusable EVERY time — every probe abstained with "only one derivation", with none of
       // the per-step failure logs below firing, because this branch returned null in silence.
       // Two derivations that cannot both be requested are not triangulation.
-      const rr = await routedComplete(`${goalHashOf(goal)}:recompute-${nth}`, "reach_verification", { prompt: promptFor(nth), model: "auto" });
+      const rr = await routedComplete(`${goalHashOf(goal)}:recompute-${nth}-${attempt}`, "reach_verification", { prompt: promptFor(nth), model: "auto" });
       if (!rr.ok) { console.log(`[recompute] ${nth} authoring call failed (routedComplete not ok)`); return null; }
       const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
@@ -4180,9 +4180,22 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     return v === null ? null : { value: v, token: null, command: cmd };
   };
 
+  // RETRY-ONCE on a fresh derivation that produced NO measurement. Live-measured 2026-08-27:
+  // the dominant recompute failure on proven recipe families is "only one derivation produced a
+  // usable measurement" — one fresh derivation lands the correct value, the other transiently
+  // fails to produce (unusable stdout / unparseable authored command). The recipe answer and the
+  // landing derivation are correct; the abstention is pure flakiness in the disposable partner.
+  // Retrying the null side once (fresh routed-completion slot via the attempt-keyed buffer) raises
+  // per-derivation success without touching the evidence bar: the recipe side is untouched, the two
+  // must still AGREE, and a contradicting value still abstains + demotes. No self-confirmation.
+  const deriveRetry = async (nth: "first" | "second"): Promise<{ value: number | null; token: string | null; command: string } | null> => {
+    let r = await derive(nth, 1);
+    if (r === null) { console.log(`[recompute] ${nth} fresh derivation produced no measurement — retrying once (attempt 2)`); r = await derive(nth, 2); }
+    return r;
+  };
   const [a, b] = _useRecipe
-    ? await Promise.all([deriveFromRecipe(), derive("second")])
-    : await Promise.all([derive("first"), derive("second")]);
+    ? await Promise.all([deriveFromRecipe(), deriveRetry("second")])
+    : await Promise.all([deriveRetry("first"), deriveRetry("second")]);
 
   // GRADE THE VERIFIER ITSELF. The recipe is evidence, not authority: every use is an audit,
   // and the counters are what let a wrong one be retired instead of quietly poisoning a whole
