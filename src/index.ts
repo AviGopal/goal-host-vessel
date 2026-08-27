@@ -3148,6 +3148,40 @@ async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReach
 /**
  * Honest-reach gate: returns reached:false for hollow completions (a produced shape without the substance the goal asked for).
  */
+// CITATION ORACLE for code-investigation goals (2026-08-27, change B). Investigation goals have no
+// deterministic verifier, so the LLM judge grades them — and it is measured 29% correct on this shape,
+// wrongly hollowing genuinely-grounded answers. Grade the SYNTHESISED answer by its CHECKABLE evidence
+// instead: re-read the source file(s) the answer CITES and confirm they contain the code symbol the
+// goal names. Reached iff a cited file independently re-reads and contains the symbol (the answer names
+// a real source location — floor parity for "find where X originates"). Fails CLOSED on a confabulated
+// or missing citation, so it can only turn a wrongly-hollowed grounded answer into a reach — never
+// green an ungrounded one. Ask-the-consumer: it re-reads the file itself, never trusts the grep output.
+async function verifyCodeInvestigationCitation(goal: string, digest: string): Promise<GoalReachVerdict | null> {
+  const syms = [...new Set((goal.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? [])
+    .filter((t) => /[_0-9]/.test(t) || /[a-z][A-Z]/.test(t))
+    .filter((t) => !/^(https?|repos|codebase|configured|investigate|execution|dispatches?|creates?)$/i.test(t)))].slice(0, 4);
+  if (syms.length === 0) return null; // no groundable symbol — leave to normal grading
+  const cited = [...new Set((digest.match(/[\w./-]*[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md)\b/g) ?? []))]
+    .filter((p) => !/node_modules/.test(p)).slice(0, 16);
+  if (cited.length === 0) {
+    return { reached: false, reason: "deterministic:code-investigation-uncited — the answer cites no source file, so its claim about where the symbol originates cannot be verified", deterministic: true, completion_shapes: [] };
+  }
+  const roots = ["", "/workspace/git/vessels/", "/workspace/git/super-repo/repos/", "/workspace/git/super-repo/"];
+  for (const rel of cited) {
+    const paths = rel.startsWith("/") ? [rel] : roots.filter(Boolean).map((r) => r + rel.replace(/^\.?\//, ""));
+    for (const p of paths) {
+      try {
+        const body = await readFile(p, "utf8");
+        const hit = syms.find((s) => body.includes(s));
+        if (hit) {
+          return { reached: true, reason: `deterministic:code-investigation-cited — the answer cites ${rel}, which independently re-reads (${p}) and CONTAINS "${hit}"; the investigation names a real source location holding the symbol`, deterministic: true, completion_shapes: [] };
+        }
+      } catch { /* not at this root */ }
+    }
+  }
+  return { reached: false, reason: `deterministic:code-investigation-citation-unverified — the answer cites [${cited.slice(0, 3).join(", ")}] but none independently re-reads to a file containing [${syms.join(", ")}] (confabulated or wrong citation)`, deterministic: true, completion_shapes: [] };
+}
+
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
@@ -3484,6 +3518,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // no per-domain calibration, so restricting it to `repos/` trees would rebuild the coverage
   // hole. Registry goals scored 0/15 with no `repos/` path — never routed, and never refused
   // either, so nothing observed the failure at all.
+  if (isCodeInvestigationGoal(goal)) {
+    const ci = await verifyCodeInvestigationCitation(goal, dig);
+    if (ci) return ci;
+  }
   if (isCountableQuestion(goal)) {
     const rc = await recomputeIndependently(goal, dig);
     if (rc) return rc;
