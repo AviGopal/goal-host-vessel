@@ -610,7 +610,11 @@ export async function inferGoalTargetDecision(
   if (knownShapes.includes("codeSearchResult") || knownShapes.includes("source_code") || knownShapes.includes("code_find_function")) {
     const CODE_INVESTIGATE = /\bsearch\s+(?:the\s+|through\s+)?(?:code\s?base|source(?:\s+code)?|repo(?:sitory)?)\b|\b(?:find|locate|identify|trace|determine|figure\s+out)\b[^.]{0,70}?\b(?:what|which|where|how)\b[^.]{0,70}?\b(?:creat\w*|produc\w*|emit\w*|writ\w*|configur\w*|generat\w*|dispatch\w*|instantiat\w*|declar\w*|defin\w*)\b|\bwhere\b[^.]{0,55}?\b(?:defined|declared|configured|set|created|produced|emitted|instantiated|comes?\s+from)\b|\broot[-\s]?cause\b|\b(?:what|which)\s+(?:code|function|module|file|resolver|class|part)\b[^.]{0,60}?\b(?:creat\w*|produc\w*|emit\w*|writ\w*|configur\w*|generat\w*|dispatch\w*|defin\w*)\b/i;
     const CODE_TARGET = /\b(?:code\s?base|source(?:\s+code)?|\bcode\b|module|function|resolver|class|symbol|identifier|the\s+source|which\s+file|what\s+file|\.ts\b|\.tsx\b|\.js\b|repos?\/)\b/i;
-    const NOT_CODE = /\b(?:how many|number of|\bcount\b|how much|implement|\bfix\b|\bedit\b|patch|refactor|rewrite|explain|describe|\bwhat\s+is\b|summar\w*|\bregistry\b|vessels?)\b/i;
+    // NOTE: do NOT exclude on "vessel(s)" here — investigation goals routinely name a vessel
+    // (e.g. "goal-host-vessel"), and matching the vessel NAME wrongly suppressed the shortcut
+    // (observed live: dispatch 8e64b30d fell through to the LLM). Registry/vessel-COUNT goals are
+    // already excluded by how-many/count/registry AND handled by the registry route placed above.
+    const NOT_CODE = /\b(?:how many|number of|\bcount\b|how much|implement|\bfix\b|\bedit\b|patch|refactor|rewrite|explain|describe|\bwhat\s+is\b|summar\w*|registered\s+vessels?|how many vessels)\b/i;
     if (!isCompositionAsk && CODE_INVESTIGATE.test(goal) && CODE_TARGET.test(goal) && !NOT_CODE.test(goal)) {
       const primary = knownShapes.includes("codeSearchResult") ? "codeSearchResult"
         : (knownShapes.includes("source_code") ? "source_code" : "code_find_function");

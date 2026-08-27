@@ -29,6 +29,17 @@ describe("goal-target-inference: code-investigation route", () => {
     expect(s[0]).toBe("codeSearchResult");
   });
 
+  it("still fires when the goal NAMES a vessel (the NOT_CODE 'vessels' over-match regression)", async () => {
+    // Regression for the live 2026-08-27 miss: "goal-host-vessel" contains "vessel", which an
+    // over-broad NOT_CODE guard matched, wrongly suppressing the shortcut. An investigation goal
+    // routinely names a vessel; it must still route to code-search.
+    const s = await route(
+      "Investigate why trace records are emitted from the live goal-host-vessel. Search the " +
+        "codebase for what creates exec_test_1 and report the root cause.",
+    );
+    expect(s[0]).toBe("codeSearchResult");
+  });
+
   it("does NOT hijack a recipe file-extension count goal (stays shellResult)", async () => {
     const s = await route("How many distinct file extensions appear under repos/discovery-vessel/src?");
     expect(s[0]).toBe("shellResult");
