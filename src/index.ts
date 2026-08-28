@@ -17,6 +17,7 @@
  */
 
 import { repairSignatureOf, classifyFailure } from './repair-signature';
+import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
 import { Config } from './config';
 
@@ -1062,7 +1063,7 @@ function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy"] as const;
 const VERSION = "0.1.0";
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 // CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
@@ -15296,6 +15297,17 @@ async function handleResolve(req: Request): Promise<Response> {
   // nothing when none is stored preserves the consumer's documented fallback.
   // A malformed file is treated as absent, never merged, because the consumer
   // replaces its literal list wholesale with whatever arrives.
+  // extractionPolicy / pathwayReusePolicy (2026-08-28): both READERS shipped without a
+  // producer, so every call fell through to a hardcoded literal and the behaviour they
+  // claim to steer was permanently constant. Same contract as bodyHonestyPolicy and
+  // walkBudget: serve the STORED document, serve nothing when none is stored.
+  if (type === "extractionPolicy" || type === "pathwayReusePolicy") {
+    const _sp = await resolveShapedPolicy(type);
+    if (!_sp) {
+      return Response.json({ resolved: false, shape: type, error: "no " + type + " configured — consumer keeps its literal fallback" }, { status: 404 });
+    }
+    return Response.json({ resolved: true, shape: type, body: _sp });
+  }
   if (type === "bodyHonestyPolicy") {
     const _pol = await resolveBodyHonestyPolicy();
     if (!_pol) {
