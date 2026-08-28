@@ -254,7 +254,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, type GoalTargetDecision } from "./goal-target-inference";
+import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, type GoalTargetDecision } from "./goal-target-inference";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
@@ -3157,9 +3157,11 @@ async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReach
 // or missing citation, so it can only turn a wrongly-hollowed grounded answer into a reach — never
 // green an ungrounded one. Ask-the-consumer: it re-reads the file itself, never trusts the grep output.
 async function verifyCodeInvestigationCitation(goal: string, digest: string): Promise<GoalReachVerdict | null> {
-  const syms = [...new Set((goal.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? [])
-    .filter((t) => /[_0-9]/.test(t) || /[a-z][A-Z]/.test(t))
-    .filter((t) => !/^(https?|repos|codebase|configured|investigate|execution|dispatches?|creates?)$/i.test(t)))].slice(0, 4);
+  // 2026-08-28: symbol extraction shared with the seed (extractInvestigationSymbols) so it also
+  // grounds on a gap-investigation goal's hyphenated gap-id slug, not just camelCase/snake_case
+  // source identifiers. See that function's comment for why. Abstain (return null) unchanged when
+  // nothing groundable is found — this can only ADD coverage, never force a hollow verdict.
+  const syms = extractInvestigationSymbols(goal);
   if (syms.length === 0) return null; // no groundable symbol — leave to normal grading
   const cited = [...new Set((digest.match(/[\w./-]*[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md)\b/g) ?? []))]
     .filter((p) => !/node_modules/.test(p)).slice(0, 16);
@@ -3518,7 +3520,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // no per-domain calibration, so restricting it to `repos/` trees would rebuild the coverage
   // hole. Registry goals scored 0/15 with no `repos/` path — never routed, and never refused
   // either, so nothing observed the failure at all.
-  if (isCodeInvestigationGoal(goal)) {
+  if (isCodeInvestigationGoal(goal) || isGapInvestigationGoal(goal)) {
     const ci = await verifyCodeInvestigationCitation(goal, dig);
     if (ci) return ci;
   }
@@ -4620,15 +4622,16 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   // memory. Verification (the citation oracle, change B) re-reads the cited file, so a confabulated
   // citation fails closed.
   let investigationSeed = "";
-  if (isCodeInvestigationGoal(goal)) {
-    // Code-symbol-like tokens worth grepping: contain a '_' or an internal capital or a digit and are
-    // >=4 chars (identifiers/strings). Plain English words are excluded; a few common goal words too.
-    const syms = [...new Set((goal.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? [])
-      .filter((t) => /[_0-9]/.test(t) || /[a-z][A-Z]/.test(t))
-      .filter((t) => !/^(https?|repos|codebase|configured|investigate|execution|dispatches?|creates?)$/i.test(t)))]
-      .slice(0, 4);
+  // 2026-08-28: also seed the autonomous "investigate and decompose gap <id>" class
+  // (isGapInvestigationGoal) with the shared extractor (extractInvestigationSymbols), which falls
+  // back to a hyphenated gap-id sub-run when no camelCase/snake_case symbol is present. Additive
+  // only — isCodeInvestigationGoal's routing/satisfier-suppression elsewhere is untouched.
+  if (isCodeInvestigationGoal(goal) || isGapInvestigationGoal(goal)) {
+    const syms = extractInvestigationSymbols(goal);
     if (syms.length) {
-      const pat = syms.map((s) => s.replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).join("|");
+      // Escape regex metachars but keep hyphens literal — extractInvestigationSymbols can return
+      // hyphen-joined spans (e.g. "universal-tool-fallback") that must match verbatim in source.
+      const pat = syms.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean).join("|");
       const cmd = `grep -rn -E '(${pat})' /workspace/git/vessels/ --include='*.ts' --include='*.js' 2>/dev/null | head -c 2000`;
       const shell = await ufExecuteTool("shellResult", { command: cmd }, new Set<string>(["shellResult"]));
       if (shell.ok) {

@@ -375,6 +375,53 @@ export function isCodeInvestigationGoal(goal: string): boolean {
     && _CODE_INVESTIGATE.test(goal) && _CODE_TARGET.test(goal) && !_NOT_CODE.test(goal);
 }
 
+// Gap-investigation predicate (2026-08-28). The substrate's own gap-lifecycle loop autonomously
+// dispatches goals shaped "investigate and decompose gap <gap-id>" (target shapes
+// problem_detection/code_quality) to self-investigate its OWN open gaps -- confirmed live,
+// running continuously, independent of any operator dispatch. isCodeInvestigationGoal does not
+// match this phrasing (no "root cause"/"search codebase" wording, no code-shaped target words),
+// so none of the 2026-08-27 grounding fixes applied to it -- observed live reaching HOLLOW
+// (groundedOk=0, tools=0/0, finalTextLen=7812) through the un-discriminating LLM judge (measured
+// 29% correct on this class of shape). Deliberately narrow and ADDITIVE-ONLY: this predicate
+// gates the investigation seed + citation oracle in index.ts, and NOTHING else. It must NOT be
+// wired into routing or satisfier-suppression -- these goals target problem_detection/
+// code_quality, which the gap-lifecycle loop consumes downstream, and that autonomous loop is
+// already confirmed working; rerouting its target shapes risks breaking it.
+const _GAP_INVESTIGATE = /\binvestigate\b[^.]{0,40}\bgap\b|\bdecompose\b[^.]{0,40}\bgap\b/i;
+export function isGapInvestigationGoal(goal: string): boolean {
+  return !!goal && _GAP_INVESTIGATE.test(goal);
+}
+
+// Shared symbol extraction for the investigation seed + citation oracle (index.ts). Beyond the
+// camelCase/snake_case heuristic (real source-code identifiers), a gap-investigation goal's only
+// grounding material is often the gap id itself -- a hyphen-joined slug (e.g.
+// "systematic-failure-universal-tool-fallback-zero") that usually embeds a REAL activity/shape id
+// as a contiguous sub-run (here "universal-tool-fallback"). Tried longest-span-first so a precise
+// multi-word match is preferred over a shorter, noisier one. A gap id with no groundable sub-run
+// correctly yields nothing here -- verifyCodeInvestigationCitation already abstains (returns null)
+// on zero symbols, so this can only ADD grounding material, never force a hollow verdict.
+export function extractInvestigationSymbols(goal: string): string[] {
+  const camel = [...new Set((goal.match(/\b[A-Za-z][A-Za-z0-9_]{3,}\b/g) ?? [])
+    .filter((t) => /[_0-9]/.test(t) || /[a-z][A-Z]/.test(t))
+    .filter((t) => !/^(https?|repos|codebase|configured|investigate|execution|dispatches?|creates?)$/i.test(t)))];
+  if (camel.length) return camel.slice(0, 4);
+  if (!isGapInvestigationGoal(goal)) return [];
+  const slug = [...(goal.match(/\b[a-z0-9]+(?:-[a-z0-9]+){2,}\b/g) ?? [])].sort((a, b) => b.length - a.length)[0];
+  if (!slug) return [];
+  // ALL contiguous sub-runs of length >=2, not just the longest few: the real activity/shape id
+  // embedded in a gap slug is usually a SHORT meaningful phrase (e.g. "universal-tool-fallback",
+  // 3 words), not the whole slug — capping to the longest spans would drop it entirely for any
+  // slug of >5 words. Grep (the actual consumer) decides which span is real; this just offers
+  // candidates. Bounded by construction: a gap slug rarely exceeds ~8 words, so the full
+  // triangular span count stays small (<=28) and costs nothing extra to try.
+  const words = slug.split("-");
+  const spans: string[] = [];
+  for (let len = words.length; len >= 2; len--) {
+    for (let start = 0; start + len <= words.length; start++) spans.push(words.slice(start, start + len).join("-"));
+  }
+  return spans;
+}
+
 export async function inferGoalTargetDecision(
   goal: string,
   knownShapes: string[],
