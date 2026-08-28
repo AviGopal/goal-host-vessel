@@ -4861,7 +4861,15 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     // for it, which is indistinguishable from a hollow pass. The plumbing for
     // this already existed end to end (GoalSeekResult.answerBody -> record ->
     // the goalWalkState body); only this one return omitted it.
-    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: verdict.completion_shapes ?? produced, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: authoredFinalAnswer ? finalText.trim() : undefined, executionId: floorExecId };
+    // Every deterministic oracle in this file returns `completion_shapes: []` on a real
+    // reach (it verifies a CLAIM, not a shape production) -- `?? produced` never fires on
+    // an empty array, so every deterministically-verified floor reach (citation-oracle
+    // included) was recorded shape-signature-blind: `recordGoalPath (floor reach) shapes=[]`,
+    // observed live 2026-08-28 on every cited investigation reach that session, which is
+    // very likely why zero REUSE LINEAGE events followed those reaches -- an unindexed
+    // reach cannot be found by shape-signature no matter how the ranking is fixed.
+    const _floorCompletionShapes = (verdict.completion_shapes && verdict.completion_shapes.length > 0) ? verdict.completion_shapes : produced;
+    return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: _floorCompletionShapes, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: authoredFinalAnswer ? finalText.trim() : undefined, executionId: floorExecId };
   }
   return null;
 }
