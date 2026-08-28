@@ -296,7 +296,7 @@ import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, re
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
-import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit } from "./goal-intent";
+import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import type {
   EventSink,
@@ -3462,7 +3462,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // only goals affected are, by construction, ones that requested a change and did not
   // make one. Read-only asks are protected by isPathlessCodeChangeGoal's own
   // disqualifiers (reports, prose destinations), which are separately tested.
-  if (goalDemandsLandedEdit(goal) && !landedEdit) {
+  if ((goalDemandsLandedEdit(goal) || isGapRepairGoal(goal)) && !landedEdit) {
     return { reached: false, reason: "deterministic:edit-intent-no-landed-edit — an edit goal is reached only by an edit-result shape WITH landing evidence (push_status:pushed / new_git_sha); an advertised/stub edit-result with no landing is not an applied edit", completion_shapes: [] };
   }
 

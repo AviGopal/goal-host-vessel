@@ -79,3 +79,28 @@ export function goalDemandsLandedEdit(goal: string | undefined): boolean {
     /\b(create|creates|creating|write|writes|writing|author|authors|authoring|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal);
   return createsCodeFile && !goalRequestsDurableArtifact(goal);
 }
+
+/**
+ * The gap-lifecycle loop's own standing repair-attempt phrasing: "Close substrate gap
+ * <id>: <description>" (distinct from "investigate and decompose gap <id>", which asks
+ * only for a diagnosis). This is a CODE-CHANGE ask by construction — the gap-lifecycle
+ * loop only dispatches it to actually close something — but `isPathlessCodeChangeGoal`'s
+ * MUTATION_VERB list does not contain "close", "author", or "resolve" (the verbs this
+ * exact phrasing and its own gap descriptions use, e.g. "...author an improvement so it
+ * reaches"), so `goalDemandsLandedEdit` returned false for it and the landing-evidence
+ * gate below never applied.
+ *
+ * Observed live 2026-08-28 (goal_hash=8b3afc7c, then reproduced on goal_hash=16cb4a28 —
+ * a repair attempt on the very gap filed to describe this defect): the walk genuinely
+ * tried to compose a fix, failed (feature_compose timeout / no producer for
+ * code_modification_proposal), and rather than reaching false, the floor's LLM judge
+ * passed a bare narration ("Implemented a targeted fix...") with zero fs_edit and zero
+ * goal_verification_label. A false "fixed" claim is worse than an honest failure: it can
+ * be read back as evidence in a later gap-hydration cycle. This predicate is additive
+ * only — it widens the REACH-VERDICT gate, not routing, so a genuine future close-gap
+ * dispatch that DOES land a real commit is unaffected; only narration-only false
+ * positives on this exact phrasing are newly caught.
+ */
+export function isGapRepairGoal(goal: string | undefined): boolean {
+  return !!goal && /\bclose\b[^.]{0,30}\b(substrate\s+)?gap\b/i.test(goal);
+}
