@@ -1007,6 +1007,38 @@ async function drainReachSpool(): Promise<void> {
   }
 }
 
+/**
+ * Execution-id prefixes that name a walk which persisted NO execution row, so there is
+ * nothing for POST /reach to patch. Skipping them is honest bookkeeping, not signal loss.
+ *
+ * WHY THIS IS A LIST AND NOT A SHAPE TEST (2026-08-29). The guard used to be the single
+ * literal `goal-seek:no-trace:`. Every other synthetic form fell through, attempted a patch,
+ * and logged "MATCHED NO ROW — verdict NOT persisted; this execution stays ungraded" — the
+ * wording for a REAL grading failure. Measured over 24h: 50 such warnings, of which 45 were
+ * `feature_compose:*` (rejected / busy) and `patch_with_tools:*`. Because a rejected or busy
+ * compose is `reached=false` by construction, this also manufactured a statistically
+ * significant artefact — 32.6% of negative verdicts "lost" versus 13.0% of positive ones
+ * (z = 2.74) — which reads exactly like the learner dropping its negative signal. It is not:
+ * there was no row to grade.
+ *
+ * DO NOT REPLACE THIS WITH "a real id is a UUID" OR WITH A BROADER PATTERN. Measured on the
+ * SAME window, ids that graded successfully include `exec_<base36>` (92),
+ * `universal-tool-fallback-<hex>-<hex>` (34) and `walk-satisfier-N-<hex>` (10) — none of them
+ * UUIDs. `walk-satisfier-` in particular appears in BOTH sets (10 persisted, 5 lost), so
+ * guarding it would suppress ten real gradings to silence five warnings. Over-guarding here
+ * is the dangerous direction: it turns a visible failure into an invisible one.
+ *
+ * The bar for adding a prefix is therefore empirical: it must NEVER appear on a successful
+ * `reach-patch ok` line. `feature_compose:` (0 persisted / 40 lost) and `patch_with_tools:`
+ * (0 / 5) clear it. The 5 remaining `walk-satisfier-` warnings are left LOUD on purpose —
+ * those are genuine grading failures that were buried in the noise.
+ */
+const SYNTHETIC_EXECUTION_ID_PREFIXES = [
+  "goal-seek:no-trace:",
+  "feature_compose:",
+  "patch_with_tools:",
+] as const;
+
 function deliverReachVerdict(
   executionId: string | undefined,
   reached: unknown,
@@ -1016,8 +1048,8 @@ function deliverReachVerdict(
   const skipReason =
     typeof executionId !== "string" || executionId.length === 0
       ? "no executionId on the dispatch record"
-      : executionId.startsWith("goal-seek:no-trace:")
-        ? "synthetic id — the walk persisted no execution row to patch (satisfier-only reach)"
+      : SYNTHETIC_EXECUTION_ID_PREFIXES.some((p) => executionId.startsWith(p))
+        ? `synthetic id (${executionId.slice(0, executionId.indexOf(":") + 1) || "goal-seek:no-trace:"}) — the walk persisted no execution row to patch (satisfier-only reach)`
         : typeof reached !== "boolean"
           ? `verdict is not a boolean (${reached === null ? "null" : typeof reached}) — the walk terminated without grading itself`
           : null;
