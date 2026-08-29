@@ -5625,10 +5625,23 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
     // Emitted, not transmitted — see the note above. This is the one place the fact
     // "this walk reused pathway X" is currently recoverable, so it must at least be
     // greppable until the store can hold it.
-    console.log(`[goal-host] REUSE LINEAGE (not yet storable) goal_hash=${goalHashOf(goalText)} borrowed_from_goal=${parent.goalHash ?? "?"} borrowed_path_signature=${parent.pathSignature ?? "?"} reached=${reached}`);
+    console.log(`[goal-host] REUSE LINEAGE (transmitted) goal_hash=${goalHashOf(goalText)} borrowed_from_goal=${parent.goalHash ?? "?"} borrowed_path_signature=${parent.pathSignature ?? "?"} reached=${reached}`);
   }
-  try {
-    const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
+  // Built once so the retry below can drop it wholesale. DEPLOY-SKEW SAFETY NET: if the
+  // receiver has not yet been updated it will reject the unknown fields, and a rejected write
+  // does not merely lose lineage — it loses the WHOLE record (measured: an 8x optimism bias in
+  // what the reuse arm later reads, because failures were retained at 12.5% against ~100% for
+  // successes). Retrying once without them converts "record destroyed" back into "lineage lost
+  // for one walk", which is exactly today's behaviour. Receiver-before-sender ordering is still
+  // the plan; this makes it a safety net rather than a single point of failure.
+  const reuseFields = (parent?.goalHash || parent?.pathSignature)
+    ? {
+        ...(parent?.goalHash ? { reused_from_goal_hash: parent.goalHash } : {}),
+        ...(parent?.pathSignature ? { reused_from_path_signature: parent.pathSignature } : {}),
+      }
+    : null;
+  const postGoalPath = async (withReuse: boolean): Promise<Response> =>
+    await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({
@@ -5642,6 +5655,10 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         cost_usd: costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
         walk_tier: walkTier,
+        // REUSE LINEAGE, TRANSMITTED (2026-08-29). Sibling fields to parent_*, with no CC1
+        // scope assertion — see activity-api sql/migrations/204-goal-path-reuse-lineage.surql.
+        // Sending parent_* for this relation is what DESTROYED the record with a 400.
+        ...(withReuse ? (reuseFields ?? {}) : {}),
         // The effect surface this walk actually touched. The receiver derives
         // work_signature from it; absent, work_signature stays null and nothing
         // about today's recording changes.
@@ -5649,6 +5666,14 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
       }),
       signal: AbortSignal.timeout(15_000),
     });
+  try {
+    let res = await postGoalPath(true);
+    if (!res.ok && reuseFields) {
+      // Loud, because a silent downgrade would hide a receiver that never got the fields —
+      // and the whole point of this change is that reuse attribution stops being invisible.
+      console.warn(`[goal-host] goal-path record REJECTED ${res.status} WITH reuse lineage; retrying WITHOUT it (receiver may predate migration 204). Lineage for this walk is lost, the record is not.`);
+      res = await postGoalPath(false);
+    }
     // A DROPPED RECOMMENDATION IS NOT A NON-EVENT. This write is the store the reuse
     // arm reads from, and it was `catch { /* non-fatal */ }` with no res.ok check —
     // silence on both a rejection and a throw. Measured consequence: failures were
