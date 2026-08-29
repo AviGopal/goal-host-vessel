@@ -267,6 +267,7 @@ import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
+import { comparePathways } from "./pathway-rank";
 import { consensusSymbols } from "./goal-file-resolution";
 import { emptyResultSetReason } from "./empty-result-set";
 import { resolveReportBody } from "./resolve-report-body";
@@ -5762,13 +5763,10 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
       if (paths.length > 0) console.log(`[goal-host-vessel] pathway reuse: ${paths.length} recommended, 0 accepted (minSuccessful=${pol.minSuccessfulExecutions} minTotal=${pol.minTotalExecutions}) — no reusable pathway`);
       return null;
     }
-    // EXACT BEFORE NEARBY, then most-proven first: successes, then total experience.
-    // A path recorded against this very goal is stronger evidence than one that
-    // merely terminates in the same shapes, so a shape-signature match can only
-    // ever be a fallback — it never displaces an exact match that survived the
-    // acceptance bar.
-    const modeRank = (p: unknown): number => ((p as Record<string, unknown>)?.["match_mode"] === "shape_signature" ? 1 : 0);
-    eligible.sort((a, b) => (modeRank(a) - modeRank(b)) || (countOf(b.successful_executions) - countOf(a.successful_executions)) || (countOf(b.total_executions) - countOf(a.total_executions)));
+    // EXACT BEFORE NEARBY, then most-CONFIDENT first (Wilson lower bound, not raw
+    // success count — see pathway-rank.ts for why raw count and naive rate both
+    // rank pathways wrong).
+    eligible.sort(comparePathways);
     const best = eligible[0];
     const activities: string[] = best.path_activities.map((x: unknown) => String(x)).filter((s: string) => s.length > 0);
     if (activities.length === 0) return null;
