@@ -5864,7 +5864,21 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
 // execution through the same `tags` path already threaded to host.runGoal.
 type RecommendPick = { id: string; correlationId: string | null };
 
-async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null): Promise<RecommendPick | null> {
+/**
+ * `outcome.lookupFailed` distinguishes "asked, and there is no candidate" from "could not ask".
+ * Both used to return null, so a flaky /v2/activities/recommend was read as a definitive absence
+ * of producers — the caller then graded reach FALSE with "no template produces the inferred target
+ * shapes" and escalated a capability gap, minting structure from a query miss.
+ *
+ * This file already states the principle 2,600 lines up, at the reach-gap FILING path: "One
+ * fail-open timeout, read as absence, collapses the whole shape space onto one arm… three
+ * outcomes, kept distinct… a failed lookup is not evidence of absence." That path abstains
+ * correctly; the GRADING path did not, which is the more consequential of the two because it
+ * decides `reached`.
+ *
+ * Callers that do not pass `outcome` are unaffected.
+ */
+async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null, outcome?: { lookupFailed: boolean }): Promise<RecommendPick | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
@@ -5873,7 +5887,11 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
       body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { state_signature: (await getCachedStateSignature())?.signature_hash } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, targetShapes) }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      if (outcome) outcome.lookupFailed = true;
+      console.log(`[recommend] LOOKUP FAILED http ${r.status} — cannot distinguish "no candidate" from "could not ask"`);
+      return null;
+    }
     const j: any = await r.json();
     const recs = j?.recommendations ?? j?.body?.recommendations ?? [];
     // Normalise ids (strip the activity:⟨…⟩ wrapper) so exclusion matches across
@@ -5895,7 +5913,11 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
       }
     }
     return null;
-  } catch { return null; }
+  } catch (e) {
+    if (outcome) outcome.lookupFailed = true;
+    console.log(`[recommend] LOOKUP UNREACHABLE (${(e as Error).message}) — a failed lookup is not evidence of absence`);
+    return null;
+  }
 }
 
 /** Tag form for the selection→outcome link. Read side: strip the `correlation:` prefix. */
@@ -12533,12 +12555,15 @@ async function runGoalWithRecovery(
     }
   }
   if (!nextTarget && goal && seededOutputShapes && seededOutputShapes.length > 0) {
-    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes);
+    // Track whether ANY producer lookup failed outright. Without this, a flaky recommend
+    // endpoint is read as "this shape has no producer at all" — see recommendExcluding.
+    const lookupOutcome = { lookupFailed: false };
+    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome);
     nextTarget = firstPick?.id ?? undefined;
     pickCorrelationId = firstPick?.correlationId ?? null;
     if (!nextTarget && goalTargetDecision) {
       for (const alt of goalTargetDecision.alternatives) {
-        const altPick = await recommendExcluding(goal, [], null, alt);
+        const altPick = await recommendExcluding(goal, [], null, alt, lookupOutcome);
         if (altPick) {
           console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
           seededOutputShapes = alt;
@@ -12549,6 +12574,16 @@ async function runGoalWithRecovery(
       }
     }
     if (!nextTarget) {
+      // ABSTAIN rather than assert absence when a lookup could not be completed. Asserting it
+      // both graded reach FALSE on a query miss and ESCALATED a capability gap — minting
+      // structure from a failed request, which is worse than reporting nothing. Verified
+      // against the live store: producers for these shapes DO exist (discover-by-shapes returns
+      // development-vessel:add-resolver-to-vessel and a learned composition for fileEditResult),
+      // while the recommend endpoint intermittently drops the connection under load.
+      if (lookupOutcome.lookupFailed) {
+        console.log(`[goal-host-vessel] ${opts.surface}: ABSTAIN on target shapes [${seededOutputShapes.join(",")}] — producer lookup could not be completed; NOT claiming absence and NOT filing a capability gap`);
+        return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `producer lookup unavailable for target shapes [${seededOutputShapes.join(", ")}] — could not ask, so absence is unproven; no capability gap filed`, reached: false };
+      }
       console.log(`[goal-host-vessel] ${opts.surface}: no candidate produces target shapes [${seededOutputShapes.join(",")}] — honest no-producer failure`);
             escalateNoProducerToInvestigation(goal, goalTargetDecision ? goalTargetDecision.confidence : null);
       return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `no template produces the inferred target shapes [${seededOutputShapes.join(", ")}]; capability gap filed by the walk`, reached: false };
