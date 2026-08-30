@@ -19,6 +19,7 @@
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
+import { quoteUrlsWithAmpersands, COMMAND_KEYS } from './command-repair';
 import { Config } from './config';
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
@@ -6766,6 +6767,39 @@ async function runGoalAsPoolWalk(
         if (typeof v === "string" && /\$\$(?=[A-Za-z])/.test(v)) {
           args[k] = v.replace(/(?<!\\)\$\$(?=[A-Za-z])/g, "\\$\\$");
           tap(`[goal-host-vessel] walk: repaired "$$" -> "\\$\\$" in synthesized arg "${k}" — inside double quotes bash expands $$ to its pid, so a literal marker like $$SOE silently matches nothing and the command exits 0 empty`);
+        }
+      }
+      // AN UNQUOTED `&` IN A URL IS A BACKGROUND OPERATOR, NOT A PARAMETER SEPARATOR.
+      //
+      // Same class as the `$$` repair above, and measured the same way. A walk dispatched to
+      // diagnose concept-db latency synthesized
+      //   curl -s http://127.0.0.1:8260/concepts/search?q=&limit=1
+      // and got empty stdout SEVEN times. local-tools-vessel runs every command through
+      // `groupBounded`, which wraps it as `( <command> ) &`; inside that subshell bash splits the
+      // line at the bare `&`, so it runs `curl -s http://…?q=` in the BACKGROUND and then treats
+      // `limit=1` as a variable assignment. The request loses its parameter, the subshell returns
+      // before curl writes anything, and stdout is empty with exit 0 — indistinguishable from
+      // "the endpoint returned nothing".
+      //
+      // The model cannot see this either: it reads back its own command text, which still says
+      // `?q=&limit=1`, finds nothing wrong, and re-emits it. Attempts 2-5 of that run logged a
+      // BYTE-IDENTICAL command ("WAS: X -> NOW: X") — the self-correction budget burned entirely
+      // on a command whose only defect was invisible to the corrector. The tell was recorded as
+      // far back as 2026-08-15 in the tap above: `produced only stderr: [1]-  Done ( curl -s 'https`
+      // is bash JOB CONTROL announcing the backgrounded job, and it was read as a curl failure.
+      //
+      // Repaired deterministically rather than explained, for the same reason as `$$`: a URL that
+      // carries `?` and `&` in one unquoted whitespace-free token is never asking to be
+      // backgrounded. The repair itself lives in `src/command-repair.ts` so it is unit-testable —
+      // no test in this vessel imports `src/index.ts`, and an untested deterministic repair on the
+      // walk's own recovery path is exactly the thing that stays broken silently.
+      for (const k of COMMAND_KEYS) {
+        const v = args[k];
+        if (typeof v !== "string") continue;
+        const repaired = quoteUrlsWithAmpersands(v);
+        if (repaired !== v) {
+          args[k] = repaired;
+          tap(`[goal-host-vessel] walk: quoted URL(s) containing "&" in synthesized arg "${k}" — bash reads a bare & as a background operator, so the query parameter after it becomes a variable assignment and the command returns empty stdout with exit 0`);
         }
       }
       const todayStr = new Date().toISOString().slice(0, 10);
