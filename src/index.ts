@@ -301,6 +301,7 @@ import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeToken
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
+import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import type {
   EventSink,
   Impulse,
@@ -4667,7 +4668,10 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
       // Escape regex metachars but keep hyphens literal — extractInvestigationSymbols can return
       // hyphen-joined spans (e.g. "universal-tool-fallback") that must match verbatim in source.
       const pat = syms.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean).join("|");
-      const cmd = `grep -rn -E '(${pat})' /workspace/git/vessels/ --include='*.ts' --include='*.js' 2>/dev/null | head -c 2000`;
+      // Named file FIRST, dependency dirs excluded — see investigation-evidence.ts. The old
+      // command had neither, so the 2000-char budget went to @types/node and eslint dist
+      // rules and the drafter never saw the file the goal named.
+      const cmd = buildInvestigationGrepCommand(pat, goal);
       const shell = await ufExecuteTool("shellResult", { command: cmd }, new Set<string>(["shellResult"]));
       if (shell.ok) {
         let out = shell.result;
