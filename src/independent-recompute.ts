@@ -237,12 +237,17 @@ export type RecomputeVerdict = "agree" | "disagree" | "no-measurement";
  * asserting a wrong one costs the learner.
  */
 export function reconcileDerivations(a: number | null, b: number | null, recipeRescue?: { agreed: number; disagreed: number }): { truth: number } | { truth: null; reason: string } {
-  if (a === null || b === null) {
-      // rescue logic for strongly‑proven single derivation
-      if (b === null && a !== null && a > 0 && recipeRescue && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
+    if (b === null) {
+      if (recipeRescue && a !== null && a > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
         return { truth: a };
       }
-      return { truth: null, reason: "only one derivation produced a usable measurement" };
+      return { truth: null, reason: "only one derivation produced a usable measurement (A)" };
+    }
+    if (a === null) {
+      if (recipeRescue && b > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
+        return { truth: b };
+      }
+      return { truth: null, reason: "only one derivation produced a usable measurement (B)" };
     }
   if (a !== b) return { truth: null, reason: `two independent derivations disagree (${a} vs ${b}) — neither is ground truth` };
   return { truth: a };
