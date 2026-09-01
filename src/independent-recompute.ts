@@ -255,7 +255,12 @@ export function reconcileDerivations(a: number | null, b: number | null, recipeR
       }
       return { truth: null, reason: "only one derivation produced a usable measurement (B)" };
     }
-  if (a !== b) return { truth: null, reason: `two independent derivations disagree (${a} vs ${b}) — neither is ground truth` };
+  if (a !== b) {
+      if (recipeRescue && (a === recipeRescue.agreed || b === recipeRescue.agreed)) {
+        return { truth: recipeRescue.agreed };
+      }
+      return { truth: null, reason: `two independent derivations disagree (${a} vs ${b}) — neither is ground truth` };
+    }
   return { truth: a };
 }
 
