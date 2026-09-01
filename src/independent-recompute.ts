@@ -237,6 +237,12 @@ export type RecomputeVerdict = "agree" | "disagree" | "no-measurement";
  * asserting a wrong one costs the learner.
  */
 export function reconcileDerivations(a: number | null, b: number | null, recipeRescue?: { agreed: number; disagreed: number }): { truth: number } | { truth: null; reason: string } {
+  if (a !== null && b === null && recipeRescue !== undefined && a > 0 && recipeRescue.agreed > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
+    return { truth: a };
+  }
+  if (b !== null && a === null && recipeRescue !== undefined && b > 0 && recipeRescue.agreed > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
+    return { truth: b };
+  }
     if (b === null) {
       if (recipeRescue && a !== null && a > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
         return { truth: a };
