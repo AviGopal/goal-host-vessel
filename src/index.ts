@@ -1082,7 +1082,14 @@ function deliverReachVerdict(
         if (!r.ok) { console.warn(`[goal-host-vessel] reach-patch rejected (${origin}): HTTP ${r.status} for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
         const j = await r.json().catch(() => null) as { updated?: number } | null;
         if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response (${origin}) for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
-        if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW (${origin}) for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); return; }
+        if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW (${origin}) for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); 
+      if (_reachVerdict) {
+        try { exports.substrateGap.emit(
+          `${_reachId}::missing-row-for-reached-verdict`,
+          { category: "extraction_eligibility" }
+        ); } catch {} 
+      }
+      return; }
         console.log(`[goal-host-vessel] reach-patch ok (${origin}): ${_reachId} reached=${_reachVerdict} rows=${j.updated} attempts=${attempt + 1}`);
         // A live connection just proved activity-api is reachable — opportunistically
         // redeliver any verdicts a prior transient outage spooled.
