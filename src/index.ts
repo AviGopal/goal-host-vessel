@@ -1084,10 +1084,16 @@ function deliverReachVerdict(
         if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response (${origin}) for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
         if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW (${origin}) for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); 
       if (_reachVerdict) {
-        try { exports.substrateGap.emit(
-          `${_reachId}::missing-row-for-reached-verdict`,
-          { category: "extraction_eligibility" }
-        ); } catch {} 
+        try {
+          await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/substrateGap`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            body: JSON.stringify({ id: `${_reachId}::missing-row-for-reached-verdict`, category: "extraction_eligibility" }),
+            signal: AbortSignal.timeout(5_000),
+          });
+        } catch (e) {
+          console.warn(`[goal-host-vessel] substrateGap emit failed for ${_reachId}: ${(e as Error)?.message ?? String(e)}`);
+        }
       }
       return; }
         console.log(`[goal-host-vessel] reach-patch ok (${origin}): ${_reachId} reached=${_reachVerdict} rows=${j.updated} attempts=${attempt + 1}`);
