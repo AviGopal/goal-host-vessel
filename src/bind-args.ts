@@ -111,3 +111,43 @@ export function describeBindings(bound: Record<string, BoundArg>): string {
   if (entries.length === 0) return "none";
   return entries.map(([k, v]) => `${k}<-${v.fromShape}`).join(", ");
 }
+
+/**
+ * REQUIRED FIELD NAMES RECOVERED FROM A RESOLVER'S OWN REJECTION.
+ *
+ * bindArgsFromPool needs to know which fields are required. The declared source is the
+ * `resolver_schema` shape — but measured 2026-09-03 against the live fleet, it answers
+ * `known:false` for exactly the shapes that fail this way:
+ *
+ *   shellResult      known=false   ("command is required")
+ *   webSearchResult  known=false
+ *   fs_edit          known=false   ("path and name are required")
+ *   substrateGap_write known=true  (id, category, source, status, detected_at, summary)
+ *
+ * So a binder driven only by the schema is inert for the shapes that need it — which is what
+ * the first version of this change was, measured: 12 arg-synthesis invocations after deploy
+ * and 0 bindings, because requiredFields was empty every time.
+ *
+ * The resolver, however, SAYS what it wants when it refuses: "command is required",
+ * "path and name are required", "pointer.concept_id is required for shape X". That message is
+ * already threaded back into synthesis as `correction`. This recovers the field names from it,
+ * so the retry can BIND them from the pool instead of asking the model a second time.
+ *
+ * The same pattern the file already uses for execField ("Detected schema-first, then via the
+ * resolver's own rejection message + a shape-name heuristic").
+ */
+export function requiredFieldsFromCorrection(correction: string | undefined): string[] {
+  if (!correction || typeof correction !== "string") return [];
+  const out = new Set<string>();
+  // "a and b are required" / "a, b and c are required" / "x is required"
+  const RE = /([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*(?:\s+and\s+[A-Za-z_][\w.]*)?)\s+(?:is|are)\s+required\b/g;
+  for (const m of correction.matchAll(RE)) {
+    for (const raw of (m[1] ?? "").split(/\s*,\s*|\s+and\s+/)) {
+      const name = raw.trim();
+      // Take the LAST dotted segment: "pointer.concept_id" is delivered as `concept_id`.
+      const leaf = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : name;
+      if (leaf && /^[A-Za-z_]\w*$/.test(leaf)) out.add(leaf);
+    }
+  }
+  return [...out];
+}

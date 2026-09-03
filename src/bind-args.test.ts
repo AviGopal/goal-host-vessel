@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { bindArgsFromPool, boundValues, describeBindings } from "./bind-args";
+import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args";
 
 // Pins BIND-BEFORE-SYNTHESISE. The operator's diagnosis, 2026-09-03: impulse content is not
 // threaded through activities, though impulses can be treated as variables.
@@ -89,5 +89,40 @@ describe("boundValues / describeBindings", () => {
     const b = bindArgsFromPool(["path"], [imp("fileContent", { path: "a.ts" })]);
     expect(describeBindings(b)).toBe("path<-fileContent");
     expect(describeBindings({})).toBe("none");
+  });
+});
+
+// Recovering required-field names from the resolver's own refusal. Needed because
+// resolver_schema answers known:false for exactly the shapes that fail this way — measured
+// live: shellResult, webSearchResult and fs_edit all unknown, while substrateGap_write is
+// known. A schema-only binder is therefore inert where it matters, which is what the first
+// version of this change measured as: 12 synthesis calls, 0 bindings.
+describe("requiredFieldsFromCorrection", () => {
+  it("recovers a single field", () => {
+    expect(requiredFieldsFromCorrection("shellResult: command is required")).toEqual(["command"]);
+  });
+
+  it("recovers a conjunction — the fs_edit case", () => {
+    expect(requiredFieldsFromCorrection('{"error":"path and name are required"}').sort()).toEqual(["name", "path"]);
+  });
+
+  it("takes the LAST dotted segment, since args are emitted flat", () => {
+    expect(requiredFieldsFromCorrection('pointer.concept_id is required for shape "concept"')).toEqual(["concept_id"]);
+  });
+
+  it("handles a comma list", () => {
+    expect(requiredFieldsFromCorrection("id, category and summary are required").sort()).toEqual(["category", "id", "summary"]);
+  });
+
+  it("returns nothing for text that names no requirement", () => {
+    expect(requiredFieldsFromCorrection("the operation timed out")).toEqual([]);
+    expect(requiredFieldsFromCorrection(undefined)).toEqual([]);
+    expect(requiredFieldsFromCorrection("")).toEqual([]);
+  });
+
+  it("feeds the binder end to end: refusal names it, pool supplies it", () => {
+    const fields = requiredFieldsFromCorrection('{"error":"command is required"}');
+    const bound = bindArgsFromPool(fields, [{ content: { command: "wc -l a.ts" }, metadata: { shape: "recipe" } }]);
+    expect(bound.command?.value).toBe("wc -l a.ts");
   });
 });

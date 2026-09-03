@@ -16,7 +16,7 @@
  *   - Otherwise: InProcessLLMPort wrapping the Anthropic SDK (requires ANTHROPIC_API_KEY).
  */
 
-import { bindArgsFromPool, boundValues, describeBindings } from "./bind-args.js";
+import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args.js";
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
@@ -6823,16 +6823,23 @@ async function runGoalAsPoolWalk(
       // conservative — declared required fields only, primitives only, and it abstains whenever
       // two impulses disagree — because a wrong bind is silent where a missing field is loud.
       // If nothing binds, behaviour is exactly as before.
-      const _bound = bindArgsFromPool(requiredFields, poolImpulses);
+      // The declared source of required-field names is `resolver_schema`, but measured
+      // 2026-09-03 it answers known:false for exactly the shapes that fail this way —
+      // shellResult, webSearchResult, fs_edit all unknown. A schema-only binder is therefore
+      // inert where it matters, which the first deploy of this change proved: 12 synthesis
+      // invocations, 0 bindings. The resolver itself names the field when it refuses
+      // ("command is required"), and that text is already threaded back here as `correction`.
+      const _reqFields = requiredFields.length > 0 ? requiredFields : requiredFieldsFromCorrection(correction);
+      const _bound = bindArgsFromPool(_reqFields, poolImpulses);
       const _boundCount = Object.keys(_bound).length;
       if (_boundCount > 0) {
         console.log(
-          `[goal-host-vessel] arg-binding: bound ${_boundCount}/${requiredFields.length} required field(s) from the pool for "${shape}" — ${describeBindings(_bound)} (synthesis filled the rest)`,
+          `[goal-host-vessel] arg-binding: bound ${_boundCount}/${_reqFields.length} required field(s) from the pool for "${shape}" — ${describeBindings(_bound)} (synthesis filled the rest)`,
         );
         Object.assign(args, boundValues(_bound));
-      } else if (requiredFields.length > 0) {
+      } else if (_reqFields.length > 0) {
         // Logged so the BIND RATE is measurable from the journal rather than assumed.
-        console.log(`[goal-host-vessel] arg-binding: nothing bindable from the pool for "${shape}" (${requiredFields.length} required field(s)) — fully synthesized`);
+        console.log(`[goal-host-vessel] arg-binding: nothing bindable from the pool for "${shape}" (${_reqFields.length} required field(s), source=${requiredFields.length > 0 ? "schema" : "refusal"}) — fully synthesized`);
       }
       // DATE-ARG NORMALISATION (2026-07-11): relative temporal references must bind
       // to the substrate's real clock, never the LLM's guess. When the goal implies
