@@ -11784,7 +11784,21 @@ async function runGoalWithRecovery(
           }
           // Not reached: fall through to the ordinary walk. A recommendation that does not
           // pan out must cost a walk, never the goal.
-          if (opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
+          //
+          // ATTRIBUTION MUST NOT DEPEND ON THE OUTCOME (2026-09-03). This call previously
+          // passed NO parent while the reached branch above passes `reachingPathway`, so a
+          // borrowed pathway was credited when it worked and anonymous when it did not.
+          // Measured consequence: of 9,396 goal_execution_paths rows only 4 carry
+          // reused_from_goal_hash, against 23 observed "pathway reuse: accepted" events —
+          // and all 4 are reaches. Any evaluation over reuse lineage therefore reads ~100%
+          // by construction, which is exactly the 4/4 figure that looked like evidence.
+          //
+          // This is the SECOND source of the same skew in this arm: recordGoalPath's own
+          // note records an 8x optimism bias from rejected writes dropping failures at
+          // 12.5% against ~100% for successes. Same tier and shapes as before — only the
+          // lineage argument changes, so a failed reuse is now attributable to the donor
+          // it borrowed from.
+          if (opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
           tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway did NOT reach — falling through to the full walk`);
         } catch (e) {
           tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway threw (${(e as Error).message.slice(0, 120)}) — falling through to the full walk`);
