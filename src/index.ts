@@ -16,6 +16,7 @@
  *   - Otherwise: InProcessLLMPort wrapping the Anthropic SDK (requires ANTHROPIC_API_KEY).
  */
 
+import { bindArgsFromPool, boundValues, describeBindings } from "./bind-args.js";
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
@@ -6624,6 +6625,9 @@ async function runGoalAsPoolWalk(
     // for shellResult, whose owning vessel advertises no resolver_schema.
     let executorGuidance = "";
     let execField = "";
+    // Hoisted so BIND-BEFORE-SYNTHESISE below can see what the resolver actually DECLARES as
+    // required; `req` itself is scoped inside the schema-fetch block.
+    let requiredFields: string[] = [];
     const EXEC_FIELDS = ["command", "cmd", "script", "sql"];
    try {
      const sep = await endpointForShape(shape);
@@ -6652,6 +6656,7 @@ async function runGoalAsPoolWalk(
          const cc = sj?.content ?? sj?.body;
          if (cc && cc.known === true && Array.isArray(cc.fields)) {
            const req = cc.fields.filter((f: any) => f.required).map((f: any) => f.name);
+           requiredFields = req as string[];
            const opt = cc.fields.filter((f: any) => !f.required).map((f: any) => f.name);
            if (!execField) execField = req.find((r: string) => EXEC_FIELDS.includes(r)) ?? "";
            // A contract may describe a FLAT-pointer resolver, in which case it carries no
@@ -6799,6 +6804,36 @@ async function runGoalAsPoolWalk(
       const parsed = JSON.parse(m[0]);
       const args = (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed as Record<string, unknown> : null;
       if (!args) return null;
+      // BIND BEFORE SYNTHESISE (2026-09-03, operator directive: "we are not threading impulse
+      // content through the activities in an effective way — impulses can be treated similarly
+      // to variables").
+      //
+      // The pool DOES reach this prompt, but as truncated prose the model must retype:
+      // `priorFindings` renders `- <shape>: <content sliced to 800>`, filters terminal shapes
+      // out, and sits inside a block whose bulk warns AGAINST using prior findings. The
+      // deterministic reference mechanism ({{shape.field}}, interpolated from the pool) has
+      // ZERO uses in the entire retained journal. So an operand that is ALREADY an impulse gets
+      // re-derived — and when that misses, the resolver answers "X is required": 12 of 41
+      // produced shapes since 2026-09-01 (29%) carried exactly that error body, including a
+      // shellResult "command is required" emitted while the answer sat in an already-produced
+      // webSearchResult in the SAME pool.
+      //
+      // A pool value is evidence; a synthesized one is a guess. So where the pool
+      // UNAMBIGUOUSLY supplies a declared-required field, it wins. The binder is deliberately
+      // conservative — declared required fields only, primitives only, and it abstains whenever
+      // two impulses disagree — because a wrong bind is silent where a missing field is loud.
+      // If nothing binds, behaviour is exactly as before.
+      const _bound = bindArgsFromPool(requiredFields, poolImpulses);
+      const _boundCount = Object.keys(_bound).length;
+      if (_boundCount > 0) {
+        console.log(
+          `[goal-host-vessel] arg-binding: bound ${_boundCount}/${requiredFields.length} required field(s) from the pool for "${shape}" — ${describeBindings(_bound)} (synthesis filled the rest)`,
+        );
+        Object.assign(args, boundValues(_bound));
+      } else if (requiredFields.length > 0) {
+        // Logged so the BIND RATE is measurable from the journal rather than assumed.
+        console.log(`[goal-host-vessel] arg-binding: nothing bindable from the pool for "${shape}" (${requiredFields.length} required field(s)) — fully synthesized`);
+      }
       // DATE-ARG NORMALISATION (2026-07-11): relative temporal references must bind
       // to the substrate's real clock, never the LLM's guess. When the goal implies
       // the current day ("today", "tonight", "daily note") and names no explicit
