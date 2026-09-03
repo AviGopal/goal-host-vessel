@@ -5679,6 +5679,47 @@ function tierFromChain(chainIds: string[]): WalkTier {
  * pathway the walk was OFFERED rather than the one it took would manufacture exactly
  * the correlation that makes reuse look effective (law 12).
  */
+/**
+ * LAST-CHANCE LANDING CHECK — did this edit goal's commit reach origin/dev after we
+ * stopped waiting?
+ *
+ * Measured 2026-09-03, twice, end to end. The EARLY EDIT-INTENT route to feature_compose
+ * times out AT THE CALLER ("The operation timed out."), the walk falls through and grades
+ * `deterministic:edit-intent-no-landed-edit` — correctly, at that instant — and the callee
+ * then lands the commit anyway. Dispatch f7f15948 was graded failed while `edd2e44` sat on
+ * origin/dev; e20c6a91 was graded failed while `82b030e` sat on origin/dev. Both were
+ * verified against the deployed binary.
+ *
+ * The reconciler at the bottom of this file (:15968 region) already knows how to grade a
+ * landed sha, but it reads /workspace/proposals/route-edit-<h>-compose-report.json, and a
+ * retried attempt OVERWRITES that file with rolled_back:true after the successful landing
+ * (measured: commit 04:39:57, report rewritten 04:56:16). So the report cannot be the
+ * evidence. Git can: the cutover writes `route-edit-<goalHashOf(goal)>` into the commit
+ * subject and the `Gap:` trailer, and goalHashOf is computed right here.
+ *
+ * This asks the SAME question the gate already asks — is there a landed sha? — only later.
+ * It cannot manufacture a green the existing rule would refuse, and every failure path
+ * (bad vessel name, missing clone, git error, no match) returns null and leaves the
+ * caller's verdict untouched. Strictly false-negative → true-positive, never the reverse.
+ */
+async function landedShaForGoalHash(vessel: string, h: string): Promise<string | null> {
+  if (!vessel || vessel.includes("..") || !/^[0-9a-f]{8}$/.test(h)) return null;
+  try {
+    // Same shape as the `git -C dir show` probe above: /workspace/git/vessels/<vessel> is
+    // the clone host-pull-sync fast-forwards against origin/dev.
+    const proc = Bun.spawn(
+      ["git", "-C", `/workspace/git/vessels/${vessel}`, "log", "origin/dev", "-1", "--format=%H", `--grep=route-edit-${h}`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const out = (await new Response(proc.stdout).text()).trim();
+    const code = await proc.exited;
+    if (code !== 0) return null;
+    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   if (parent?.goalHash || parent?.pathSignature) {
@@ -12539,6 +12580,23 @@ async function runGoalWithRecovery(
               }
             } catch (escErr) {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools call failed (${(escErr as Error).message}) — returning the compose failure`);
+            }
+            // The compose call may have timed out at THIS caller while the callee went on
+            // to land the commit. Ask git before declaring not-reached — same evidence bar
+            // (a sha on origin/dev), read later. Null on any failure ⇒ verdict unchanged.
+            const _landedSha = await landedShaForGoalHash(String(editFile).split("/")[1] ?? "", goalHashOf(goal as string));
+            if (_landedSha) {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT LATE-LANDING ${_landedSha} found on origin/dev for route-edit-${goalHashOf(goal as string)} — the compose call failed at the caller but the edit LANDED; grading reached:true`);
+              return {
+                result: null,
+                status: "completed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["mitosisCutoverReport"],
+                attempts: 1,
+                goalReachReason: `late-landing confirmed: commit ${_landedSha} for route-edit-${goalHashOf(goal as string)} is on origin/dev; the caller's compose call failed (${failWhy}) but the edit landed`,
+                reached: true,
+                executionId: `feature_compose:${_landedSha}`,
+              };
             }
             return {
               result: null,
