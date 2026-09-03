@@ -1083,16 +1083,57 @@ function deliverReachVerdict(
         const j = await r.json().catch(() => null) as { updated?: number } | null;
         if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response (${origin}) for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
         if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW (${origin}) for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); 
+      // A LOST *REACHED* VERDICT IS THE ONE WORTH FILING. Failures still persist normally;
+      // it is the successes on this path that vanish, so the loss is success-selective and
+      // the learner sees a pessimism it did not earn.
+      //
+      // THIS BLOCK WAS INERT TWICE. It first shipped (776391aa0f) as
+      // `exports.substrateGap.emit(...)` — an API that exists nowhere, and `exports` is
+      // undefined in an ESM vessel, so it threw ReferenceError into a bare `catch {}`. The
+      // repair (62e66a7) replaced it with a real fetch to `/v2/impulses/substrateGap`, a
+      // route that does not exist: 404. Both passed every gate because every gate READ the
+      // diff and none RAN it, and both were written with four correct call sites in this
+      // file. See docs/architecture/TYPESCRIPT_VESSEL_TEMPLATE.md "Emitting an impulse".
+      //
+      // The call below is copied from the proven site at :4157 — one impulse endpoint
+      // (`/v2/impulses/resolve`), shape in the BODY, sent to the vessel that SERVES it
+      // (development-vessel, not activity-api). `fetch` does not throw on 404/500, so the
+      // `!r.ok` branch is load-bearing: without it this fails silently exactly as before.
       if (_reachVerdict) {
         try {
-          await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/substrateGap`, {
+          const _gapId = `lost-reached-verdict-${String(_reachId).replace(/[^a-zA-Z0-9_.-]/g, "_")}`.slice(0, 120);
+          const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ id: `${_reachId}::missing-row-for-reached-verdict`, category: "extraction_eligibility" }),
+            body: JSON.stringify({
+              impulse: {
+                type: "substrateGap_write",
+                pointer: {
+                  type: "substrateGap_write",
+                  gap: {
+                    id: _gapId,
+                    category: "extraction_eligibility",
+                    source: "substrate_detected",
+                    status: "open",
+                    detected_at: new Date().toISOString(),
+                    summary:
+                      `A REACHED verdict was lost: reach-patch matched no row for execution ${_reachId} (${origin}), ` +
+                      `so the execution stays ungraded and the ribosome cannot extract from it. ` +
+                      `Successes are lost on this path while failures persist, which biases the learner pessimistic.`,
+                    classification_metadata: { execution_id: _reachId, origin, lost_verdict: "reached" },
+                  },
+                },
+              },
+            }),
             signal: AbortSignal.timeout(5_000),
           });
+          if (!r.ok) {
+            console.warn(`[goal-host-vessel] lost-reached-verdict gap emit REJECTED for ${_reachId}: http ${r.status}`);
+          } else {
+            console.log(`[goal-host-vessel] filed lost-reached-verdict gap ${_gapId} (http ${r.status})`);
+          }
         } catch (e) {
-          console.warn(`[goal-host-vessel] substrateGap emit failed for ${_reachId}: ${(e as Error)?.message ?? String(e)}`);
+          console.warn(`[goal-host-vessel] lost-reached-verdict gap emit failed for ${_reachId}: ${(e as Error)?.message ?? String(e)}`);
         }
       }
       return; }
