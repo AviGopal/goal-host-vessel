@@ -5727,7 +5727,18 @@ async function landedShaForGoalHash(vessel: string, h: string): Promise<string |
       // `h` is the 8-hex GOAL HASH parameter of this function. The report is named for the
       // goal hash, NOT for the commit sha in `out`.
       const reportFile = Bun.file(`/workspace/proposals/route-edit-${h}-compose-report.json`);
-      if (!(await reportFile.exists())) return null;
+      if (!(await reportFile.exists())) {
+        // AUDIBLE, DELIBERATE FALSE NEGATIVE. No compose report exists for this goal hash.
+        // That is the normal case for a landing made by the patch_with_tools ESCALATION,
+        // which files provenance under a `pwt-<file>-<hash>` gap id and writes no proposal
+        // artifact — measured 2026-09-04: 19 of 101 recent activity-api landings, none with
+        // a report. Such landings cannot be credited here, and that is chosen rather than
+        // overlooked: nothing records whether a pwt landing was judged good, and crediting
+        // one on the sha alone is exactly the false positive this gate exists to prevent.
+        // Log it so an operator can tell "no commit" from "commit exists, uncreditable".
+        console.warn(`[goal-host-vessel] late-landing: commit exists for route-edit-${h} but no compose report — uncreditable (patch_with_tools landings have none); withholding reach`);
+        return null;
+      }
       const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
       if (report.verdict !== "FAVORABLE") return null;
       const cutovers = Array.isArray(report.cutovers) ? (report.cutovers as Array<Record<string, unknown>>) : [];
