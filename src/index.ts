@@ -5714,7 +5714,32 @@ async function landedShaForGoalHash(vessel: string, h: string): Promise<string |
     const out = (await new Response(proc.stdout).text()).trim();
     const code = await proc.exited;
     if (code !== 0) return null;
-    return /^[0-9a-f]{40}$/.test(out) ? out : null;
+    if (!/^[0-9a-f]{40}$/.test(out)) return null;
+    // A COMMIT IS NOT AN ACHIEVEMENT. The sha proves work landed; it does not prove the
+    // work did what the goal asked. Measured 2026-09-03: 023f9b1 landed for
+    // route-edit-c10beb80, the goal was NOT met, and this helper graded it reached:true.
+    // Demand the corroboration the crash-recovery reconciler further down this file
+    // demands: a FAVORABLE compose report carrying a cutover new_git_sha. That report is
+    // trustworthy again since development-vessel ce10c8b stopped a failed retry from
+    // overwriting a favorable one. Every doubt below returns null, so this can only ever
+    // WITHHOLD a reach, never invent one.
+    try {
+      // `h` is the 8-hex GOAL HASH parameter of this function. The report is named for the
+      // goal hash, NOT for the commit sha in `out`.
+      const reportFile = Bun.file(`/workspace/proposals/route-edit-${h}-compose-report.json`);
+      if (!(await reportFile.exists())) return null;
+      const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
+      if (report.verdict !== "FAVORABLE") return null;
+      const cutovers = Array.isArray(report.cutovers) ? (report.cutovers as Array<Record<string, unknown>>) : [];
+      const landed = cutovers.some((c) => {
+        const res = (c?.result ?? {}) as Record<string, unknown>;
+        return typeof res.new_git_sha === "string" && res.new_git_sha.length > 0;
+      });
+      if (!landed) return null;
+    } catch {
+      return null;
+    }
+    return out;
   } catch {
     return null;
   }
