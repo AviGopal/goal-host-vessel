@@ -244,7 +244,7 @@ export function reconcileDerivations(a: number | null, b: number | null, recipeR
     return { truth: b };
   }
     if (b === null) {
-      if (recipeRescue && a !== null && a > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
+      if (a !== null && recipeRescue && a > 0 && recipeRescue.agreed >= 10 && recipeRescue.agreed > recipeRescue.disagreed * 4) {
         return { truth: a };
       }
       return { truth: null, reason: "only one derivation produced a usable measurement (A)" };
