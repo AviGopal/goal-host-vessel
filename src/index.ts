@@ -4863,7 +4863,7 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
     ? `[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED. If this goal asked for a current, live or measured value from outside this repository, an unretrieved answer does not fulfil it however plausible the number looks.]\n\n${_digestBase}`
     : _digestBase;
   const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined);
-  console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`); if (verdict) if (verdict) recordDeterministicLabel(goal, `universal-tool-fallback:${goalHashOf(goal)}`, "universal-tool-fallback", verdict);
+  console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
   // execution id (`universal-tool-fallback:<goalHash>`) that named no row anywhere: a
   // 2,000-row window of the live trace store contained ZERO floor executions, and the
