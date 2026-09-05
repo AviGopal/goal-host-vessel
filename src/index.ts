@@ -1531,6 +1531,28 @@ async function verifyNamedArtifactCarries(
   }
 }
 
+function parseGapTotalCount(goal: string): { status: "open" | "closed" } | null {
+  if (!/\b(?:gaps?|substrate\s?gaps?)\b/i.test(goal)) return null;
+  if (!/\b(?:how many|count|number of|total)\b/i.test(goal)) return null;
+  if (parseGapCategoryAggregate(goal)) return null;
+  if (parseGapRatio(goal)) return null;
+  return { status: /\bclosed\b/i.test(goal) ? "closed" : "open" };
+}
+
+async function verifyGapTotalCountReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  const p = parseGapTotalCount(goal);
+  if (!p) return null;
+  const counts = await fetchGapCategoryCounts(p.status);
+  if (!counts) return null;
+  let total = 0;
+  for (const n of counts.values()) total += n;
+  const nums = [...dig.matchAll(/\b(\d{1,6})\b/g)].map((m) => Number(m[1]));
+  if (nums.some((n) => Math.abs(n - total) <= 2)) {
+    return { reached: true, reason: `deterministic:verified-gap-total - independently recounted the live gap store: ${p.status} gaps = ${total}; the produced output states this value (+/-2 live-drift tolerance)`, deterministic: true, completion_shapes: [] };
+  }
+  return null;
+}
+
 // INDEPENDENT REGISTRY-INVENTORY ORACLE (2026-07-27). The independent-oracle critical path shared by
 // validatability (gaming_gap) and falsifiability (confabulation_rate): for a self-inventory COUNT over
 // the discovery registry, do NOT trust the command's own stdout — query the AUTHORITATIVE source
@@ -3452,6 +3474,11 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const gapV = await verifyGapAggregateReach(goal, dig);
     if (gapV) return gapV;
+  }
+
+  {
+    const gapTotalV = await verifyGapTotalCountReach(goal, dig);
+    if (gapTotalV) return gapTotalV;
   }
   // INDEPENDENT REGISTRY-INVENTORY ORACLE — verify a self-inventory count against the authoritative
   // /registry/stats instead of the self-graded LLM (validatability + falsifiability critical path).
