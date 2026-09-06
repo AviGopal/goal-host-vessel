@@ -11858,7 +11858,7 @@ async function runGoalWithRecovery(
                       : `landed ${earlyLandedSha}${editPostOk === true ? " (post-state confirms the requested symbol is present)" : ""}`
                 }${earlySummary}`,
                 reached: earlyReached,
-                executionId: earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined,
+                executionId: (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) ? earlyBody.execution_id : (earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined),
               };
             }
             // CAPACITY IS TRANSIENT, NOT A CAPABILITY VERDICT. When compose refuses for capacity
