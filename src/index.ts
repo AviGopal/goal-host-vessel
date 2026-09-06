@@ -11881,6 +11881,9 @@ async function runGoalWithRecovery(
                 reached: false,
               };
             }
+            if (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) {
+              deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable");
+            }
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
           } else {
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — falling through to walk`);
