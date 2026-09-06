@@ -12462,7 +12462,7 @@ async function runGoalWithRecovery(
                 attempts: 1,
                 goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${summary}`,
                 reached: !!landedSha,
-                executionId: landedSha ? `feature_compose:${landedSha}` : undefined,
+                executionId: (typeof body.execution_id === "string" && body.execution_id.length > 0) ? body.execution_id : (landedSha ? `feature_compose:${landedSha}` : undefined),
               };
             }
             // Reason-plane (GAP B): surface the WHY from the compose report instead of
