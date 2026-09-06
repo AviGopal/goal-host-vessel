@@ -15171,6 +15171,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
       const dispatcherTag = ["dispatcher_used:goal-host"];
       const operatorTag = operator ? [`operator:${operator}`] : [];
       const effectiveTags = [...(tags ?? []), ...sigTag, ...mitosisTags, ...dispatcherTag, ...operatorTag];
+      if (learningMode) effectiveTags.push(`learning_mode:${learningMode}`);
+      if (ablation) effectiveTags.push(`ablation:${[ablation.disableReuse ? "disableReuse" : "", ablation.forceFloor ? "forceFloor" : "", ablation.pinnedPriors ? "pinnedPriors" : ""].filter(Boolean).join("+")}`);
 
       // Async /run-goal is the agent (MCP) + boredom dispatch surface. It uses the
       // SHARED runGoalWithRecovery (same loop as /resolve, no duplication) and can
