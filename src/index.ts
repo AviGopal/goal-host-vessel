@@ -6596,6 +6596,22 @@ async function runGoalAsPoolWalk(
   // tolerant of failure (empty Set ⇒ never mint, fall through to escalate).
   let liveResolverShapes: Set<string> | null = null;
   const liveShapes = async (): Promise<Set<string>> => {
+  const activityProducedShapes = new Set<string>();
+  try {
+    const activitiesResp = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities?retired=false&deprecated=false`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (activitiesResp.ok) {
+      const activities = await activitiesResp.json() as Array<{ output_shapes?: string[] }>;
+      for (const activity of activities) {
+        if (activity.output_shapes) {
+          for (const shape of activity.output_shapes) {
+            activityProducedShapes.add(shape);
+          }
+        }
+      }
+    }
+  } catch { /* fail open */ }
     if (liveResolverShapes) return liveResolverShapes;
     try {
       const r = await fetch(DISCOVERY_SHAPES_ENDPOINT, { signal: AbortSignal.timeout(10_000) });
