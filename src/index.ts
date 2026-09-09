@@ -5726,8 +5726,9 @@ function tierFromChain(chainIds: string[]): WalkTier {
  * subject and the `Gap:` trailer, and goalHashOf is computed right here.
  *
  * This asks the SAME question the gate already asks — is there a landed sha? — only later.
- * It cannot manufacture a green the existing rule would refuse, and every failure path
- * (bad vessel name, missing clone, git error, no match) returns null and leaves the
+ * It cannot manufacture a green the existing rule would refuse: the commit found by git log
+ * MUST match a new_git_sha in a FAVORABLE compose report. Every failure path
+ * (bad vessel name, missing clone, git error, no match, sha mismatch) returns null and leaves the
  * caller's verdict untouched. Strictly false-negative → true-positive, never the reverse.
  */
 async function landedShaForGoalHash(vessel: string, h: string): Promise<string | null> {
@@ -5770,11 +5771,17 @@ async function landedShaForGoalHash(vessel: string, h: string): Promise<string |
       const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
       if (report.verdict !== "FAVORABLE") return null;
       const cutovers = Array.isArray(report.cutovers) ? (report.cutovers as Array<Record<string, unknown>>) : [];
-      const landed = cutovers.some((c) => {
+      const landedShas: string[] = [];
+      for (const c of cutovers) {
         const res = (c?.result ?? {}) as Record<string, unknown>;
-        return typeof res.new_git_sha === "string" && res.new_git_sha.length > 0;
-      });
-      if (!landed) return null;
+        if (typeof res.new_git_sha === "string" && res.new_git_sha.length > 0) {
+          landedShas.push(res.new_git_sha);
+        }
+      }
+      if (landedShas.length === 0) return null;
+      // The commit we found via git log MUST be one of the favorably-landed SHAs.
+      // A commit merely mentioning the goal hash in its message is not sufficient.
+      if (!landedShas.includes(out)) return null;
     } catch {
       return null;
     }
