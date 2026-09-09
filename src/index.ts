@@ -12446,7 +12446,8 @@ async function runGoalWithRecovery(
                   return !!(sg && sg.verified === true && Array.isArray(rs) && rs.length > 0);
                 })();
                 void persistSatisfierTrace({
-                  id: (typeof body.execution_id === "string" && body.execution_id.startsWith("exec_")) ? body.execution_id : (landedSha ? `feature_compose:${landedSha}` : `feature_compose:staged-${editSite}`),
+                  id: landedSha ? `feature_compose:${landedSha}` : `feature_compose:staged-${editSite}`,
+
                   templateId: "feature_compose",
                   templateName: "feature_compose (edit-intent)",
                   status: "completed",
