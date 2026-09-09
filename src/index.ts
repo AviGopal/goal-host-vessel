@@ -11702,7 +11702,7 @@ async function runGoalWithRecovery(
       // activity-api/package.json") match a fake "edit verb" and route to feature_compose, which
       // then EDITED + committed the file (an unrequested version bump 1.20.9->1.20.10) — a read goal
       // causing a code change. Keep this list IDENTICAL to the two late detectors.
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goalForRouting) : false;
+      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|create|register|scaffold)\b/i.test(goalForRouting) : false;
       // READ-ONLY intent: a goal that REPORTS/READS/SUMMARIZES/EXPLAINS/COUNTS a file's content or a
       // field is NOT an edit, even when it names exactly one repos file — without this the file-only
       // heuristic below routes every read-over-a-named-file goal into feature_compose.
