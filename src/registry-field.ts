@@ -23,7 +23,7 @@
  * report. Abstaining costs an LLM judgement; guessing poisons the posterior of an arm that
  * was right.
  */
-export type RegistryField = "totalVessels" | "totalShapes" | "healthyCount";
+export type RegistryField = "totalVessels" | "totalShapes" | "healthyCount" | "producersPerShape";
 
 export function registryFieldFor(goal: string): RegistryField | null {
   const g = goal.toLowerCase();
@@ -59,6 +59,14 @@ export function registryFieldFor(goal: string): RegistryField | null {
 
   const distinctEntities = new Set(counted.map((w) => (w.startsWith("vessel") ? "vessel" : "shape")));
   if (distinctEntities.size > 1) return null;
+
+  // Check for "producers for shape X" type goals.
+  // This pattern is distinct from general shape/vessel counts and requires a specific entity (shape name).
+  const producersForShapeMatch = g.match(/how many producers for shape (\w+)/);
+  if (producersForShapeMatch) {
+    return "producersPerShape";
+  }
+
 
   // WHY THE GUARD ABOVE DID NOT FIRE, AND WHAT ACTUALLY FIXED IT. Audited 2026-08-17 and
   // reproduced on HEAD: "how many shapes and how many vessels are there?" was answered
