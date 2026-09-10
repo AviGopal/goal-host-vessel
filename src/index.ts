@@ -12483,6 +12483,7 @@ async function runGoalWithRecovery(
               // SUBSTANCE GRADE: reached iff a real landing occurred (landedSha set only on
               // push_status==="pushed" + new_git_sha). "staged FAVORABLE" is not a reach.
               if (!landedSha) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); }
+              recordDeterministicLabel(goal ?? "", landedSha ? `feature_compose:${landedSha}` : undefined, "feature_compose", { reached: !!landedSha, reason: `deterministic:edit-intent-${landedSha ? `landed ${landedSha}` : "staged-not-landed"}`, deterministic: true });
               return {
                 result: null,
                 status: landedSha ? "completed" : "failed",
