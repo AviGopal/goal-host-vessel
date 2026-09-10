@@ -12489,7 +12489,7 @@ async function runGoalWithRecovery(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${summary}`,
+                goalReachReason: `deterministic:edit-intent-${landedSha ? "landed" : "staged-not-landed"} — routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${summary}`,
                 reached: !!landedSha,
                 executionId: (typeof body.execution_id === "string" && body.execution_id.length > 0) ? body.execution_id : (landedSha ? `feature_compose:${landedSha}` : undefined),
               };
