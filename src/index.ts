@@ -11875,7 +11875,7 @@ async function runGoalWithRecovery(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `early edit-intent routed to feature_compose; ${
+                goalReachReason: `deterministic:early-edit-intent-${earlyReached ? "landed" : "not-landed"} — early edit-intent routed to feature_compose; ${
                   !earlyLandedSha
                     ? "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"
                     : editHollow
