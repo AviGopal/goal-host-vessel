@@ -754,6 +754,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
         body: JSON.stringify({ type: "llm_completion", prompt, model }),
         signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
       });
+      console.warn(`[goal-target-inference] llm_completion returned ${r.status} (${r.status === 402 ? "provider out of credit" : r.status === 429 ? "rate limited" : "transport failure"}) — returning an EMPTY target, which is indistinguishable downstream from "no target is inferable" for goal_hash=${goalHashOf(goal)}`);
       if (!r.ok) return empty;
       const j = await r.json() as Record<string, unknown>;
       const body = j?.body as Record<string, unknown> | undefined;
