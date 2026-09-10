@@ -12646,6 +12646,7 @@ async function runGoalWithRecovery(
                   : (typeof pwtBody["new_git_sha"] === "string" && (pwtBody["new_git_sha"] as string).trim() ? (pwtBody["new_git_sha"] as string).trim() : null);
                 if (pwtJson.success !== false && pwtLandedSha) {
                   tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools LANDED ${pwtLandedSha} for ${editFile} — grading reached:true`);
+                  recordDeterministicLabel(goal ?? "", `patch_with_tools:${pwtLandedSha}`, "patch_with_tools", { reached: true, reason: `deterministic:escalation-landed ${pwtLandedSha}`, deterministic: true });
                   return {
                     result: null,
                     status: "completed",
