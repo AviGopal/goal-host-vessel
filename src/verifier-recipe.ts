@@ -77,7 +77,7 @@ export function goalTreePath(goal: string): string | null {
   const all = [...new Set((noUrls.match(/repos\/[\w.-]+(?:\/[\w./-]+)?/g) ?? []).map((m) => m.replace(/[.,;:]+$/, "")))];
   if (all.length !== 1) return null;               // 0 = not a tree goal; >1 = the chain form, which one command cannot answer
   const p = all[0]!;
-  return /\.\w{1,6}$/.test(p) ? null : p;          // a FILE path is not a tree
+  return /\.[\w.]{1,6}$/.test(p) ? null : p;          // a FILE path is not a tree. Added . to catch files like '.npmrc'
 }
 
 /**
