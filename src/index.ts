@@ -11862,6 +11862,7 @@ async function runGoalWithRecovery(
               // unreadable goals, so those keep grading on the landing sha alone (no regression).
               const editPostOk = earlyLandedSha ? await verifyEditPostState(goal ?? "", earlyEditFile, earlyLandedSha) : null;
               const editHollow = editPostOk === false;      // landed, but the symbol is not there
+                  recordDeterministicLabel(goal ?? "", earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined, "feature_compose", {deterministic: true, reached: false, reason: "pending-verdict"});
               const earlyReached = !!earlyLandedSha && !editHollow;
               // Record the grade, do not just apply it. `alphaBetaDelta` is the
               // decision-transparency surface; six of eight grading sites discarded
