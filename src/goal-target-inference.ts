@@ -764,7 +764,8 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
         : "") as string;
     }
     const m = String(text).match(/\{[\s\S]*\}/);
-    if (!m) return empty;
+    if (!m) console.warn(`[goal-target-inference] the LLM answered but no JSON object could be parsed from ${String(text).length} char(s) — returning an EMPTY target, indistinguishable downstream from "no target is inferable"; first 120 chars: ${String(text).slice(0, 120) || "(empty response body)"}`);
+if (!m) return empty;
     const parsed = JSON.parse(m[0]) as Record<string, unknown>;
     const rawShapes = Array.isArray(parsed?.target_shapes) ? parsed.target_shapes as unknown[] : [];
     const filterShape = (s: unknown): string | null => {
