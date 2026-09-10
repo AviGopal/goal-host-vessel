@@ -12601,7 +12601,15 @@ async function runGoalWithRecovery(
             // Same shape as the BUSY fix above: a guard selecting on a property of
             // the REQUEST must also read the KIND of the failure.
             const anchorFailure = /old_string not found|no_unique_anchor|anchor_not_found|apply_failed/i.test(failWhy);
-            if (namedRegion && verdict && !anchorFailure) {
+            // NO VERDICT IS NOT EVIDENCE FOR ESCALATION. Escalation is justified by an
+            // ANCHOR failure, where the byte-anchored route is strictly better at the
+            // thing that failed. A compose that returned nothing - HTTP 503 while the
+            // vessel drains for a restart, observed 2026-09-10 06:54 - reports no failure
+            // kind at all, and routing on that basis sends work to a lane that runs no
+            // semantic judge and lands ungraded. Suppress when there is no verdict, so
+            // the caller retries against a live compose instead. The region-named case
+            // below is unchanged.
+            if ((namedRegion || !verdict) && !anchorFailure) {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SUPPRESSED for ${editFile} — the spec names region "${namedRegion}", and the byte-anchored route runs no semantic judge and lands ungraded; a region-named gap stays on the judged compose path (${failWhy})`);
               return {
                 result: null,
