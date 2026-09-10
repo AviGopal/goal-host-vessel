@@ -5098,6 +5098,7 @@ async function fetchKnownShapes(): Promise<string[]> {
       headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       signal: AbortSignal.timeout(10_000),
     });
+    if (!r.ok) console.warn(`[known-shapes] discovery /registry/shapes answered ${r.status} — keeping ${knownShapesCache ? "last known-good vocabulary" : "an EMPTY vocabulary (no cache yet), which disables goal->target inference entirely"}${API_KEY ? "" : "; NO Authorization header was sent because API_KEY is empty"}`);
     if (!r.ok) return knownShapesCache?.shapes ?? [];
     const j: any = await r.json();
     const local = (Array.isArray(j?.shapes) ? j.shapes : [])
