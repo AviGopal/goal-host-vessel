@@ -745,7 +745,8 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
     let text: string;
     if (opts.complete) {
       const t = await opts.complete(prompt);
-      if (t == null) return empty;
+      if (t == null) console.warn(`[goal-target-inference] the completion callback returned ${t === null ? "null" : "undefined"} — returning an EMPTY target, which is indistinguishable downstream from "no target is inferable"`);
+  if (t == null) return empty;
       text = t;
     } else {
       const r = await fetchImpl(`${llmEndpoint!.replace(/\/$/, "")}/resolve`, {
