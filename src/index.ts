@@ -11869,6 +11869,7 @@ async function runGoalWithRecovery(
               // rendered "This run taught the system nothing" off exactly that.
               if (!earlyLandedSha) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); }
               else if (editHollow) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol")); }
+              recordDeterministicLabel(goal ?? "", earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined, "feature_compose", { reached: earlyReached, reason: `deterministic:early-edit-intent-${earlyReached ? "landed" : "not-landed"}${earlyLandedSha ? ` ${earlyLandedSha}` : ""}`, deterministic: true });
               return {
                 result: null,
                 status: earlyReached ? ("completed" as const) : ("failed" as const),
