@@ -5728,9 +5728,11 @@ function tierFromChain(chainIds: string[]): WalkTier {
  *
  * This asks the SAME question the gate already asks — is there a landed sha? — only later.
  * It cannot manufacture a green the existing rule would refuse: the commit found by git log
- * MUST match a new_git_sha in a FAVORABLE compose report. Every failure path
- * (bad vessel name, missing clone, git error, no match, sha mismatch) returns null and leaves the
- * caller's verdict untouched. Strictly false-negative → true-positive, never the reverse.
+ * must be a genuine cutover commit (verified via Gap trailer), AND match a new_git_sha in a
+ * FAVORABLE compose report. Every failure path (bad vessel name, missing clone, git error,
+ * no match, sha mismatch, missing/mismatched Gap trailer, revert commit) returns null and
+ * leaves the caller's verdict untouched. Strictly false-negative → true-positive, never the
+ * reverse.
  */
 async function landedShaForGoalHash(vessel: string, h: string): Promise<string | null> {
   if (!vessel || vessel.includes("..") || !/^[0-9a-f]{8}$/.test(h)) return null;
@@ -5753,6 +5755,32 @@ async function landedShaForGoalHash(vessel: string, h: string): Promise<string |
     // trustworthy again since development-vessel ce10c8b stopped a failed retry from
     // overwriting a favorable one. Every doubt below returns null, so this can only ever
     // WITHHOLD a reach, never invent one.
+    // ADDITIONAL EVIDENCE BAR: verify the commit is a genuine cutover for this goal by
+    // checking its Gap trailer. A commit merely mentioning the goal hash in its message
+    // (e.g. a revert, a follow-up, or an unrelated reference) is not sufficient.
+    try {
+      const showProc = Bun.spawn(
+        ["git", "-C", `/workspace/git/vessels/${vessel}`, "show", "-s", "--format=%B", out],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const commitMsg = (await new Response(showProc.stdout).text()).trim();
+      const showCode = await showProc.exited;
+      if (showCode !== 0) return null;
+      // Verify Gap trailer matches the goal hash exactly.
+      const gapTrailerMatch = commitMsg.match(/^Gap:\s*route-edit-([0-9a-f]{8})$/m);
+      if (!gapTrailerMatch || gapTrailerMatch[1] !== h) {
+        console.warn(`[goal-host-vessel] late-landing: commit ${out} for route-edit-${h} lacks matching Gap trailer; withholding reach`);
+        return null;
+      }
+      // Verify not a revert commit.
+      const subjectLine = commitMsg.split("\n")[0] ?? "";
+      if (subjectLine.startsWith("Revert ")) {
+        console.warn(`[goal-host-vessel] late-landing: commit ${out} for route-edit-${h} is a revert; withholding reach`);
+        return null;
+      }
+    } catch {
+      return null;
+    }
     try {
       // `h` is the 8-hex GOAL HASH parameter of this function. The report is named for the
       // goal hash, NOT for the commit sha in `out`.
