@@ -3959,7 +3959,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
       // The `subs.length < 1` check below still refuses when NOTHING was substitutable:
       // that is a verbatim reuse, which the exact-hash path already owns.
       if (first < 0) {
-  const oldContentToks = oldContent.split(/\s+/);
+  const oldContentToks = oldContent.split(/\s+/).map((tok) => stripPunct(tok)).filter((tok) => tok.length > 0);
   if (oldContentToks.some((tok) => e.command.includes(tok))) {
     ok = false;
     break;
