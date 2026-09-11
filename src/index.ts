@@ -1414,7 +1414,8 @@ interface GoalReachVerdict {
 // DISTINCTIVE answer before the LLM sees it — it NEVER greens: a match or any ambiguity
 // falls through to the LLM (which also validates write/completeness). Strictly
 // fail-toward-honest (mirrors the ':820 never suppress a real reach' guarantee):
-// unclassified / ambiguous / answer-absent / truncated => null (LLM fallthrough).
+// unclassified / ambiguous / answer-absent / truncated => null (LLM fallthrough). 
+// rejects provably-wrong distinctive answers; greens ONLY standalone-delivered recomputed truth with no artifact-write clause; everything else falls through to the LLM.
 function dcFib(n: bigint): bigint { if (n <= 0n) return 0n; let x = 0n, y = 1n; for (let i = 2n; i <= n; i++) { const t = x + y; x = y; y = t; } return y; }
 function dcFactorialStr(n: bigint): string { let r = 1n; for (let i = 2n; i <= n; i++) r *= i; return r.toString(); }
 function dcNumericCandidates(dig: string, minDigits: number): string[] {
@@ -1476,7 +1477,28 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
   }
   if (!expected) return null;                          // unclassified => LLM fallthrough
   if (claimed.length === 0) return null;                // no answer of this form present => cannot verify => fall through
-  if (claimed.some((c) => expected!.has(c))) return null; // TRUTH PRESENT => not a deterministic green; hand to the LLM
+    if (claimed.some((c) => expected!.has(c))) {
+    if (/\b(write|save|store|record|append|titled)\b/i.test(goal)) return null; // artifact delivery stays LLM-judged.
+
+    const digLines = dig.split('\n').map(line => line.replace(/^-\s+\S+:\s+/, '').trim());
+    const isStandalone = digLines.some(line => {
+      if (expected!.has(line)) return true;
+      if (line.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(line);
+          if (typeof parsed === 'object' && parsed !== null && 'stdout' in parsed && typeof parsed.stdout === 'string') {
+            return expected!.has(parsed.stdout.trim());
+          }
+        } catch (e) { /* not JSON or not a shellResult */ }
+      }
+      return false;
+    });
+
+    if (isStandalone) {
+      return { reached: true, reason: `deterministic:verified-compute-answer — recomputed ${label} independently and the output delivers exactly this value standalone (bare answer line or exact shellResult stdout)`, deterministic: true, completion_shapes: [] };
+    }
+    return null; // TRUTH PRESENT but buried in prose or blobs, hand to the LLM
+  }
   return { reached: false, reason: `deterministic:wrong-compute-answer — recomputed ${label} does not match any distinctive answer token in the output (e.g. ${claimed[0]})`, completion_shapes: [] };
 }
 
