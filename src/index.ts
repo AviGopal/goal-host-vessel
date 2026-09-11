@@ -12540,7 +12540,7 @@ async function runGoalWithRecovery(
               // walk log carries the WHY without host journal access.
               const fv = (body.verify as any[]).find((v: any) => v && v.ok === false);
               const out = typeof fv.output === "string" ? fv.output : "";
-              const errLines = out.split("\n").filter((l: string) => /error|EXIT=[1-9]/.test(l)).slice(0, 3).join(" | ");
+              const errLines = out.split("\n").filter((l: string) => (/error|EXIT=[1-9]/.test(l) || l.includes("(fail)")) && !l.includes("(pass)")).slice(0, 3).join(" | ");
               failDetail = `verify failed (${fv.vessel ?? "?"}): ${(errLines || out.slice(-200)).slice(0, 240)}`;
             } else if (body.semantic_gate && typeof body.semantic_gate === "object" && typeof (body.semantic_gate as any).reason === "string" && (body.semantic_gate as any).reason.trim()) {
               failDetail = `semantic_gate: ${String((body.semantic_gate as any).reason).trim().slice(0, 200)}`;
