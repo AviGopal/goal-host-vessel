@@ -3465,6 +3465,30 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   // correct 2597 line-count rejected as deterministic:wrong-registry-count vs 15), and
   // verifyCountFilesReach would compute a FILE-count truth for a lines/contains goal.
   {
+  // INDEPENDENT COMPUTE-ARTIFACT ORACLE (2026-09-11): a self-contained arithmetic goal that
+  // records its result in a titled memory note is graded by RESOLVING THE NOTE and comparing
+  // its body against an in-process recomputation — never by the LLM re-deriving arithmetic
+  // (measured: the judge rejected a correct 307127 claiming the truth was 307787). The
+  // operand parse is deliberately duplicated from verifyDeterministicCompute residual 4
+  // (same regexes) so this stays additive and cannot disturb that function's tested contract.
+  {
+    const num = (s: string) => Number(s.replace(/[,_]/g, ""));
+    let truth: number | null = null;
+    const pm = goal.match(/(\d[\d,_.\s]*)\s*(?:%|percent(?:age)?)\s+of\s+(\d[\d,_.\s]*)/i);
+    const mm = goal.match(/(\d[\d,_.\s]*)\s*(?:\*|×|times|multiplied\s+by)\s+(\d[\d,_.\s]*)/i)
+            || goal.match(/\bproduct\s+of\s+(\d[\d,_.\s]*)\s+and\s+(\d[\d,_.\s]*)/i);
+    if (pm) { const p = num(pm[1]), n = num(pm[2]); if (Number.isFinite(p) && Number.isFinite(n)) truth = (p * n) / 100; }
+    else if (mm) { const a = num(mm[1]), b = num(mm[2]); if (Number.isFinite(a) && Number.isFinite(b)) truth = a * b; }
+    if (truth !== null && Number.isInteger(truth) && Math.abs(truth) >= 1000 && /\btitled\b/i.test(goal) && !/repos\/[\w.-]+/.test(goal)) {
+      const art = await verifyNamedArtifactCarries(goal, truth);
+      if (art) {
+        if (art.ok) return { reached: true, reason: `deterministic:verified-compute-artifact — recomputed the arithmetic in-process (${truth}) and resolved the named note "${art.title}": its stored body carries exactly this value`, deterministic: true, completion_shapes: ["memoryNote"] };
+        return { reached: false, reason: `deterministic:wrong-compute-artifact — recomputed the arithmetic in-process (${truth}) but the named note "${art.title}" does not carry it (stored: ${art.storedExcerpt.slice(0, 80)})`, completion_shapes: [] };
+      }
+      // art === null: note unresolvable/absent — fail open to the remaining oracles and the LLM judge.
+    }
+  }
+
     // Route-as-data dispatcher FIRST: serves every CLASS_ROWS class (avg-threshold, below-mean, …)
     // off SELECTORS + emitVerdict. Its owns() are specific comparator-word matches, so it never
     // steals rank/total/two-source goals (locked by the golden test's dispatcher-null collisions).
