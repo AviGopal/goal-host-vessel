@@ -1,9 +1,18 @@
 // Deterministic reach-verifier tests (hollow-green value-blindness closure).
 // verifyDeterministicCompute independently RECOMPUTES a mechanically-verifiable answer
-// (hash / fibonacci / factorial / self-contained arithmetic) and can ONLY reject a
-// provably-wrong DISTINCTIVE answer — it NEVER greens. Every abstention path fails OPEN
-// (returns null => the LLM judge still runs). These tests pin that contract, especially
-// the Residual-4 arithmetic block, so a drafter edit that over-rejects (false-red) or
+// (hash / fibonacci / factorial / self-contained arithmetic). Contract (revised — the
+// measured false rejection on dispatch e5a1849a: a correct standalone shellResult
+// stdout "20413" was handed to the LLM judge, which re-derived the arithmetic wrongly
+// and rejected it):
+//   - a provably-wrong DISTINCTIVE answer => reject (unchanged);
+//   - the recomputed truth DELIVERED STANDALONE (exact trimmed shellResult stdout, or a
+//     digest line that IS the bare value) AND the goal names no artifact write
+//     => deterministic GREEN (verified-compute-answer);
+//   - truth merely PRESENT but buried in prose/blobs, or the goal asks to
+//     write/save/store/record/append/titled => null (LLM judge still owns delivery).
+// Every other abstention path still fails OPEN (returns null => the LLM judge runs).
+// These tests pin that contract, especially the Residual-4 arithmetic block, so a
+// drafter edit that over-greens (buried truth), over-rejects (false-red) or
 // under-rejects (re-opens the hollow-green hole) is caught by construction.
 //
 // IMPORT NOTE: src/index.ts guards its HTTP boot behind import.meta.main, so a dynamic
@@ -85,5 +94,49 @@ describe("verifyDeterministicCompute — regression on existing forms", () => {
     // fib(40) = 102334155. Assert a wrong long value.
     const v = verifyDeterministicCompute("what is the 40th fibonacci number", "It is 102334100.");
     expect(v?.reached).toBe(false);
+  });
+});
+
+describe("verifyDeterministicCompute — standalone-delivery deterministic GREEN (e5a1849a closure)", () => {
+  const ARITH_GOAL = "Compute 137 * 149. Return only the decimal integer, with no Markdown, explanation, or other text.";
+
+  it("GREENS a correct answer delivered as the entire trimmed shellResult stdout", () => {
+    const dig = '- shellResult: {"shape":"shellResult","stdout":"20413\\n","stderr":"","exit_code":0}';
+    const v = verifyDeterministicCompute(ARITH_GOAL, dig);
+    expect(v?.reached).toBe(true);
+    expect((v as { deterministic?: boolean } | null)?.deterministic).toBe(true);
+    expect(v?.reason).toMatch(/verified-compute-answer/);
+  });
+
+  it("GREENS a bare digest line that IS the value", () => {
+    const v = verifyDeterministicCompute("what is 123 times 456", "56088");
+    expect(v?.reached).toBe(true);
+  });
+
+  it("stays NULL when the truth is buried in a web-search blob (attempt-2 shape must NOT green)", () => {
+    const dig = '- webSearchResult: {"shape":"webSearchResult","query":"137 * 149","results":[{"title":"149 multiplied by 137 equals 20413","url":"https://example.net/","snippet":"149 multiplied by 137 equals 20413"}]}';
+    expect(verifyDeterministicCompute(ARITH_GOAL, dig)).toBeNull();
+  });
+
+  it("stays NULL when the truth is present only inside prose", () => {
+    expect(verifyDeterministicCompute("compute 37% of 48200", "That comes to 17834 exactly.")).toBeNull();
+  });
+
+  it("stays NULL on standalone truth when the goal names an artifact write", () => {
+    const v = verifyDeterministicCompute('compute 123 times 456 and save it in a memory note titled "products"', "56088");
+    expect(v).toBeNull();
+  });
+
+  it("GREENS a standalone fibonacci stdout", () => {
+    const dig = '- shellResult: {"shape":"shellResult","stdout":"102334155\\n","stderr":"","exit_code":0}';
+    const v = verifyDeterministicCompute("what is the 40th fibonacci number", dig);
+    expect(v?.reached).toBe(true);
+  });
+
+  it("still REJECTS a wrong standalone stdout (green path must not weaken rejection)", () => {
+    const dig = '- shellResult: {"shape":"shellResult","stdout":"20412\\n","stderr":"","exit_code":0}';
+    const v = verifyDeterministicCompute(ARITH_GOAL, dig);
+    expect(v?.reached).toBe(false);
+    expect(v?.reason).toMatch(/wrong-compute-answer/);
   });
 });
