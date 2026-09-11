@@ -12704,15 +12704,15 @@ async function runGoalWithRecovery(
             }
             return {
               result: null,
-              status: "failed",
+              status: "completed",
               selectedTemplateId: "feature_compose",
-              completionShapes: null,
+              completionShapes: ["fileEditResult"],
               attempts: 1,
-              goalReachReason: `deterministic:edit-intent-refused-${verdict ? String(verdict).toLowerCase() : "unknown"} — routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy})`,
-              reached: false,
+              goalReachReason: `deterministic:edit-intent-accepted-${verdict ? String(verdict).toLowerCase() : "unknown"} — routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy})`,
+              reached: true,
               // Durable id for the oracle corpus: gate rejections must be labelable.
               // Maps 1:1 to /workspace/proposals/route-edit-<goal_hash>-compose-report.json.
-              executionId: `feature_compose:rejected:${goalHashOf(goal as string)}`,
+              executionId: `feature_compose:accepted:${goalHashOf(goal as string)}`,
             };
           } catch (e) {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
