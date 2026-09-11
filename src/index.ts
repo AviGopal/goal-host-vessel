@@ -10728,7 +10728,15 @@ If one of those sibling shapes is the action that would create what the goal ask
               //
               // Ordering (the placeholder write racing its own input) is the separate
               // half of that gap and is NOT fixed here; this makes the repair reachable.
-              const goalNoteTitle = parseGoalNoteTitle(goal);
+              // A named artifact the reach oracle ALREADY VERIFIED to carry the answer is a
+              // deliverable, not a placeholder: redirecting the bridge rendering into it
+              // erases the very body the verdict certified (measured on dispatch bee01ffa:
+              // note product-419-733 body 307127 overwritten with the markdown answerBody
+              // 3s after the green). Address the goal-named note ONLY when the verdict did
+              // not deterministically verify it; otherwise fall back to the distinct
+              // slugged finding note, exactly as when no title is parsed.
+              const namedArtifactVerified = verdict?.deterministic === true && /verified-compute-artifact/.test(String(verdict?.reason ?? ""));
+              const goalNoteTitle = namedArtifactVerified ? null : parseGoalNoteTitle(goal);
               // ORDER BY HOW THE GOAL ADDRESSES ITS ARTIFACT, not by Set iteration order.
               // When a walk re-frames it can carry BOTH a title-addressed store shape
               // (memoryNote_write) and a path-addressed vault shape (obsidian:write_note)
