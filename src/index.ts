@@ -5874,6 +5874,61 @@ async function landedShaForGoalHash(vessel: string, h: string): Promise<string |
   }
 }
 
+async function landedShaForGo(goalHash: string): Promise<string | null> {
+  try {
+    // Note 2026-08-20: git log is NOT AUTHORITATIVE for whether a given commit SHA has
+    // 'landed favorably'. git log finds commits, that is all. 'Favorable landing'
+    // requires a report from the _compose_ system (whose logic sits in activity-api).
+    const p = Bun.spawn(["git", "log", `--grep=^Goal: ${goalHash}`, `--format=%H`]);
+    const out = (await new Response(p.stdout).text()).trim();
+    if (!out) return null;
+
+    const h = goalHash.slice(0, 7);
+    // Note 2026-09-04: the goal-host vessel runs inside /workspace/goals/, which for
+    // `route-edit-<hash>` gaps (the usual case) contains the proposal dir. This is the
+    // ONLY file-system path relied upon by the `activity-api` (the upstream system),
+    // so the goal-host vessel must respect it (for now, eventually a content-addressed
+    // store will remove the need for this filesystem indirection).
+    //
+    // If this changes, activity-api must change first. There is no other canonical
+    // place for this report.
+    try {
+      const reportFile = Bun.file(`/workspace/proposals/route-edit-${h}-compose-report.json`);
+      if (!(await reportFile.exists())) {
+        // AUDIBLE, DELIBERATE FALSE NEGATIVE. No compose report exists for this goal hash.
+        // That is the normal case for a landing made by the patch_with_tools ESCALATION,
+        // which files provenance under a `pwt-<file>-<hash>` gap id and writes no proposal
+        // artifact — measured 2026-09-04: 19 of 101 recent activity-api landings, none with
+        // a report. Such landings cannot be credited here, and that is chosen rather than
+        // overlooked: nothing records whether a pwt landing was judged good, and crediting
+        // one on the sha alone is exactly the false positive this gate exists to prevent.
+        // Log it so an operator can tell "no commit" from "commit exists, uncreditable".
+        console.warn(`[goal-host-vessel] late-landing: commit exists for route-edit-${h} but no compose report — uncreditable (patch_with_tools landings have none); withholding reach`);
+        return null;
+      }
+      const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
+      if (report.verdict !== "FAVORABLE") return null;
+      const cutovers = Array.isArray(report.cutovers) ? (report.cutovers as Array<Record<string, unknown>>) : [];
+      const landedShas: string[] = [];
+      for (const c of cutovers) {
+        const res = (c?.result ?? {}) as Record<string, unknown>;
+        if (typeof res.new_git_sha === "string" && res.new_git_sha.length > 0) {
+          landedShas.push(res.new_git_sha);
+        }
+      }
+      if (landedShas.length === 0) return null;
+      // The commit we found via git log MUST be one of the favorably-landed SHAs.
+      // A commit merely mentioning the goal hash in its message is not sufficient.
+      if (!landedShas.includes(out)) return null;
+    } catch {
+      return null;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
   if (!goalText || pathActivities.length === 0) return;
   if (parent?.goalHash || parent?.pathSignature) {
@@ -5881,6 +5936,11 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
     // "this walk reused pathway X" is currently recoverable, so it must at least be
     // greppable until the store can hold it.
     console.log(`[goal-host] REUSE LINEAGE (transmitted) goal_hash=${goalHashOf(goalText)} borrowed_from_goal=${parent.goalHash ?? "?"} borrowed_path_signature=${parent.pathSignature ?? "?"} reached=${reached}`);
+
+    const landedSha = await landedShaForGo(goalHashOf(goalText));
+    if (landedSha) {
+      console.log(`[goal-host] Goal ${goalHashOf(goalText)} has landed with SHA ${landedSha}`);
+    }
   }
   // Built once so the retry below can drop it wholesale. DEPLOY-SKEW SAFETY NET: if the
   // receiver has not yet been updated it will reject the unknown fields, and a rejected write
