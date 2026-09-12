@@ -1529,12 +1529,20 @@ async function verifyNamedArtifactCarries(
 ): Promise<{ ok: boolean; title: string; storedExcerpt: string } | null> {
   if (typeof truth !== "number" || !Number.isFinite(truth)) return null;
   const title = (goal.match(/\btitled\s+["“']([^"”']{2,80})["”']/i)?.[1] ?? "").trim();
-  if (!title) return null;
+  let titleResolved = title;
+  if (!titleResolved) {
+    const ti = goal.toLowerCase().indexOf("titled ");
+    if (ti >= 0) {
+      const tok = goal.slice(ti + 7).trim().split(" ")[0] ?? "";
+      titleResolved = tok.endsWith(".") ? tok.slice(0, -1) : tok;
+    }
+  }
+  if (!titleResolved) return null;
   try {
     const res = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ pointer: { type: "memoryNote", title_prefix: title } }),
+      body: JSON.stringify({ pointer: { type: "memoryNote", title_prefix: titleResolved } }),
       signal: AbortSignal.timeout(6000),
     });
     if (!res.ok) return null;
