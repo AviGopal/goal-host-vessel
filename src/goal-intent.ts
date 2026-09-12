@@ -64,7 +64,7 @@ export function goalDemandsLandedEdit(goal: string | undefined): boolean {
     /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal) || isPathlessCodeChangeGoal(goal);
   if (!asksForCodeChange) return false;
   const mutationVerb =
-    /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow)\b/i.test(goal);
+    /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow|close)\b/i.test(goal);
   if (mutationVerb) return true;
   // A goal that CREATES a new source file also demands landing evidence. The verb list above
   // was mutation-only, so "Create/Author the file repos/…/x.ts" did NOT demand a landed edit
