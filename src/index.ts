@@ -3815,6 +3815,11 @@ function persistReachedCommand(hash: string, e: { command: string; field: string
 // applies it in order. Last-N-wins then does the right thing for free — a later re-bank after a
 // genuine reach overrides an earlier tombstone, and a later tombstone overrides an earlier bank.
 function evictReachedCommand(hash: string, reason: string): void {
+  const envOrUnknown = String(reason ?? "").toLowerCase();
+  if (envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown")) {
+    console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (environment or unknown verdict, not a command defect: ${reason})`);
+    return;
+  }
   const had = reachedCommandCache.delete(hash);
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, tombstone: true, reason }) + "\n")
     .catch(() => { /* fail-open: the in-process delete already happened */ });
