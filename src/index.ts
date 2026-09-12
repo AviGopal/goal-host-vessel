@@ -25,6 +25,28 @@ import { Config } from './config';
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
 
+async function landedShaForGoal(goal: string): Promise<string | null> {
+  try {
+    const response = await fetch(`${Config.discoveryEndpoint}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pointer: { type: 'goal_path_sha', goal },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      console.warn(`Failed to resolve SHA for goal '${goal.slice(0, 50)}...': ${response.status} ${response.statusText}`);
+      return null;
+    }
+    const json = await response.json();
+    return json?.content?.sha ?? null;
+  } catch (e) {
+    console.error(`Error resolving SHA for goal '${goal.slice(0, 50)}...': ${e}`);
+    return null;
+  }
+}
+
 // ── fleetActivityFeed ────────────────────────────────────────────────────────
 
 interface FeedMember {
@@ -5935,6 +5957,7 @@ async function landedShaForGo(goalHash: string): Promise<string | null> {
 }
 
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
+  const landedSha = await landedShaForGoal(goalText);
   if (!goalText || pathActivities.length === 0) return;
   if (parent?.goalHash || parent?.pathSignature) {
     // Emitted, not transmitted — see the note above. This is the one place the fact
