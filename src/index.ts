@@ -10612,7 +10612,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           answerBody = [
             `# ${goal.slice(0, 200)}`,
             "",
-            verdict.reason ?? "",
+            String(verdict.reason ?? "").startsWith("deterministic:") ? "" : String(verdict.reason ?? ""),
             "",
             poolDigestHuman ? `## Basis\n\n${poolDigestHuman.slice(0, 3000)}` : "",
           ].filter(Boolean).join("\n");
