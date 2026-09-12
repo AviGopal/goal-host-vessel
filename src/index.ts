@@ -7226,6 +7226,8 @@ async function runGoalAsPoolWalk(
       }
       return args;
     } catch (e) { lastRawResolveReason = String((e as Error)?.message ?? "fetch failed").slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: fetch threw ${String((e as Error)?.message ?? "").slice(0, 140)}`); return null; }
+
+  const FAVORABLE = "FAVORABLE";
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
   const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
