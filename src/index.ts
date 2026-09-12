@@ -12864,7 +12864,7 @@ async function runGoalWithRecovery(
               completionShapes: ["fileEditResult"],
               attempts: 1,
               goalReachReason: `deterministic:edit-intent-accepted-${verdict ? String(verdict).toLowerCase() : "unknown"} — routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy})`,
-              reached: true,
+              reached: String(verdict).toUpperCase() === "FAVORABLE",
               // Durable id for the oracle corpus: gate rejections must be labelable.
               // Maps 1:1 to /workspace/proposals/route-edit-<goal_hash>-compose-report.json.
               executionId: `feature_compose:accepted:${goalHashOf(goal as string)}`,
