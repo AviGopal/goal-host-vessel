@@ -12047,8 +12047,14 @@ async function runGoalWithRecovery(
               // decision-transparency surface; six of eight grading sites discarded
               // the return, so a dispatch that WAS graded reported [] and obsidian
               // rendered "This run taught the system nothing" off exactly that.
-              if (!earlyLandedSha) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); }
-              else if (editHollow) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol")); }
+              if (!earlyLandedSha) { 
+          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); 
+          recordDeterministicLabel(goal ?? "", undefined, "feature_compose", { reached: false, reason: "deterministic:early-edit-intent-not-landed", deterministic: true });
+        }
+              else if (editHollow) { 
+          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol")); 
+          recordDeterministicLabel(goal ?? "", earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined, "feature_compose", { reached: false, reason: `deterministic:early-edit-intent-hollow ${earlyLandedSha ? ` ${earlyLandedSha}` : ""}`, deterministic: true });
+        }
               recordDeterministicLabel(goal ?? "", earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined, "feature_compose", { reached: earlyReached, reason: `deterministic:early-edit-intent-${earlyReached ? "landed" : "not-landed"}${earlyLandedSha ? ` ${earlyLandedSha}` : ""}`, deterministic: true });
               return {
                 result: null,
