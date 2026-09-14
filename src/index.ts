@@ -15807,20 +15807,20 @@ async function handleResolve(req: Request): Promise<Response> {
 
   if (type === "activeDispatches") {
     const statusFilter = body.status ?? pointer.status;
-    const limit = Math.min(100, Math.max(1, Number(body.limit ?? pointer.limit ?? 50)));
+    const limit = Math.min(50, Math.max(1, Number(body.limit ?? pointer.limit ?? 50)));
     const offset = Math.max(0, Number(body.offset ?? pointer.offset ?? 0));
     
-    let executions = [...executionStore.values()];
+    let allExecutions = [...executionStore.values()];
     if (typeof statusFilter === 'string') {
-      executions = executions.filter(e => e.status === statusFilter);
+      allExecutions = allExecutions.filter(e => e.status === statusFilter);
     }
-    executions.sort((a, b) => b.startedAt - a.startedAt);
+    allExecutions.sort((a, b) => b.startedAt - a.startedAt);
     
-    const total = executions.length;
+    const total = allExecutions.length;
     const hasMore = offset + limit < total;
     const nextOffset = hasMore ? offset + limit : null;
     
-    const dispatches = executions.slice(offset, offset + limit).map((r) => ({
+    const dispatches = allExecutions.slice(offset, offset + limit).map((r) => ({
       dispatchId: r.dispatchId,
       goal: typeof r.goal === "string" ? r.goal.slice(0, 200) : null,
       status: r.status,
