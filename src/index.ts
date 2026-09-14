@@ -16410,10 +16410,18 @@ function persistDispatchStore(): void {
 }
 setInterval(persistDispatchStore, 5000);
 function pruneStore(): void {
-  if (executionStore.size > 100) {
-    const oldest = [...executionStore.entries()].sort((a, b) => a[1].startedAt - b[1].startedAt);
-    for (const [id] of oldest.slice(0, 20)) executionStore.delete(id);
+  const byNewest = [...executionStore.entries()].sort((a, b) => b[1].startedAt - a[1].startedAt);
+  for (const [, r] of byNewest.slice(100)) {
+    const d = r as unknown as Record<string, unknown>;
+    if (d["compacted"] === true) continue;
+    d["stateSignature"] = undefined;
+    d["steps"] = [];
+    d["walkLog"] = [];
+    d["poolProvenance"] = [];
+    d["poolEvents"] = [];
+    d["compacted"] = true;
   }
+  for (const [id] of byNewest.slice(2000)) executionStore.delete(id);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
