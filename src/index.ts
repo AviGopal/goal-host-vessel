@@ -15806,23 +15806,46 @@ async function handleResolve(req: Request): Promise<Response> {
   }
 
   if (type === "activeDispatches") {
-    const dispatches = [...executionStore.values()]
-      .sort((a, b) => b.startedAt - a.startedAt)
-      .slice(0, 50)
-      .map((r) => ({
-        dispatchId: r.dispatchId,
-        goal: typeof r.goal === "string" ? r.goal.slice(0, 200) : null,
-        status: r.status,
-        reached: r.reached ?? null,
-        operator: r.operator ?? null,
-        trigger: r.trigger ?? null,
-        startedAt: r.startedAt,
-        selectedTemplateId: r.selectedTemplateId ?? null,
-        executionId: r.executionId ?? null,
-        learning: (r as { learning?: LearningConsequences }).learning ?? null,
-        answerBody: (r as { answerBody?: string }).answerBody ?? null,
-      }));
-    return Response.json({ resolved: true, shape: "activeDispatches", body: { dispatches } });
+    const statusFilter = body.status ?? pointer.status;
+    const limit = Math.min(100, Math.max(1, Number(body.limit ?? pointer.limit ?? 50)));
+    const offset = Math.max(0, Number(body.offset ?? pointer.offset ?? 0));
+    
+    let executions = [...executionStore.values()];
+    if (typeof statusFilter === 'string') {
+      executions = executions.filter(e => e.status === statusFilter);
+    }
+    executions.sort((a, b) => b.startedAt - a.startedAt);
+    
+    const total = executions.length;
+    const hasMore = offset + limit < total;
+    const nextOffset = hasMore ? offset + limit : null;
+    
+    const dispatches = executions.slice(offset, offset + limit).map((r) => ({
+      dispatchId: r.dispatchId,
+      goal: typeof r.goal === "string" ? r.goal.slice(0, 200) : null,
+      status: r.status,
+      reached: r.reached ?? null,
+      operator: r.operator ?? null,
+      trigger: r.trigger ?? null,
+      startedAt: r.startedAt,
+      selectedTemplateId: r.selectedTemplateId ?? null,
+      executionId: r.executionId ?? null,
+      learning: (r as { learning?: LearningConsequences }).learning ?? null,
+      answerBody: (r as { answerBody?: string }).answerBody ?? null,
+    }));
+    
+    return Response.json({ 
+      resolved: true, 
+      shape: "activeDispatches", 
+      body: { 
+        dispatches, 
+        total, 
+        hasMore,
+        nextOffset,
+        limit: Number(limit),
+        offset: Number(offset)
+      } 
+    });
   }
   if (type === "goalWalkState") {
     const wid = (typeof body.dispatchId === "string" ? body.dispatchId : undefined)
