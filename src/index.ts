@@ -15807,8 +15807,13 @@ async function handleResolve(req: Request): Promise<Response> {
 
   if (type === "activeDispatches") {
     const statusFilter = body.status ?? pointer.status;
-    const limit = Math.min(50, Math.max(1, Number(body.limit ?? pointer.limit ?? 50)));
-    const offset = Math.max(0, Number(body.offset ?? pointer.offset ?? 0));
+    const rawLimit = Number(body.limit ?? pointer.limit ?? 50);
+    const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, Math.trunc(rawLimit))) : null;
+    const rawOffset = Number(body.offset ?? pointer.offset ?? 0);
+    const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.trunc(rawOffset)) : null;
+    if (limit === null || offset === null) {
+      return Response.json({ error: "Invalid pagination parameters: limit and offset must be finite numbers" }, { status: 400 });
+    }
     
     let allExecutions = [...executionStore.values()];
     if (typeof statusFilter === 'string') {
@@ -15842,8 +15847,8 @@ async function handleResolve(req: Request): Promise<Response> {
         total, 
         hasMore,
         nextOffset,
-        limit: Number(limit),
-        offset: Number(offset)
+        limit,
+        offset
       } 
     });
   }
