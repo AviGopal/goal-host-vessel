@@ -14921,6 +14921,24 @@ async function handleRunGoal(req: Request): Promise<Response> {
     }
   }
   const targetTemplateId = typeof body.targetTemplateId === "string" ? body.targetTemplateId : undefined;
+  // "START WITH THIS" AND "IT MUST BE THIS" ARE DIFFERENT REQUESTS, and until now a caller
+  // could only make the second one. runGoalWithRecovery already distinguishes them —
+  // `firstTarget` seeds attempt 1, `callerPinned` forbids re-selection — but every call site
+  // derived BOTH from the same supplied template id, so naming a starting point silently
+  // also forbade recovery. A caller who merely knew where to begin got the strictest
+  // possible contract by accident.
+  //
+  // The cost is not theoretical: of the goal-reach verdicts observed on this surface, a
+  // clear majority are HOLLOW, and not one of them was eligible for a second attempt. The
+  // whole in-flight recovery design — beta-penalise, exclude, re-recommend, retry until
+  // reached or exhausted — is unreachable for the traffic that actually arrives, because
+  // that traffic supplies a template.
+  //
+  // DEFAULT IS UNCHANGED (a supplied template still hard-pins) so no existing caller's
+  // contract moves. `reroute_on_miss: true` opts into the behaviour the recovery loop was
+  // built for: try the named template first, and if the goal is not reached, let the loop
+  // pick a genuinely different producer instead of reporting the miss as final.
+  const rerouteOnMiss = body.reroute_on_miss === true;
   const variables = typeof body.variables === "object" && body.variables !== null
     ? (body.variables as Record<string, unknown>)
     : {};
@@ -15411,7 +15429,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // (analysis / concept) never reached the vessel-resolve satisfier and fell into
       // slow from-scratch drafting. We pass only the CALLER's pin as firstTarget so
       // the walk runs; the walk's satisfier routes outward goals to their vessel.
-      const callerPinnedTarget = typeof targetTemplateId === "string" && targetTemplateId.length > 0;
+      // A supplied template still hard-pins by default; `reroute_on_miss` downgrades it to
+      // a starting point so the recovery loop may re-select after a miss. See the note at
+      // the `rerouteOnMiss` declaration for why the two were previously inseparable.
+      const callerPinnedTarget =
+        typeof targetTemplateId === "string" && targetTemplateId.length > 0 && !rerouteOnMiss;
       const authorFallback = async (): Promise<string | undefined> => {
         await autoDraft();
         if (authoredTemplateId) {
@@ -15967,6 +15989,9 @@ async function handleResolve(req: Request): Promise<Response> {
   const targetTemplateId = typeof body.target_template_id === "string" ? body.target_template_id
     : typeof pointer.target_template_id === "string" ? pointer.target_template_id
     : undefined;
+  // Same opt-in as /run-goal — see the note there. Default unchanged: a supplied template
+  // hard-pins, so no existing caller's contract moves.
+  const rerouteOnMiss = body.reroute_on_miss === true || pointer.reroute_on_miss === true;
   const variablesSrc = (typeof body.variables === "object" && body.variables !== null) ? body.variables
     : (typeof pointer.variables === "object" && pointer.variables !== null) ? pointer.variables
     : {};
@@ -15986,7 +16011,8 @@ async function handleResolve(req: Request): Promise<Response> {
     // Sync /resolve uses the SHARED runGoalWithRecovery (same loop as /run-goal, no
     // duplication). Bounded to maxAttempts 2 to stay under the MCP ~290s timeout;
     // the async /run-goal path recovers more deeply.
-    const callerPinnedTarget = typeof targetTemplateId === "string" && targetTemplateId.length > 0;
+    const callerPinnedTarget =
+      typeof targetTemplateId === "string" && targetTemplateId.length > 0 && !rerouteOnMiss;
     const seek = await runGoalWithRecovery(goal, {
       firstTarget: targetTemplateId,
       callerPinned: callerPinnedTarget,
