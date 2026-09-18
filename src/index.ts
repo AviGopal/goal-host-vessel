@@ -3838,7 +3838,13 @@ function persistReachedCommand(hash: string, e: { command: string; field: string
 // genuine reach overrides an earlier tombstone, and a later tombstone overrides an earlier bank.
 function evictReachedCommand(hash: string, reason: string): void {
   const envOrUnknown = String(reason ?? "").toLowerCase();
-  if (envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown")) {
+  // Unconfirmation is not disconfirmation (2026-09-18): a grader whose READBACK missed a
+  // write that in fact landed must not destroy a proven command. Deterministic mismatch
+  // markers keep eviction precedence so never-worked entries stay removable (the ratchet
+  // note above still holds).
+  const _disconfirmed = envOrUnknown.includes("deterministic:") || envOrUnknown.includes("recomputed") || envOrUnknown.includes("does not match");
+  const _unconfirmed = envOrUnknown.includes("not recorded") || envOrUnknown.includes("not successfully written") || envOrUnknown.includes("was not written") || envOrUnknown.includes("not written to") || envOrUnknown.includes("could not confirm") || envOrUnknown.includes("could not verify") || envOrUnknown.includes("failed to verify") || envOrUnknown.includes("not found in");
+  if ((!_disconfirmed && _unconfirmed) || envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown")) {
     console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (environment or unknown verdict, not a command defect: ${reason})`);
     return;
   }
