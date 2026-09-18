@@ -9295,7 +9295,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         pathwayReusePicks++;
         tap(`[goal-host-vessel] walk(${opts.surface}): REUSE-BEFORE-DERIVE (satisfier) — ${JSON.stringify(_satProven)} ${_satProven.length === 1 ? "is a step" : "are steps"} of a composition already proven to reach this goal family; satisfying ${String(_satProven[0])} ahead of ${JSON.stringify(_satEligible.filter((s) => !_satProven.includes(s)))} (pathway_steps=${pathwaySet.size}, reuse_picks=${pathwayReusePicks})`);
       }
-      const satisfiableNow = preferComposition ? undefined : (_satProven[0] ?? _satEligible[0]);
+      // Exact-hit replay preference (2026-09-18): a reachedCommandCache entry for THIS
+      // goal hash is a verified whole command; prefer its shape so the walk reaches the
+      // _rcHit consult in vesselResolveShape and replays instead of re-deriving. This is
+      // deliberately NOT the posterior reuse-ordering disabled above (0/4 vs 3/4, p~.029):
+      // no exact hit -> _rcPrefer undefined -> behaviour byte-identical to before.
+      const _rcPrefer = reachedCommandCache.get(goalHashOf(goal))?.shape;
+      const satisfiableNow = preferComposition ? undefined : ((_rcPrefer && _satEligible.includes(_rcPrefer) ? _rcPrefer : undefined) ?? _satProven[0] ?? _satEligible[0]);
       if (satisfiableNow) {
         const resolved = await vesselResolveShape(satisfiableNow);
         // INSTRUMENTATION, DELIBERATELY NOT A FIX.
