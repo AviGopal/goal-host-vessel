@@ -3807,7 +3807,7 @@ function recordDeterministicLabel(goal: string, executionId: string | undefined,
 // DISCOVERY_ENDPOINT / API_KEY and so stay here).
 const inferredTargetShapeCache = new Map<string, string[]>();
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
-const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }>();
+const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; strikes?: number }>();
 // PERSISTENCE (2026-07-25): reachedCommandCache is the "known command" library — a verified command
 // that a NEW similar goal reuses (Tier-1 exact replay + Tier-2/multi-slot rebind). In-process it
 // resets on every restart/deploy, so the learned reuse never compounds across restarts. Persist it
@@ -3843,10 +3843,21 @@ function evictReachedCommand(hash: string, reason: string): void {
   // markers keep eviction precedence so never-worked entries stay removable (the ratchet
   // note above still holds).
   const _disconfirmed = envOrUnknown.includes("deterministic:") || envOrUnknown.includes("recomputed") || envOrUnknown.includes("does not match");
-  const _unconfirmed = envOrUnknown.includes("not recorded") || envOrUnknown.includes("not successfully written") || envOrUnknown.includes("was not written") || envOrUnknown.includes("not written to") || envOrUnknown.includes("could not confirm") || envOrUnknown.includes("could not verify") || envOrUnknown.includes("failed to verify") || envOrUnknown.includes("not found in");
-  if ((!_disconfirmed && _unconfirmed) || envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown")) {
+  const _infra = envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown");
+  if (!_disconfirmed && _infra) {
     console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (environment or unknown verdict, not a command defect: ${reason})`);
     return;
+  }
+  if (!_disconfirmed) {
+    const entry = reachedCommandCache.get(hash);
+    if (entry) {
+      const strikes = (entry.strikes ?? 0) + 1;
+      if (strikes < 2) {
+        entry.strikes = strikes;
+        console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (strike ${strikes}/2, free-prose verdict is not deterministic disconfirmation: ${reason})`);
+        return;
+      }
+    }
   }
   const had = reachedCommandCache.delete(hash);
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, tombstone: true, reason }) + "\n")
@@ -11056,7 +11067,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
         if (opts.learningMode !== "observe" && producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
-          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal });
+          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal, strikes: 0 });
           persistReachedCommand(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal }); // durable known-command library
           break;
         }
