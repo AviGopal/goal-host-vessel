@@ -3508,6 +3508,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     const mm = goal.match(/(\d[\d,_.\s]*)\s*(?:\*|×|times|multiplied\s+by)\s+(\d[\d,_.\s]*)/i)
             || goal.match(/\bproduct\s+of\s+(\d[\d,_.\s]*)\s+and\s+(\d[\d,_.\s]*)/i);
     if (pm) { const p = num(pm[1]), n = num(pm[2]); if (Number.isFinite(p) && Number.isFinite(n)) truth = (p * n) / 100; }
+    else if (mm) { const a = num(mm[1]), b = num(mm[2]); if (Number.isFinite(a) && Number.isFinite(b)) truth = a * b; }
+    // Restored (2026-09-18): the compose that added the squared/reverse branches replaced
+    // this multiplication branch instead of inserting after it, which would have moved the
+    // one fully-conforming class (mul) back outside the deterministic artifact oracle.
     else { const sq = goal.match(/(\d[\d,_.\s]*)\s+squared\b/i); if (sq) { const a = num(sq[1]); if (Number.isFinite(a)) truth = a * a; } } let tokenTruth: string | null = null; const rv = goal.match(/reverse\s+the\s+(?:string|text|word)\s+["']?([A-Za-z0-9_-]{4,})/i); if (rv) tokenTruth = rv[1]!.split("").reverse().join("");
     if (((truth !== null && Number.isInteger(truth) && Math.abs(truth) >= 1000) || tokenTruth !== null) && /\btitled\b/i.test(goal) && !/repos\/[\w.-]+/.test(goal)) {
       const art = await verifyNamedArtifactCarries(goal, (tokenTruth ?? truth)!);
