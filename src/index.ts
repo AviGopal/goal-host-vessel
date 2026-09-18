@@ -1549,7 +1549,7 @@ async function verifyNamedArtifactCarries(
   goal: string,
   truth: number | string,
 ): Promise<{ ok: boolean; title: string; storedExcerpt: string } | null> {
-  if (typeof truth !== "number" || !Number.isFinite(truth)) return null;
+  if (typeof truth === "number" ? !Number.isFinite(truth) : truth.trim().length < 4) return null;
   const title = (goal.match(/\btitled\s+["“']([^"”']{2,80})["”']/i)?.[1] ?? "").trim();
   let titleResolved = title;
   if (!titleResolved) {
@@ -3508,9 +3508,9 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     const mm = goal.match(/(\d[\d,_.\s]*)\s*(?:\*|×|times|multiplied\s+by)\s+(\d[\d,_.\s]*)/i)
             || goal.match(/\bproduct\s+of\s+(\d[\d,_.\s]*)\s+and\s+(\d[\d,_.\s]*)/i);
     if (pm) { const p = num(pm[1]), n = num(pm[2]); if (Number.isFinite(p) && Number.isFinite(n)) truth = (p * n) / 100; }
-    else if (mm) { const a = num(mm[1]), b = num(mm[2]); if (Number.isFinite(a) && Number.isFinite(b)) truth = a * b; }
-    if (truth !== null && Number.isInteger(truth) && Math.abs(truth) >= 1000 && /\btitled\b/i.test(goal) && !/repos\/[\w.-]+/.test(goal)) {
-      const art = await verifyNamedArtifactCarries(goal, truth);
+    else { const sq = goal.match(/(\d[\d,_.\s]*)\s+squared\b/i); if (sq) { const a = num(sq[1]); if (Number.isFinite(a)) truth = a * a; } } let tokenTruth: string | null = null; const rv = goal.match(/reverse\s+the\s+(?:string|text|word)\s+["']?([A-Za-z0-9_-]{4,})/i); if (rv) tokenTruth = rv[1]!.split("").reverse().join("");
+    if (((truth !== null && Number.isInteger(truth) && Math.abs(truth) >= 1000) || tokenTruth !== null) && /\btitled\b/i.test(goal) && !/repos\/[\w.-]+/.test(goal)) {
+      const art = await verifyNamedArtifactCarries(goal, (tokenTruth ?? truth)!);
       if (art) {
         if (art.ok) return { reached: true, reason: `deterministic:verified-compute-artifact — recomputed the arithmetic in-process (${truth}) and resolved the named note "${art.title}": its stored body carries exactly this value`, deterministic: true, completion_shapes: ["memoryNote"] };
         return { reached: false, reason: `deterministic:wrong-compute-artifact — recomputed the arithmetic in-process (${truth}) but the named note "${art.title}" does not carry it (stored: ${art.storedExcerpt.slice(0, 80)})`, completion_shapes: [] };
