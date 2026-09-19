@@ -1492,7 +1492,7 @@ function verifyDeterministicCompute(goal: string, dig: string): GoalReachVerdict
     const mm = goal.match(/(\d[\d,_.]*)\s*(?:\*|×|times|multiplied\s+by)\s+(\d[\d,_.]*)/i)
             || goal.match(/\bproduct\s+of\s+(\d[\d,_.]*)\s+and\s+(\d[\d,_.]*)/i);
     if (pm) { const p = num(pm[1]), n = num(pm[2]); if (Number.isFinite(p) && Number.isFinite(n)) { val = (p * n) / 100; lab = `${pm[1]}% of ${pm[2]}`; } }
-    else if (mm) { const a = num(mm[1]), b = num(mm[2]); if (Number.isFinite(a) && Number.isFinite(b)) { val = a * b; lab = `${mm[1]} × ${mm[2]}`; } }
+    else if (mm) { const a = num(mm[1]), b = num(mm[2]); if (Number.isFinite(a) && Number.isFinite(b)) { val = Math.round(a * b); lab = `${mm[1]} × ${mm[2]}`; } }
     if (val !== null && Number.isInteger(val) && Math.abs(val) >= 1000) {
       const exp = String(val); expected = new Set([exp]); claimed = dcNumericCandidates(dig, exp.length - 1); label = lab;
     }
