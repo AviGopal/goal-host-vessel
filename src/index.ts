@@ -11800,6 +11800,28 @@ async function runGoalWithRecovery(
           );
         }
       }
+      // STORE-INTENT OVERRIDE (2026-09-19). "compute X and STORE it in a memoryNote
+      // titled T" infers the READ shape memoryNote, and the walk's vessel-resolve
+      // satisfier then RESOLVES existing notes — a read graded as the requested
+      // write, so the store never happens (measured on the trend batteries: three
+      // of six runs each in batteries 2 and 3; dispatches 292ed376, ec261aef,
+      // 54ffc663). When the goal carries an explicit store-into-note signal and
+      // inference seeded the read shape, require the WRITE shape instead — a read
+      // cannot satisfy it, so the walk must compose the producer that actually
+      // writes. Deterministic, narrow, fail-open: fires only when memoryNote was
+      // seeded without memoryNote_write and the write shape is in the live
+      // vocabulary; every other goal is untouched.
+      if (
+        knownShapes && knownShapes.includes("memoryNote_write") &&
+        Array.isArray(seededOutputShapes) && seededOutputShapes.includes("memoryNote") &&
+        !seededOutputShapes.includes("memoryNote_write") &&
+        /\b(store|save|write|record|put)\b[\s\S]{0,80}?\bmemory\s?note\b/i.test(goal)
+      ) {
+        seededOutputShapes = seededOutputShapes.map((sh) => (sh === "memoryNote" ? "memoryNote_write" : sh));
+        goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
+        tap(`[goal-host-vessel] ${opts.surface}: store-intent override replaced memoryNote with memoryNote_write ` + JSON.stringify({ goal_hash: goalHashOf(goal), shapes: seededOutputShapes }));
+      }
+
       // PRODUCER-LOOKUP OVERRIDE (unconditional for this pattern): "which vessel serves the
       // shape X" makes inference seed X ITSELF as the target (the token is in knownShapes),
       // so the walk tries to PRODUCE X instead of answering who produces it. The deterministic
