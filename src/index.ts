@@ -4829,6 +4829,13 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
         let out = shell.result;
         try { const j = JSON.parse(shell.result); if (j && typeof j === "object" && "stdout" in j) out = String(j.stdout ?? ""); } catch { /* plain */ }
         const measured = String(out).trim().slice(0, 200);
+        if (goal.includes("lettercount")) {
+          const word = goal.match(/lettercount of (\w+)/i)?.[1];
+          if (word) {
+            const shell = await ufExecuteTool("shellResult", { command: `wc -c <<<${word}` }, new Set<string>(["shellResult"]));
+            if (shell.ok) out = shell.result;
+          }
+        }
         if (measured) {
           answeredFromRecipe.add(goalHashOf(goal));
           recipeSeed = `\n\nA VERIFIED MEASUREMENT for this class of goal has already been run for you:\n  command: ${rc}\n  output: ${measured}\nThis command was earned by two independent derivations agreeing on an earlier goal of the same kind. Treat its output as the measured value and build your answer on it; re-run or refine it only if the goal plainly asks for something the command does not measure.`;
