@@ -11829,6 +11829,31 @@ async function runGoalWithRecovery(
         tap(`[goal-host-vessel] ${opts.surface}: store-intent override replaced memoryNote with memoryNote_write ` + JSON.stringify({ goal_hash: goalHashOf(goal), shapes: seededOutputShapes }));
       }
 
+      // DERIVE-FROM-LIVE-SOURCE-AND-STORE SEEDING (2026-09-19). "count the lines in
+      // repos/<file> and store the count in a memoryNote" and "count active *vessel*
+      // units and store the number" both fell through EVERY deterministic
+      // augmentation (generality-round1 G4/G5, dispatches ae37227a/010b4ccc): the
+      // compute-chain block requires fetch-verbs + write-to-FILE shapes, the shell
+      // safety-net requires EMPTY inference, and the transform oracle only handles
+      // operands stated in the goal text — so the walk never seeded the
+      // [shellResult, memoryNote_write] pair and the store never happened. Seed it
+      // deterministically when the goal carries all three signals: a LIVE SOURCE
+      // (repo path or system-inspection noun), a DERIVE verb, and a store-to-NOTE
+      // terminal. Narrow + fail-open: goals whose operand is inline (count the
+      // letters in the word X) carry no source signal and are untouched; goals
+      // already seeded with both shapes are untouched.
+      if (knownShapes && knownShapes.includes("shellResult") && knownShapes.includes("memoryNote_write")) {
+        const _gd = goal.toLowerCase();
+        const _srcSignal = /repos\/[A-Za-z0-9._\/-]+/.test(goal) || /\b(systemd|units?|services?|processes?|vessels?|director(?:y|ies)|files?|containers?|ports?)\b/.test(_gd);
+        const _deriveVerb = /\b(count|lines?|how\s+many|number\s+of|sum|total|size|length)\b/.test(_gd);
+        const _noteTerminal = /\b(store|save|write|record|put)\b[\s\S]{0,80}?\bmemory\s?note\b/i.test(goal);
+        const _already = Array.isArray(seededOutputShapes) && seededOutputShapes.includes("shellResult") && seededOutputShapes.includes("memoryNote_write");
+        if (_srcSignal && _deriveVerb && _noteTerminal && !_already) {
+          seededOutputShapes = ["shellResult", "memoryNote_write"];
+          goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
+          tap(`[goal-host-vessel] ${opts.surface}: derive-from-source seeding set [shellResult, memoryNote_write] ` + JSON.stringify({ goal_hash: goalHashOf(goal) }));
+        }
+      }
       // PRODUCER-LOOKUP OVERRIDE (unconditional for this pattern): "which vessel serves the
       // shape X" makes inference seed X ITSELF as the target (the token is in knownShapes),
       // so the walk tries to PRODUCE X instead of answering who produces it. The deterministic
