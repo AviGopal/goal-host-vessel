@@ -15799,7 +15799,25 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
         // on the next poll. No limit change is needed.
         if (label?.labeler === "human") learn.oracleLabelWritten = true;
         if (label?.labeler === "human") {
+          const priorReached = record.reached;
           record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
+          // ORACLE-DISAGREEMENT WIRE (2026-09-19). Ground-truth labels sat in the
+          // corpus with zero readers turning contradiction into work: a human verdict
+          // that CONTRADICTS the system's own reach verdict is direct evidence the
+          // grading pipeline judged this goal class wrongly, and until now the label
+          // only corrected this one record. Mint the repair gap automatically —
+          // deduplicated by execution id (idempotent upsert), fire-and-forget,
+          // fail-open, with the failure logged in the catch so a silent drop is
+          // observable.
+          if (priorReached !== null && record.reached !== null && priorReached !== record.reached) {
+            const dgapId = "gap-oracle-label-disagreement-" + String(labelExecId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
+            void fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { id: dgapId, source: "human_reported", summary: `Human ground-truth label contradicts the system reach verdict for execution ${labelExecId}: system graded reached=${String(priorReached)}, human graded ${labelVerdict}. Goal: ${String(record.goal ?? "").slice(0, 200)}. Human notes: ${String(label?.notes ?? "").slice(0, 300)}. The grading pipeline judged this goal class wrongly; determine why the verdicts diverge and repair the grader for the class, preserving honest grading.`, detected_at: new Date().toISOString() } } } }),
+              signal: AbortSignal.timeout(10_000),
+            }).then((r) => console.log(`[oracle-label] disagreement gap ${dgapId} filed (http ${r.status})`)).catch((e) => console.warn(`[oracle-label] disagreement gap filing failed (non-fatal): ${(e as Error).message}`));
+          }
           (record as { humanGraded?: boolean }).humanGraded = true;
           const notes = typeof label?.notes === "string" ? label.notes.trim() : "";
           (record as { humanReachNotes?: string }).humanReachNotes = notes;
