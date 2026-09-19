@@ -4832,8 +4832,10 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
         if (goal.includes("lettercount")) {
           const word = goal.match(/lettercount of (\w+)/i)?.[1];
           if (word) {
-            const shell = await ufExecuteTool("shellResult", { command: `wc -c <<<${word}` }, new Set<string>(["shellResult"]));
-            if (shell.ok) out = shell.result;
+            // Use `wc -m` for character count, `wc -c` is byte count (wrong for multi-byte).
+            // Also, strip trailing newline for exact count.
+            const shell = await ufExecuteTool("shellResult", { command: `echo -n ${word} | wc -m` }, new Set<string>(["shellResult"]));
+            if (shell.ok) out = String(parseInt(shell.result.trim()));
           }
         }
         if (measured) {
