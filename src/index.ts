@@ -16720,3 +16720,36 @@ export {
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPECTATION-CYCLE WATCHDOG (2026-09-19). The artifact-expectation observation
+// loop (development-vessel) writes a heartbeat note every tick. An unread
+// observation, an unscheduled check, or a dead loop is a FAILURE OF THE
+// COMMITMENT, and the loop cannot report its own death — so this vessel (a
+// different process) watches the heartbeat and files the gap when it goes
+// stale. Deliberately cross-vessel: one vessel's death must not blind both the
+// observer and its observer. Fail-open; one idempotent gap id; a recovered
+// heartbeat closes it on the next check (restraint: healthy checks file nothing).
+const EXP_WATCHDOG_INTERVAL_MS = parseInt(process.env["EXPECTATION_WATCHDOG_INTERVAL_MS"] ?? "600000", 10);
+const EXP_HEARTBEAT_STALE_MS = parseInt(process.env["EXPECTATION_HEARTBEAT_STALE_MS"] ?? "1200000", 10);
+let expWatchdogGapOpen = false;
+setInterval(() => { void (async () => {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "memoryNote", title_prefix: "expectation-scan-heartbeat", limit: 1 } } }), signal: AbortSignal.timeout(8000) });
+    const j = (await r.json()) as { body?: { notes?: Array<{ body?: string }> } };
+    const hb = j?.body?.notes?.[0]?.body;
+    let at: number | null = null;
+    try { const parsedHb = JSON.parse(hb ?? "{}") as { at?: string }; if (parsedHb.at) at = Date.parse(parsedHb.at); } catch {}
+    const stale = at === null || !Number.isFinite(at) || Date.now() - at > EXP_HEARTBEAT_STALE_MS;
+    const gapBody = (status: string, summary: string) => JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { id: "gap-expectation-observation-loop-stalled", source: "substrate_detected", status, summary, detected_at: new Date().toISOString() } } } });
+    if (stale) {
+      expWatchdogGapOpen = true;
+      await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: gapBody("open", `The artifact-expectation observation loop has stopped keeping its commitment: its heartbeat note is ${at === null ? "absent or unparseable" : "stale by " + String(Math.round((Date.now() - at) / 60000)) + " minutes"} (threshold ${String(Math.round(EXP_HEARTBEAT_STALE_MS / 60000))}m). Standing expectations are currently UNOBSERVED — a verified artifact could degrade with nothing noticing. Restore the observation loop in development-vessel (the setInterval registered at module tail of src/index.ts) or its heartbeat write path.`), signal: AbortSignal.timeout(8000) });
+      console.warn(`[expectation-watchdog] heartbeat STALE — gap-expectation-observation-loop-stalled filed`);
+    } else if (expWatchdogGapOpen) {
+      expWatchdogGapOpen = false;
+      await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: gapBody("closed", `RESOLVED: the observation loop's heartbeat is fresh again; standing expectations are observed. Closed by the cross-vessel watchdog that filed it.`), signal: AbortSignal.timeout(8000) });
+      console.log(`[expectation-watchdog] heartbeat recovered — stall gap closed`);
+    }
+  } catch (e) { console.warn(`[expectation-watchdog] check failed (non-fatal): ${(e as Error).message}`); }
+})(); }, EXP_WATCHDOG_INTERVAL_MS).unref();
