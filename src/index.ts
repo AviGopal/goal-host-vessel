@@ -6867,7 +6867,7 @@ async function runGoalAsPoolWalk(
     pointer: { type: "memo" },
     metadata: { shape, summary: summary ?? `pool impulse (${shape})`, producedBy: "goal-host-walk", goalSignature: goalHashOf(goal) },
     loaded: true,
-    content,
+    content: shape === 'memoryNote' ? (content as {value: string}).value : content,
   });
   const addToPool = (shape: string, content: unknown, summary?: string): void => {
     const widEv = opts.variables.dispatch_id;
