@@ -7321,6 +7321,17 @@ async function runGoalAsPoolWalk(
         : undefined;
       const ordered = target ? [target, ...vessels.filter((x) => x !== target)] : vessels;
       const routeFor = (v: { id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }) => {
+  // When resolve_endpoint is absolute, use its origin and path
+  if (v.resolve_endpoint?.startsWith('http://') || v.resolve_endpoint?.startsWith('https://')) {
+    try {
+      const url = new URL(v.resolve_endpoint);
+      return {
+        endpoint: url.origin,
+        resolvePath: url.pathname + url.search
+      };
+    } catch {} // fall through to relative path handling on URL parse failure
+  }
+
         if (v.protocol === "libp2p" && Array.isArray(v.libp2p_multiaddr) && v.libp2p_multiaddr[0]) {
           // libp2p-reachable peer: route the resolve through the local federation-transport
           // egress (goal-host has no libp2p deps), passing the peer multiaddr as ?target=.
