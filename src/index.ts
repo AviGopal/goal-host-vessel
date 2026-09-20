@@ -7388,6 +7388,8 @@ async function runGoalAsPoolWalk(
     writeShape: string,
     writeResult: unknown,
   ): Promise<{ persisted: true; content: unknown } | { persisted: false } | null> {
+    // Clear stale resolve reason to prevent rebind cache from reusing prior goal's write command
+    lastRawResolveReason = null;
     const isPersistingWrite = /_write$/.test(writeShape) || writeShape === "write_note";
     if (!isPersistingWrite) return null;
 
