@@ -5751,7 +5751,7 @@ async function creditReachedTemplate(activityId: string, reason: string): Promis
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) console.warn(`[goal-host-vessel] alpha-credit REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; credit not applied`);
-    return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: 0 };
+    return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: res.ok ? 0 : 1 };
   } catch (e) {
     // A SWALLOWED CREDIT IS A REACH THAT TEACHES NOTHING, AND THIS CATCH SAID NOTHING.
     //
@@ -5766,7 +5766,7 @@ async function creditReachedTemplate(activityId: string, reason: string): Promis
     // failure under a success message is harder to find than a silent failure alone.
     console.warn(`[goal-host-vessel] alpha-credit LOST for '${activityId}' — the feedback POST to ${ACTIVITY_API_ENDPOINT} threw (${(e as Error)?.message ?? String(e)}); this reach earned nothing and the arm learns nothing from it`);
   }
-  return { templateId: activityId, dAlpha: 0, dBeta: 0 };
+  return { templateId: activityId, dAlpha: 0, dBeta: 1 };
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
 // goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
