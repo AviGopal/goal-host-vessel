@@ -5993,6 +5993,12 @@ async function landedShaForGo(goalHash: string): Promise<string | null> {
 
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
   const landedSha = await landedShaForGoal(goalText);
+  // Situation at decision time (2026-09-20). Selection ASKS with this signature
+  // (recommendReachingPath and both recommend calls send it) but the RECORD never
+  // kept it — state_signature was absent from all 13,423 path rows measured
+  // 2026-09-16, so conditioned selection had nothing to condition on. Sender half;
+  // receiver landed as e1979f77 + 092eac27, DB field via migration 211.
+  const _recStateSig = (await getCachedStateSignature())?.signature_hash;
   if (!goalText || pathActivities.length === 0) return;
   if (parent?.goalHash || parent?.pathSignature) {
     // Emitted, not transmitted — see the note above. This is the one place the fact
@@ -6033,6 +6039,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         cost_usd: costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
         walk_tier: walkTier,
+        ...(_recStateSig ? { state_signature: _recStateSig } : {}),
         // REUSE LINEAGE, TRANSMITTED (2026-08-29). Sibling fields to parent_*, with no CC1
         // scope assertion — see activity-api sql/migrations/204-goal-path-reuse-lineage.surql.
         // Sending parent_* for this relation is what DESTROYED the record with a 400.
