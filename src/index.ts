@@ -13303,6 +13303,10 @@ async function runGoalWithRecovery(
     if (attempt < maxAttempts) {
       const repairKey = await repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
         const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
+      if (altPickRetry && 'status' in altPickRetry && (altPickRetry.status === 401 || altPickRetry.status === 403)) {
+        tap(`[goal-host-vessel] ${opts.surface}: auth failure (${altPickRetry.status}) - refusing to use as evidence`);
+        break;
+      }
       const alt = altPickRetry?.id ?? null;
       // Re-stamp per attempt: each retry is a NEW selection with its own correlation id,
       // so carrying the first attempt's would attribute this outcome to a prior decision.
