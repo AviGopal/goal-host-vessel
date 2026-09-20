@@ -382,7 +382,7 @@ const asResolvePath = (rp: string | undefined): string => {
   if (rp.startsWith("http://") || rp.startsWith("https://")) {
     try {
       const u = new URL(rp);
-      return u.pathname + u.search;
+      return u.protocol + "//" + u.host + u.pathname + u.search;
     } catch {
       return "/resolve";
     }
