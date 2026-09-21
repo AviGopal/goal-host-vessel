@@ -161,7 +161,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
             signal: AbortSignal.timeout(8_000),
           });
           const fedJ = (await fedR.json()) as { content?: { body?: { dispatches?: Array<Record<string, unknown>> } }; body?: { dispatches?: Array<Record<string, unknown>> } };
-          members.push({ substrate, reachable: fedR.ok ? true : null, dispatches: (fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? []).map((d) => ({ ...d, answerBody: d.answerBody ?? null, lifeShapes: d.lifeShapes ?? [] })) });
+                    members.push({ substrate, reachable: fedR.ok ? true : null, dispatches: (fedJ?.content?.body?.dispatches ?? fedJ?.body?.dispatches ?? []) as Array<Record<string, unknown>> })
         } catch {
           members.push({ substrate, reachable: null, dispatches: [] });
         }
