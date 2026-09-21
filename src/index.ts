@@ -11936,6 +11936,11 @@ async function runGoalWithRecovery(
         if (nbRe.test(goal)) namedBound.push(nb);
       }
       if (namedBound.length > 0 && namedBound.length <= 3) {
+        // A verbatim-named shape outranks weak inference: drop tool-noise terminals that
+        // are unsatisfiable as goals in their own right (shellResult satisfier is PROVEN-BAD
+        // and unarmed; run 9f7cfb62 died on it AFTER substrateGap was already in the pool).
+        const TOOL_NOISE = new Set(["shellResult", "fileContent", "source_code"]);
+        seededOutputShapes = seededOutputShapes.filter((sx) => !TOOL_NOISE.has(sx));
         seededOutputShapes = [...namedBound, ...seededOutputShapes];
         tap(`[goal-host-vessel] ${opts.surface}: named-shape bind ` + JSON.stringify({ goal_hash: goalHashOf(goal), bound: namedBound }));
       }
