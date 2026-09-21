@@ -11919,6 +11919,26 @@ async function runGoalWithRecovery(
     // is bound from the produced findings (deferral + content-binding live in the
     // walk's satisfier). Tight classifier returns [] for plain single-step goals →
     // unchanged 1-step behaviour. Only attempted when we have a terminal target set.
+    // NAMED-SHAPE BINDING (gap analysis-goals-never-bind-the-named-data-shape...):
+    // a shape named VERBATIM in the goal text is a deterministic routing fact, not an
+    // inference problem. Bind advertised, resolvable shapes whose exact token appears
+    // in the goal as required intermediates, so synthesis receives the data it names.
+    if (seededOutputShapes && seededOutputShapes.length > 0) {
+      const NAMED_BIND_EXCLUDE = new Set(["goal", "dispatch_id", "shell", "bash", "shellResult", "fileContent"]);
+      const namedBindCandidates = [...new Set([...shapeEndpointMap.keys(), ...discoveredProxyShapes])];
+      const namedBound = [];
+      for (const nb of namedBindCandidates) {
+        if (nb.length < 6 || NAMED_BIND_EXCLUDE.has(nb)) continue;
+        if (seededOutputShapes.includes(nb)) continue;
+        const nbEsc = nb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const nbRe = new RegExp("(^|[^A-Za-z0-9_])" + nbEsc + "($|[^A-Za-z0-9_])");
+        if (nbRe.test(goal)) namedBound.push(nb);
+      }
+      if (namedBound.length > 0 && namedBound.length <= 3) {
+        seededOutputShapes = [...namedBound, ...seededOutputShapes];
+        tap(`[goal-host-vessel] ${opts.surface}: named-shape bind ` + JSON.stringify({ goal_hash: goalHashOf(goal), bound: namedBound }));
+      }
+    }
     if (seededOutputShapes && seededOutputShapes.length >= 2) {
       // Partition the (multi-shape) target into derive→emit stages. No-op for a
       // single-shape target (the common case) — needs ≥2 shapes to be a derivation.
