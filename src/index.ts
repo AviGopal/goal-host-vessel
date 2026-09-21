@@ -11929,6 +11929,7 @@ async function runGoalWithRecovery(
       const namedBound = [];
       for (const nb of namedBindCandidates) {
         if (nb.length < 6 || NAMED_BIND_EXCLUDE.has(nb)) continue;
+        if (!/[A-Z_:]/.test(nb)) continue; // prose-collision guard: real shape names carry a hump, underscore, or colon ("cluster" bound as a junk terminal on 9f7cfb62)
         if (seededOutputShapes.includes(nb)) continue;
         const nbEsc = nb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const nbRe = new RegExp("(^|[^A-Za-z0-9_])" + nbEsc + "($|[^A-Za-z0-9_])");
