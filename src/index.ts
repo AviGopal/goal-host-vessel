@@ -11935,6 +11935,18 @@ async function runGoalWithRecovery(
         const nbRe = new RegExp("(^|[^A-Za-z0-9_])" + nbEsc + "($|[^A-Za-z0-9_])");
         if (nbRe.test(goal)) namedBound.push(nb);
       }
+      // SYNTHESIS-STEP INJECTION: a bound data-read plus an analysis-shaped goal needs a
+      // compute step between data and terminal write, or the walk stalls with the records
+      // in the pool and the write honestly refusing a confabulated body (run 9f7cfb62:
+      // intermediates=[substrateGap], terminals=[memoryNote], nothing scheduled between).
+      // The compute shape comes from the advertised vocabulary, never hardcoded.
+      if (namedBound.length > 0 && /analy[sz]|cluster|investigat|\breport\b/i.test(goal)) {
+        const hasCompute = [...namedBound, ...seededOutputShapes].some((sx) => /llm|problem_detection/i.test(sx));
+        if (!hasCompute) {
+          const compute = ["llmCompletion", "llm_completion", "problem_detection"].find((cx) => namedBindCandidates.includes(cx));
+          if (compute) namedBound.push(compute);
+        }
+      }
       if (namedBound.length > 0 && namedBound.length <= 3) {
         // A verbatim-named shape outranks weak inference: drop tool-noise terminals that
         // are unsatisfiable as goals in their own right (shellResult satisfier is PROVEN-BAD
