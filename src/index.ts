@@ -7504,7 +7504,7 @@ async function runGoalAsPoolWalk(
     }
     let resp: Response;
     try {
-      resp = await fetch(`${endpoint}${resolvePath}`, {
+      resp = await fetch(resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
         // The LLM resolver reads a TOP-LEVEL `prompt` (a prompt nested only in
