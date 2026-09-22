@@ -16459,7 +16459,7 @@ async function emitAuthoringDecision(
   const timer = setTimeout(() => ctrl.abort(), 10_000);
   try {
     // Key the decision-log id on the GOAL, not the per-dispatch UUID: repeat dispatches of the same goal upsert one row in the gap store instead of accumulating duplicates (observed 177 open rows for 24 distinct goals).
-    const goalText = typeof classification_metadata.goal === "string" ? classification_metadata.goal : "";
+    const goalText = String((classification_metadata as Record<string, unknown>)["goal"] ?? ""); // typed string unconditionally: tsc flagged the dead block below the telemetry return (TS18046) and failed EVERY compose verify on this vessel
     const gap = {
       id: `auto_draft_decision:${goalText.length > 0 ? Bun.hash(goalText).toString(36) : ((classification_metadata.dispatchId as string | undefined) ?? crypto.randomUUID())}:${category}`,
       category,
