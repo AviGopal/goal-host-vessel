@@ -12015,18 +12015,24 @@ async function runGoalWithRecovery(
           if (compute) namedBound.push(compute);
         }
       }
-        // READ-SHAPE -> WRITE-SIBLING for persist goals: the goal names a data shape so
-        // named-shape bind captured the READ shape "memoryNote"; but the ACTION is to
-        // persist, and satisfying the read shape only RESOLVES it without writing. When
-        // the goal is a persist goal and a bound read-shape has a resolvable _write
-        // sibling, swap to the writer (in place) so the terminal actually stores the body.
-        if (/\b(store|save|write|record|persist|put|log)\b/i.test(goal)) {
-          const _nb: string[] = namedBound;
-          for (let _i = 0; _i < _nb.length; _i++) {
-            const _s: string = String(_nb[_i]);
+        // READ-INPUT vs WRITE-TARGET: a persist goal both READS an input data shape and
+        // WRITES an output. Named-shape bind captured both as READ shapes; only the write
+        // TARGET should map to its _write sibling. Map S -> S_write only when the goal
+        // mentions S in a WRITE context ("in a/the S", "S titled", a persist verb near S)
+        // AND not in a READ context ("resolve/read/fetch/analyze ... S", "the S shape").
+        // (substrateGap here is read-input -> stays; memoryNote is the store target -> maps.)
+        {
+          const _esc = (x: string): string => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          for (let _i = 0; _i < namedBound.length; _i++) {
+            const _s: string = String(namedBound[_i]);
+            if (_s.endsWith("_write")) continue;
             const _w: string = _s + "_write";
             const _hasWriter: boolean = shapeEndpointMap.has(_w) || discoveredProxyShapes.includes(_w) || namedBindCandidates.includes(_w);
-            if (!_s.endsWith("_write") && _hasWriter) { _nb[_i] = _w; }
+            if (!_hasWriter) continue;
+            const _e = _esc(_s);
+            const _writeCtx = new RegExp("(\\b(store|save|write|record|persist|put|log)\\b[^.]{0,80}\\b" + _e + "\\b)|(\\bin\\s+(a|an|the)\\s+" + _e + "\\b)|(\\b" + _e + "\\s+titled\\b)", "i");
+            const _readCtx = new RegExp("(\\b(read|resolve|fetch|load|analy[sz]e|cluster|list|inspect|from)\\b[^.]{0,80}\\b" + _e + "\\b)|(\\bthe\\s+" + _e + "\\s+shape\\b)|(\\b" + _e + "\\b[^.]{0,40}\\bto\\s+read\\b)", "i");
+            if (_writeCtx.test(goal) && !_readCtx.test(goal)) { namedBound[_i] = _w; }
           }
         }
       if (namedBound.length > 0 && namedBound.length <= 3) {
