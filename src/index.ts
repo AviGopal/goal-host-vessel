@@ -12017,6 +12017,19 @@ async function runGoalWithRecovery(
         }
         // Order intermediates first so the walk produces the analysis before the
         // deferred terminal write (the satisfier enforces the deferral too).
+        // COMPUTE IS AN INTERMEDIATE, NEVER A TERMINAL (2026-09-22): a compute shape
+        // (llmCompletion / problem_detection) that landed on the terminal side has no
+        // producing activity, so the walk defers the terminal write, seeks a producer,
+        // finds none, and files reach-gap-llmcompletion. It must be PRODUCED before the
+        // memoryNote write, i.e. an intermediate. Move any compute shape terminal->intermediate.
+        {
+          const _isCompute = (s: string) => /llm|problem_detection/i.test(s);
+          const _computeTerminals = terminalOutputShapes.filter(_isCompute);
+          if (_computeTerminals.length > 0) {
+            terminalOutputShapes = terminalOutputShapes.filter((s) => !_isCompute(s));
+            split.intermediate = [...split.intermediate, ..._computeTerminals];
+          }
+        }
         seededOutputShapes = [...split.intermediate, ...terminalOutputShapes];
         tap(
           `[goal-host-vessel] ${opts.surface}: derivation-intent intermediates ` +
