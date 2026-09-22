@@ -7542,7 +7542,17 @@ async function runGoalAsPoolWalk(
     // LLM failure still returns null below, so honest no-reach is preserved.
     if ((shape === "llm_completion" || shape === "llmCompletion")
         && !(typeof pointer.prompt === "string" && (pointer.prompt as string).trim().length > 0)) {
-      pointer.prompt = goal;
+      // THREAD PRODUCED POOL RECORDS INTO THE PROMPT (not goal-text-only): the walk
+      // fetches real data (e.g. 144k chars of substrateGap) into the pool BEFORE the
+      // compute step, but defaulting the prompt to the goal alone starved the LLM of it,
+      // so it confabulated ("let us assume the resolver returns...", invented GAP-101).
+      // Feed the produced intermediate findings so the compute analyzes REAL data; the
+      // reach gate then has a real artifact to grade instead of a hollow guess. Law 13:
+      // the system owns payload synthesis — including binding the fetched inputs.
+      const _poolFindings = boundFindingsFromIntermediates();
+      pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
+        ? `${goal}\n\n--- PRODUCED INPUT DATA (analyze ONLY the records below; do NOT invent, assume, or use placeholder records) ---\n${_poolFindings.slice(0, 120000)}`
+        : goal;
     }
     // KEYSTONE: thread produced pool-shape content into the executor command deterministically,
     // so the command that RUNS is a function of threaded inputs (not an LLM-re-derived literal).
