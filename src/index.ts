@@ -9540,7 +9540,17 @@ If one of those sibling shapes is the action that would create what the goal ask
           };
           satisfierTraces.push(synthTrace);
           chain.push(satId);
-          ledgerStep(undefined, [satisfiableNow]);
+          // CONSUMPTION-EDGE DECLARATION: a compute (llmCompletion) or terminal-write
+          // satisfier is genuinely bound from the produced intermediates
+          // (boundFindingsFromIntermediates feeds its prompt/body), so it CONSUMES them.
+          // Declaring those inputs makes consumedInChain register the real
+          // producer->consumer edge, so a read->compute->write walk earns a credited
+          // reach and crystallizes. A leading read (no binding) declares nothing and
+          // stays uncredited — the gate stays honest; we stop hiding a real edge.
+          const _consumedInputs = (satisfiableNow === "llmCompletion" || satisfiableNow === "llm_completion" || terminalShapes.has(satisfiableNow))
+            ? [...chainProduced].filter((s) => s !== "goal" && s !== satisfiableNow && !terminalShapes.has(s))
+            : [];
+          ledgerStep(_consumedInputs.length > 0 ? _consumedInputs : undefined, [satisfiableNow]);
           exclude.add(normActivityId(satId));
           chainExecIds.push(synthTrace.id);
           lastTrace = synthTrace;
