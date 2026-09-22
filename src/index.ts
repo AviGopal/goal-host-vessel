@@ -16430,6 +16430,31 @@ async function emitAuthoringDecision(
   classification_metadata: Record<string, unknown>,
 ): Promise<void> {
   if (process.env.SUBSTRATE_AUTHORING_DECISION_EMIT === "0") return;
+  // Telemetry redirect (R4a): auto_draft_* authoring decisions are telemetry,
+  // not gaps. As substrateGap rows they were ~94 percent of daily gap closes and
+  // drowned the gap-triple metric. No consumer reads auto_draft_decision rows
+  // back as gaps (boredom-vessel skips the id prefix, substrate-gap excludes
+  // DECISION_LOG_GAP_CATEGORIES, gap-to-feature excludes, lifecycle-scan
+  // auto-closes them as low-value), so the inspectable-log intent is preserved
+  // by appending to a JSONL stream in the gitignored gaps/ runtime-state dir.
+  try {
+    const goalForHash = typeof classification_metadata.goal === "string" ? classification_metadata.goal : "";
+    const record = {
+      ts: new Date().toISOString(),
+      kind: "auto_draft_decision",
+      category,
+      summary,
+      goal_hash: goalForHash.length > 0 ? Bun.hash(goalForHash).toString(36) : null,
+      classification_metadata,
+    };
+    const fs = await import("node:fs/promises");
+    const dir = "/workspace/git/super-repo/gaps";
+    await fs.mkdir(dir, { recursive: true });
+    await fs.appendFile(dir + "/auto-draft-decisions.jsonl", JSON.stringify(record) + "\n");
+  } catch (err) {
+    console.warn(`[goal-host-vessel] emitAuthoringDecision(${category}) telemetry append failed: ${(err as Error).message}`);
+  }
+  return;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10_000);
   try {
@@ -16471,6 +16496,18 @@ async function closeAuthoringDecisions(goalText: string): Promise<void> {
   // goal.slice(0, 200) into classification_metadata, so the open row's id hashes
   // the SLICED goal — hashing the full text here would miss every goal >200 chars.
   const hash = Bun.hash(goalText.slice(0, 200)).toString(36);
+  // Telemetry redirect (R4a): emitAuthoringDecision no longer opens gap rows,
+  // so there is nothing to close in the gap store. The four unconditional
+  // per-dispatch status:closed writes below were the bulk of the polluted daily
+  // close count; record the completion in the same JSONL stream instead.
+  try {
+    const fs = await import("node:fs/promises");
+    const dir = "/workspace/git/super-repo/gaps";
+    await fs.mkdir(dir, { recursive: true });
+    const record = { ts: new Date().toISOString(), kind: "auto_draft_decision_closed", goal_hash: hash, goal: goalText.slice(0, 120) };
+    await fs.appendFile(dir + "/auto-draft-decisions.jsonl", JSON.stringify(record) + "\n");
+  } catch { /* fire-and-forget, same contract as the writes this replaces */ }
+  return;
   for (const category of ["auto_draft_triggered", "auto_draft_reused", "auto_draft_authored", "auto_draft_fallback_recommend"]) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10_000);
