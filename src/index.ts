@@ -299,7 +299,7 @@ import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer, satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
-import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent } from "./llm-router";
+import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage } from "./llm-router";
 import { createHash } from "node:crypto";
 import { orderRing } from "./mem-ring";
 import {
@@ -5023,6 +5023,8 @@ async function universalToolFallback(goal: string, targetShapes: string[]): Prom
   if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
     await persistSatisfierTrace({
       id: floorExecId,
+      tokensInput: peekRouterUsage(goalHashOf(goal)).tokensIn,
+      tokensOutput: peekRouterUsage(goalHashOf(goal)).tokensOut,
       templateId: "universal-tool-fallback",
       templateName: "universal ReAct fallback (floor)",
       status: floorReached ? "completed" : "failed",

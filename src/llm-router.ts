@@ -192,6 +192,25 @@ function buffer(dispatchId: string, sel: BufferedSelection): void {
 // ── the routed call — a drop-in for the old fetch(LLM_VESSEL_ENDPOINT/resolve) ─
 export interface RoutedResult { ok: boolean; json: any; vesselId: string | null; }
 
+// Per-dispatch provider-usage accumulator (key: goalHashOf(goal), same as buffers).
+// goal-host reasoning calls route through this module but historically dropped
+// usage, so every synthetic walk/satisfier/floor trace recorded tokens_in/out=0.
+interface RouterUsage { tokensIn: number; tokensOut: number; }
+const usageByDispatch = new Map<string, RouterUsage>();
+function accumulateUsage(dispatchId: string, inner: any): void {
+  if (!dispatchId) return;
+  const u = inner && typeof inner === "object" ? (inner.usage ?? inner?.body?.usage) : undefined;
+  const tin = typeof u?.input_tokens === "number" ? u.input_tokens : 0;
+  const tout = typeof u?.output_tokens === "number" ? u.output_tokens : 0;
+  if (tin === 0 && tout === 0) return;
+  const cur = usageByDispatch.get(dispatchId) ?? { tokensIn: 0, tokensOut: 0 };
+  cur.tokensIn += tin; cur.tokensOut += tout;
+  usageByDispatch.set(dispatchId, cur);
+}
+export function peekRouterUsage(dispatchId: string): RouterUsage {
+  return usageByDispatch.get(dispatchId) ?? { tokensIn: 0, tokensOut: 0 };
+}
+
 async function postFeedback(vesselId: string | null, taskType: string, reached: boolean): Promise<void> {
   if (vesselId == null) return;
   try {
@@ -242,6 +261,7 @@ async function routeOverRanked(
       }
       await postFeedback(sel.vesselId, taskType, true);
       if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs: 0, costUsd: 0 });
+      accumulateUsage(dispatchId, inner);
       return { ok: true, json: { ...(inner as any), body: { ...(((inner as any)?.body) ?? {}), content: text } }, vesselId: sel.vesselId };
     } catch {
       await postFeedback(sel.vesselId, taskType, false);
@@ -334,6 +354,7 @@ async function routedCompleteOnce(
         if (typeof text === "string" && text.length > 0) {
           await postFeedback(winner.vesselId, taskType, true);
           buffer(dispatchId, { taskType, vesselId: winner.vesselId, latencyMs: 0, costUsd: 0 });
+          accumulateUsage(dispatchId, inner);
           return { ok: true, json: { ...(inner as any), body: { ...((inner as any)?.body ?? {}), content: text } }, vesselId: winner.vesselId };
         }
       }
@@ -392,6 +413,7 @@ export async function flushRouterFeedback(dispatchId: string, reached: boolean):
   const buf = buffers.get(dispatchId);
   if (!buf) return;
   buffers.delete(dispatchId);
+  usageByDispatch.delete(dispatchId);
   await Promise.allSettled(
     // ORACLE INTEGRITY (L12 effect-as-cause): the reach-verification arm produces
     // the very `reached` verdict this reward is keyed on, so rewarding it would let
