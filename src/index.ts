@@ -6789,6 +6789,13 @@ async function runGoalAsPoolWalk(
     learningSink?: LearningConsequences;
     /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
     suppressSatisfierShapes?: string[];
+    /** FEEDBACK EDGE (hill-climb retry): the prior attempt's reach verdict reason, injected into the
+     * synthesis prompt so the retry CORRECTS the named defect instead of re-deriving blind. Set only on
+     * the feedback-retry, paired with ablation.disableReuse so the reached-command cache does not replay
+     * the failed recipe. This is the grade->next-attempt edge: without it a hollow verdict is graded and
+     * discarded, and the retry either repeats the mistake (cache replay) or abandons the producer that
+     * worked (suppressSatisfierShapes) — both anti-learning. */
+    priorVerdictFeedback?: string;
     // The lessons recalled for THIS dispatch, passed explicitly rather than looked up.
     //
     // These were previously handed over through a module-level map keyed by goalHashOf(goal), on
@@ -7550,9 +7557,14 @@ async function runGoalAsPoolWalk(
       // reach gate then has a real artifact to grade instead of a hollow guess. Law 13:
       // the system owns payload synthesis — including binding the fetched inputs.
       const _poolFindings = boundFindingsFromIntermediates();
+      // FEEDBACK EDGE: on a hill-climb retry the prior attempt's verdict reason is injected here so the
+      // model CORRECTS the named defect instead of re-deriving blind (the grade->next-attempt edge).
+      const _fbPreamble = (typeof opts.priorVerdictFeedback === "string" && opts.priorVerdictFeedback.trim().length > 0)
+        ? `A PREVIOUS attempt at THIS goal was graded NOT REACHED for this reason:\n"${opts.priorVerdictFeedback.trim().slice(0, 600)}"\nProduce a CORRECTED final artifact that fixes EXACTLY that defect — if it was "incomplete", cover every class in the records; if member ids were wrong or invented, use ONLY ids that appear verbatim in the records below.\n\n`
+        : "";
       pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
-        ? `${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
-        : goal;
+        ? `${_fbPreamble}${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
+        : `${_fbPreamble}${goal}`;
       if (!(typeof pointer.max_tokens === "number" && (pointer.max_tokens as number) >= 4096)) pointer.max_tokens = 4096; // ensure the report can COMPLETE (satisfier default was capping it short)
     }
     // KEYSTONE: thread produced pool-shape content into the executor command deterministically,
@@ -12462,6 +12474,47 @@ async function runGoalWithRecovery(
             ? ["shellResult", "codeSearchResult", "code_search", "source_code", "code_find_function"]
             : undefined,
       });
+      // FEEDBACK-RETRY (hill-climb; the grade->next-attempt edge). Before the suppress-retry ABANDONS
+      // the producer that just ran, or a cached recipe replays the same failure, re-run the SAME chain
+      // ONCE with the judge's verdict fed into synthesis (priorVerdictFeedback) and the reached-command
+      // cache bypassed (ablation.disableReuse), so the retry CORRECTS the named defect instead of
+      // re-deriving blind. Gated to CONTENT-hollow verdicts (a structural no-pick has nothing to
+      // correct) and fires at most once — only the initial walk carries no priorVerdictFeedback.
+      if (
+        walk.reached === false &&
+        typeof walk.goalReachReason === "string" &&
+        walk.goalReachReason.trim().length > 0 &&
+        !/no pick|no producer|missing shapes|constructible payload|terminating walk/i.test(walk.goalReachReason)
+      ) {
+        tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed)`);
+        const fbWalk = await runGoalAsPoolWalk(goal, {
+          recalledLessons: _dispatchLessons,
+          variables: opts.variables,
+          tags: opts.tags,
+          parentExecutionId: opts.parentExecutionId,
+          compositionChain: opts.compositionChain,
+          expectedOutputShapes: seededOutputShapes,
+          terminalOutputShapes,
+          surface: opts.surface,
+          stepSink: opts.stepSink,
+          learningSink: opts.learningSink,
+          ablation: { ...(opts.ablation ?? {}), disableReuse: true },
+          learningMode: opts.learningMode,
+          preferPathway: reachingPathway?.activities,
+          preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
+          priorVerdictFeedback: walk.goalReachReason,
+        });
+        if (fbWalk.reached) {
+          // Same edit-intent guard as the suppress-retry: a hollow author/read satisfier must not
+          // launder into a false reach for a repo-edit goal that produced no edit-result shape.
+          const _fbEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
+          const _fbEditShapes = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
+          const _fbDidNotEdit = (fbWalk.completionShapes ?? []).every((s) => !_fbEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+          if (!(_fbEditIntent && _fbDidNotEdit)) return fbWalk;
+        }
+        walk = fbWalk.attempts > 0 ? fbWalk : walk;
+      }
+
       // IN-DISPATCH SATISFIER RETRY: a HOLLOW verdict reached via a vessel-resolve
       // satisfier means the satisfier resolved but produced nothing goal-satisfying —
       // and by filling the pool it short-circuited the bridge-mint path. Retry ONCE
