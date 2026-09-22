@@ -7788,7 +7788,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             _directComputed = _trimmed;
           }
         }
-        if (_directComputed === null) {
+        if (_directComputed === null && !(boundBody && boundBody.trim().length > 0)) {
           // HONEST-BIND: the terminal must emit a REAL produced computed value. None is in the
           // pool yet, so refuse to satisfy the terminal with an LLM-synthesized (confabulated)
           // body — return null so the walk produces the compute intermediate first, then binds it.
