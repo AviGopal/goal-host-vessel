@@ -3947,7 +3947,8 @@ function priorFailureFeedbackFor(goalText: string): string {
   const rank = (a: GoalFailureRecord, b: GoalFailureRecord) => Number(b.deterministic) - Number(a.deterministic) || b.at.localeCompare(a.at);
   const lines: string[] = [];
   for (const r of [...exact].sort(rank).slice(0, 3)) lines.push(`- (this exact goal, ${r.at.slice(0, 16)}, producer ${r.pick ?? "?"}) ${r.reason}`);
-  for (const r of near) lines.push(`- (a similar goal, ${r.at.slice(0, 16)}) ${r.reason}`);
+  // Near-miss lessons only when the verdict was deterministic: an LLM-judged hollow on a different goal is too weak to steer this one.
+  for (const r of near.filter((x) => x.deterministic)) lines.push(`- (a similar goal, ${r.at.slice(0, 16)}) ${r.reason}`);
   return lines.join("\n");
 }
 async function loadGoalFailureMemory(): Promise<void> {
@@ -10750,7 +10751,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_hc && _hc.trim().length > 0) tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW-CONTENT ${_hs} (${_hc.length} chars) = ${_hc.slice(0, 400)}`);
           }
         } catch { /* observability only — never break the verdict path */ }
-        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)} goal_hash=${goalHashOf(goal)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
         // shape has NO live resolver (a true CAPABILITY gap — not a selection
@@ -10859,7 +10860,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // "alpha-credited" in the journal — the log asserting the opposite of the delta
           // it had just been handed.
           tap(_abCredit.dAlpha > 0
-            ? `[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (+${_abCredit.dAlpha}) (substance-honest reach: ${verdict.reason})`
+            ? `[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (+${_abCredit.dAlpha}) (substance-honest reach: ${verdict.reason}) goal_hash=${goalHashOf(goal)}`
             : `[goal-host-vessel] walk(${opts.surface}): alpha-credit NOT APPLIED for ${lastPick} (dAlpha=0) despite a substance-honest reach: ${verdict.reason}`);
         } else if (consumedInChain.size === 0) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); } else if (consumedInChain.size > 0 && editEffectReach) {
           tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit for ${lastPick} — edit-effect reach via in-chain edge only (no landed sha); fileEditResult/fileWriteResult is advertised-not-applied, not substance`);
@@ -11634,9 +11635,10 @@ async function runGoalWithRecovery(
   // re-deriving blind. Paired with disableReuse on attempt 1: a cached recipe whose latest verdict
   // was hollow is not replayed on the strength of one earlier reach.
   const _priorFailureFeedback = goal ? priorFailureFeedbackFor(goal) : "";
+  const _priorExactFailures = goal ? recallGoalFailures(goal).exact.length : 0;
   if (_priorFailureFeedback && goal) {
     const _pf = recallGoalFailures(goal);
-    tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL — ${_pf.exact.length} prior hollow verdict(s) for goal_hash=${goalHashOf(goal)} + ${_pf.near.length} near-miss; fed into attempt 1, reached-command replay disabled: ${_priorFailureFeedback.slice(0, 220).replace(/\n/g, " | ")}`);
+    tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL — ${_pf.exact.length} prior hollow verdict(s) for goal_hash=${goalHashOf(goal)} + ${_pf.near.length} near-miss; fed into attempt 1${_priorExactFailures > 0 ? ", reached-command replay disabled" : ""}: ${_priorFailureFeedback.slice(0, 220).replace(/\n/g, " | ")}`);
   }
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
@@ -12551,7 +12553,9 @@ async function runGoalWithRecovery(
         surface: opts.surface,
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
-        ablation: _priorFailureFeedback ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,
+        // Replay is held off only on an EXACT-hash failure history: a near-miss lesson from a similar
+        // goal must not cost this goal its learned pathway (the gap-closing lane shares one class token).
+        ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,
         learningMode: opts.learningMode,
         preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
@@ -15965,7 +15969,20 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // FAILURE MEMORY: the verdict reason is the lesson. Persist it keyed by goal_hash so the next
       // dispatch of this goal can avoid the named defect explicitly instead of re-deriving blind.
       if (typeof record.goal === "string" && record.goal) {
-        if (record.reached === false) rememberGoalFailure(record.goal, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+        if (record.reached === false) {
+          // Remember every DISTINCT hollow verdict of this dispatch, attempt 1 first. The terminal
+          // goalReachReason describes the worst producer after suppress-drift, not the closest
+          // attempt; the most informative lesson is usually the first verdict (measured: A's
+          // attempt-1 "5 families instead of 1" was lost behind the drifted "fails to produce").
+          const _seen = new Set<string>(); const _reasons: string[] = [];
+          for (const l of walkStepSink) {
+            const m = /HOLLOW \u2014 (.+?)(?:; \u03b2|$)/.exec(String(l));
+            if (m && m[1]) { const k = m[1].trim().slice(0, 600); if (k && !_seen.has(k)) { _seen.add(k); _reasons.push(k); } }
+          }
+          const _final = String(record.goalReachReason ?? "").trim().slice(0, 600);
+          if (_final && !_seen.has(_final)) _reasons.push(_final);
+          for (const r of _reasons.slice(0, 3)) rememberGoalFailure(record.goal, r, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+        }
         else if (record.reached === true) markGoalReached(record.goal);
       }
       record.learning = learningSink;
