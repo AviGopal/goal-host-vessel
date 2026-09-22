@@ -6096,6 +6096,55 @@ async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
     console.warn(`[goal-host] trace persistence failed for ${trace.id} (non-fatal, this execution stays ungradable): ${(e as Error).message}`);
   }
 }
+// Persist a DURABLE, inspectable execution trace for a walk that terminated WITHOUT
+// reaching and WITHOUT persisting any engine/satisfier row (no-pick, no-producer,
+// hollow, or a thrown walk). Grades no posterior (structural satellite).
+async function persistFailedWalkTrace(
+  goal: string,
+  walkLog: string[],
+  completionShapes: string[] | null,
+  reachReason: string | undefined,
+  targetShapes: string[],
+  termination: string,
+): Promise<string> {
+  const execId = `walk-satisfier-failed-${goalHashOf(goal)}-${Date.now()}`;
+  const produced = completionShapes ?? [];
+  const steps = walkLog.slice(-40);
+  await persistSatisfierTrace({
+    id: execId,
+    templateId: "satisfier:goal-host-walk-failed",
+    templateName: "goal-host walk (failed, ungraded)",
+    status: "failed",
+    compositionChain: [],
+    inputImpulseIds: [],
+    outputImpulseIds: [],
+    tasks: steps.map((line, i) => ({
+      taskId: `walk-step-${i + 1}`,
+      description: line.slice(0, 500),
+      resolverId: "walk",
+      resolverTier: "deterministic",
+      inputImpulseIds: [],
+      outputImpulseIds: [],
+      outputShapes: [],
+      success: false,
+    })),
+    costUsd: 0,
+    durationMs: 0,
+    tags: ["dispatcher_used:goal-host"],
+    metadata: {
+      satisfier: true,
+      walk_failed: true,
+      goal_hash: goalHashOf(goal),
+      termination_reason: termination,
+      reach_reason: reachReason ?? null,
+      target_shapes: targetShapes,
+      produced_shapes: produced,
+      walk_log: walkLog.slice(-80).map((l) => l.slice(0, 500)),
+    },
+  } as ExecutionTrace);
+  return execId;
+}
+
 // Consult per-goal learning before selection: if a prior attempt at THIS goal
 // reached it via a known path, prefer that path (improvement over subsequent
 // attempts). Returns a template id to target, or null to fall through to the
@@ -15693,7 +15742,20 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // so a held-out measurement does not update router posteriors.
       if (learningMode !== "observe") void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
       record.walkLog = walkStepSink;
-      record.executionId = seek.executionId ?? seek.result?.trace?.id ?? `goal-seek:no-trace:${goalHashOf(String(goal ?? ""))}`;
+      const _seekExecId = seek.executionId ?? seek.result?.trace?.id;
+      if (_seekExecId) {
+        record.executionId = _seekExecId;
+      } else if (seek.reached !== true) {
+        const _goalStr = String(goal ?? "");
+        const _targetShapes = (typeof goal === "string" ? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes : undefined) ?? [];
+        try {
+          record.executionId = await persistFailedWalkTrace(_goalStr, walkStepSink, seek.completionShapes, seek.goalReachReason, _targetShapes, "walk-terminated-unreached");
+        } catch {
+          record.executionId = `goal-seek:no-trace:${goalHashOf(_goalStr)}`;
+        }
+      } else {
+        record.executionId = `goal-seek:no-trace:${goalHashOf(String(goal ?? ""))}`;
+      }
       record.selectedTemplateId = seek.selectedTemplateId;
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
@@ -15752,6 +15814,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // learner most needs to penalize were the exact ones it could not hear about.
       // Same helper, same retry, and it names its own skip reason when the record has no
       // patchable execution row.
+      if ((!record.executionId || String(record.executionId).startsWith("goal-seek:no-trace:")) && walkStepSink.length > 0) {
+        try {
+          record.executionId = await persistFailedWalkTrace(String(goal ?? ""), walkStepSink, (record as { completionShapes?: string[] | null }).completionShapes ?? null, record.error, [], "walk-threw");
+        } catch { /* leave executionId as-is */ }
+      }
       deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw");
       // A dispatch that THREW never reached the classifier below, so it used to
       // terminalize with no executionPath at all — indistinguishable, to every
