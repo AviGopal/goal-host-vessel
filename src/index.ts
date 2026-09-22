@@ -7551,7 +7551,7 @@ async function runGoalAsPoolWalk(
       // the system owns payload synthesis — including binding the fetched inputs.
       const _poolFindings = boundFindingsFromIntermediates();
       pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
-        ? `${goal}\n\n--- PRODUCED INPUT DATA (analyze ONLY the records below; do NOT invent, assume, or use placeholder records) ---\n${_poolFindings.slice(0, 120000)}`
+        ? `${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
         : goal;
     }
     // KEYSTONE: thread produced pool-shape content into the executor command deterministically,
