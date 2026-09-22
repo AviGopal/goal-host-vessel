@@ -7551,7 +7551,7 @@ async function runGoalAsPoolWalk(
       // the system owns payload synthesis — including binding the fetched inputs.
       const _poolFindings = boundFindingsFromIntermediates();
       pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
-        ? `${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. BE CONCISE so the report is COMPLETE and not truncated: at most 8 classes; per class give the class name, the member gap ids on one line, and a one-sentence invariant. Keep the whole report under 2500 characters.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
+        ? `${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
         : goal;
       if (!(typeof pointer.max_tokens === "number" && (pointer.max_tokens as number) >= 4096)) pointer.max_tokens = 4096; // ensure the report can COMPLETE (satisfier default was capping it short)
     }
