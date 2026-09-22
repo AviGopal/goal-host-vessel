@@ -10497,6 +10497,11 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
       // Deterministic-oracle label feed: after every post-hoc correction above, so the
       // corpus records the FINAL ground-truth verdict (incl. wrong-derived-value flips).
+      // Hoisted so the durable satisfier-trace persist below can honor the walk's
+      // beta-withhold decision. The _noOracle / _betaWithheldForSymmetry consts are
+      // block-scoped inside the reached===false branch and invisible at the persist
+      // site, which is how a WITHHELD verdict still got stamped reached:false there.
+      let walkBetaWithheld = false;
       if (verdict) recordDeterministicLabel(goal, lastExecId, lastPick || undefined, verdict);
       if (verdict && verdict.reached === false) {
         status = "failed";
@@ -10539,6 +10544,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _alphaWasReachable =
           verdict.deterministic === true || consumedInChain.size > 0;
         const _betaWithheldForSymmetry = !_noOracle && !_alphaWasReachable;
+        walkBetaWithheld = _noOracle || _betaWithheldForSymmetry;
 
         if (!_noOracle && !_betaWithheldForSymmetry) {
           const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
@@ -11067,7 +11073,18 @@ If one of those sibling shapes is the action that would create what the goal ask
           ...lastTrace,
           status: reached ? "completed" : "failed",
           reason: reached ? lastTrace.reason : (goalReachReason ?? lastTrace.reason),
-          tags: [..._existingTags, reached ? "reached:true" : "reached:false"],
+          // CREDIT TRUTHFULNESS (a withheld beta must actually be withheld): the
+          // store's classifyReach tests the reached:false TAG before its
+          // hollow-satellite guard, so stamping it here instructed activity-api's
+          // insert-path applyOutcomeToPosteriors to add beta 1.0 to the very arm the
+          // verdict branch had just logged WITHHELD for (byte-verified on
+          // satisfier:substrateObservable, beta 6.625 to 7.625, one durable trace).
+          // When beta was withheld, persist the trace UNTAGGED: classifyReach then
+          // falls through to isHollowSatellite (id walk-satisfier-*, activity_id
+          // satisfier:*) and returns ungraded, which is the abstention the log
+          // already claims. Reached and genuinely-penalised verdicts are stamped
+          // exactly as before.
+          tags: (!reached && walkBetaWithheld) ? _existingTags : [..._existingTags, reached ? "reached:true" : "reached:false"],
         };
         void persistSatisfierTrace(durableTrace);
       }
