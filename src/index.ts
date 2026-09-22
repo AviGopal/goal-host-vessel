@@ -3913,7 +3913,7 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   if (!goalText || !r) return;
   // Structural terminations and environment faults carry no correctable content; only a verdict
   // about PRODUCED content can teach the next attempt what to do differently.
-  if (/no pick|no producer|missing shapes|constructible payload|terminating walk|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
+  if (/no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
   const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
   const list = goalFailureMemory.get(rec.hash) ?? [];
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
