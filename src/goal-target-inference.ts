@@ -271,6 +271,13 @@ function deterministicCompositionAsk(goal: string, knownShapes: string[]): GoalT
 // repaired, since routing to a severed shape hollow-greens the dispatch. !WRITE_CLAUSE so
 // "save an env-gate note" keeps its compose-then-persist path; knownShapes-guarded so a
 // spoke masking the producer falls through unchanged.
+function deterministicWebSearchRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  if (!knownShapes.includes("web_search")) return null;
+  const WORLD_QUERY = /\b(what('s| is) happening (in|around) the world (right now|today)|current events|world news|latest news)\b/i;
+  if (!WORLD_QUERY.test(goal)) return null;
+  return { shapes: ["web_search"], confidence: 0.9, alternatives: [] };
+}
+
 function deterministicEnvGateRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
   if (!knownShapes.includes("env_gate_scan")) return null;
   if (_COMPOSITION_WRITE_CLAUSE.test(goal)) return null;
@@ -308,6 +315,8 @@ function deterministicEnvGateRoute(goal: string, knownShapes: string[]): GoalTar
  * cannot be reopened by this new door.
  */
 function deterministicRegistryRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  const webSearchDecision = deterministicWebSearchRoute(goal, knownShapes);
+  if (webSearchDecision) return webSearchDecision;
   if (!knownShapes.includes("shellResult")) return null;
   // A COMPUTE-THEN-EMIT GOAL IS NOT A LOOKUP. "how many vessels are registered? store the
   // answer in <X>" asks for a count AND a write; routing it to shellResult alone answers
