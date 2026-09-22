@@ -3887,6 +3887,90 @@ async function loadReachedCommandCache(): Promise<void> {
     console.log(`[goal-host-vessel] reached-command cache: loaded ${reachedCommandCache.size} persisted commands (${applied} lines applied, ${tombstoned} tombstone(s)) from ${REACHED_CMD_CACHE_PATH}`);
   } catch { /* fail-open: start empty */ }
 }
+// ── FAILURE MEMORY (cross-dispatch feedback edge) ──
+// The success side persists twice (reachedCommandCache, goal_execution_paths) and replays on the
+// next dispatch of the same goal. The failure side persisted only a de-identified class label
+// (reach-gate-lesson strips the reason so content dedup holds), so the system recorded THAT a goal
+// was hollow, never WHY — and the next dispatch re-derived blind, or replayed a cached recipe the
+// judge had already rejected (one hollow is strike 1 of 2; the recipe is retained). Compounding on
+// failures needs the symmetric store: the verdict REASON keyed by goal_hash, recalled at dispatch
+// start, fed into attempt 1, with recipe replay held off while the latest verdict is a failure.
+// A later verified reach does not erase the history; it supersedes it (records older than the last
+// reach are not fed back), so a goal that now reaches gets its reuse back and a goal that goes
+// hollow again after a counterfeit reach is steered again. Fail-open throughout, like the caches.
+type GoalFailureRecord = { hash: string; classToken: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean };
+const goalFailureMemory = new Map<string, GoalFailureRecord[]>();
+const goalLastReachedAt = new Map<string, string>();
+const GOAL_FAILURE_MEMORY_PATH = process.env.GOAL_FAILURE_MEMORY_PATH ?? "/workspace/.goal-host-failure-memory.jsonl";
+const GOAL_FAILURE_MEMORY_MAX_LOAD = 4000;
+const GOAL_FAILURE_PER_HASH = 5;
+function goalClassTokenOf(goalText: string): string {
+  const gw = String(goalText ?? "").toLowerCase().match(/\b([a-z]{3,12})\b[^a-z]*(?:the\s+|all\s+|every\s+)?([a-z_][a-z0-9_:.-]{2,24})?/);
+  return gw && gw[1] ? `${gw[1]}${gw[2] ? "-" + gw[2] : ""}` : "";
+}
+function rememberGoalFailure(goalText: string, reason: string | undefined | null, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): void {
+  const r = String(reason ?? "").trim();
+  if (!goalText || !r) return;
+  // Structural terminations and environment faults carry no correctable content; only a verdict
+  // about PRODUCED content can teach the next attempt what to do differently.
+  if (/no pick|no producer|missing shapes|constructible payload|terminating walk|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
+  const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
+  const list = goalFailureMemory.get(rec.hash) ?? [];
+  list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
+  goalFailureMemory.set(rec.hash, list);
+  appendFile(GOAL_FAILURE_MEMORY_PATH, JSON.stringify(rec) + "\n").catch(() => { /* fail-open: in-process memory is authoritative */ });
+  console.log(`[goal-host-vessel] failure-memory: REMEMBERED hash=${rec.hash} class=${rec.classToken || "-"} pick=${rec.pick ?? "-"} (${list.length} on record) reason="${rec.reason.slice(0, 100)}"`);
+}
+function markGoalReached(goalText: string): void {
+  if (!goalText) return;
+  const hash = goalHashOf(goalText);
+  if (!goalFailureMemory.has(hash)) return;
+  const at = new Date().toISOString();
+  goalLastReachedAt.set(hash, at);
+  appendFile(GOAL_FAILURE_MEMORY_PATH, JSON.stringify({ hash, reachedAt: at }) + "\n").catch(() => { /* fail-open */ });
+  console.log(`[goal-host-vessel] failure-memory: SUPERSEDED hash=${hash} (goal reached; older failure records no longer fed back)`);
+}
+function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
+  const hash = goalHashOf(goalText); const cls = goalClassTokenOf(goalText);
+  const since = (h: string) => goalLastReachedAt.get(h) ?? "";
+  const exact = (goalFailureMemory.get(hash) ?? []).filter((r) => r.at > since(hash));
+  const near: GoalFailureRecord[] = [];
+  if (cls) for (const [h, list] of goalFailureMemory) { if (h === hash) continue; for (const r of list) if (r.classToken === cls && r.at > since(h)) near.push(r); }
+  near.sort((a, b) => b.at.localeCompare(a.at));
+  return { exact, near: near.slice(0, 3) };
+}
+function priorFailureFeedbackFor(goalText: string): string {
+  const { exact, near } = recallGoalFailures(goalText);
+  if (exact.length === 0 && near.length === 0) return "";
+  // Deterministic verdicts outrank LLM-judged ones: a judge that once credited a counterfeit can
+  // also mis-grade a hollow, and a lesson built on a mis-grade steers the wrong way.
+  const rank = (a: GoalFailureRecord, b: GoalFailureRecord) => Number(b.deterministic) - Number(a.deterministic) || b.at.localeCompare(a.at);
+  const lines: string[] = [];
+  for (const r of [...exact].sort(rank).slice(0, 3)) lines.push(`- (this exact goal, ${r.at.slice(0, 16)}, producer ${r.pick ?? "?"}) ${r.reason}`);
+  for (const r of near) lines.push(`- (a similar goal, ${r.at.slice(0, 16)}) ${r.reason}`);
+  return lines.join("\n");
+}
+async function loadGoalFailureMemory(): Promise<void> {
+  try {
+    const raw = await readFile(GOAL_FAILURE_MEMORY_PATH, "utf-8").catch(() => "");
+    if (!raw) return;
+    const lines = raw.split("\n").filter((l) => l.trim()).slice(-GOAL_FAILURE_MEMORY_MAX_LOAD);
+    goalFailureMemory.clear(); goalLastReachedAt.clear(); let n = 0;
+    for (const l of lines) {
+      try {
+        const o = JSON.parse(l) as Partial<GoalFailureRecord> & { reachedAt?: string };
+        if (!o.hash) continue;
+        if (o.reachedAt) { goalLastReachedAt.set(o.hash, o.reachedAt); continue; }
+        if (!o.reason) continue;
+        const list = goalFailureMemory.get(o.hash) ?? [];
+        list.push({ hash: o.hash, classToken: o.classToken ?? "", reason: o.reason, pick: o.pick ?? null, shapes: o.shapes ?? [], attempts: o.attempts ?? 0, at: o.at ?? "", deterministic: o.deterministic === true });
+        while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
+        goalFailureMemory.set(o.hash, list); n++;
+      } catch { /* skip a malformed line */ }
+    }
+    console.log(`[goal-host-vessel] failure-memory: loaded ${n} record(s) for ${goalFailureMemory.size} goal(s) from ${GOAL_FAILURE_MEMORY_PATH}`);
+  } catch { /* fail-open: start empty */ }
+}
 // ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24; multi-slot 2026-07-25) ──
 // On an exact goal_hash MISS, before the LLM synthesis call, REUSE a verified command from a
 // SIMILAR prior goal by swapping ONLY the varying content span. Pure, synchronous, zero-LLM,
@@ -7560,7 +7644,7 @@ async function runGoalAsPoolWalk(
       // FEEDBACK EDGE: on a hill-climb retry the prior attempt's verdict reason is injected here so the
       // model CORRECTS the named defect instead of re-deriving blind (the grade->next-attempt edge).
       const _fbPreamble = (typeof opts.priorVerdictFeedback === "string" && opts.priorVerdictFeedback.trim().length > 0)
-        ? `A PREVIOUS attempt at THIS goal was graded NOT REACHED for this reason:\n"${opts.priorVerdictFeedback.trim().slice(0, 600)}"\nProduce a CORRECTED final artifact that fixes EXACTLY that defect — if it was "incomplete", cover every class in the records; if member ids were wrong or invented, use ONLY ids that appear verbatim in the records below.\n\n`
+        ? `Earlier attempts at this goal (or a similar one) were graded NOT REACHED for these reasons:\n${opts.priorVerdictFeedback.trim().slice(0, 1200)}\nProduce a CORRECTED final artifact that avoids EXACTLY those defects — if an attempt was "incomplete", cover every class in the records; if member ids were wrong or invented, use ONLY ids that appear verbatim in the records below; if a count was wrong, count the listed members and state that number.\n\n`
         : "";
       pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
         ? `${_fbPreamble}${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
@@ -11545,6 +11629,15 @@ async function runGoalWithRecovery(
   // Lessons recalled for this dispatch, passed explicitly into every walk below.
   // See opts.recalledLessons for why the previous goal-hash key silently never matched.
   let _dispatchLessons = "";
+  // FAILURE-RECALL (cross-dispatch feedback edge): what earlier dispatches of THIS goal were graded
+  // hollow FOR, fed into attempt 1 so the walk starts where the previous dispatch ended instead of
+  // re-deriving blind. Paired with disableReuse on attempt 1: a cached recipe whose latest verdict
+  // was hollow is not replayed on the strength of one earlier reach.
+  const _priorFailureFeedback = goal ? priorFailureFeedbackFor(goal) : "";
+  if (_priorFailureFeedback && goal) {
+    const _pf = recallGoalFailures(goal);
+    tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL — ${_pf.exact.length} prior hollow verdict(s) for goal_hash=${goalHashOf(goal)} + ${_pf.near.length} near-miss; fed into attempt 1, reached-command replay disabled: ${_priorFailureFeedback.slice(0, 220).replace(/\n/g, " | ")}`);
+  }
   if (goal && !opts.callerPinned && !opts.firstTarget) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -12448,6 +12541,7 @@ async function runGoalWithRecovery(
       }
       let walk = await runGoalAsPoolWalk(goal, {
         recalledLessons: _dispatchLessons,
+        priorVerdictFeedback: _priorFailureFeedback || undefined,
         variables: opts.variables,
         tags: opts.tags,
         parentExecutionId: opts.parentExecutionId,
@@ -12457,7 +12551,7 @@ async function runGoalWithRecovery(
         surface: opts.surface,
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
-        ablation: opts.ablation,
+        ablation: _priorFailureFeedback ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,
         learningMode: opts.learningMode,
         preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
@@ -12486,7 +12580,7 @@ async function runGoalWithRecovery(
         walk.goalReachReason.trim().length > 0 &&
         !/no pick|no producer|missing shapes|constructible payload|terminating walk/i.test(walk.goalReachReason)
       ) {
-        tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed)`);
+        tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=${goalHashOf(goal)}`);
         const fbWalk = await runGoalAsPoolWalk(goal, {
           recalledLessons: _dispatchLessons,
           variables: opts.variables,
@@ -12502,7 +12596,7 @@ async function runGoalWithRecovery(
           learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
-          priorVerdictFeedback: walk.goalReachReason,
+          priorVerdictFeedback: [_priorFailureFeedback, `- (this dispatch, the attempt just graded) ${walk.goalReachReason}`].filter(Boolean).join("\n"),
         });
         if (fbWalk.reached) {
           // Same edit-intent guard as the suppress-retry: a hollow author/read satisfier must not
@@ -15868,6 +15962,12 @@ async function handleRunGoal(req: Request): Promise<Response> {
       if (record.reached === false && typeof record.goal === "string" && record.goal) {
         evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String(record.goalReachReason ?? "no reason recorded").slice(0, 120)}`);
       }
+      // FAILURE MEMORY: the verdict reason is the lesson. Persist it keyed by goal_hash so the next
+      // dispatch of this goal can avoid the named defect explicitly instead of re-deriving blind.
+      if (typeof record.goal === "string" && record.goal) {
+        if (record.reached === false) rememberGoalFailure(record.goal, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+        else if (record.reached === true) markGoalReached(record.goal);
+      }
       record.learning = learningSink;
       if (seek.answerBody) record.answerBody = seek.answerBody;
       persistDispatchStore();
@@ -16983,6 +17083,7 @@ console.log(
 );
 
 void loadReachedCommandCache(); // populate the known-command library from durable storage (fail-open, async)
+void loadGoalFailureMemory(); // populate the failure memory (why prior dispatches of a goal were hollow) from durable storage (fail-open, async)
 registerBuiltinResolvers();
 await registerDevVesselProxies();
 await registerDiscoveryProxies();
