@@ -12015,6 +12015,20 @@ async function runGoalWithRecovery(
           if (compute) namedBound.push(compute);
         }
       }
+        // READ-SHAPE -> WRITE-SIBLING for persist goals: the goal names a data shape so
+        // named-shape bind captured the READ shape "memoryNote"; but the ACTION is to
+        // persist, and satisfying the read shape only RESOLVES it without writing. When
+        // the goal is a persist goal and a bound read-shape has a resolvable _write
+        // sibling, swap to the writer (in place) so the terminal actually stores the body.
+        if (/\b(store|save|write|record|persist|put|log)\b/i.test(goal)) {
+          const _nb: string[] = namedBound;
+          for (let _i = 0; _i < _nb.length; _i++) {
+            const _s: string = String(_nb[_i]);
+            const _w: string = _s + "_write";
+            const _hasWriter: boolean = shapeEndpointMap.has(_w) || discoveredProxyShapes.includes(_w) || namedBindCandidates.includes(_w);
+            if (!_s.endsWith("_write") && _hasWriter) { _nb[_i] = _w; }
+          }
+        }
       if (namedBound.length > 0 && namedBound.length <= 3) {
         // A verbatim-named shape outranks weak inference: drop tool-noise terminals that
         // are unsatisfiable as goals in their own right (shellResult satisfier is PROVEN-BAD
