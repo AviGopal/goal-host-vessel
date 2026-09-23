@@ -6326,7 +6326,7 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_sig ? { state_signature: _sig } : {}), ...(_shapes.length ? { target_shapes: _shapes } : {}) }),
+      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_sig ? { state_signature: _sig } : {}), ...(_shapes.length ? { target_shapes: _shapes } : {}), exploit_threshold: 0.9 }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) return null;
@@ -6341,7 +6341,7 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
       countOf(p?.successful_executions) >= pol.minSuccessfulExecutions &&
       countOf(p?.total_executions) >= pol.minTotalExecutions);
     if (eligible.length === 0) {
-      if (paths.length > 0) console.log(`[goal-host-vessel] pathway reuse: ${paths.length} recommended, 0 accepted (minSuccessful=${pol.minSuccessfulExecutions} minTotal=${pol.minTotalExecutions}) — no reusable pathway`);
+      if (paths.length > 0) console.log(`[goal-host-vessel] pathway reuse: ${paths.length} recommended (mode: ${j?.mode}, shape-matched: ${j?.shape_matched_candidates ?? '?'}), 0 accepted (minSuccessful=${pol.minSuccessfulExecutions} minTotal=${pol.minTotalExecutions}) — no reusable pathway`);
       return null;
     }
     // EXACT BEFORE NEARBY, then most-CONFIDENT first (Wilson lower bound, not raw
@@ -6352,7 +6352,7 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
     const activities: string[] = best.path_activities.map((x: unknown) => String(x)).filter((s: string) => s.length > 0);
     if (activities.length === 0) return null;
     const _mode = best?.match_mode === "shape_signature" ? `shape_signature cover=${typeof best?.shape_cover === "number" ? best.shape_cover.toFixed(2) : "?"} borrowed_from_goal=${typeof best?.goal_hash === "string" ? best.goal_hash : "?"}` : "goal_hash";
-    console.log(`[goal-host-vessel] pathway reuse: accepted ${activities.length}-step pathway via ${_mode} (${countOf(best.successful_executions)}/${countOf(best.total_executions)} reached) of ${paths.length} recommended, dropped ${paths.length - eligible.length}`);
+    console.log(`[goal-host-vessel] pathway reuse: accepted ${activities.length}-step pathway via ${_mode} (${countOf(best.successful_executions)}/${countOf(best.total_executions)} reached) of ${paths.length} recommended (mode: ${j?.mode}), dropped ${paths.length - eligible.length}`);
     return {
       activities,
       goalHash: typeof best.goal_hash === "string" ? best.goal_hash : null,
