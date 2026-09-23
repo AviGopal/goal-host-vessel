@@ -5286,6 +5286,17 @@ async function fetchLearnedDeliverableShapes(): Promise<string[]> {
     }
     const j: any = await r.json();
     const shapes = (Array.isArray(j?.shapes) ? j.shapes : []).map((x: unknown) => String(x)).filter(Boolean);
+    if (shapes.length === 0) {
+      if (learnedDeliverableCache && learnedDeliverableCache.shapes.length > 0) {
+        console.log(`[deliverable-shapes] lookup answered an EMPTY set — keeping last known-good vocabulary of ${learnedDeliverableCache.shapes.length} shapes`);
+        learnedDeliverableCache = { shapes: learnedDeliverableCache.shapes, fetchedAt: now };
+        return learnedDeliverableCache.shapes;
+      } else {
+        console.log("[deliverable-shapes] lookup answered an EMPTY set and no cache exists — the walk's vocabulary is narrower than the substrate");
+        learnedDeliverableCache = { shapes: [], fetchedAt: now };
+        return [];
+      }
+    }
     learnedDeliverableCache = { shapes, fetchedAt: now };
     return shapes;
   } catch (e) {
