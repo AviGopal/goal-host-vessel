@@ -6577,6 +6577,27 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
   const executionId = trace?.id;
   if (!executionId) return;
   if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
+  
+  // Causal attempt ledger: never crystallize a walk that landed an unaccounted commit.
+  // The scan ingests the git-hook spool first, so a commit made seconds ago is seen.
+  // Unreachable ledger => defer (delaying a template is cheap; crystallizing a regression is not).
+  {
+    const did = dispatchContext.getStore()?.dispatchId;
+    if (did) {
+      let deferSha: string | null = null;
+      try {
+        const scanUrl = await ufResolveUrl("unaccounted_landing_scan");
+        if (!scanUrl) throw new Error("no producer for unaccounted_landing_scan");
+        const r = await fetch(scanUrl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "unaccounted_landing_scan" } } }), signal: AbortSignal.timeout(30_000) });
+        const j = await r.json() as { body?: { unaccounted?: Array<{ sha?: string; execution_id?: string | null }> } };
+        const hit = (j.body?.unaccounted ?? []).find((u) => u.execution_id === did);
+        if (hit) deferSha = String(hit.sha ?? "unknown");
+      } catch (e) {
+        deferSha = `ledger-unreachable: ${(e as Error).message.slice(0, 80)}`;
+      }
+      if (deferSha) { console.log(`[goal-host-vessel] reach->mint: DEFER landing — dispatch ${did} landed ${deferSha} with no settled attempt; extraction withheld (causal-attempt-ledger)`); return; }
+    }
+  }
   try {
     // Execute ribosome-extract via the LOCAL executor (host.runGoal), not by
     // POSTing activityDispatch to activity-api /v2/impulses/resolve — activity-api
