@@ -9649,6 +9649,8 @@ If one of those sibling shapes is the action that would create what the goal ask
             ? [...chainProduced].filter((s) => s !== "goal" && s !== satisfiableNow && !terminalShapes.has(s))
             : [];
           ledgerStep(_consumedInputs.length > 0 ? _consumedInputs : undefined, [satisfiableNow]);
+          if (_consumedInputs.length > 0) { const _inIds = poolImpulses.filter((i) => _consumedInputs.includes(String((i.metadata as { shape?: unknown }).shape))).map((i) => i.id); synthTrace.inputImpulseIds = _inIds; const _t0 = synthTrace.tasks[0]; if (_t0) { _t0.inputImpulseIds = _inIds; (_t0 as { inputShapes?: string[] }).inputShapes = [..._consumedInputs]; } }
+          { const _outImp = poolImpulses.find((i) => String((i.metadata as { shape?: unknown }).shape) === satisfiableNow); if (_outImp) { synthTrace.outputImpulseIds = [_outImp.id]; const _t1 = synthTrace.tasks[0]; if (_t1) _t1.outputImpulseIds = [_outImp.id]; } }
           exclude.add(normActivityId(satId));
           chainExecIds.push(synthTrace.id);
           lastTrace = synthTrace;
