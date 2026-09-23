@@ -9239,6 +9239,35 @@ If one of those sibling shapes is the action that would create what the goal ask
   // path_signature throws away. Deduped and sorted at send time.
   const effectLedger = new Set<string>();
   const ledgerStep = (inputShapes: string[] | undefined, newOutputs: string[]): void => {
+  // Normalize satisfier shapes: treat "foo" and "satisfier:foo" as equivalent for
+  // producer->consumer matching. Without this, steps that declare inputShapes without the
+  // satisfier: prefix fail to match earlier produced satisfier:foo (and vice versa), so the
+  // in-chain credit is withheld. Verified producer: fetchSatisfierReliability normalizes
+  // shapes at lines 5718-5719 by adding the satisfier: prefix when absent, so both forms
+  // circulate. Example that previously failed: declared ["goal_verification_label"] vs
+  // earlier produced ["satisfier:goal_verification_label"].
+  const _in = inputShapes;
+  if (Array.isArray(_in) && _in.length > 0) {
+    const pref = "satisfier:";
+    const expanded: string[] = [];
+    for (const s of _in) {
+      expanded.push(s);
+      if (s.startsWith(pref)) {
+        const bare = s.slice(pref.length);
+        if (bare.length > 0) expanded.push(bare);
+      } else {
+        expanded.push(`${pref}${s}`);
+      }
+    }
+    // Deduplicate while preserving order
+    const seen = new Set<string>();
+    const dedup: string[] = [];
+    for (const s of expanded) {
+      if (!seen.has(s)) { seen.add(s); dedup.push(s); }
+    }
+    // Rebind so downstream equality checks see both forms.
+    inputShapes = dedup;
+  }
     for (const s of (inputShapes ?? [])) if (chainProduced.has(s)) consumedInChain.add(s);
     for (const s of newOutputs) if (s && s !== "activityExecutionSummary") chainProduced.add(s);
   };
