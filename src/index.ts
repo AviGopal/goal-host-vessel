@@ -12332,6 +12332,7 @@ async function runGoalWithRecovery(
                   // id (route-edit-*), so `pointer.gap` cannot tell the lanes
                   // apart, and a naming convention is not a contract.
                   directed: opts.operatorOrigin === true,
+                  authoring_execution_id: typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined,
                   spec: earlySpec,
                   verify_vessels: earlyAllVessels.map((v) => `repos/${v}`),
                   land: true,
@@ -12950,6 +12951,7 @@ async function runGoalWithRecovery(
                   pointer: {
                     type: "feature_compose",
                     directed: opts.operatorOrigin === true,   // see the note at the sibling site above
+                    authoring_execution_id: typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined,
                     spec,
                     verify_vessels: allEditVessels.map((v) => `repos/${v}`),
                     land: true,
