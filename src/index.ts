@@ -4275,11 +4275,14 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // outside it is REFUSED, so the model can never drive a shape we didn't authorize.
 // Mirrors rawResolve's content/body/success unwrap + error discipline. Fail-open: any
 // error => {ok:false} (counted as a failed exec, never as grounding).
+import { AsyncLocalStorage } from "node:async_hooks";
+// The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery.
+const dispatchContext = new AsyncLocalStorage<{ dispatchId: string }>();
 async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
   try {
-    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...args } } }), signal: AbortSignal.timeout(60_000) });
+    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...args, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(60_000) });
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     const j = await r.json() as any;
     let c: unknown = j;
