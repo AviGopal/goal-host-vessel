@@ -12554,7 +12554,7 @@ async function runGoalWithRecovery(
         parentExecutionId: opts.parentExecutionId,
         compositionChain: opts.compositionChain,
         expectedOutputShapes: _pathHeadSat && !(seededOutputShapes ?? []).includes(_pathHeadSat) ? [_pathHeadSat, ...(seededOutputShapes ?? [])] : seededOutputShapes,
-        terminalOutputShapes,
+        terminalOutputShapes: (terminalOutputShapes && terminalOutputShapes.length > 0) ? terminalOutputShapes : (_pathHeadSat ? (((reachingPathway?.activities as unknown[] | undefined) ?? []).filter((a): a is string => typeof a === "string" && a.startsWith("satisfier:")).map((a) => a.slice("satisfier:".length)).filter((s) => s !== _pathHeadSat)) : undefined),
         surface: opts.surface,
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
