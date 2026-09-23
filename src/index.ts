@@ -7992,7 +7992,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       tap(`[goal-host-vessel] walk: ANSWERED from learned family recipe for "${shape}" — verification will pay for two FRESH derivations so the answer cannot confirm itself`);
     } else {
       const _rebind = _suppressReuse ? null : tryLexicalRebind(goal, shape);
-      if (_rebind) {
+      if (_rebind && !(terminalShapes.has(shape) && [...chainProduced].some((s) => s !== "goal" && !terminalShapes.has(s)))) {
         directArgsRaw = { [_rebind.field]: _rebind.command };
         commandReuseFired = true;
         tap(`[goal-host-vessel] walk: REBOUND verified command for "${shape}" from a similar goal (src ${_rebind.srcHash}) — content swapped, SKIPPED pointer_arg_extraction synthesis`);
