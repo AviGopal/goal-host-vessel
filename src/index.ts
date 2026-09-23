@@ -12541,14 +12541,17 @@ async function runGoalWithRecovery(
           tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway threw (${(e as Error).message.slice(0, 120)}) — falling through to the full walk`);
         }
       }
-      let walk = await runGoalAsPoolWalk(goal, {
+      const _headAct = (reachingPathway?.activities as unknown[] | undefined)?.[0];
+        const _pathHeadSat = typeof _headAct === "string" && _headAct.startsWith("satisfier:") ? _headAct.slice("satisfier:".length) : null;
+        if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
+        let walk = await runGoalAsPoolWalk(goal, {
         recalledLessons: _dispatchLessons,
         priorVerdictFeedback: _priorFailureFeedback || undefined,
         variables: opts.variables,
         tags: opts.tags,
         parentExecutionId: opts.parentExecutionId,
         compositionChain: opts.compositionChain,
-        expectedOutputShapes: seededOutputShapes,
+        expectedOutputShapes: _pathHeadSat && !(seededOutputShapes ?? []).includes(_pathHeadSat) ? [_pathHeadSat, ...(seededOutputShapes ?? [])] : seededOutputShapes,
         terminalOutputShapes,
         surface: opts.surface,
         stepSink: opts.stepSink,
@@ -12568,9 +12571,14 @@ async function runGoalWithRecovery(
           // falls to the grounded FLOOR, which runs the grep as a TOOL, observes it, and SYNTHESISES a
           // cited answer — the ReAct loop. Scoped tightly to this predicate; every other goal is
           // untouched, so the 63.5%-of-steps satisfier hot path is not broadly rejected.
-          suppressSatisfierShapes: isCodeInvestigationGoal(goal)
-            ? ["shellResult", "codeSearchResult", "code_search", "source_code", "code_find_function"]
-            : undefined,
+          suppressSatisfierShapes: (() => {
+            const codeInvestSuppressed = isCodeInvestigationGoal(goal)
+              ? ["shellResult", "codeSearchResult", "code_search", "source_code", "code_find_function"]
+              : [];
+            const terminalSuppressed = _pathHeadSat ? (terminalOutputShapes ?? []) : [];
+            const merged = [...codeInvestSuppressed, ...terminalSuppressed];
+            return merged.length > 0 ? merged : undefined;
+          })(),
       });
       // FEEDBACK-RETRY (hill-climb; the grade->next-attempt edge). Before the suppress-retry ABANDONS
       // the producer that just ran, or a cached recipe replays the same failure, re-run the SAME chain
