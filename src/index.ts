@@ -7923,7 +7923,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
       if (!processedBody) return args;
       const out = { ...args };
-      for (const k of ["content", "body", "text", "note", "markdown"]) if (k in out) out[k] = processedBody;
+      for (const k of ["content", "body", "text", "note", "markdown"]) if (k in out) { const _cur = out[k]; if (!(typeof _cur === "string" && _cur.trim().length > 0 && boundBody.includes(_cur.trim()))) out[k] = processedBody; }
       if (!("content" in out)) out["content"] = processedBody;
       return out;
     };
