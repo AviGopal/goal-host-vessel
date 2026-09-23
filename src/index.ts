@@ -7222,7 +7222,7 @@ async function runGoalAsPoolWalk(
     }
     const priorFindings = poolImpulses
         .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal" && !terminalShapes.has(s); })
-        .map((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?"; let c: string; try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } return `- ${s}: ${c.slice(0, 800)}`; })
+        .map((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?"; let c: string; try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = ""; return `- ${s}: ${c.slice(0, 800)}`; })
         .join("\n");
       const promptParts = [
         `${temporalGrounding}${schemaContract}${executorGuidance}${howToGuidance}A resolver for the impulse shape "${shape}" must be invoked to satisfy this goal. Extract ONLY the pointer argument fields that the resolver needs, from the goal text. ${execField ? `This is an EXECUTOR shape: emit ONLY the field "${execField}" holding the synthesized executable described above. Do NOT emit a "path", "file", or "query" field — a path is not the deliverable here; the runnable ${execField} is.` : `For a write/note shape that means fields like "path" and "content"; for a read shape a "path" or "query"; emit only fields the goal actually specifies or clearly implies.`}`,
@@ -7797,7 +7797,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (!sh || terminalShapes.has(sh) || sh === "goal") continue;
       let c: string;
       try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content, null, 2); }
-      catch { c = String(imp.content); }
+      catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
       if (!c || c.trim().length === 0 || c.trim() === "{}" || c.trim() === "[]") continue;
       parts.push(`## ${sh}\n\n\`\`\`json\n${c.slice(0, 8000)}\n\`\`\``);
     }
@@ -10398,7 +10398,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         .map((imp) => {
           const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
           let c: string;
-          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
           return `- ${s}: ${c.slice(0, 1500)}`;
         })
         .join("\n");
@@ -10474,7 +10474,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (co && typeof co === "object" && !Array.isArray(co) && typeof co.stdout === "string") {
           c = String(co.stdout).trim();
         } else {
-          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
         }
         return `- ${s}: ${c.slice(0, 1500)}`;
       })
@@ -10488,7 +10488,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
       .map((imp) => {
         let c: string;
-        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
         return c.slice(0, 1500);
       })
       .filter((c) => c.trim().length > 0)
@@ -13421,7 +13421,7 @@ async function runGoalWithRecovery(
         try { authoredFallbackTarget = await opts.authorFallback(); } catch { /* author failed → recovery loop proceeds without a target */ }
       }
     } catch (e) {
-      console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`);
+      console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`); console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error stack: ${String((e as Error).stack ?? "").split("\n").slice(0, 4).join(" | ")}`);
     }
   }
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
@@ -13562,7 +13562,7 @@ async function runGoalWithRecovery(
             .map((imp) => {
               const s = imp.metadata?.shape ?? "?";
               let c: string;
-              try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+              try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
               return `- ${s}: ${c.slice(0, 600)}`;
             })
             .join("\n")
@@ -13843,7 +13843,7 @@ function captureReachDigest(event: unknown): void {
       .map((imp) => {
         const s = imp.metadata?.shape ?? "?";
         let c: string;
-        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); }
+        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
         return `- ${s}: ${c.slice(0, 600)}`;
       })
       .join("\n")
