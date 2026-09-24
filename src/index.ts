@@ -12375,7 +12375,11 @@ async function runGoalWithRecovery(
               signal: AbortSignal.timeout(5_000),
             });
             const earlyDj = await earlyDr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-            const earlyV = pickSatisfierProducer((earlyDj?.content?.vessels ?? []) as import("./satisfier-pick.js").SatisfierProducer[]);
+            const earlyRows = (earlyDj?.content?.vessels ?? []) as Array<import("./satisfier-pick.js").SatisfierProducer & { owned_repos?: string[]; vesselId?: string }>;
+            const earlyTargetVessel = /^repos\/([^/]+)\//.exec(earlyEditFile)?.[1] ?? "";
+            const earlyOwners = earlyRows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(earlyTargetVessel));
+            const earlyV = earlyOwners.length === 1 ? earlyOwners[0] : pickSatisfierProducer(earlyRows);
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ${earlyOwners.length === 1 ? `routed by ownership → ${earlyOwners[0]!.vesselId}` : 'routed by pick'}`);
             if (earlyV?.endpoint) {
               earlyComposeUrl = `${earlyV.endpoint.replace(/\/+$/, "")}${asResolvePath(earlyV.resolve_endpoint)}`;
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose producer resolved via discovery → ${earlyComposeUrl}`);
