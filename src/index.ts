@@ -13028,7 +13028,7 @@ async function runGoalWithRecovery(
                   },
                 },
               }),
-              signal: AbortSignal.timeout(240_000),
+              signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
             });
             // Transient-failure retry (capability-gap-edit-intent-compose-transient-failure-retry):
             // a single socket closure / timeout / BUSY must not dump an edit goal onto the
