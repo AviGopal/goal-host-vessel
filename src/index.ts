@@ -3998,6 +3998,19 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   const REBIND_EXEC_FIELDS = ["command", "cmd", "script", "sql"];
   const META = /[;&|`$><\n\\]|\$\(/;
   const isNum = (x: string) => /^-?\d+(\.\d+)?$/.test(x.trim());
+  // GAP: vessel_mitosis_cutover refuses edits on protected vessels, but too late. Add an upfront check.
+  const PROTECTED_VESSELS = new Set(["discovery-vessel", "identity-vessel"]);
+  const goalPathMatch = goalNow.match(/repos\/([a-zA-Z0-9_-]+-vessel)\//);
+  if (goalPathMatch) {
+    const targetVessel = goalPathMatch[1]!;
+    if (PROTECTED_VESSELS.has(targetVessel)) {
+      // Any goal mentioning a protected vessel path that reaches this point is likely an edit-intent
+      // that would be rejected later by vessel_mitosis_cutover. Refuse upfront to prevent a
+      // wasteful compose cycle.
+      throw new Error(`refusing cutover on protected vessel: ${targetVessel}`);
+    }
+  }
+
   const toks = (str: string) => Array.from(str.matchAll(/\S+/g)).map((m) => ({ raw: m[0], start: m.index as number, end: (m.index as number) + m[0].length }));
   const norm = (t: string) => t.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, "");
   let best: { ratio: number; field: string; command: string; srcHash: string } | null = null;
