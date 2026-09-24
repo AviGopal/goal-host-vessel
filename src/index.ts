@@ -7661,6 +7661,7 @@ async function runGoalAsPoolWalk(
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     const pointer: Record<string, unknown> = { type: shape, ...base, ...extraArgs };
+    if ((shape === "shellResult" || shape === "shell" || shape === "bash" || shape === "bounded_shell") && pointer.execution_id === undefined && dispatchContext.getStore()?.dispatchId) pointer.execution_id = dispatchContext.getStore()!.dispatchId;
     // llm_completion / llmCompletion resolvers REQUIRE a non-empty `prompt`. The LLM
     // pointer-arg extractor does not reliably synthesize one for a bare inferred
     // llm_completion target (a pure question), so the resolver rejects "body must
