@@ -13952,6 +13952,8 @@ const host = new GoalHost({
   eventSink: (useNoOpSink ? pureNoOpSink : new CapturingEventSink(boundedSink)) as unknown as typeof busSink,
   ...(DISABLE_SUBSCRIBERS ? { subscriberTemplates: [] } : {}),
 });
+{ const _proc = (host as unknown as { proc?: { run: (command: string[], options?: unknown) => Promise<unknown> } }).proc; if (_proc && typeof _proc.run === "function") { const _run = _proc.run.bind(_proc); _proc.run = (command: string[], options?: unknown) => { const _id = dispatchContext.getStore()?.dispatchId; return _run(_id ? ["env", `SUBSTRATE_EXECUTION_ID=${_id}`, ...command] : command, options); }; } }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getTemplate: LOCAL-first, HUB-fallback (2026-07-01 template-fetch split)
