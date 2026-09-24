@@ -4791,7 +4791,7 @@ async function runGroundedToolLoop(
     // ITER_TIMEOUT_MS and blow the caller's proxy timeout.
     const iterBudgetMs = Math.max(5_000, Math.min(ITER_TIMEOUT_MS, deadline - Date.now()));
     try {
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools } } }), signal: AbortSignal.timeout(iterBudgetMs) });
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(iterBudgetMs) });
       if (!r.ok) {
         // A 5xx IS EVIDENCE ABOUT THE ACTION; A 4xx IS EVIDENCE ABOUT THE CHANNEL.
         //
