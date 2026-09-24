@@ -11697,6 +11697,7 @@ async function runGoalWithRecovery(
   // Lessons recalled for this dispatch, passed explicitly into every walk below.
   // See opts.recalledLessons for why the previous goal-hash key silently never matched.
   let _dispatchLessons = "";
+  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ dispatchId: opts.variables.dispatch_id });
   // FAILURE-RECALL (cross-dispatch feedback edge): what earlier dispatches of THIS goal were graded
   // hollow FOR, fed into attempt 1 so the walk starts where the previous dispatch ended instead of
   // re-deriving blind. Paired with disableReuse on attempt 1: a cached recipe whose latest verdict
