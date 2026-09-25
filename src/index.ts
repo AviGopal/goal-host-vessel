@@ -2372,7 +2372,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
     // clone holds UNDER THE SAME ASSUMPTIONS \u2014 stating those assumptions is what lets a wrong
     // one be spotted. Claiming independence is how a 10 (top-level) and an 18 (unfiltered)
     // were both credited as verified before the scope and filter defects were found.
-    return { reason: `deterministic:verified-file-count \u2014 counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) ${topLevelOnly ? "top-level" : "recursively"} in ${rel} from the git clone (authoritative), filter=${ext ? "*." + ext : "ALL FILES"}; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)${drift}`, reached: true, deterministic: true, completion_shapes: [] };
+    return { reason: `deterministic:verified-file-count \u2014 counted ${truth} ${ext ? ("." + ext + " ") : ""}file(s) ${topLevelOnly ? "top-level" : "recursively"} in ${rel} from the git clone (authoritative), filter=${ext ? "*." + ext : "ALL FILES"}; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)${drift}`, reached: true, deterministic: true, completion_shapes: ["bind:memoryNote.body<-llmCompletion"] };
   }
   if (emitted.length > 0) {
     // A counting command RAN and produced a number, but NOT the authoritative count. A wrong
@@ -2380,7 +2380,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
     // never green it. (Root of the wrong number: the reached-command cache replayed a stale
     // command that counted the drifted /vessels mirror instead of re-deriving against the clone
     // — filed as gap-reached-command-cache-stale-count-not-revalidated.)
-    return { reached: false, reason: `deterministic:file-count-mismatch \u2014 the authoritative count (git clone) is ${truth} ${ext ? ("." + ext + " ") : ""}file(s) in ${rel}, but the produced counting-command output reports ${emitted.join("/")}${drift}; a wrong/stale count is not a reach`, deterministic: true, completion_shapes: [] };
+    return { reached: false, reason: `deterministic:file-count-mismatch \u2014 the authoritative count (git clone) is ${truth} ${ext ? ("." + ext + " ") : ""}file(s) in ${rel}, but the produced counting-command output reports ${emitted.join("/")}${drift}; a wrong/stale count is not a reach`, deterministic: true, completion_shapes: ["bind:memoryNote.body<-llmCompletion"] };
   }
   return null;                                             // no counting-command output at all -> LLM/honest-miss (the walk never measured)
 }
