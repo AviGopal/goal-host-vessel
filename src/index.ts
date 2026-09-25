@@ -13460,7 +13460,27 @@ async function runGoalWithRecovery(
             // duplicated 128f51f this way). Ask git first, with the same evidence bar as the
             // late-landing check below: a sha on origin/dev for this goal hash means done.
             const _preLandedSha = await landedShaForGoalHash(String(editFile).split("/")[1] ?? "", goalHashOf(goal as string));
+            // ONLY WHILE THAT COMMIT IS STILL THE FILE'S LATEST CHANGE. Fixtures that re-send
+            // identical goal text (the graded canary R/restore/C) have older landings for the
+            // same goal hash that a later commit has since superseded; those must still
+            // escalate. If the goal-hash commit is the newest commit touching the file, its
+            // edit is in effect now and a second application would duplicate it.
+            let _preLandedIsLatest = false;
             if (_preLandedSha) {
+              try {
+                const _vessel = String(editFile).split("/")[1] ?? "";
+                const _rel = String(editFile).split("/").slice(2).join("/");
+                const _lp = Bun.spawn(
+                  ["git", "-C", `/workspace/git/vessels/${_vessel}`, "log", "origin/dev", "-1", "--format=%H", "--", _rel],
+                  { stdout: "pipe", stderr: "pipe" },
+                );
+                const _latest = (await new Response(_lp.stdout).text()).trim();
+                _preLandedIsLatest = (await _lp.exited) === 0 && _latest === _preLandedSha;
+              } catch {
+                _preLandedIsLatest = false;
+              }
+            }
+            if (_preLandedSha && _preLandedIsLatest) {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SKIPPED for ${editFile} - route-edit-${goalHashOf(goal as string)} already landed as ${_preLandedSha} on origin/dev`);
               return {
                 result: null,
