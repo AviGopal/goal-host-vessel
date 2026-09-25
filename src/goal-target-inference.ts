@@ -36,7 +36,7 @@ export function goalHashOf(goal: string): string {
   // goal-host-LOCAL (inference cache, router-buffer ids, lexical-rebind donor key); activity-api
   // keys its persistent per-goal posteriors from goal_text independently, so this does NOT re-key
   // stored learning — it only sharpens local coalescing / rebind matching across rephrasings.
-  const normalized = goal.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim();
+  const normalized = goal.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim().replace(/[.,!?;:]+$/, "");
   let hash = 2166136261 >>> 0; // FNV-1a 32-bit offset basis
   for (let i = 0; i < normalized.length; i++) {
     hash ^= normalized.charCodeAt(i);
