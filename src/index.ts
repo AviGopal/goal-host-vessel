@@ -1244,6 +1244,7 @@ function deliverReachVerdict(
 
 const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy"] as const;
 const VERSION = "0.1.0";
+const _dupOwnerFiled = new Set<string>();
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 // CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
 // Leaving it declared but unused invites the next call site to reach for it again, and
@@ -12486,6 +12487,24 @@ async function runGoalWithRecovery(
               }));
             }
             const earlyOwners = earlyRows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(earlyTargetVessel));
+            if (earlyOwners.length > 1 && !_dupOwnerFiled.has(earlyTargetVessel)) {
+              _dupOwnerFiled.add(earlyTargetVessel);
+              const claimants = earlyOwners.map((r) => String(r.vesselId ?? ""));
+              void fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+                body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
+                  id: `compose-ownership-duplicate-${earlyTargetVessel}`,
+                  category: "attempt_consequence",
+                  source: "substrate_detected",
+                  status: "open",
+                  detected_at: new Date().toISOString(),
+                  summary: `Two or more composers claim ${earlyTargetVessel} (${claimants.join(", ")})\u003a each holds a push clone for it, so both can land on its origin/dev. Remove the clone from all but one node's SUBSTRATE_PUSH_VESSELS.`,
+                  classification_metadata: { claimants, vessel: earlyTargetVessel },
+                } } } }),
+                signal: AbortSignal.timeout(5_000),
+              }).then((r) => { if (!r.ok) tap(`[goal-host-vessel] duplicate-owner gap write failed: HTTP ${r.status}`); }).catch((e) => tap(`[goal-host-vessel] duplicate-owner gap write failed: ${(e as Error).message}`));
+            }
             const earlyV = earlyOwners.length === 1 ? earlyOwners[0] : pickSatisfierProducer(earlyRows);
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ${earlyOwners.length === 1 ? `routed by ownership → ${earlyOwners[0]!.vesselId}` : 'routed by pick'}`);
             if (earlyV?.endpoint) {
