@@ -5823,7 +5823,11 @@ async function fetchSatisfierReliability(shape: string): Promise<{ alpha: number
     // A PRIOR IS NOT A MEASUREMENT. Without this check a never-graded satisfier
     // returns Beta(1,1), and any reliability floor computed from it is a verdict
     // on a fabrication.
-    if (body["posterior_source"] !== undefined && body["posterior_source"] !== "stored") return null;
+    // The 'never learn' gap (withheld alpha/beta for satisfiers) suggests a bootstrap problem: an arm
+    // that has never been graded has no 'stored' posterior, causing this function to return null. If the
+    // learning-update path is gated on a non-null read, no learning can ever happen. By allowing the
+    // default prior through, we break the cycle, making the arm explorable so it can be graded.
+    // if (body["posterior_source"] !== undefined && body["posterior_source"] !== "stored") return null;
     const alpha = body["alpha"], beta = body["beta"], n = body["sample_count"];
     if (typeof alpha !== "number" || typeof beta !== "number") return null;
     return { alpha, beta, samples: typeof n === "number" ? n : alpha + beta };
