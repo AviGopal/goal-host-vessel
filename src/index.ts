@@ -169,6 +169,73 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
     }
   } catch { /* fail-open */ }
 
+  // (3) Gaps from feature_compose
+  try {
+    const [fcRes, regRes] = await Promise.all([
+      fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+        method: "POST",
+        headers: feedAuthHeaders,
+        body: JSON.stringify({ pointer: { type: "feature_compose" } }),
+        signal: AbortSignal.timeout(5_000),
+      }),
+      fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+        method: "POST",
+        headers: feedAuthHeaders,
+        body: JSON.stringify({ pointer: { type: "vesselRegistry" } }),
+        signal: AbortSignal.timeout(5_000),
+      }),
+    ]);
+
+    if (fcRes.ok && regRes.ok) {
+      const fcBody = (await fcRes.json()) as { content?: { rows?: any[] } };
+      const regBody = (await regRes.json()) as { content?: { vessels?: any[] } };
+      const featureComposeRows = fcBody?.content?.rows ?? [];
+      const vesselRegistry = regBody?.content?.vessels ?? [];
+
+      if (featureComposeRows.length > 0 && vesselRegistry.length > 0) {
+        const repoOwnerMap = new Map<string, string[]>();
+        for (const vessel of vesselRegistry) {
+          const vesselId = (vessel?.vesselId ?? vessel?.id) as string | undefined;
+          const repositories = vessel?.repositories as string[] | undefined;
+          if (vesselId && Array.isArray(repositories) && repositories.length > 0) {
+            const vesselName = vesselId.split("@")[0];
+            if (vesselName) {
+              repoOwnerMap.set(vesselName, repositories);
+            }
+          }
+        }
+
+        for (const row of featureComposeRows) {
+          const producerId = row?.producer_id as string | undefined;
+          if (producerId && repoOwnerMap.has(producerId)) {
+            row.owned_repos = repoOwnerMap.get(producerId); // Fill in the data
+          }
+
+          if (row && row.id && row.summary) {
+            gaps.push({
+              substrate: row.substrate ?? FED_SUBSTRATE_ID,
+              id: row.id,
+              category: "feature_compose",
+              status: row.status ?? "open",
+              summary: row.summary,
+              ...(row.owned_repos &&
+                (row.owned_repos as string[]).length > 0 && {
+                  webTool: {
+                    url: `https://substrate-tools.fly.dev/feature-compose-repos?repos=${(row.owned_repos as string[]).join(
+                      "," 
+                    )}`,
+                    label: `Owned Repos: ${(row.owned_repos as string[]).join(", ")}`,
+                  },
+                }),
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[fleet-feed] Failed to resolve feature_compose gaps: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // (2b) peer substrates from PEER_DISCOVERY_ENDPOINTS — the hub(s) this spoke
   // federates UP to for resolvers. A resolver/relay hub commonly masks its own
   // goal-host (so it runs no goals and section (2)'s activeDispatches fanout
