@@ -4363,6 +4363,7 @@ const dispatchContext = new AsyncLocalStorage<{ dispatchId: string }>();
 async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
+  if (!dispatchContext.getStore()?.dispatchId) console.warn(`[uf] tool call WITHOUT dispatch id: tool=${name} (the resolver will receive no execution_id)`);
   try {
     const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...args, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(60_000) });
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
@@ -4966,7 +4967,15 @@ async function runGroundedToolLoop(
   }
   return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
 }
-async function universalToolFallback(goal: string, targetShapes: string[]): Promise<GoalSeekResult | null> {
+async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string): Promise<GoalSeekResult | null> {
+  // CARRY THE DISPATCH ID EXPLICITLY. ufExecuteTool reads it from dispatchContext, which was
+  // only ever populated by enterWith in runGoalWithRecovery; on a FEEDBACK-RETRY the floor ran
+  // with an empty store and posted bare {type, command} shell pointers (run 12 item 7, commit
+  // 5a0d780e unlinked). Re-enter under run() with the id the caller passed, so every tool call
+  // inside the floor is attributed regardless of how the async chain reached it.
+  if (dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) {
+    return await dispatchContext.run({ dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId));
+  }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
   // the entire ReAct parity FLOOR because LLM_VESSEL_ENDPOINT is unset in the running container —
@@ -12725,7 +12734,7 @@ async function runGoalWithRecovery(
       if (floorIsTheProvenPathway) {
         tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE — the store recommends the floor for this goal (${reachingPathway?.successfulExecutions}/${reachingPathway?.totalExecutions} reached); running it directly and skipping the walk`);
         try {
-          const reused = await universalToolFallback(goal, seededOutputShapes ?? []);
+          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
           if (reused?.reached) {
             if (opts.learningMode !== "observe") {
               void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
@@ -13030,7 +13039,7 @@ async function runGoalWithRecovery(
         !/\b(edit|add |insert|append|change|modify|replace|\bfix\b|remove|delete|update|rename|refactor|\bcount\b|how many|number of|value of|extract|report the value|report whether)\b/i.test(goal);
       if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? []);
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
