@@ -6114,6 +6114,23 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
   // receiver landed as e1979f77 + 092eac27, DB field via migration 211.
   const _recStateSig = (await getCachedStateSignature())?.signature_hash;
   if (!goalText || pathActivities.length === 0) return;
+  if (reached) {
+    const _did = dispatchContext.getStore()?.dispatchId;
+    if (_did) {
+      let _withheld: string | null = null;
+      try {
+        const _scanUrl = await ufResolveUrl("unaccounted_landing_scan");
+        if (!_scanUrl) throw new Error("no producer for unaccounted_landing_scan");
+        const _r = await fetch(_scanUrl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "unaccounted_landing_scan" } } }), signal: AbortSignal.timeout(30_000) });
+        const _j = await _r.json() as { body?: { unaccounted?: Array<{ sha?: string; execution_id?: string | null }> } };
+        const _hit = (_j.body?.unaccounted ?? []).find((u) => u.execution_id === _did);
+        if (_hit) _withheld = String(_hit.sha ?? "unknown");
+      } catch (e) {
+        _withheld = `ledger-unreachable: ${(e as Error).message.slice(0, 80)}`;
+      }
+      if (_withheld) { console.log(`[goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch ${_did} landed ${_withheld} with no settled attempt (causal-attempt-ledger)`); return; }
+    }
+  }
   if (parent?.goalHash || parent?.pathSignature) {
     // Emitted, not transmitted — see the note above. This is the one place the fact
     // "this walk reused pathway X" is currently recoverable, so it must at least be
