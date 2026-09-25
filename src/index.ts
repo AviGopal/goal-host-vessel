@@ -10302,7 +10302,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape: X, goal, available_shapes: [...producedShapes], max_attempts: 3 } } }),
+            body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape: X, goal, available_shapes: [...producedShapes], max_attempts: 3, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }),
             signal: AbortSignal.timeout(180_000),
           });
           if (r.ok) {
