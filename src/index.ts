@@ -9037,7 +9037,13 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (v !== null && "persisted" in v && v.persisted === true && _terminalWrite && _persistedBodyEmpty(v.content)) {
         tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" persisted with an EMPTY body — not a genuine emit; treating as unsatisfied so reach is graded honestly (not a hollow green)`);
         // fall through: the terminal shape stays unsatisfied -> honest not-reached
-      } else if (v !== null && "persisted" in v && v.persisted === true) {
+      } else if (v !== null && "persisted" in v && v.persisted === true && _terminalWrite) {
+      // Do not short-circuit on terminal writes; allow learned-pathway/producers to run first.
+      // Defer by adopting the independently-read content as the direct value so later branches can still emit it if nothing outranks it.
+      try { direct = v.content as unknown; } catch {}
+      recordExecutorCommand(directArgsRaw);
+      // fall through without returning — reuse check must run before terminal-write satisfier
+    } else if (v !== null && "persisted" in v && v.persisted === true) {
         recordExecutorCommand(directArgsRaw);
         return { content: v.content, effect: effectTupleOf(shape, ep?.endpoint, v.content) };
       } else if (v !== null && "persisted" in v && v.persisted === false) {
