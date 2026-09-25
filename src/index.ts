@@ -85,6 +85,58 @@ async function buildFleetActivityFeedBody(): Promise<Record<string, unknown>> {
   return resolveFleetActivityFeed() as unknown as Promise<Record<string, unknown>>;
 }
 
+// Discovery-first routing shim: ensure pointers naming an advertised shape resolve at its producer before any satisfier.
+// Applied once at module import; safe no-op if already patched.
+if (!(globalThis as { __discoveryFirstShimApplied?: boolean }).__discoveryFirstShimApplied) {
+  (globalThis as { __discoveryFirstShimApplied?: boolean }).__discoveryFirstShimApplied = true;
+  const __origFetch = globalThis.fetch.bind(globalThis) as (input: any, init?: any) => Promise<Response>;
+  globalThis.fetch = (async (input: any, init?: any): Promise<Response> => {
+    try {
+      const methodSrc = init && typeof init.method === "string" ? init.method : (input && typeof input.method === "string" ? input.method : "GET");
+      const method = typeof methodSrc === "string" ? methodSrc.toUpperCase() : "GET";
+      const urlStr = typeof input === "string"
+        ? input
+        : ((typeof URL !== "undefined" && input instanceof URL)
+            ? input.toString()
+            : ((typeof Request !== "undefined" && input instanceof Request) ? (input as Request).url : ""));
+      if (method === "POST" && urlStr && (urlStr.endsWith("/resolve") || urlStr.includes("/egress/resolve"))) {
+        let bodyText: string | null = null;
+        const bodyAny = init?.body ?? (typeof Request !== "undefined" && input instanceof Request ? await (input as Request).clone().text().catch(() => null) : null);
+        if (typeof bodyAny === "string") {
+          bodyText = bodyAny;
+        } else if (bodyAny && typeof (bodyAny as any).text === "function") {
+          try { bodyText = await (bodyAny as any).text(); } catch { bodyText = null; }
+        } else if (bodyAny && typeof bodyAny === "object") {
+          try { bodyText = JSON.stringify(bodyAny); } catch { bodyText = null; }
+        }
+        if (bodyText) {
+          let parsed: any = null;
+          try { parsed = JSON.parse(bodyText); } catch { parsed = null; }
+          const pointer = parsed?.pointer ?? parsed?.impulse?.pointer ?? null;
+          const reqBody = parsed?.body ?? parsed?.impulse?.body;
+          const pType = typeof pointer?.type === "string" ? pointer.type : null;
+          const hasFedTarget = typeof pointer?._fedTargetVessel === "string";
+          // Discovery-first for non-satisfier shapes, only when not explicitly federated to a target vessel.
+          if (!hasFedTarget && pType && pType !== "shellResult" && pType !== "bash" && !/^fs_/.test(pType)) {
+            try {
+              const probe = await __origFetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+                body: JSON.stringify({ pointer: { type: pType }, body: reqBody }),
+                signal: AbortSignal.timeout(5_000),
+              });
+              if (probe.ok) {
+                return probe;
+              }
+            } catch { /* fall through to original fetch */ }
+          }
+        }
+      }
+    } catch { /* fall through to original fetch */ }
+    return __origFetch(input, init);
+  }) as typeof fetch;
+}
+
 async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
