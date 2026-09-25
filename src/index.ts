@@ -13453,6 +13453,26 @@ async function runGoalWithRecovery(
                 executionId: `feature_compose:rejected:${goalHashOf(goal as string)}`,
               };
             }
+            // ALREADY LANDED IS NOT AN ANCHOR FAILURE. A retry of an edit that has already
+            // landed fails no_unique_anchor (the inserted text now contains the anchor), which
+            // the guard above counts as an anchor failure. Escalating then hands a landed edit
+            // to patch_with_tools, which reads the file and applies it a second time (31d07cd
+            // duplicated 128f51f this way). Ask git first, with the same evidence bar as the
+            // late-landing check below: a sha on origin/dev for this goal hash means done.
+            const _preLandedSha = await landedShaForGoalHash(String(editFile).split("/")[1] ?? "", goalHashOf(goal as string));
+            if (_preLandedSha) {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SKIPPED for ${editFile} - route-edit-${goalHashOf(goal as string)} already landed as ${_preLandedSha} on origin/dev`);
+              return {
+                result: null,
+                status: "completed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["mitosisCutoverReport"],
+                attempts: 1,
+                goalReachReason: `late-landing confirmed before escalation: commit ${_preLandedSha} for route-edit-${goalHashOf(goal as string)} is on origin/dev; the compose retry failed (${failWhy}) because the edit was already applied, so patch_with_tools was not called`,
+                reached: true,
+                executionId: `feature_compose:${_preLandedSha}`,
+              };
+            }
             try {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION — feature_compose verdict=${verdict || "(none)"} for ${editFile}; escalating to patch_with_tools (byte-anchored route)`);
               const pwtResp = await fetch(composeUrl, {
