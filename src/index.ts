@@ -16261,9 +16261,19 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // gracefulShutdown()'s drain breaks only when in-flight reaches zero (so it could
       // never exit early and always burned its full budget), and /health's in_flight grew
       // monotonically as a zombie count.
-      record.status = "failed"; record.endedAt = Date.now();
-      record.reached = false;
-      record.error = (err as Error).message;
+      // Pre-admission refusal: a pinned target was decisively negative. Do not count as a failed reach.
+      const __isPinnedRefusal = /^refusing pinned target/i.test(((err as Error).message ?? ""));
+      const __callerTag = Array.isArray(tags) ? (tags as string[]).find((t) => typeof t === "string" && t.startsWith("dispatcher:")) : undefined;
+      const __caller = __callerTag ?? "dispatcher:unknown";
+      if (__isPinnedRefusal) {
+        record.status = "completed"; record.endedAt = Date.now();
+        record.reached = false;
+        record.error = `${((err as Error).message ?? "")} [caller:${__caller}]`;
+      } else {
+        record.status = "failed"; record.endedAt = Date.now();
+        record.reached = false;
+        record.error = (err as Error).message;
+      }
       // A throw is an honest negative verdict, and it was never delivered: the only
       // delivery site sat on the success path above this catch, so the executions the
       // learner most needs to penalize were the exact ones it could not hear about.
@@ -16274,7 +16284,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           record.executionId = await persistFailedWalkTrace(String(goal ?? ""), walkStepSink, (record as { completionShapes?: string[] | null }).completionShapes ?? null, record.error, [], "walk-threw");
         } catch { /* leave executionId as-is */ }
       }
-      deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw");
+      if (!__isPinnedRefusal) deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw");
       // A dispatch that THREW never reached the classifier below, so it used to
       // terminalize with no executionPath at all — indistinguishable, to every
       // reader, from a run whose mechanism simply was not recorded. A throw is
