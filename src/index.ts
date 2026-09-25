@@ -12674,6 +12674,7 @@ async function runGoalWithRecovery(
             }
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
           } else {
+            if (earlyComposeResp.status === 503 || earlyComposeResp.status === 429) { tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — draining/capacity, NOT falling through to a walk; refusing retryably`); return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, goalReachReason: `RETRYABLE CAPACITY: edit-intent routed to feature_compose but the compose producer answered HTTP ${earlyComposeResp.status} (draining or at capacity). Transient; re-dispatch after the drain rather than editing through a generic walk.`, reached: false }; }
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — falling through to walk`);
           }
         } catch (earlyErr) {
