@@ -12390,6 +12390,17 @@ async function runGoalWithRecovery(
             const earlyDj = await earlyDr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
             const earlyRows = (earlyDj?.content?.vessels ?? []) as Array<import("./satisfier-pick.js").SatisfierProducer & { owned_repos?: string[]; vesselId?: string }>;
             const earlyTargetVessel = /^repos\/([^/]+)\//.exec(earlyEditFile)?.[1] ?? "";
+            if (earlyRows.length > 1 && !earlyRows.some((r) => Array.isArray(r.owned_repos))) {
+              await Promise.all(earlyRows.map(async (r) => {
+                try {
+                  const u = `${String(r.endpoint ?? "").replace(/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
+                  const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership" } } }), signal: AbortSignal.timeout(3_000) });
+                  const j = await res.json() as { body?: { owned_repos?: unknown }; content?: { owned_repos?: unknown } };
+                  const owned = j?.body?.owned_repos ?? j?.content?.owned_repos;
+                  if (Array.isArray(owned)) r.owned_repos = owned.map(String);
+                } catch { /* a producer that does not answer claims nothing */ }
+              }));
+            }
             const earlyOwners = earlyRows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(earlyTargetVessel));
             const earlyV = earlyOwners.length === 1 ? earlyOwners[0] : pickSatisfierProducer(earlyRows);
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ${earlyOwners.length === 1 ? `routed by ownership → ${earlyOwners[0]!.vesselId}` : 'routed by pick'}`);
