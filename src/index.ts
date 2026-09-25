@@ -6196,8 +6196,8 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         if (!_scanUrl) throw new Error("no producer for unaccounted_landing_scan");
         const _r = await fetch(_scanUrl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "unaccounted_landing_scan" } } }), signal: AbortSignal.timeout(30_000) });
         const _j = await _r.json() as { body?: { unaccounted?: Array<{ sha?: string; execution_id?: string | null }> } };
-        const _hit = (_j.body?.unaccounted ?? []).find((u) => u.execution_id === _did);
-        if (_hit) _withheld = String(_hit.sha ?? "unknown");
+        const _hit = (_j.body?.unaccounted ?? []).filter((u) => u.execution_id === _did).map((u) => String(u.sha ?? "unknown")).join(",");
+        if (_hit) _withheld = _hit;
       } catch (e) {
         _withheld = `ledger-unreachable: ${(e as Error).message.slice(0, 80)}`;
       }
@@ -6704,8 +6704,8 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
         if (!scanUrl) throw new Error("no producer for unaccounted_landing_scan");
         const r = await fetch(scanUrl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "unaccounted_landing_scan" } } }), signal: AbortSignal.timeout(30_000) });
         const j = await r.json() as { body?: { unaccounted?: Array<{ sha?: string; execution_id?: string | null }> } };
-        const hit = (j.body?.unaccounted ?? []).find((u) => u.execution_id === did);
-        if (hit) deferSha = String(hit.sha ?? "unknown");
+        const hit = (j.body?.unaccounted ?? []).filter((u) => u.execution_id === did).map((u) => String(u.sha ?? "unknown")).join(",");
+        if (hit) deferSha = hit;
       } catch (e) {
         deferSha = `ledger-unreachable: ${(e as Error).message.slice(0, 80)}`;
       }
