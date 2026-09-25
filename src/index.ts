@@ -12678,6 +12678,7 @@ async function runGoalWithRecovery(
           }
         } catch (earlyErr) {
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
+          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failure detail name=${String((earlyErr as Error)?.name ?? "")} cause=${String(((earlyErr as { cause?: unknown })?.cause as Error | undefined)?.message ?? (earlyErr as { cause?: unknown })?.cause ?? "")} code=${String((earlyErr as { code?: unknown })?.code ?? "")}`);
         }
       }
       // REUSE BEFORE DERIVE: consult the proven-composition store BEFORE the walk,
@@ -13531,6 +13532,7 @@ async function runGoalWithRecovery(
             };
           } catch (e) {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
+            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose failure detail name=${String((e as Error)?.name ?? "")} cause=${String(((e as { cause?: unknown })?.cause as Error | undefined)?.message ?? (e as { cause?: unknown })?.cause ?? "")} code=${String((e as { code?: unknown })?.code ?? "")}`);
             // fall through to the existing behaviour unchanged
           }
         }
