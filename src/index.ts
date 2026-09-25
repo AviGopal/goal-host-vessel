@@ -13800,6 +13800,22 @@ async function runGoalWithRecovery(
     // walk that genuinely planned and produced nothing.
     if (opts.learningMode !== "observe" && goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId), producedShapes, seededOutputShapes ?? []);
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
+      { // cap retries if this dispatch already landed a commit
+        const _capDid = dispatchContext.getStore()?.dispatchId;
+        if (_capDid) {
+          try {
+            const _scanUrl = await ufResolveUrl("unaccounted_landing_scan");
+            if (_scanUrl) {
+              const _r = await fetch(_scanUrl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "unaccounted_landing_scan" } } }), signal: AbortSignal.timeout(30_000) });
+              const _j = await _r.json() as { body?: { unaccounted?: Array<{ sha?: string; execution_id?: string | null }> } };
+              const hit = (_j.body?.unaccounted ?? []).find((u) => u.execution_id === _capDid);
+              if (hit) { tap(`[goal-host-vessel] ${opts.surface}: RETRY CAPPED — dispatch ${_capDid} already landed ${String(hit.sha ?? "unknown")}; not re-running a side-effecting goal`); break; }
+            }
+          } catch {
+            // scan unreachable — do not change today's behaviour
+          }
+        }
+      }
     if (selId) excluded.push(selId);
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
