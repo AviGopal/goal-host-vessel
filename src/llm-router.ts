@@ -195,29 +195,76 @@ export interface RoutedResult { ok: boolean; json: any; vesselId: string | null;
 // Per-dispatch provider-usage accumulator (key: goalHashOf(goal), same as buffers).
 // goal-host reasoning calls route through this module but historically dropped
 // usage, so every synthetic walk/satisfier/floor trace recorded tokens_in/out=0.
-interface RouterUsage { tokensIn: number; tokensOut: number; }
+//
+// SPEND ACCOUNTING (value-per-cost-selection 1.3): the goal hash is shared by
+// concurrent dispatches of the same goal string, so usage is ALSO keyed by the
+// DISPATCH ID read from the caller's async context (goal-host registers its
+// dispatchContext reader via setRouterDispatchIdReader). Every completion counts
+// one call; cost is the provider-reported usage.cost_usd when present, else 0.
+interface RouterUsage { tokensIn: number; tokensOut: number; calls: number; costUsd: number; }
+const zeroUsage = (): RouterUsage => ({ tokensIn: 0, tokensOut: 0, calls: 0, costUsd: 0 });
 const usageByDispatch = new Map<string, RouterUsage>();
-function accumulateUsage(dispatchId: string, inner: any): void {
-  if (!dispatchId) return;
+const usageByDispatchId = new Map<string, RouterUsage>();
+// How much of a dispatch's usage has already been attributed to a persisted trace.
+const attributedByDispatchId = new Map<string, RouterUsage>();
+let readDispatchId: () => string | undefined = () => undefined;
+export function setRouterDispatchIdReader(reader: () => string | undefined): void {
+  readDispatchId = reader;
+}
+function boundedSet(map: Map<string, RouterUsage>, key: string, value: RouterUsage): void {
+  if (!map.has(key) && map.size >= MAX_BUFFERS) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
+function addUsage(map: Map<string, RouterUsage>, key: string, tin: number, tout: number, cost: number): void {
+  const cur = map.get(key) ?? zeroUsage();
+  cur.tokensIn += tin; cur.tokensOut += tout; cur.calls += 1; cur.costUsd += cost;
+  boundedSet(map, key, cur);
+}
+/** Record one completion's usage; returns that call's cost in USD (0 when unreported). */
+function accumulateUsage(dispatchId: string, inner: any): number {
   const u = inner && typeof inner === "object" ? (inner.usage ?? inner?.body?.usage) : undefined;
   const tin = typeof u?.input_tokens === "number" ? u.input_tokens : 0;
   const tout = typeof u?.output_tokens === "number" ? u.output_tokens : 0;
-  if (tin === 0 && tout === 0) return;
-  const cur = usageByDispatch.get(dispatchId) ?? { tokensIn: 0, tokensOut: 0 };
-  cur.tokensIn += tin; cur.tokensOut += tout;
-  usageByDispatch.set(dispatchId, cur);
+  const cost = typeof u?.cost_usd === "number" && Number.isFinite(u.cost_usd) && u.cost_usd > 0 ? u.cost_usd : 0;
+  if (dispatchId) addUsage(usageByDispatch, dispatchId, tin, tout, cost);
+  let did: string | undefined;
+  try { did = readDispatchId(); } catch { did = undefined; }
+  if (did) addUsage(usageByDispatchId, did, tin, tout, cost);
+  return cost;
 }
 export function peekRouterUsage(dispatchId: string): RouterUsage {
-  return usageByDispatch.get(dispatchId) ?? { tokensIn: 0, tokensOut: 0 };
+  return usageByDispatch.get(dispatchId) ?? zeroUsage();
+}
+/** Total LLM usage recorded under a dispatch id (tokens, calls, cost). */
+export function peekDispatchUsage(dispatchId: string | undefined): RouterUsage {
+  const cur = dispatchId ? usageByDispatchId.get(dispatchId) : undefined;
+  return cur ? { ...cur } : zeroUsage();
+}
+/** Usage under a dispatch id not yet attributed to a persisted trace; marks it attributed,
+ *  so the traces a dispatch persists sum to its total instead of each repeating it. */
+export function takeDispatchUsageDelta(dispatchId: string | undefined): RouterUsage {
+  if (!dispatchId) return zeroUsage();
+  const total = peekDispatchUsage(dispatchId);
+  const prev = attributedByDispatchId.get(dispatchId) ?? zeroUsage();
+  boundedSet(attributedByDispatchId, dispatchId, { ...total });
+  return {
+    tokensIn: total.tokensIn - prev.tokensIn,
+    tokensOut: total.tokensOut - prev.tokensOut,
+    calls: total.calls - prev.calls,
+    costUsd: total.costUsd - prev.costUsd,
+  };
 }
 
-async function postFeedback(vesselId: string | null, taskType: string, reached: boolean): Promise<void> {
+async function postFeedback(vesselId: string | null, taskType: string, reached: boolean, costUsd = 0): Promise<void> {
   if (vesselId == null) return;
   try {
     await fetch(`${ACTIVITY_API_ENDPOINT.replace(/\/$/, "")}/v2/llm-router/feedback`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ task_type: taskType, vessel_id: vesselId, reached, latency_ms: 0, cost_usd: 0 }),
+      body: JSON.stringify({ task_type: taskType, vessel_id: vesselId, reached, latency_ms: 0, cost_usd: costUsd }),
       signal: AbortSignal.timeout(5_000),
     });
   } catch { /* fire-and-forget */ }
@@ -259,9 +306,12 @@ async function routeOverRanked(
         await postFeedback(sel.vesselId, taskType, false);
         continue;
       }
-      await postFeedback(sel.vesselId, taskType, true);
+      // The call's real cost rides the immediate per-call post; the buffered end-of-dispatch
+      // reward keeps costUsd 0 because activity-api SUMS cost_usd per arm, and charging the
+      // same call on both posts would double it.
+      const callCostUsd = accumulateUsage(dispatchId, inner);
+      await postFeedback(sel.vesselId, taskType, true, callCostUsd);
       if (sel.vesselId) buffer(dispatchId, { taskType, vesselId: sel.vesselId, latencyMs: 0, costUsd: 0 });
-      accumulateUsage(dispatchId, inner);
       return { ok: true, json: { ...(inner as any), body: { ...(((inner as any)?.body) ?? {}), content: text } }, vesselId: sel.vesselId };
     } catch {
       await postFeedback(sel.vesselId, taskType, false);
@@ -352,9 +402,10 @@ async function routedCompleteOnce(
         const inner = (j && typeof j === "object" && (j as any).content && typeof (j as any).content === "object" && ((((j as any).content as any).body !== undefined) || (((j as any).content as any).shape !== undefined))) ? (j as any).content : j;
         const text: unknown = (inner as any)?.body?.content ?? (inner as any)?.content ?? (inner as any)?.body?.text ?? (inner as any)?.value ?? "";
         if (typeof text === "string" && text.length > 0) {
-          await postFeedback(winner.vesselId, taskType, true);
+          // Real cost on the immediate post only (see routeOverRanked: the feedback store sums cost).
+          const callCostUsd = accumulateUsage(dispatchId, inner);
+          await postFeedback(winner.vesselId, taskType, true, callCostUsd);
           buffer(dispatchId, { taskType, vesselId: winner.vesselId, latencyMs: 0, costUsd: 0 });
-          accumulateUsage(dispatchId, inner);
           return { ok: true, json: { ...(inner as any), body: { ...((inner as any)?.body ?? {}), content: text } }, vesselId: winner.vesselId };
         }
       }
