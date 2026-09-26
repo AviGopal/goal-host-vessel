@@ -13090,6 +13090,37 @@ async function runGoalWithRecovery(
           const editLine = afterFile.match(/^:(\d+)/)?.[1] ?? goal.match(/\bline\s+~?(\d+)/i)?.[1];
           const editSite = editLine ? `${editFile}:${editLine}` : editFile;
           try {
+            {
+              // POST-WALK DOUBLE COMPOSE. A dispatch whose early compose already landed keeps walking; when the walk ends
+              // hollow, this route used to start a SECOND compose of the same edit (graded run 11, 09-26: C's dispatch 918cbd15
+              // landed, walked on, and a second compose landed d3cd630 inside the next run). Same test as the escalation
+              // guard: skip only while this goal's route-edit commit is still the file's latest change on origin/dev.
+              const _pwSha = await landedShaForGoalHash(editVessel, goalHashOf(goal));
+              let _pwLatest = false;
+              if (_pwSha) {
+                try {
+                  const _pwRel = editFile.split("/").slice(2).join("/");
+                  const _pwLp = Bun.spawn(["git", "-C", `/workspace/git/vessels/${editVessel}`, "log", "origin/dev", "-1", "--format=%H", "--", _pwRel], { stdout: "pipe", stderr: "pipe" });
+                  const _pwLatestSha = (await new Response(_pwLp.stdout).text()).trim();
+                  _pwLatest = (await _pwLp.exited) === 0 && _pwLatestSha === _pwSha;
+                } catch {
+                  _pwLatest = false;
+                }
+              }
+              if (_pwSha && _pwLatest) {
+                tap(`[goal-host-vessel] ${opts.surface}: POST-WALK EDIT-INTENT SKIPPED for ${editFile} - route-edit-${goalHashOf(goal)} already landed as ${_pwSha} and is the file's latest commit`);
+                return {
+                  result: null,
+                  status: "completed",
+                  selectedTemplateId: "feature_compose",
+                  completionShapes: ["mitosisCutoverReport"],
+                  attempts: 1,
+                  goalReachReason: `late-landing confirmed before a second compose: commit ${_pwSha} for route-edit-${goalHashOf(goal)} is on origin/dev and is the file's latest change`,
+                  reached: true,
+                  executionId: `feature_compose:${_pwSha}`,
+                };
+              }
+            }
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT DETECTED (0-step walk names ${editFile}) — routing to feature_compose`);
             // CREATE-INTENT (2026-07-10): a goal authoring a NET-NEW file (a new
             // resolver/module/vessel) must be allowed to create_file — otherwise
