@@ -12601,9 +12601,9 @@ async function runGoalWithRecovery(
           // 503 like any other bad status and abandons the compose, so the fast
           // path is discarded for a producer that asked to be called back.
           //
-          // Bounded: one re-issue, honouring Retry-After (the producer sends 30)
+          // Bounded: re-issue at Retry-After spacing (the producer sends 30) for up to 18 min — a cutover quiesce lasts up to the compose ceiling + restart —
           // and capped at 60s, so a large or malformed header cannot park the goal.
-          if (earlyComposeResp.status === 503) {
+          for (const _drainStart = Date.now(); earlyComposeResp.status === 503 && Date.now() - _drainStart < 1_080_000; ) {
             const ra = Number(earlyComposeResp.headers.get("retry-after") ?? "");
             const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
@@ -13242,10 +13242,10 @@ async function runGoalWithRecovery(
             // is recorded as a compose that failed, and the arm is β-penalised for
             // work it never did.
             //
-            // Bounded: one re-issue, honouring Retry-After when the producer sends a
+            // Bounded: re-issue at Retry-After spacing for up to 18 min (a cutover quiesce + restart), honouring Retry-After when the producer sends a
             // sane one and capped at 60s so a large or malformed header cannot park
             // an edit goal past its dispatch timeout.
-            if (resp.status === 503) {
+            for (const _drainStart = Date.now(); resp.status === 503 && Date.now() - _drainStart < 1_080_000; ) {
               const ra = Number(resp.headers.get("retry-after") ?? "");
               const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
