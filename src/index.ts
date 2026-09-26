@@ -367,7 +367,7 @@ import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer, satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
-import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage } from "./llm-router";
+import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
 import { createHash } from "node:crypto";
 import { orderRing } from "./mem-ring";
 import {
@@ -4428,6 +4428,8 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 import { AsyncLocalStorage } from "node:async_hooks";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery.
 const dispatchContext = new AsyncLocalStorage<{ dispatchId: string }>();
+// The LLM router keys usage (tokens, calls, cost) by the dispatch id it reads from this same context.
+setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
 // Goal hashes this process is currently walking through /resolve. A walk that targets
 // goal_execution resolves it through discovery back into this same /resolve with the same
 // goal; with nothing tracking that, one goal recursed without bound (2026-09-26: load 26,
@@ -6319,7 +6321,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         expected_output_shapes: expectedOutputShapes,
         success: reached,
         duration_ms: Math.round(durationMs) || 0,
-        cost_usd: costUsd || 0,
+        cost_usd: costUsd || peekDispatchUsage(dispatchContext.getStore()?.dispatchId).costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
         walk_tier: walkTier,
         ...(_recStateSig ? { state_signature: _recStateSig } : {}),
@@ -6370,6 +6372,13 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
 // failure never throws into / slows the walk.
 const satisfierTraceSink = new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? "");
 async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
+  // SPEND ACCOUNTING: every trace persisted here used to carry costUsd 0 and, off the floor,
+  // tokens 0. Attribute the LLM usage this dispatch made since its previous persisted trace,
+  // so each execution row carries real tokens/cost and a dispatch's rows sum to its total.
+  const _spend = takeDispatchUsageDelta(dispatchContext.getStore()?.dispatchId);
+  if (!trace.costUsd && _spend.costUsd > 0) trace.costUsd = _spend.costUsd;
+  if (!trace.tokensInput && _spend.tokensIn > 0) trace.tokensInput = _spend.tokensIn;
+  if (!trace.tokensOutput && _spend.tokensOut > 0) trace.tokensOutput = _spend.tokensOut;
   try {
     await satisfierTraceSink.record(trace);
   } catch (e) {
@@ -16327,6 +16336,14 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // (buffered under the goal hash) to the final reach verdict — α on reach, β on
       // hollow. Fire-and-forget; never blocks the dispatch. Skipped in observe mode
       // so a held-out measurement does not update router posteriors.
+      // SPEND ACCOUNTING: stamp this dispatch's LLM cost on its record before router usage is
+      // flushed, keyed by the explicit dispatch id (not the goal hash, which concurrent
+      // dispatches of one goal share). Re-entering the context lets the failed-walk trace
+      // persisted below attribute the same dispatch's usage.
+      const _costDid = typeof variables.dispatch_id === "string" && variables.dispatch_id.length > 0 ? variables.dispatch_id : dispatchId;
+      dispatchContext.enterWith({ dispatchId: _costDid });
+      const _spend = peekDispatchUsage(_costDid);
+      (record as { cost?: { tokens_in: number; tokens_out: number; llm_calls: number; cost_usd: number; wall_ms: number } }).cost = { tokens_in: _spend.tokensIn, tokens_out: _spend.tokensOut, llm_calls: _spend.calls, cost_usd: _spend.costUsd, wall_ms: (record.endedAt ?? Date.now()) - record.startedAt };
       if (learningMode !== "observe") void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
       record.walkLog = walkStepSink;
       const _seekExecId = seek.executionId ?? seek.result?.trace?.id;
@@ -17464,6 +17481,7 @@ server = Bun.serve({
         error: record.error,
         walkLog: record.walkLog,
         learning: record.learning ?? null,
+        cost: (record as { cost?: unknown }).cost ?? null,
         // THE ANSWER. This response is built KEY BY KEY, and every key not named here is
         // dropped silently — no error, no warning, no failing test, because omitting an
         // optional field is legal. answerBody was missing, so the human surface rendered a
