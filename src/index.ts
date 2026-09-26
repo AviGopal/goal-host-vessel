@@ -12608,7 +12608,7 @@ async function runGoalWithRecovery(
             const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
             await new Promise((r) => setTimeout(r, waitMs));
-            earlyComposeResp = await fetch(earlyComposeUrl, earlyComposeInit);
+            earlyComposeResp = await fetch(earlyComposeUrl, { ...earlyComposeInit, signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)) });
           }
           if (earlyComposeResp.ok) {
             const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
