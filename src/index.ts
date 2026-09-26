@@ -14798,6 +14798,7 @@ function buildDiscoveryProxyResolver(shape: string) {
       const timer = setTimeout(() => ctrl.abort(), PROXY_TIMEOUT_MS);
       let resp: Response;
       try {
+        if (!pointer.execution_id) { const _did = dispatchContext.getStore()?.dispatchId ?? (typeof variables.dispatch_id === "string" ? variables.dispatch_id : undefined); if (_did) pointer.execution_id = _did; else if (/^(shell|shellResult|bash|bounded_shell|git_commit|gitCommitResult)$/.test(shape)) console.log(`[goal-host-vessel] discovery-proxy ${shape} call WITHOUT dispatch id`); }
         resp = await fetch(`${endpoint}${resolvePath}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
