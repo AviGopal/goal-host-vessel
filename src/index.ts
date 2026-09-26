@@ -4360,6 +4360,12 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 import { AsyncLocalStorage } from "node:async_hooks";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery.
 const dispatchContext = new AsyncLocalStorage<{ dispatchId: string }>();
+// Goal hashes this process is currently walking through /resolve. A walk that targets
+// goal_execution resolves it through discovery back into this same /resolve with the same
+// goal; with nothing tracking that, one goal recursed without bound (2026-09-26: load 26,
+// ~66 nested walks/min, every LLM provider exhausted). Deterministic and LLM-free on purpose:
+// the brake has to work when the LLM plane is the thing the storm exhausted.
+const __resolveInFlight = new Map<string, number>();
 async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
@@ -16823,7 +16829,19 @@ async function handleResolve(req: Request): Promise<Response> {
     // the async /run-goal path recovers more deeply.
     const callerPinnedTarget =
       typeof targetTemplateId === "string" && targetTemplateId.length > 0 && !rerouteOnMiss;
-    const seek = await runGoalWithRecovery(goal, {
+    const __rh = goalHashOf(String(goal ?? ""));
+    if ((__resolveInFlight.get(__rh) ?? 0) >= 1) {
+      console.warn(`[goal-host-vessel] /resolve: RECURSION REFUSED goalHash=${__rh} - this goal is already being walked through /resolve in this process`);
+      return Response.json({
+        resolved: false,
+        shape: type === "goal_execution" ? "goalExecution" : "activityExecution",
+        status: "refused",
+        reached: false,
+        error: `recursive /resolve refused: goal ${__rh} is already being walked in this process`,
+      });
+    }
+    __resolveInFlight.set(__rh, (__resolveInFlight.get(__rh) ?? 0) + 1);
+    const __seekP = runGoalWithRecovery(goal, {
       firstTarget: targetTemplateId,
       callerPinned: callerPinnedTarget,
       maxAttempts: 2,
@@ -16831,6 +16849,10 @@ async function handleResolve(req: Request): Promise<Response> {
       parentExecutionId,
       compositionChain,
       surface: "/resolve",
+    });
+    const seek = await __seekP.finally(() => {
+      const n = (__resolveInFlight.get(__rh) ?? 1) - 1;
+      if (n <= 0) __resolveInFlight.delete(__rh); else __resolveInFlight.set(__rh, n);
     });
     // Reward the LLM router for every routed selection this dispatch made.
     void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
