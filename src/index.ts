@@ -4435,6 +4435,19 @@ setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
 // goal; with nothing tracking that, one goal recursed without bound (2026-09-26: load 26,
 // ~66 nested walks/min, every LLM provider exhausted). Deterministic and LLM-free on purpose:
 // the brake has to work when the LLM plane is the thing the storm exhausted.
+// GAP ID OF A GOAL (contained-self-development, gap supply step 0). A compose is attributed to the
+// gap its goal names. Only "Close substrate gap X:" was recognised, so gap-to-feature's own
+// investigation dispatches ("investigate and decompose gap X: …", "investigate gap X before
+// composing …") were minted as fresh `route-edit-<hash>` gaps: 593 open on 2026-09-27, 384 of
+// them investigation outputs (4 closed, 0 with a falsifier), each failing, narrowing and being
+// investigated again under a new hash. Attributing them to the parent X keeps the work, its
+// failures and its closure on the gap that asked for it.
+function gapIdOfGoal(goal: string): string {
+  const m = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)
+    ?? /^investigate and decompose gap ([-\w:.!]+):\s/i.exec(goal)
+    ?? /^investigate gap ([-\w:.!]+) before composing\b/i.exec(goal);
+  return m?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+}
 const __resolveInFlight = new Map<string, number>();
 // SPEND-RATE BREAKER (value-per-cost-selection 4.4). A storm is many dispatches of ONE goal (the
 // 2026-09-26 recursion storm: ~3,080 walks of one goal in 3 h) or too many dispatches overall. Both
@@ -11919,7 +11932,7 @@ async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<ty
   const sentAt = _dispatchSentCompose.get(opts) ?? startMs;
   const fm = /repos\/([\w.-]+)\/[\w./-]+\.\w+/.exec(goal);
   if (!fm) return r;
-  const gapId = /^Close substrate gap ([\-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+  const gapId = gapIdOfGoal(goal);
   const mayStillLand = /timed out|timeout/i.test(String(r.goalReachReason ?? ""));
   const until = mayStillLand ? sentAt + Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000) + 180_000 : 0;
   let sha = await landedCommitForGoal(fm[1]!, gapId, startMs);
@@ -12693,7 +12706,7 @@ async function runGoalWithRecoveryInner(
             "",
             `GOAL: ${goalForRouting}`,
           ].join("\n") + await verbatimExcerptBlock(earlyEditFile, earlyEditLine, goalForRouting);
-          const earlyGapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+          const earlyGapId = gapIdOfGoal(goal);
           let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
           try {
             const earlyDr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
@@ -12928,7 +12941,7 @@ async function runGoalWithRecoveryInner(
         // ceiling (plus a tail for a response that lags its landing) instead of walking, since
         // the walk cannot serve an edit goal.
         {
-          const _probeGapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+          const _probeGapId = gapIdOfGoal(goal);
           const _probeUntil = _earlyComposeCutAtCaller ? _dispatchStartMs + Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000) + 180_000 : 0;
           let _probeSha = await landedCommitForGoal(earlyEditVessel, _probeGapId, _dispatchStartMs);
           if (!_probeSha && Date.now() < _probeUntil) tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose was cut at the caller; polling origin/dev for ${_probeGapId} until the compose ceiling before any walk`);
@@ -13364,7 +13377,7 @@ async function runGoalWithRecoveryInner(
               // below also requires a local compose report and that the commit is still the file's
               // latest; an ownership-routed landing has no local report, and another commit can
               // become the latest in minutes, so c23b601 was composed again as 194df79.
-              const _pwGapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+              const _pwGapId = gapIdOfGoal(goal);
               const _pwAny = _pwSha && _pwLatest ? null : await landedCommitForGoal(editVessel, _pwGapId, _dispatchStartMs);
               if (_pwAny) {
                 const _pwPostOk = await verifyEditPostState(goal, editFile, _pwAny);
@@ -13428,7 +13441,7 @@ async function runGoalWithRecoveryInner(
             // (feature_compose AND the patch_with_tools escalations) drafts against
             // verbatim current file text, not a schematic reconstruction.
             const spec = specBase + await verbatimExcerptBlock(editFile, editLine, goal);
-            const gapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+            const gapId = gapIdOfGoal(goal);
             // Resolve the feature_compose producer via DISCOVERY first (impulse-contract
             // compliance: no hardcoded vessel endpoint). Same inline vesselCapability
             // idiom as endpointForShape / the proxy resolver above. dev-vessel does not
