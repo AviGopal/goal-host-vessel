@@ -13432,7 +13432,7 @@ async function runGoalWithRecoveryInner(
               if (rows.length > 1 && !rows.some((r) => Array.isArray(r.owned_repos))) {
                 await Promise.all(rows.map(async (r) => {
                   try {
-                    const u = `${String(r.endpoint ?? "").replace(/\/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
+                    const u = `${String(r.endpoint ?? "").replace(/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
                     const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership" } } }), signal: AbortSignal.timeout(3_000) });
                     const j = await res.json() as { body?: { owned_repos?: unknown }; content?: { owned_repos?: unknown } };
                     const owned = j?.body?.owned_repos ?? j?.content?.owned_repos;
