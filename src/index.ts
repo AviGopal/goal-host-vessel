@@ -6204,6 +6204,46 @@ async function landedShaForGoalHash(vessel: string, h: string): Promise<string |
   }
 }
 
+/**
+ * ANY LANDING OF THIS GOAL SINCE THE DISPATCH STARTED (value-per-cost-selection 3.1).
+ *
+ * landedShaForGoalHash above also demands a FAVORABLE compose report in THIS container's
+ * /workspace/proposals. A compose routed by ownership to another node's development-vessel
+ * writes its report on THAT node, so every ownership-routed landing was invisible to it
+ * (measured 2026-09-27: "commit exists for route-edit-818d7e4e but no compose report"),
+ * the post-walk guard let a second compose through, and the same change landed twice
+ * (c23b601, then 194df79). This probe credits on git evidence alone, bounded in time:
+ * fetch origin/dev, then take the NEWEST commit since `sinceMs` that mentions `gapId`.
+ * It counts only if its `Gap:` trailer names `gapId` exactly and it is not a revert; a
+ * revert newer than the landing returns null rather than crediting the reverted commit.
+ * Callers still grade substance (verifyEditPostState) before calling it a reach. Every
+ * failure returns null, which leaves the caller's verdict untouched.
+ */
+async function landedCommitForGoal(vessel: string, gapId: string, sinceMs: number): Promise<string | null> {
+  if (!vessel || vessel.includes("..") || vessel.includes("/") || !gapId || !Number.isFinite(sinceMs)) return null;
+  const dir = `/workspace/git/vessels/${vessel}`;
+  try {
+    // origin/dev moves only when pull-sync or a fetch moves it, and a compose on another node
+    // pushes to the remote. A failed fetch (ref lock, offline) still lets the log read the last
+    // known origin/dev.
+    const f = Bun.spawn(["git", "-C", dir, "fetch", "--quiet", "origin", "dev"], { stdout: "ignore", stderr: "ignore", timeout: 20_000 });
+    await f.exited;
+    const since = new Date(sinceMs - 1_000).toISOString().replace(/\.\d{3}Z/, "Z");
+    const p = Bun.spawn(["git", "-C", dir, "log", "origin/dev", "-n", "20", `--since=${since}`, "--fixed-strings", `--grep=${gapId}`, "--format=%H%x1f%ct%x1f%B%x1e"], { stdout: "pipe", stderr: "ignore", timeout: 10_000 });
+    const out = await new Response(p.stdout).text();
+    if ((await p.exited) !== 0) return null;
+    const newest = out.split("\x1e").map((s) => s.trim()).find((s) => s.length > 0);
+    if (!newest) return null;
+    const [sha = "", ct = "", body = ""] = newest.split("\x1f");
+    if (!/^[0-9a-f]{40}$/.test(sha) || Number(ct) * 1000 < sinceMs - 1_000) return null;
+    if ((body.split("\n")[0] ?? "").startsWith("Revert ")) return null;
+    const trailerMatches = body.split("\n").some((l) => /^Gap:\s*/.test(l) && l.replace(/^Gap:\s*/, "").trim() === gapId);
+    return trailerMatches ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
 async function landedShaForGo(goalHash: string): Promise<string | null> {
   try {
     // Note 2026-08-20: git log is NOT AUTHORITATIVE for whether a given commit SHA has
@@ -11874,6 +11914,11 @@ async function runGoalWithRecovery(
 ): Promise<GoalSeekResult> {
   // Reason-plane tap (outer): mirror goal-decomposition lines to the caller's sink.
   const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
+  // LANDED PROBE BOUNDS (value-per-cost-selection 3.1): a commit for this goal counts as this
+  // dispatch's landing only if it landed after this instant; the flag records that the early
+  // compose was cut at the caller while the callee may still land it.
+  const _dispatchStartMs = Date.now();
+  let _earlyComposeCutAtCaller = false;
   // DEFAULT strategy (2026-06-23): when there's a goal, the caller did NOT pin a
   // target, and no firstTarget is supplied, WALK THE SHAPE GRAPH across multiple
   // activities instead of picking one whole template by goal-text. Automatic
@@ -12779,6 +12824,42 @@ async function runGoalWithRecovery(
         } catch (earlyErr) {
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failure detail name=${String((earlyErr as Error)?.name ?? "")} cause=${String(((earlyErr as { cause?: unknown })?.cause as Error | undefined)?.message ?? (earlyErr as { cause?: unknown })?.cause ?? "")} code=${String((earlyErr as { code?: unknown })?.code ?? "")}`);
+          if ((earlyErr as Error)?.name === "TimeoutError" || /timed out|socket|closed|reset/i.test(String((earlyErr as Error)?.message ?? ""))) _earlyComposeCutAtCaller = true;
+        }
+        // A LANDING ENDS THE DISPATCH (value-per-cost-selection 3.1). Every successful compose
+        // outcome above returns, so reaching this line means timeout, exception, non-favourable
+        // verdict or bad status. The compose may have landed anyway: measured 2026-09-27, the
+        // caller was cut at 342 s (00:51:04) and c23b601 landed at 00:53:12, the walk ran on,
+        // and the post-walk route composed the same change again. Probe git for this goal's
+        // landing first; when the caller was cut mid-compose, keep probing until the compose
+        // ceiling (plus a tail for a response that lags its landing) instead of walking, since
+        // the walk cannot serve an edit goal.
+        {
+          const _probeGapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+          const _probeUntil = _earlyComposeCutAtCaller ? _dispatchStartMs + Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000) + 180_000 : 0;
+          let _probeSha = await landedCommitForGoal(earlyEditVessel, _probeGapId, _dispatchStartMs);
+          if (!_probeSha && Date.now() < _probeUntil) tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose was cut at the caller; polling origin/dev for ${_probeGapId} until the compose ceiling before any walk`);
+          while (!_probeSha && Date.now() < _probeUntil) {
+            await new Promise((r) => setTimeout(r, 30_000));
+            _probeSha = await landedCommitForGoal(earlyEditVessel, _probeGapId, _dispatchStartMs);
+          }
+          if (_probeSha) {
+            const _probePostOk = await verifyEditPostState(goal ?? "", earlyEditFile, _probeSha);
+            const _probeReached = _probePostOk !== false;
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT LANDED-PROBE found ${_probeSha} for ${_probeGapId} since dispatch start - ending the dispatch (reached=${_probeReached}), no walk and no second compose`);
+            recordDeterministicLabel(goal ?? "", `feature_compose:${_probeSha}`, "feature_compose", { reached: _probeReached, reason: `deterministic:early-edit-intent-${_probeReached ? "landed" : "hollow"} ${_probeSha} (landed-probe)`, deterministic: true });
+            return {
+              result: null,
+              status: _probeReached ? ("completed" as const) : ("failed" as const),
+              selectedTemplateId: "feature_compose",
+              completionShapes: ["fileEditResult"],
+              attempts: 1,
+              goalReachReason: `deterministic:early-edit-intent-${_probeReached ? "landed" : "hollow"} — the compose reply was lost or non-favourable, but git shows ${_probeSha} for ${_probeGapId} on origin/dev since this dispatch started${_probeReached ? (_probePostOk === true ? " (post-state confirms the requested symbol is present)" : "") : ` and the requested symbol is NOT observably present in ${earlyEditFile} — a hollow edit landing, not a reach`}`,
+              reached: _probeReached,
+              executionId: `feature_compose:${_probeSha}`,
+            };
+          }
+          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT LANDED-PROBE found no commit for ${_probeGapId} since dispatch start — falling through to walk`);
         }
       }
       // REUSE BEFORE DERIVE: consult the proven-composition store BEFORE the walk,
@@ -13185,6 +13266,26 @@ async function runGoalWithRecovery(
                 } catch {
                   _pwLatest = false;
                 }
+              }
+              // ANY LANDING SINCE THIS DISPATCH STARTED (value-per-cost-selection 3.1). The test
+              // below also requires a local compose report and that the commit is still the file's
+              // latest; an ownership-routed landing has no local report, and another commit can
+              // become the latest in minutes, so c23b601 was composed again as 194df79.
+              const _pwGapId = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+              const _pwAny = _pwSha && _pwLatest ? null : await landedCommitForGoal(editVessel, _pwGapId, _dispatchStartMs);
+              if (_pwAny) {
+                const _pwPostOk = await verifyEditPostState(goal, editFile, _pwAny);
+                tap(`[goal-host-vessel] ${opts.surface}: POST-WALK EDIT-INTENT SKIPPED for ${editFile} - ${_pwGapId} landed as ${_pwAny} since this dispatch started; a second compose would apply the same change twice`);
+                return {
+                  result: null,
+                  status: _pwPostOk === false ? "failed" : "completed",
+                  selectedTemplateId: "feature_compose",
+                  completionShapes: ["mitosisCutoverReport"],
+                  attempts: 1,
+                  goalReachReason: `late-landing confirmed before a second compose: commit ${_pwAny} for ${_pwGapId} landed on origin/dev after this dispatch started${_pwPostOk === false ? `, but the requested symbol is NOT observably present in ${editFile} — a hollow edit landing, not a reach` : ""}`,
+                  reached: _pwPostOk !== false,
+                  executionId: `feature_compose:${_pwAny}`,
+                };
               }
               if (_pwSha && _pwLatest) {
                 tap(`[goal-host-vessel] ${opts.surface}: POST-WALK EDIT-INTENT SKIPPED for ${editFile} - route-edit-${goalHashOf(goal)} already landed as ${_pwSha} and is the file's latest commit`);
