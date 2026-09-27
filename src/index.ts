@@ -12761,6 +12761,13 @@ async function runGoalWithRecoveryInner(
             // old ceiling expired mid-queue — reported as "The operation timed out", which reads
             // like a slow model rather than a busy lane.
             signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
+            // BUN CUTS A SILENT RESPONSE AT ~300 s REGARDLESS OF THE SIGNAL (value-per-cost-selection
+            //  3.3). Bun's fetch has its own idle timeout, checked coarsely, so it fires between 300 and
+            //  360 s: the journal shows this call cut at 315/342/345/359 s with TimeoutError code=23,
+            //  and a loopback probe on Bun 1.4.2 (server answering at 480 s) failed at 361.7 s both
+            //  with and without this 900 s signal and succeeded only with `timeout: false`. Without
+            //  this the 900 s budget above was never the real ceiling. Cast because bun-types omit it.
+            ...({ timeout: false } as RequestInit),
           };
           let earlyComposeResp = await fetch(earlyComposeUrl, earlyComposeInit);
           // A DRAINING PRODUCER ANSWERS 503 — DO NOT SPEND THE FAST PATH ON IT.
@@ -13446,6 +13453,7 @@ async function runGoalWithRecoveryInner(
                 },
               }),
               signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
+              ...({ timeout: false } as RequestInit),   // Bun's own ~300 s fetch cut; see the early site
             });
             // Transient-failure retry (capability-gap-edit-intent-compose-transient-failure-retry):
             // a single socket closure / timeout / BUSY must not dump an edit goal onto the
