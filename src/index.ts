@@ -4441,7 +4441,7 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
   if (!dispatchContext.getStore()?.dispatchId) console.warn(`[uf] tool call WITHOUT dispatch id: tool=${name} (the resolver will receive no execution_id)`);
   try {
-    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...args, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(60_000) });
+    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...(name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}), ...args, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(60_000) });
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     const j = await r.json() as any;
     let c: unknown = j;
@@ -4950,7 +4950,7 @@ async function runGroundedToolLoop(
     // ITER_TIMEOUT_MS and blow the caller's proxy timeout.
     const iterBudgetMs = Math.max(5_000, Math.min(ITER_TIMEOUT_MS, deadline - Date.now()));
     try {
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(iterBudgetMs) });
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "llm_completion_dispatch", prompt: iterPrompt, max_tokens: 4096, tools, caller: "goal-host:floor_tool_loop", task_type: "floor_tool_loop", ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId, dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(iterBudgetMs) });
       if (!r.ok) {
         // A 5xx IS EVIDENCE ABOUT THE ACTION; A 4xx IS EVIDENCE ABOUT THE CHANNEL.
         //
@@ -7937,7 +7937,7 @@ async function runGoalAsPoolWalk(
         // impulse.pointer is ignored — verified live). Thread it up for llm_completion.
         body: JSON.stringify(
           (shape === "llm_completion" || shape === "llmCompletion") && typeof pointer.prompt === "string"
-            ? { impulse: { pointer }, prompt: pointer.prompt }
+            ? { impulse: { pointer }, prompt: pointer.prompt, caller: "goal-host:walk_llm_completion", task_type: "walk_llm_completion", ...(dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) }
             : { impulse: { pointer } }
         ),
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
