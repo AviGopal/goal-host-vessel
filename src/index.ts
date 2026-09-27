@@ -4436,6 +4436,42 @@ setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
 // ~66 nested walks/min, every LLM provider exhausted). Deterministic and LLM-free on purpose:
 // the brake has to work when the LLM plane is the thing the storm exhausted.
 const __resolveInFlight = new Map<string, number>();
+// SPEND-RATE BREAKER (value-per-cost-selection 4.4). A storm is many dispatches of ONE goal (the
+// 2026-09-26 recursion storm: ~3,080 walks of one goal in 3 h) or too many dispatches overall. Both
+// surfaces (/run-goal and /resolve) count dispatches per goal hash and globally over a sliding
+// window on the RAW goal, before any LLM call, and refuse above a threshold. Thresholds are read at
+// use time from the shaped policy `dispatchRatePolicy` ({window_s, per_hash_max, global_max}) under
+// the workspace policies dir; literal defaults apply when it is absent. A refused dispatch is NOT
+// counted, so a goal recovers as its window slides. Counts are in-process and reset on restart.
+const __dispatchRateTimes = new Map<string, number[]>();
+let __dispatchRateGlobal: number[] = [];
+const DISPATCH_RATE_DEFAULTS = { window_s: 3600, per_hash_max: 6, global_max: 240 };
+async function dispatchRateRefusal(goal: string): Promise<string | null> {
+  let pol = DISPATCH_RATE_DEFAULTS;
+  try {
+    const sp = await resolveShapedPolicy("dispatchRatePolicy");
+    if (sp) {
+      const num = (k: string, d: number) => (typeof sp[k] === "number" && Number.isFinite(sp[k] as number) && (sp[k] as number) > 0 ? (sp[k] as number) : d);
+      pol = { window_s: num("window_s", pol.window_s), per_hash_max: num("per_hash_max", pol.per_hash_max), global_max: num("global_max", pol.global_max) };
+    }
+  } catch { /* absent or unreadable policy: defaults */ }
+  const now = Date.now();
+  const cutoff = now - pol.window_s * 1000;
+  const h = goalHashOf(goal);
+  const times = (__dispatchRateTimes.get(h) ?? []).filter((t) => t > cutoff);
+  __dispatchRateGlobal = __dispatchRateGlobal.filter((t) => t > cutoff);
+  if (times.length >= pol.per_hash_max) {
+    __dispatchRateTimes.set(h, times);
+    return `${times.length} dispatches of goal ${h} in the last ${pol.window_s} s (per_hash_max ${pol.per_hash_max}, dispatchRatePolicy)`;
+  }
+  if (__dispatchRateGlobal.length >= pol.global_max) {
+    return `${__dispatchRateGlobal.length} dispatches in the last ${pol.window_s} s (global_max ${pol.global_max}, dispatchRatePolicy)`;
+  }
+  times.push(now);
+  __dispatchRateTimes.set(h, times);
+  __dispatchRateGlobal.push(now);
+  return null;
+}
 async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
@@ -15745,6 +15781,19 @@ async function handleRunGoal(req: Request): Promise<Response> {
   }
 
   const rawGoal = typeof body.goal === "string" ? body.goal : undefined;
+  // SPEND-RATE BREAKER (4.4) on the raw goal, before any LLM call. 429 (not 200) so a caller such
+  // as gap-to-feature records a failed hand-off instead of a successful one.
+  if (typeof rawGoal === "string" && rawGoal.trim().length > 0) {
+    const rateRefusal = await dispatchRateRefusal(rawGoal);
+    if (rateRefusal) {
+      const dispatchId = crypto.randomUUID();
+      const reason = "deterministic:spend-rate-refused - " + rateRefusal;
+      const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal: rawGoal, selectedTemplateId: "spend-rate-refused", goalReachReason: reason };
+      executionStore.set(dispatchId, refusalRec);
+      console.warn(`[goal-host-vessel] /run-goal: SPEND-RATE REFUSED at handler entry (no LLM call) goal_hash=${goalHashOf(rawGoal)}: ${rateRefusal}`);
+      return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason }, { status: 429 });
+    }
+  }
   // RESOLVE THE FILE THE OPERATOR DID NOT NAME (2026-08-09).
   //
   // isEditIntentGoal requires a literal repos/<vessel>/<file> path, so a goal
@@ -17098,6 +17147,18 @@ async function handleResolve(req: Request): Promise<Response> {
         status: "refused",
         reached: false,
         error: `recursive /resolve refused: goal ${__rh} is already being walked in this process`,
+      });
+    }
+    // SPEND-RATE BREAKER (4.4): the same per-goal and global window as /run-goal.
+    const __rateRefusal = await dispatchRateRefusal(String(goal ?? ""));
+    if (__rateRefusal) {
+      console.warn(`[goal-host-vessel] /resolve: SPEND-RATE REFUSED goalHash=${__rh}: ${__rateRefusal}`);
+      return Response.json({
+        resolved: false,
+        shape: type === "goal_execution" ? "goalExecution" : "activityExecution",
+        status: "refused",
+        reached: false,
+        error: `spend-rate breaker: ${__rateRefusal}`,
       });
     }
     __resolveInFlight.set(__rh, (__resolveInFlight.get(__rh) ?? 0) + 1);
