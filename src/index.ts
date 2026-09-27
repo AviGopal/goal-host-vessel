@@ -11862,7 +11862,57 @@ function effectTupleOf(shape: string, vesselEndpoint: string | undefined, conten
   return `${vessel}|${shape}|${kind}|${externals.join(",")}`;
 }
 
-async function runGoalWithRecovery(
+/**
+ * LANDED LATCH (value-per-cost-selection 3.2). A landing is terminal and sticky: once this
+ * goal's commit is on origin/dev, no later step of the same dispatch may report failed or
+ * reached:false. Inside the body every in-process landed verdict already returns at once;
+ * the downgrade came from landings the body did not see. The callee landed after the caller
+ * stopped waiting, then a hollow walk or a post-walk "refused for CAPACITY (BUSY) after one
+ * retry" (while the first compose still held the slot) became the final verdict. So the latch
+ * sits on the single exit: a dispatch that sent a post-walk compose and is about to return
+ * unreached probes git for the goal's landing since it started (waiting out that compose's
+ * own ceiling when the reply was lost to a timeout, since it may still land; a BUSY refusal
+ * gets a single probe) and returns the landed verdict instead. A result that already judged
+ * that very commit, or a landing whose requested symbol is absent, is left as it is.
+ */
+const _dispatchSentCompose = new WeakMap<object, number>();
+async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<typeof runGoalWithRecoveryInner>[1]): Promise<GoalSeekResult> {
+  const startMs = Date.now();
+  const r = await runGoalWithRecoveryInner(goal, opts);
+  if (r.reached === true || typeof goal !== "string" || !_dispatchSentCompose.has(opts)) return r;
+  const sentAt = _dispatchSentCompose.get(opts) ?? startMs;
+  const fm = /repos\/([\w.-]+)\/[\w./-]+\.\w+/.exec(goal);
+  if (!fm) return r;
+  const gapId = /^Close substrate gap ([\-\w:.!]+):\s/.exec(goal)?.[1] ?? `route-edit-${goalHashOf(goal)}`;
+  const mayStillLand = /timed out|timeout/i.test(String(r.goalReachReason ?? ""));
+  const until = mayStillLand ? sentAt + Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000) + 180_000 : 0;
+  let sha = await landedCommitForGoal(fm[1]!, gapId, startMs);
+  while (!sha && Date.now() < until) {
+    await new Promise((res) => setTimeout(res, 30_000));
+    sha = await landedCommitForGoal(fm[1]!, gapId, startMs);
+  }
+  if (!sha || r.executionId === `feature_compose:${sha}` || String(r.goalReachReason ?? "").includes(sha)) return r;
+  const postOk = await verifyEditPostState(goal, fm[0], sha);
+  if (postOk === false) {
+    console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed but the requested symbol is absent; keeping the unreached verdict`);
+    return r;
+  }
+  console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed during this dispatch; the later ${r.status}/reached:${String(r.reached)} verdict does not downgrade it`);
+  opts.stepSink?.push(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed during this dispatch; final verdict stays landed`);
+  recordDeterministicLabel(goal, `feature_compose:${sha}`, "feature_compose", { reached: true, reason: `deterministic:edit-intent-landed ${sha} (landed latch)`, deterministic: true });
+  return {
+    result: null,
+    status: "completed",
+    selectedTemplateId: "feature_compose",
+    completionShapes: ["fileEditResult"],
+    attempts: r.attempts,
+    goalReachReason: `deterministic:edit-intent-landed — ${sha} for ${gapId} landed on origin/dev during this dispatch${postOk === true ? " (post-state confirms the requested symbol is present)" : ""}; a later step reported ${r.status}/reached:${String(r.reached)} (${String(r.goalReachReason ?? "no reason").slice(0, 200)}), which a landing is not downgraded by`,
+    reached: true,
+    executionId: `feature_compose:${sha}`,
+  };
+}
+
+async function runGoalWithRecoveryInner(
   goal: string | undefined,
   opts: {
     firstTarget?: string;
@@ -13401,6 +13451,7 @@ async function runGoalWithRecovery(
             // a single socket closure / timeout / BUSY must not dump an edit goal onto the
             // recommend path, where non-editing tick templates get selected and β-penalised.
             let resp: Response;
+            _dispatchSentCompose.set(opts, Date.now());   // the landed latch in runGoalWithRecovery reads this
             try {
               resp = await fetch(composeUrl, composeInit());
             } catch (err1) {
