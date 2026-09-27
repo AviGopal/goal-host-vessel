@@ -211,6 +211,14 @@ let readDispatchId: () => string | undefined = () => undefined;
 export function setRouterDispatchIdReader(reader: () => string | undefined): void {
   readDispatchId = reader;
 }
+// SPEND ATTRIBUTION (value-per-cost-selection 1.5): llm-resolver keys its spend summary by
+// model|provider|task_type|caller, so every routed completion names its caller and dispatch.
+function attributionFields(taskType: string): Record<string, string> {
+  let did: string | undefined;
+  try { did = readDispatchId(); } catch { did = undefined; }
+  return { caller: `goal-host:${taskType}`, ...(did ? { dispatch_id: did } : {}) };
+}
+
 function boundedSet(map: Map<string, RouterUsage>, key: string, value: RouterUsage): void {
   if (!map.has(key) && map.size >= MAX_BUFFERS) {
     const oldest = map.keys().next().value;
@@ -276,7 +284,7 @@ async function routeOverRanked(
   taskType: string,
   body: { prompt: string; maxTokens?: number; system?: string; model?: string },
 ): Promise<RoutedResult> {
-  const payload: Record<string, unknown> = { type: "llm_completion", prompt: body.prompt, task_type: taskType };
+  const payload: Record<string, unknown> = { type: "llm_completion", prompt: body.prompt, task_type: taskType, ...attributionFields(taskType) };
   if (body.maxTokens) payload.max_tokens = body.maxTokens;
   if (body.system) payload.system = body.system;
   for (const sel of ranked.slice(0, 2)) {
@@ -391,7 +399,7 @@ async function routedCompleteOnce(
           method: "POST",
           headers: authHeaders(),
           // No model override — the vessel's own pinned default applies.
-          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}), ...(body.model ? { model: body.model } : {}), task_type: taskType }),
+          body: JSON.stringify({ type: "llm_completion", prompt: body.prompt, ...(body.maxTokens ? { max_tokens: body.maxTokens } : {}), ...(body.system ? { system: body.system } : {}), ...(body.model ? { model: body.model } : {}), task_type: taskType, ...attributionFields(taskType) }),
           signal: controller.signal,
         });
       } finally {
