@@ -13425,7 +13425,28 @@ async function runGoalWithRecoveryInner(
               // tiebreak). Reuse, not a new preference — and note this leaves the
               // env fallback (DEV_VESSEL_ENDPOINT) as the floor, so an empty registry
               // still composes locally rather than not at all.
-              const v = pickSatisfierProducer((dj?.content?.vessels ?? []) as import("./satisfier-pick.js").SatisfierProducer[]);
+              // ROUTE BY OWNERSHIP, like the early edit-intent site (decentralized-compose-ownership).
+              // Without it this compose went to the preferred producer even when another node owns
+              // the repo, so an edit already composed on the owner was composed again here (194df79).
+              const rows = (dj?.content?.vessels ?? []) as Array<import("./satisfier-pick.js").SatisfierProducer & { owned_repos?: string[]; vesselId?: string }>;              const targetVessel = /^repos\/([^/]+)\//.exec(editFile)?.[1] ?? "";
+              if (rows.length > 1 && !rows.some((r) => Array.isArray(r.owned_repos))) {
+                await Promise.all(rows.map(async (r) => {
+                  try {
+                    const u = `${String(r.endpoint ?? "").replace(/\/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
+                    const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership" } } }), signal: AbortSignal.timeout(3_000) });
+                    const j = await res.json() as { body?: { owned_repos?: unknown }; content?: { owned_repos?: unknown } };
+                    const owned = j?.body?.owned_repos ?? j?.content?.owned_repos;
+                    if (Array.isArray(owned)) r.owned_repos = owned.map(String);
+                  } catch { /* a producer that does not answer claims nothing */ }
+                }));
+              }
+              const owners = rows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(targetVessel));
+              const v = owners.length === 1 ? owners[0] : pickSatisfierProducer(rows);
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ${owners.length === 1 ? `routed by ownership → ${owners[0]!.vesselId}` : 'routed by pick'}`);
+              if (v?.endpoint) {
+                composeUrl = `${v.endpoint.replace(/\/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
+                tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
+              }
               if (v?.endpoint) {
                 composeUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
                 tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
