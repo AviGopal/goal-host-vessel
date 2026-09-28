@@ -102,19 +102,10 @@ export async function inferGoalTargetShapes(
   // passed, so the autonomous verify gate never saw it. Do not reintroduce it: the
   // no-target case is the one this function exists to serve.)
 
-  // Special handling for known path rewriting issues.
-  // The goal might refer to a repo-relative path, but the substrate expects an absolute path.
-  // This mapping handles cases where inference incorrectly rewrites paths.
-  let processedGoal = goal;
-  if (goal.startsWith('scripts/substrate/')) {
-    // Example: 'scripts/substrate/vessels.inventory.json' should map to '/substrate/vessels.inventory.json'
-    // This is a general pattern: paths relative to the repo root under `scripts/substrate/`
-    // are intended to be absolute paths under `/substrate/` in the runtime environment.
-    processedGoal = `/` + goal.substring('scripts/substrate/'.length -1 ); // preserve the first slash from `/substrate/`
-  }
-
+  // Path rewriting logic removed. It was incorrectly converting valid repo-relative paths
+  // into non-existent absolute paths. The original goal string is now used directly.
   const cache = opts.cache;
-  const cacheKey = goalHashOf(processedGoal);
+  const cacheKey = goalHashOf(goal);
   if (cache) {
     const cached = cache.get(cacheKey);
     if (cached) return cached;
