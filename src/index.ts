@@ -5683,19 +5683,41 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
   const id = `gap-${slug}`;
+  // DEMAND-COUNTED FILING (contained-self-development 8.15). Measured 09-28: 697 open capability gaps named
+  // 697 distinct shapes, each demanded by exactly ONE goal (actual_content_before_wc, SUBSTRATE_EXECUTION_ID,
+  // ...): intermediate shapes a walk invented, not capabilities. One goal is a walk artifact; a shape becomes
+  // real demand when a SECOND distinct goal needs it. The demand ledger is the gap row itself.
+  let priorGoals: string[] = [];
+  try {
+    const pr = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap", pointer: { type: "substrateGap", id } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const pj = (await pr.json()) as { body?: { gaps?: Array<{ id?: string; classification_metadata?: Record<string, unknown> }> } };
+    const prior = (pj?.body?.gaps ?? []).find((g) => g.id === id);
+    const pm = (prior?.classification_metadata ?? {}) as Record<string, unknown>;
+    const dg = pm["demand_goals"];
+    priorGoals = Array.isArray(dg) ? dg.filter((x): x is string => typeof x === "string") : (typeof pm["goal"] === "string" ? [pm["goal"] as string] : []);
+  } catch { /* unreadable: counted as a first demand */ }
+  const goalKey = goal.trim().slice(0, 300);
+  if (priorGoals.includes(goalKey)) return null; // the same goal again is not new demand
+  const demandGoals = [...priorGoals, goalKey].slice(-10);
+  const demanded = demandGoals.length >= 2;
   const summary = `Capability gap: the goal-walk needs a producer for shape "${canonicalShape}" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape "${canonicalShape}" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck.`;
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
-        id, category: "missing_capability", source: "substrate_detected", status: "open", summary,
+        id, category: "missing_capability", source: "substrate_detected", status: demanded ? "open" : "closed", summary,
         detected_at: new Date().toISOString(),
-        classification_metadata: { kind: "capability_gap", missing_shape: canonicalShape, allowed_output_shapes: [canonicalShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true },
+        classification_metadata: { kind: "capability_gap", missing_shape: canonicalShape, allowed_output_shapes: [canonicalShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true, demand_goals: demandGoals, demand_count: demandGoals.length, ...(demanded ? {} : { closed_reason: "walk_artifact", resolution: "single-goal demand: recorded, filed open only when a second distinct goal needs this shape" }) },
       } } } }),
       signal: AbortSignal.timeout(15_000),
     });
-    return r.ok ? id : null;
+    return r.ok && demanded ? id : null;
   } catch { return null; }
 }
 /**
