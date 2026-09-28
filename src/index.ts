@@ -7454,7 +7454,7 @@ async function runGoalAsPoolWalk(
    try {
      const sep = await endpointForShape(shape);
      if (sep) {
-       const sr = await fetch(`${sep.endpoint}${sep.resolvePath}`, {
+       const sr = await fetch(sep.resolvePath.startsWith('http://') || sep.resolvePath.startsWith('https://') ? sep.resolvePath : `${sep.endpoint}${sep.resolvePath}`, {
          method: "POST",
          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
          body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }),
@@ -15125,7 +15125,7 @@ function buildDiscoveryProxyResolver(shape: string) {
       let resp: Response;
       try {
         if (!pointer.execution_id) { const _did = dispatchContext.getStore()?.dispatchId ?? (typeof variables.dispatch_id === "string" ? variables.dispatch_id : undefined); if (_did) pointer.execution_id = _did; else if (/^(shell|shellResult|bash|bounded_shell|git_commit|gitCommitResult)$/.test(shape)) console.log(`[goal-host-vessel] discovery-proxy ${shape} call WITHOUT dispatch id`); }
-        resp = await fetch(`${endpoint}${resolvePath}`, {
+        resp = await fetch(resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify({ impulse: { pointer } }),
