@@ -605,6 +605,8 @@ export async function inferGoalTargetDecision(
   if (knownShapes.includes("shellResult")) {
     const EXTRACT_VERB = /\b(report|extract|get|find|show|print|tell me|give me|what(?:'s| is| are)|which)\b/i;
     const VALUE_NOUN = /\b(value|field|key|version|name|entry|entries|property|properties|attribute|setting|settings|dependenc(?:y|ies)|devdependenc\w*|script|scripts|main|license|author|homepage|repository|url|port|endpoint)\b/i;
+    // Specific override: map repo-relative path to known absolute substrate path before any rewriting.
+    goal = goal.replace(/\bscripts\/substrate\/vessels\.inventory\.json\b/g, "/substrate/vessels.inventory.json");
     const FILE_OPERAND = /repos\/[\w.-]+\/[\w./-]+\.\w+|\b[\w-]+\.(?:json|ts|tsx|js|jsx|md|txt|ya?ml|toml|lock|cfg|ini|sh|py|sql|env)\b/i;
     const NOT_EXTRACT = /\b(summar|explain|describe|overview|analy[sz]e|review|audit|refactor|rewrite|gist|understand|two\s+sentences?|what\s+is\s+.*\s+about|quality|problem|complexity|coverage|security|performance|architecture|conformance)\b/i;
     if (!isCompositionAsk && EXTRACT_VERB.test(goal) && VALUE_NOUN.test(goal) && FILE_OPERAND.test(goal) && !NOT_EXTRACT.test(goal)) {
