@@ -3270,9 +3270,17 @@ function parseGapCategoryAggregate(goal: string): { status: "open" | "closed"; n
   const fewest = /\b(fewest|least|lowest|smallest)\b/i.test(goal);
   if (most === fewest) return null;                       // neither or ambiguous -> LLM
   if (/\bfailed_attempts?\b|\bsum\b|\baverage\b|\bmean\b|\btotal\b/i.test(goal)) return null; // count-by-category ONLY
-  const topM = goal.match(/\btop\s+(\d{1,2})\b/i);
+  // A MULTI-PART GOAL IS NOT A CATEGORY-COUNT CLAIM (09-29): goals that also asked for the total open
+  // count, or for a specific gap in the category (its id, the most recently updated one), were graded
+  // reached on the category line alone. Anything beyond category counts goes to the LLM judge.
+  if (/\bhow many\s+(?:substrate\s+)?gaps?\b/i.test(goal)) return null;
+  if (/\b(?:ids?|identifier|updated|recent(?:ly)?|newest|oldest|latest|earliest|which\s+(?:open\s+)?gap\b(?!\s+categor))/i.test(goal)) return null;
+  const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const topM = goal.match(/\btop\s+(\d{1,2})\b/i)
+    ?? goal.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:substrate\s+)?(?:gap\s+)?categor(?:y|ies)\b/i);
+  const topN = topM ? (NUMBER_WORDS[topM[1]!.toLowerCase()] ?? +topM[1]!) : 1;
   return { status: /\bclosed\b/i.test(goal) ? "closed" : "open",
-           n: topM ? Math.min(50, Math.max(1, +topM[1])) : 1,
+           n: Math.min(50, Math.max(1, topN)),
            dir: fewest ? "fewest" : "most" };
 }
 
@@ -3361,6 +3369,29 @@ async function verifyGapAggregateReach(goal: string, dig: string): Promise<GoalR
   const shortLines = dig.split("\n").map((l) => l.trim()).filter((t) =>
     t.length > 0 && t.length <= 160 && !/error|not found|cannot|invalid/i.test(t));
   let sawPair = false;
+  // TOP-N MEANS EVERY ONE OF THE N (09-29): only the single extreme category used to be checked, so an
+  // answer naming one category passed a 'which three categories' goal. For n>1 the answer must report
+  // each of the top-n categories (by count, ties counted as one rank) with a count within the drift band.
+  if (p.n > 1) {
+    const ranked = entries.slice().sort((a, b) => p.dir === "most" ? b[1] - a[1] : a[1] - b[1]);
+    const cutoff = ranked[Math.min(p.n, ranked.length) - 1]?.[1];
+    const required = ranked.filter(([, n]) => p.dir === "most" ? n > (cutoff ?? 0) : n < (cutoff ?? 0));
+    const atCutoff = ranked.filter(([, n]) => n === cutoff);
+    const reported = new Map<string, number>();
+    for (const line of shortLines) {
+      let m2: RegExpExecArray | null;
+      pairRe.lastIndex = 0;
+      while ((m2 = pairRe.exec(line)) !== null) { if (counts.has(m2[1]!)) reported.set(m2[1]!, Number(m2[2])); }
+    }
+    if (reported.size === 0) return null;
+    const within = (cat: string): boolean => reported.has(cat) && Math.abs((reported.get(cat) ?? -99) - (counts.get(cat) ?? 0)) <= 2;
+    const need = p.n - required.length;
+    const ok = required.every(([c]) => within(c)) && atCutoff.filter(([c]) => within(c)).length >= need;
+    if (ok) {
+      return { reached: true, reason: `deterministic:verified-gap-top${p.n}-categories \u2014 independently recomputed the top ${p.n} ${p.status}-gap categories from the live gap store and the produced output reports each with its count (\u00b12 live-drift tolerance)`, deterministic: true, completion_shapes: [] };
+    }
+    return { reached: false, reason: `deterministic:gap-top${p.n}-mismatch \u2014 the top ${p.n} ${p.status}-gap categories at grading time are [${ranked.slice(0, p.n).map(([c, n]) => `${c} ${n}`).join(", ")}], and the produced output does not report every one with its count`, deterministic: true, completion_shapes: [] };
+  }
   for (const line of shortLines) {
     let m: RegExpExecArray | null;
     pairRe.lastIndex = 0;
