@@ -3273,10 +3273,14 @@ function parseGapCategoryAggregate(goal: string): { status: "open" | "closed"; n
   // A MULTI-PART GOAL IS NOT A CATEGORY-COUNT CLAIM (09-29): goals that also asked for the total open
   // count, or for a specific gap in the category (its id, the most recently updated one), were graded
   // reached on the category line alone. Anything beyond category counts goes to the LLM judge.
-  if (/\bhow many\b[\s\S]{0,30}\bgaps?\b/i.test(goal)) return null;
+  // The COUNT OF THE NAMED CATEGORIES is what this oracle recomputes, so a clause asking for it ('…, and
+  // how many does it have', 'what are their counts') is not a second ask; strip it before the multi-part
+  // tests (qa 09-29: 9eb8f12 nulled these and handed them to a judge that rubber-stamps).
+  const multi = goal.replace(/,?\s+and\s+(?:how\s+many(?:\s+(?:open\s+)?gaps?)?\s+(?:does|do)\s+(?:it|they)\s+have|how\s+many\s+(?:open\s+)?gaps\s+are\s+in\s+(?:it|them|that\s+category)|(?:what|give)\s+(?:is|are)\s+(?:its|their)\s+counts?)\b/gi, "");
+  if (/\bhow many\b[\s\S]{0,30}\bgaps?\b/i.test(multi)) return null;
   // MULTI-PART IS THE CLASS, not a list of phrasings (qa 09-29): a second clause after the category ask
   // (', and which/what/how many/name/give/list/show …') means the goal asks for more than category counts.
-  if (/,?\s+and\s+(?:also\s+)?(?:which|what|how\s+many|name|give|list|show|tell|report|identify)\b/i.test(goal)) return null;
+  if (/,?\s+and\s+(?:also\s+)?(?:which|what|how\s+many|name|give|list|show|tell|report|identify)\b/i.test(multi)) return null;
   if (/\b(?:ids?|identifier|updated|recent(?:ly)?|newest|oldest|latest|earliest|which\s+(?:open\s+)?gap\b(?!\s+categor))/i.test(goal)) return null;
   const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
   const topM = goal.match(/\btop\s+(\d{1,2})\b/i)
@@ -3358,6 +3362,61 @@ async function verifyGapRatioReach(goal: string, dig: string): Promise<GoalReach
     return { reached: false, reason: `deterministic:gap-ratio-mismatch \u2014 authoritative ratio is ${shown} (${maxg}/${total}); the produced output does not report it`, deterministic: true, completion_shapes: [] };
   }
   return null;
+}
+
+/**
+ * REJECT-ONLY: A NAMED GAP THAT CANNOT BE THE ANSWER (qa 09-29). For 'the top category and its most recently
+ * updated / newest gap', the LLM judge graded a real gap from ANOTHER category and a made-up id as reached.
+ * This recomputes the top open-gap category (ties honoured) and REJECTS an answer naming a gap id that is not
+ * an open gap at all, or is an open gap outside the top category. It never greens: a named id inside the top
+ * category falls through to the judge (the newest one drifts minute to minute, so recency is not judged here).
+ */
+async function rejectWrongTopCategoryGapId(goal: string, dig: string): Promise<GoalReachVerdict | null> {
+  if (!/\bcategor(?:y|ies)\b/i.test(goal) || !/\bgaps?\b/i.test(goal)) return null;
+  if (!/\b(?:most\s+recently\s+updated|recently\s+updated|newest|latest|last\s+(?:updated|touched))\b/i.test(goal)) return null;
+  if (!/\b(?:most|highest|largest|top)\b/i.test(goal) || /\b(?:fewest|least|lowest|smallest)\b/i.test(goal)) return null;
+  if (/\bclosed\b/i.test(goal)) return null;
+  let gaps: Array<{ id?: unknown; category?: unknown }> = [];
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status: "open", limit: 100000 } } }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    gaps = Array.isArray(j?.body?.gaps) ? j.body.gaps : [];
+  } catch { return null; }
+  if (gaps.length === 0) return null;
+  const counts = new Map<string, number>();
+  for (const g of gaps) { const c = String(g?.category ?? "?"); counts.set(c, (counts.get(c) ?? 0) + 1); }
+  const max = Math.max(...counts.values());
+  const top = new Set([...counts.entries()].filter(([, n]) => n === max).map(([c]) => c));
+  const byId = new Map(gaps.map((g) => [String(g?.id ?? ""), String(g?.category ?? "?")]));
+  // The top category's own id shape: the leading two segments most of its ids share (e.g. route-edit-).
+  const prefixCounts = new Map<string, number>();
+  const topIds = gaps.filter((g) => top.has(String(g?.category ?? "?"))).map((g) => String(g?.id ?? ""));
+  for (const id of topIds) { const m = id.match(/^([a-z0-9]+-[a-z0-9]+-)/i); if (m) prefixCounts.set(m[1]!, (prefixCounts.get(m[1]!) ?? 0) + 1); }
+  const dominant = [...prefixCounts.entries()].find(([, n]) => n * 2 >= topIds.length)?.[0] ?? null;
+  const wrong: string[] = [];
+  let named = 0;
+  for (const line of dig.split("\n")) {
+    if (!/\b(?:gap|id)\b/i.test(line)) continue;
+    for (const tok of line.match(/[a-z0-9]+(?:[-_:.][a-z0-9]+)+/gi) ?? []) {
+      if (/^\d{4}-\d{2}-\d{2}/.test(tok) || counts.has(tok)) continue;   // a date/timestamp or a category name
+      if (byId.has(tok)) {                                  // a real open gap: wrong only if outside the top category
+        named++;
+        if (!top.has(byId.get(tok)!)) wrong.push(tok);
+        continue;
+      }
+      // Not an open gap: count it only if it is shaped like the top category's own ids (a made-up id),
+      // so vessel names, shapes and other hyphenated words never trigger a rejection.
+      if (dominant && tok.toLowerCase().startsWith(dominant.toLowerCase()) && tok.length > dominant.length) { named++; wrong.push(tok); }
+    }
+  }
+  if (named === 0 || wrong.length === 0) return null;
+  return { reached: false, reason: `deterministic:wrong-top-category-gap-id \u2014 the top open-gap category is [${[...top].join(", ")}] (${max}); the produced output names ${wrong.slice(0, 3).map((w) => byId.has(w) ? `${w} (an open gap in ${byId.get(w)})` : `${w} (not an open gap)`).join(", ")}`, deterministic: true, completion_shapes: [] };
 }
 
 async function verifyGapAggregateReach(goal: string, dig: string): Promise<GoalReachVerdict | null> {
@@ -3732,6 +3791,10 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   {
     const gapTotalV = await verifyGapTotalCountReach(goal, dig);
     if (gapTotalV) return gapTotalV;
+  }
+  {
+    const wrongIdV = await rejectWrongTopCategoryGapId(goal, dig);
+    if (wrongIdV) return wrongIdV;
   }
   // INDEPENDENT REGISTRY-INVENTORY ORACLE — verify a self-inventory count against the authoritative
   // /registry/stats instead of the self-graded LLM (validatability + falsifiability critical path).
