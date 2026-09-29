@@ -3273,11 +3273,16 @@ function parseGapCategoryAggregate(goal: string): { status: "open" | "closed"; n
   // A MULTI-PART GOAL IS NOT A CATEGORY-COUNT CLAIM (09-29): goals that also asked for the total open
   // count, or for a specific gap in the category (its id, the most recently updated one), were graded
   // reached on the category line alone. Anything beyond category counts goes to the LLM judge.
-  if (/\bhow many\s+(?:substrate\s+)?gaps?\b/i.test(goal)) return null;
+  if (/\bhow many\b[\s\S]{0,30}\bgaps?\b/i.test(goal)) return null;
+  // MULTI-PART IS THE CLASS, not a list of phrasings (qa 09-29): a second clause after the category ask
+  // (', and which/what/how many/name/give/list/show …') means the goal asks for more than category counts.
+  if (/,?\s+and\s+(?:also\s+)?(?:which|what|how\s+many|name|give|list|show|tell|report|identify)\b/i.test(goal)) return null;
   if (/\b(?:ids?|identifier|updated|recent(?:ly)?|newest|oldest|latest|earliest|which\s+(?:open\s+)?gap\b(?!\s+categor))/i.test(goal)) return null;
   const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
   const topM = goal.match(/\btop\s+(\d{1,2})\b/i)
     ?? goal.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:substrate\s+)?(?:gap\s+)?categor(?:y|ies)\b/i);
+  // A plural 'categories' ask with no number is ambiguous; it used to default silently to the top one.
+  if (!topM && /\bcategories\b/i.test(goal)) return null;
   const topN = topM ? (NUMBER_WORDS[topM[1]!.toLowerCase()] ?? +topM[1]!) : 1;
   return { status: /\bclosed\b/i.test(goal) ? "closed" : "open",
            n: Math.min(50, Math.max(1, topN)),
