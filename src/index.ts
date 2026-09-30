@@ -18,6 +18,7 @@
 
 import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args.js";
 import { buildResolvePointer } from "./resolve-pointer";
+import { toolPointer } from "./resolve-pointer";
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
@@ -4590,7 +4591,7 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
   if (!dispatchContext.getStore()?.dispatchId) console.warn(`[uf] tool call WITHOUT dispatch id: tool=${name} (the resolver will receive no execution_id)`);
   try {
-    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: name, ...(name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}), ...args, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }), signal: AbortSignal.timeout(60_000) });
+    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: toolPointer(name, args, dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}, name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}) } }), signal: AbortSignal.timeout(60_000) });
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     const j = await r.json() as any;
     let c: unknown = j;
