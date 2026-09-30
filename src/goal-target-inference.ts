@@ -1,3 +1,4 @@
+import path from "path";
 import { registryFieldFor, registryRatioFor } from "./registry-field";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
@@ -43,6 +44,24 @@ export function goalHashOf(goal: string): string {
     hash = (hash * 16777619) >>> 0; // FNV prime
   }
   return hash.toString(16).padStart(8, "0");
+}
+
+/**
+ * Given a candidate absolute path and the original repo-relative path, checks if the
+ * absolute path exists on the filesystem. If it does, returns the absolute path.
+ * If not, falls back to the original repo-relative path. This prevents rewriting
+ * valid repo-relative paths into non-existent absolute paths.
+ */
+async function fallbackToOriginalPath(absolutePath: string, originalPath: string): Promise<string> {
+  try {
+    const file = Bun.file(absolutePath);
+    if (await file.exists()) {
+      return absolutePath;
+    }
+  } catch (e) {
+    // Bun.file can throw on invalid path characters. In that case, fallback.
+  }
+  return originalPath;
 }
 
 const INFER_CACHE_MAX = 512;
@@ -102,8 +121,21 @@ export async function inferGoalTargetShapes(
   // passed, so the autonomous verify gate never saw it. Do not reintroduce it: the
   // no-target case is the one this function exists to serve.)
 
-  // Path rewriting logic removed. It was incorrectly converting valid repo-relative paths
-  // into non-existent absolute paths. The original goal string is now used directly.
+  // Resolve repo-relative paths in the goal to absolute paths, falling back to
+  // the original path if the absolute path doesn't exist. This helps the model
+  // by grounding file paths, without inventing non-existent ones.
+  const pathRegex = /(?:(?:[\w-]+\/)*[\w-]+\.[\w.-]+)/g;
+  const matches = goal.match(pathRegex);
+  if (matches) {
+    // To avoid overlapping replaces, process paths from longest to shortest.
+    const uniqueMatches = [...new Set(matches)].sort((a, b) => b.length - a.length);
+    for (const originalPath of uniqueMatches) {
+      const absolutePath = path.resolve(originalPath);
+      const effectivePath = await fallbackToOriginalPath(absolutePath, originalPath);
+      // Using split/join to replace all occurrences.
+      goal = goal.split(originalPath).join(effectivePath);
+    }
+  }
   const cache = opts.cache;
   const cacheKey = goalHashOf(goal);
   if (cache) {
