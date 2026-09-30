@@ -17,6 +17,7 @@
  */
 
 import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args.js";
+import { buildResolvePointer } from "./resolve-pointer";
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
@@ -8061,7 +8062,8 @@ async function runGoalAsPoolWalk(
     lastRawResolveReason = null;
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
-    const pointer: Record<string, unknown> = { type: shape, ...base, ...extraArgs };
+    // The shape is resolved LAST: a synthesized `type` must never change it (see resolve-pointer.ts).
+    const pointer: Record<string, unknown> = buildResolvePointer(shape, base as Record<string, unknown>, extraArgs);
     if ((shape === "shellResult" || shape === "shell" || shape === "bash" || shape === "bounded_shell" || shape === "gitCommitResult" || shape === "git_commit") && !pointer.execution_id && dispatchContext.getStore()?.dispatchId) pointer.execution_id = dispatchContext.getStore()!.dispatchId;
     // llm_completion / llmCompletion resolvers REQUIRE a non-empty `prompt`. The LLM
     // pointer-arg extractor does not reliably synthesize one for a bare inferred
@@ -15005,7 +15007,8 @@ function buildProxyResolver(shape: string) {
       // interpolated value, and the resolver sees the wrong field. Variables
       // remain available for resolvers whose pointer fields aren't explicit
       // in the task config — they just don't override an interpolated config.
-      const pointer: Record<string, unknown> = { type: shape, ...variables, ...config };
+      // variables < config (config wins), and the shape LAST: a `type` in either must never re-route it.
+      const pointer: Record<string, unknown> = buildResolvePointer(shape, variables, config);
       // ITER-4 fix: manual AbortController + clearTimeout instead of
       // AbortSignal.timeout — the implicit timer leaks native buffers. Also
       // drain response body explicitly via .cancel() since Bun retains the
@@ -15171,7 +15174,8 @@ function buildDiscoveryProxyResolver(shape: string) {
       const random = context.random as { id: (prefix: string) => string };
       const impulseSlots = buildImpulseSlots(context.inputImpulses);
       const config = interpolateProxyValue(configRaw, variables, impulseSlots) as Record<string, unknown>;
-      const pointer: Record<string, unknown> = { type: shape, ...variables, ...config };
+      // variables < config (config wins), and the shape LAST: a `type` in either must never re-route it.
+      const pointer: Record<string, unknown> = buildResolvePointer(shape, variables, config);
 
       // 1. Resolve the producer endpoint via discovery (lazy → survives restarts).
       const discCtrl = new AbortController();
