@@ -177,8 +177,25 @@ interface BufferedSelection { taskType: string; vesselId: string; latencyMs: num
 const buffers = new Map<string, BufferedSelection[]>();
 const MAX_BUFFERS = 512; // backstop against a dispatch that never flushes
 
+/**
+ * A routing key with this prefix is a SHADOW call: made only to MEASURE (e.g. the LLM reach judge
+ * consulted alongside a deterministic oracle that already decided). It is graded by nothing the
+ * dispatch produces, so it must never enter the per-dispatch reward buffer — otherwise the
+ * dispatch's final verdict would reward or penalise an arm for a call whose output was discarded.
+ */
+export const SHADOW_ROUTE_PREFIX = "shadow:";
+
+/** Reward-buffer entries under one routing key, or across all keys (observability + tests). */
+export function rewardBufferEntries(key?: string): number {
+  if (key !== undefined) return buffers.get(key)?.length ?? 0;
+  let n = 0;
+  for (const b of buffers.values()) n += b.length;
+  return n;
+}
+
 function buffer(dispatchId: string, sel: BufferedSelection): void {
   if (!dispatchId) return;
+  if (dispatchId.startsWith(SHADOW_ROUTE_PREFIX)) return; // shadow calls are measurement, never reward
   if (!buffers.has(dispatchId)) {
     if (buffers.size >= MAX_BUFFERS) {
       const oldest = buffers.keys().next().value;

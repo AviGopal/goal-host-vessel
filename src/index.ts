@@ -369,7 +369,7 @@ import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer, satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
-import { routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
+import { SHADOW_ROUTE_PREFIX, routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
 import { createHash } from "node:crypto";
 import { orderRing } from "./mem-ring";
 import {
@@ -395,6 +395,7 @@ import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
+import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import type {
   EventSink,
   Impulse,
@@ -3583,6 +3584,38 @@ async function verifyCodeInvestigationCitation(goal: string, digest: string): Pr
   return { reached: false, reason: `deterministic:code-investigation-citation-unverified — the answer cites [${cited.slice(0, 3).join(", ")}] but none independently re-reads to a file containing [${syms.join(", ")}] (confabulated or wrong citation)`, deterministic: true, completion_shapes: [] };
 }
 
+/**
+ * Fresh re-read of `path` through whichever vessel discovery names for fileContent — the same
+ * producer shape and pointer form the walk's own resolve uses (buildResolvePointer, shape last).
+ * Read-only; null on any failure so the verbatim oracle degrades to abstaining, never to a verdict.
+ */
+// The shadow-judge budget. Durable part: shadow_until (an end time in the policy, default
+// VERBATIM_SHADOW_DEFAULT_UNTIL), so the window closes regardless of restarts. Per-process part:
+// shadow_n, which RESETS on restart — a restart buys up to N more comparisons inside the window.
+// (The label resolver can filter by activity_id, so counting prior shadow labels is possible; the
+// end time made it unnecessary.)
+const verbatimShadow = createVerbatimShadow();
+async function verbatimShadowBudget(): Promise<ShadowBudget> {
+  // Shaped policy (law 1): /workspace/policies/verbatimReadShadowPolicy.json
+  // {"shadow_n": <int>, "shadow_until": "<ISO time>"}. Absent or unusable fields keep the defaults.
+  return shadowBudgetFrom(await resolveShapedPolicy("verbatimReadShadowPolicy"));
+}
+
+async function rereadFileContentViaProducer(path: string): Promise<FileRead | null> {
+  try {
+    const url = await ufResolveUrl("fileContent");
+    if (!url) return null;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: buildResolvePointer("fileContent", {}, { path }) } }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return null;
+    return fileReadOf(await r.json());
+  } catch { return null; }
+}
+
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
@@ -3720,6 +3753,50 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     if (computeVerdict) return computeVerdict;
   }
   // ── End deterministic pre-check — fall through to LLM ───────────────────
+
+  // VERBATIM FILE-READ ORACLE (2026-10-01) — "read <abs path> and tell me exactly what it says".
+  // FIRST in the oracle chain so no sibling claims the goal before it. The LLM judge called a
+  // correct one-step read HOLLOW ("truncated"), and that verdict drove a FEEDBACK-RETRY, the
+  // suppression of the producer that worked, and a retry widened to web search (dispatch ee3cdfc3:
+  // 35 walk-log entries, reached:false). Ground truth is a FRESH re-read through the fileContent
+  // producer, never the walk's answer; a verdict here returns before the judge is consulted, so the
+  // retry/suppress/widen ladder (all keyed on walk.reached === false) never fires on a confirmed
+  // read. Abstains (null) outside the family, so every other goal reaches the judge unchanged.
+  {
+    const verbatimV = await verifyVerbatimFileRead(goal, dig, rereadFileContentViaProducer, (why) =>
+      console.log(`[verbatim-read-oracle] ABSTAINED for goal_hash=${goalHashOf(goal)} — ${why.slice(0, 240)}; the judge grades this one`));
+    if (verbatimV) {
+      console.log(`[verbatim-read-oracle] VERDICT reached=${verbatimV.reached} — ${verbatimV.reason.slice(0, 200)}`);
+      // SHADOW JUDGE: measure the oracle against the judge it displaces, for the first N verdicts.
+      // NOT awaited and never consulted — the verdict returned below is the oracle's, unconditionally.
+      const shadowKey = dispatchContext.getStore()?.dispatchId ?? goalHashOf(goal);
+      void verbatimShadow.run(verbatimV, {
+        // Routed under a SHADOW_ROUTE_PREFIX key: the router never puts it in the dispatch's reward
+        // buffer, so the final verdict cannot reward or penalise an arm for a discarded call.
+        judge: () => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`),
+        budget: verbatimShadowBudget,
+        log: (line) => console.log(line),
+        // NOT GROUND TRUTH. Two corpus readers tally every label's verdict as a reach rate with no
+        // labeler filter (obsidian improvement-sync, scripts/substrate/performance-status), so a
+        // disagreement is written as the schema's only non-binary verdict, "partial", labelled
+        // automated with its own source, and both verdicts in the notes ("disputed: …").
+        recordDisagreement: (o, j) => recordDeterministicLabel(
+          goal,
+          `verbatim-shadow:${shadowKey}:${Date.now()}`,
+          "verbatim-read-oracle",
+          { reached: o.reached, reason: "deterministic:verbatim-shadow-disagreement", completion_shapes: [], deterministic: true },
+          {
+            verdict: "partial",
+            labeler: "automated",
+            confidence: 0.5,
+            source: "verbatim-shadow-disagreement",
+            notes: `disputed: oracle=${o.reached ? "reached" : "fail"} judge=${j.reached ? "reached" : "hollow"} | oracle: ${o.reason.slice(0, 240)} | judge: ${String(j.reason ?? "").slice(0, 240)}`,
+          },
+        ),
+      }, shadowKey);
+      return verbatimV;
+    }
+  }
 
   // INDEPENDENT AGGREGATE ORACLE — total-lines / avg-lines / grep-files, graded against the
   // authoritative clone with the SAME parse+enumeration+arithmetic as the command template.
@@ -3929,9 +4006,6 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }
 
   if (!LLM_VESSEL_ENDPOINT) return null;
-  const cmdSection = commandEvidence
-    ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. ALSO grade HOLLOW when the command merely ECHOES or PRINTS a literal answer (e.g. echo or printf of a constant) instead of MEASURING it — a self-emitted answer is the model asserting, not evidence. Apply this skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
-    : "";
   // REFUSE TO GUESS ON A COUNTABLE QUESTION NO ORACLE OWNS.
   //
   // Every deterministic verifier above has declined. For a prose or edit goal the LLM judge
@@ -3983,6 +4057,19 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
       completion_shapes: [],
     };
   }
+  return llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+}
+
+/**
+ * The LLM reach judge, extracted unchanged from the tail of verifyGoalReached so the verbatim
+ * oracle can consult it in SHADOW (recorded, never used) without re-running the oracle chain.
+ * Same prompt, same routing, same sanitisation; deterministic is always false.
+ */
+async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, routeKey?: string): Promise<GoalReachVerdict | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  const cmdSection = commandEvidence
+    ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment):\n${commandEvidence}\nWhen an answer was produced by RUNNING a command shown above, VERIFY the command actually accomplishes what the goal asks, and be SKEPTICAL of a DEGENERATE result (0 / empty / error) from it: for a "how many / count / list / are there" goal on a system that plainly contains such items, a 0/empty result usually means the command was wrong or ran in the wrong context — grade that reach HOLLOW (reached:false) unless the command clearly and correctly targets what the goal asks. ALSO grade HOLLOW when the command merely ECHOES or PRINTS a literal answer (e.g. echo or printf of a constant) instead of MEASURING it — a self-emitted answer is the model asserting, not evidence. Apply this skepticism ONLY to an answer shown with a command here; for an answer with NO command shown, use normal judgment and do NOT treat a 0/empty value as suspect.`
+    : "";
   const prompt = `You verify whether a substrate execution REACHED its goal. status=completed does NOT mean reached — many executions "complete" by running unrelated activities (hollow completion).
 
 GOAL: ${goal}
@@ -4000,7 +4087,7 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
   try {
     // Routed per task type (reach_verification) across the llm-resolver fleet;
     // buffered under the goal hash and rewarded by this dispatch's final verdict.
-    const rr = await routedComplete(goalHashOf(goal), "reach_verification", {
+    const rr = await routedComplete(routeKey ?? goalHashOf(goal), "reach_verification", {
       prompt, model: "auto",
     });
     if (!rr.ok) return null;
@@ -4035,10 +4122,22 @@ Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completi
 // invisible to it. Mirror each oracle verdict into the corpus as a
 // goal_verification_label_write. Fire-and-forget (.catch swallow+log): verification
 // latency is unchanged and an activity-api outage is non-fatal.
-function recordDeterministicLabel(goal: string, executionId: string | undefined, activityId: string | undefined, verdict: GoalReachVerdict): void {
+/** Field overrides for a label that is evidence ABOUT an oracle rather than its verdict (e.g. a
+ *  shadow-judge disagreement): it must not read as ground truth to the corpus's tallies. */
+interface LabelOverride { verdict: "achieved" | "not_achieved" | "partial"; labeler: "automated" | "deterministic"; confidence: number; source: string; notes: string }
+function recordDeterministicLabel(goal: string, executionId: string | undefined, activityId: string | undefined, verdict: GoalReachVerdict, override?: LabelOverride): void {
   if (!executionId) return;
   const det = verdict.deterministic === true || /^deterministic:/.test(verdict.reason ?? "");
   if (!det) return;
+  if (override) {
+    fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "goal_verification_label_write", goal: goal.slice(0, 600), execution_id: executionId, activity_id: activityId ?? "unattributed", verdict: override.verdict, confidence: override.confidence, labeler: override.labeler, source: override.source, notes: override.notes.slice(0, 600) } }),
+      signal: AbortSignal.timeout(10_000),
+    }).catch((e) => console.warn(`[oracle-label] ${override.source} label write failed (non-fatal): ${(e as Error).message}`));
+    return;
+  }
   fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
@@ -17977,6 +18076,7 @@ export {
   SELECTORS, enumerate, emitVerdict, parsePathsAndExt, ROW_AVG_THRESHOLD, ROW_BELOW_MEAN, CLASS_ROWS,
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
+  verifyGoalReached,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 
