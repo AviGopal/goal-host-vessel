@@ -398,6 +398,7 @@ import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
+import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
 import { findingsDigest, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, type PoolProvenance, type StepEdge } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
@@ -7306,6 +7307,17 @@ interface GoalSeekResult {
   answerBody?: string;
   /** Set when the reach gate ABSTAINED (§9.2) — the walk is neither reached nor hollow. */
   abstain?: { kind: "cut-view"; cuts: JudgeCut[] };
+  /** The route-around record a stalled walk emitted (route-around.ts); absent when it did not stall. */
+  routeAround?: RouteAroundRecord;
+}
+
+/** Mirror a route-around record onto its dispatch record (bounded), where goalWalkState serves it.
+ *  The record object is shared, so a caller's later `noteRouteTaken` shows up there too. */
+function appendRouteAround(dispatchId: unknown, r: RouteAroundRecord): void {
+  if (typeof dispatchId !== "string") return;
+  const rec = executionStore.get(dispatchId) as ({ routeArounds?: RouteAroundRecord[] } | undefined);
+  if (!rec) return;
+  rec.routeArounds = [...(rec.routeArounds ?? []), r].slice(-16);
 }
 
 // Normalise an activity id by stripping the `activity:⟨…⟩` wrapper the recommend +
@@ -7708,6 +7720,11 @@ async function runGoalAsPoolWalk(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
+  // ROUTE-AROUND input (route-around.ts): why each satisfier this walk tried came back empty — the
+  // per-shape reason that lastRawResolveReason (last-wins) loses by the time the walk stalls.
+  const satisfierFailures = new Map<string, string>();
+  const pickFailures = new Map<string, string>();
+  let routeAround: RouteAroundRecord | undefined;
   for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
   // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): ste
   // does satisfierTried.add(shape) BEFORE resolving, so a single TRANSIENT null (LLM
@@ -8155,6 +8172,13 @@ async function runGoalAsPoolWalk(
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
   let lastRawResolveReason: string | null = null;
+  /** Bumped on every rawResolve, so a caller can tell whether lastRawResolveReason is about ITS
+   *  resolve or a previous shape's (vesselResolveShape can return null before resolving at all). */
+  let rawResolveSeq = 0;
+  /** The failure reason for a vesselResolveShape call that returned null: its own rawResolve's, or a
+   *  stated "no resolve attempted" — never the previous shape's leftover reason. */
+  const resolveFailureSince = (seqBefore: number): string =>
+    rawResolveSeq !== seqBefore ? (lastRawResolveReason ?? "resolver returned nothing") : "no resolve attempted (already tried, refused before resolving, or no endpoint)";
   async function verifyWritePersisted(
     writeShape: string,
     writeResult: unknown,
@@ -8240,6 +8264,7 @@ async function runGoalAsPoolWalk(
   }
   const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>): Promise<unknown | null> => {
     lastRawResolveReason = null;
+    rawResolveSeq++;
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     // The shape is resolved LAST: a synthesized `type` must never change it (see resolve-pointer.ts).
@@ -10187,6 +10212,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _rcPrefer = reachedCommandCache.get(goalHashOf(goal))?.shape;
       const satisfiableNow = preferComposition ? undefined : ((_rcPrefer && _satEligible.includes(_rcPrefer) ? _rcPrefer : undefined) ?? _satProven[0] ?? _satEligible[0]);
       if (satisfiableNow) {
+        const _seqBefore = rawResolveSeq;
         const resolved = await vesselResolveShape(satisfiableNow);
         // INSTRUMENTATION, DELIBERATELY NOT A FIX.
         //
@@ -10229,6 +10255,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // or search goal, and this route carries ~63.5% of recorded pathway
         // steps — a broad rejection here would break far more than it fixes.
         const _emptyRead = resolved ? emptyResultSetReason(resolved.content) : null;
+        if (!resolved || _emptyRead) satisfierFailures.set(satisfiableNow, _emptyRead ?? resolveFailureSince(_seqBefore));
         if (_emptyRead) {
           tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${satisfiableNow}" REFUSED — ${_emptyRead}; leaving the shape unsatisfied so a real producer can be selected`);
           lastRawResolveReason = _emptyRead.slice(0, 200);
@@ -10882,7 +10909,9 @@ If one of those sibling shapes is the action that would create what the goal ask
               }
               if (_vrEndpoint && !satisfierTried.has(missingShape)) {
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
+                const _vrSeqBefore = rawResolveSeq;
                 const _vrResolved = await vesselResolveShape(missingShape);
+                if (!_vrResolved) satisfierFailures.set(missingShape, resolveFailureSince(_vrSeqBefore));
                 if (_vrResolved) {
                   addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`, { producedBy: `satisfier:${missingShape}` });
                   const _vrSatId = `satisfier:${missingShape}`;
@@ -10935,6 +10964,15 @@ If one of those sibling shapes is the action that would create what the goal ask
       } else {
         tap(`[goal-host-vessel] ${opts.surface}: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk`);
       }
+      // ROUTE-AROUND RECORD, AT THE STALL (route-around.ts): the structured need — missing shapes,
+      // the producers tried and why each failed — while it is still local state. The caller that
+      // acts on this stall names its route on the same record.
+      routeAround = buildRouteAround({
+        goalHash: goalHashOf(goal), target, produced: producedShapes, missing: missingNow,
+        satisfierFailures, pickFailures, termination: walkTerminationReason ?? "no pick", secrets: [API_KEY],
+      });
+      appendRouteAround(opts.variables.dispatch_id, routeAround);
+      tap(`[goal-host-vessel] ${opts.surface}: walk: ROUTE-AROUND ${routeAround.kind} missing=[${routeAround.missing_producer.join(",")}] failed_producers=${routeAround.failed_producers.length} (${routeAround.failed_producers.slice(0, 3).map((f) => `${f.producer}: ${f.reason.slice(0, 60)}`).join(" | ")})`);
       break;
     }
 
@@ -10950,6 +10988,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (!template) {
       // Can't fetch the template object — exclude and try another candidate.
       exclude.add(normActivityId(pick.id));
+      pickFailures.set(pick.id, "template unfetchable");
       console.log(`[goal-host-vessel] walk(${opts.surface}): template ${pick.id} unfetchable — excluding`);
       continue;
     }
@@ -10967,12 +11006,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       });
     } catch (e) {
       exclude.add(normActivityId(pick.id));
+      pickFailures.set(pick.id, `runTemplate threw: ${String((e as Error).message ?? e).slice(0, 200)}`);
       console.warn(`[goal-host-vessel] walk(${opts.surface}): runTemplate(${pick.id}) threw: ${(e as Error).message} — excluding`);
       continue;
     }
     lastTrace = trace;
     lastPick = pick.id;
     lastExecId = trace.id;
+    if (trace.status === "failed") pickFailures.set(pick.id, String(trace.reason ?? "template execution failed").slice(0, 200));
     if (trace.id) chainExecIds.push(trace.id);
     totalDurationMs += trace.durationMs ?? 0;
     totalCostUsd += trace.costUsd ?? 0;
@@ -12053,6 +12094,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     answerBody,
     grounded: walkGroundedVerdict,
     ...(walkAbstain ? { abstain: walkAbstain } : {}),
+    ...(routeAround ? { routeAround } : {}),
   };
 }
 
@@ -13331,6 +13373,11 @@ async function runGoalWithRecoveryInner(
       if (floorIsTheProvenPathway) {
         tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE — the store recommends the floor for this goal (${reachingPathway?.successfulExecutions}/${reachingPathway?.totalExecutions} reached); running it directly and skipping the walk`);
         try {
+          // A REUSED floor is a route taken without a walk: record it as such, so it is never read
+          // as a stall (agentic-floor D P5 must-fail: a REUSE floor emits kind floor_as_pathway).
+          const _floorRec = buildRouteAround({ goalHash: goalHashOf(goal), target: seededOutputShapes ?? [], produced: [], missing: [], satisfierFailures: new Map(), pickFailures: new Map(), termination: "learned pathway is the floor", kind: "floor_as_pathway" });
+          noteRouteTaken(_floorRec, "universal-tool-fallback");
+          appendRouteAround(opts.variables.dispatch_id, _floorRec);
           const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
           if (reused?.reached) {
             if (opts.learningMode !== "observe") {
@@ -13419,6 +13466,7 @@ async function runGoalWithRecoveryInner(
         walk.goalReachReason.trim().length > 0 &&
         !/no pick|no producer|missing shapes|constructible payload|terminating walk/i.test(walk.goalReachReason)
       ) {
+        noteRouteTaken(walk.routeAround, "retry:feedback");
         tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=${goalHashOf(goal)}`);
         const fbWalk = await runGoalAsPoolWalk(goal, {
           recalledLessons: _dispatchLessons,
@@ -13464,6 +13512,7 @@ async function runGoalWithRecoveryInner(
         const suppressedShape = walk.selectedTemplateId.slice("satisfier:".length);
         console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
         tap(`[goal-host-vessel] ${opts.surface}: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes`);
+        noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");
         // A RETRY THAT DOES NOT WIDEN IS NOT A RETRY. This retry used to re-run with the same
         // expectedOutputShapes it started with while suppressing the ONLY producer of that shape,
         // which is unsatisfiable by construction: the walk logged "no pick — missing shapes
@@ -13538,6 +13587,7 @@ async function runGoalWithRecoveryInner(
         ) ?? null;
         if (altShapes !== null) {
           tap(`[goal-host-vessel] ${opts.surface}: walk: re-framing to alternative target shapes ${JSON.stringify(altShapes)} after no-pick/hollow termination`);
+          noteRouteTaken(walk.routeAround, "reframe");
           const altWalkResult = await runGoalAsPoolWalk(goal, {
             recalledLessons: _dispatchLessons,
             variables: opts.variables,
@@ -13649,6 +13699,7 @@ async function runGoalWithRecoveryInner(
         !/\b(edit|add |insert|append|change|modify|replace|\bfix\b|remove|delete|update|rename|refactor|\bcount\b|how many|number of|value of|extract|report the value|report whether)\b/i.test(goal);
       if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
+          noteRouteTaken(walk.routeAround, "universal-tool-fallback");
           const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
@@ -17375,7 +17426,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
   if (type === "poolImpulse_write") {
