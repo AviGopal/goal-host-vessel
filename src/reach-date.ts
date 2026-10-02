@@ -67,7 +67,7 @@ const MONTHS = ["january", "february", "march", "april", "may", "june", "july", 
 const MON_RE = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
 const monthIndex = (m: string): number => MONTHS.findIndex((full) => full.startsWith(m.toLowerCase().slice(0, 3)));
 
-type Asserted = { text: string; year: number; month?: number; day?: number };
+export type Asserted = { text: string; year: number; month?: number; day?: number };
 
 /** Parse the date at the head of `s` (after an anchor phrase). Granularity follows what is written. */
 function parseDateAt(s: string): Asserted | null {
@@ -131,7 +131,9 @@ export function assertedDates(digest: string): Asserted[] {
   return found;
 }
 
-function isStale(d: Asserted, target: Date): boolean {
+/** Off the ±1-day window around `target`, at the granularity the deliverable wrote. Shared with the
+ *  grounded-report oracle, which requires the opposite (every asserted date in the window). */
+export function isStaleDate(d: Asserted, target: Date): boolean {
   // The ±1 day window, expressed at the granularity the deliverable wrote.
   const window = [-1, 0, 1].map((k) => new Date(target.getTime() + k * DAY_MS));
   if (d.day !== undefined && d.month !== undefined && d.month >= 0) {
@@ -150,7 +152,7 @@ export function verifyAssertedDate(goal: string, digest: string, now: Date = new
   const offset = timeRelativeOffset(goal);
   if (offset === null || !digest) return null;
   const target = new Date(now.getTime() + offset * DAY_MS);
-  const stale = assertedDates(digest).filter((d) => isStale(d, target));
+  const stale = assertedDates(digest).filter((d) => isStaleDate(d, target));
   if (stale.length === 0) return null;
   const clock = now.toISOString().slice(0, 10);
   const want = target.toISOString().slice(0, 10);

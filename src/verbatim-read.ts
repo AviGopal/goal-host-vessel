@@ -375,12 +375,12 @@ export const VERBATIM_SHADOW_DEFAULT_UNTIL = "2026-10-08T00:00:00Z";
 export interface ShadowBudget { n: number; untilMs: number }
 
 /** Read the shadow budget from a verbatimReadShadowPolicy document (null = no document: defaults). */
-export function shadowBudgetFrom(pol: Record<string, unknown> | null | undefined): ShadowBudget {
+export function shadowBudgetFrom(pol: Record<string, unknown> | null | undefined, defaults: { n: number; until: string } = { n: VERBATIM_SHADOW_DEFAULT_N, until: VERBATIM_SHADOW_DEFAULT_UNTIL }): ShadowBudget {
   const n = Number(pol?.["shadow_n"]);
   const until = Date.parse(String(pol?.["shadow_until"] ?? ""));
   return {
-    n: Number.isFinite(n) && n >= 0 ? Math.floor(n) : VERBATIM_SHADOW_DEFAULT_N,
-    untilMs: Number.isFinite(until) ? until : Date.parse(VERBATIM_SHADOW_DEFAULT_UNTIL),
+    n: Number.isFinite(n) && n >= 0 ? Math.floor(n) : defaults.n,
+    untilMs: Number.isFinite(until) ? until : Date.parse(defaults.until),
   };
 }
 
@@ -397,7 +397,8 @@ export interface ShadowDeps {
   now?: () => number;
 }
 
-export function createVerbatimShadow() {
+/** `tag` names the oracle in the shadow's log lines; the grounded-report oracle reuses this shadow. */
+export function createVerbatimShadow(tag: string = "verbatim-read-oracle") {
   let slots = 0;
   // One shadow per dispatch (or execution): the interim and end-of-walk gates both see the same
   // verdict, and N is meant to count distinct goals, not gate passes.
@@ -417,18 +418,18 @@ export function createVerbatimShadow() {
         if (slot >= b.n) return;
         let j: ShadowJudgeVerdict | null;
         try { j = await deps.judge(); } catch (e) {
-          deps.log(`[verbatim-read-oracle] shadow oracle=${o} judge=error agree=unknown reason=shadow judge failed (ignored): ${(e as Error)?.message ?? e}`);
+          deps.log(`[${tag}] shadow oracle=${o} judge=error agree=unknown reason=shadow judge failed (ignored): ${(e as Error)?.message ?? e}`);
           return;
         }
         if (!j) {
-          deps.log(`[verbatim-read-oracle] shadow oracle=${o} judge=unavailable agree=unknown reason=the judge returned no verdict (ignored)`);
+          deps.log(`[${tag}] shadow oracle=${o} judge=unavailable agree=unknown reason=the judge returned no verdict (ignored)`);
           return;
         }
         const agree = j.reached === oracle.reached;
-        deps.log(`[verbatim-read-oracle] shadow oracle=${o} judge=${j.reached ? "reached" : "hollow"} agree=${agree} reason=${String(j.reason ?? "").slice(0, 200)}`);
+        deps.log(`[${tag}] shadow oracle=${o} judge=${j.reached ? "reached" : "hollow"} agree=${agree} reason=${String(j.reason ?? "").slice(0, 200)}`);
         if (!agree) deps.recordDisagreement(oracle, j);
       } catch (e) {
-        try { deps.log(`[verbatim-read-oracle] shadow comparison failed (ignored): ${(e as Error)?.message ?? e}`); } catch { /* nothing left to tell */ }
+        try { deps.log(`[${tag}] shadow comparison failed (ignored): ${(e as Error)?.message ?? e}`); } catch { /* nothing left to tell */ }
       }
     },
   };

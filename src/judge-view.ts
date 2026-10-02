@@ -73,8 +73,8 @@ export function capturedPoolEntries(impulses: ReadonlyArray<{ shape?: string; co
 }
 
 /** Unwrap a resolver envelope (`{resolved, content: "…"}` / `{body:{content}}`) so the deliverable
- *  is read as text, not as escaped JSON. */
-function deliverableText(c: unknown): string {
+ *  is read as text, not as escaped JSON. Shared with the grounded-report oracle. */
+export function deliverableText(c: unknown): string {
   if (c && typeof c === "object" && !Array.isArray(c)) {
     const o = c as Record<string, unknown>;
     for (const k of ["content", "text", "body", "completion", "answer"]) {

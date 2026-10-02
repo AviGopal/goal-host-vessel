@@ -398,6 +398,7 @@ import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
+import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
 import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
@@ -3605,6 +3606,11 @@ async function verifyCodeInvestigationCitation(goal: string, digest: string): Pr
 // (The label resolver can filter by activity_id, so counting prior shadow labels is possible; the
 // end time made it unnecessary.)
 const verbatimShadow = createVerbatimShadow();
+// The grounded-report oracle's shadow: same mechanism, its own slots and window. Budget fields live in
+// the groundedReportPolicy document (shadow_n, shadow_until); the window closes on its own.
+const groundedReportShadow = createVerbatimShadow("grounded-report-oracle");
+/** In-process G1-vs-judge agreement in OBSERVE mode (resets on restart; the labels are durable). */
+const groundedObserveTally = { n: 0, agree: 0 };
 async function verbatimShadowBudget(): Promise<ShadowBudget> {
   // Shaped policy (law 1): /workspace/policies/verbatimReadShadowPolicy.json
   // {"shadow_n": <int>, "shadow_until": "<ISO time>"}. Absent or unusable fields keep the defaults.
@@ -3633,15 +3639,15 @@ async function rereadFileContentViaProducer(path: string): Promise<FileRead | nu
  * (`deliverables`, else the goal's inferred targets) name it. /reach, recordGoalPath and gap filing
  * therefore never read a judge-invented name, whichever site asked.
  */
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[]): Promise<GoalReachVerdict | null> {
-  const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView);
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[]): Promise<GoalReachVerdict | null> {
+  const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables);
   if (v && v.deterministic !== true) {
     const keep = new Set(deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
     v.completion_shapes = restrictCompletionShapes(v.completion_shapes, new Set(producedShapes), false, keep);
   }
   return v;
 }
-async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }): Promise<GoalReachVerdict | null> {
+async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, poolEvidence?: PoolEvidence[], deliverables?: string[]): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
   const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
@@ -3832,6 +3838,42 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     if (dateV) {
       console.log(`[reach-date-oracle] VERDICT reached=false — ${dateV.reason.slice(0, 200)}`);
       return dateV;
+    }
+  }
+
+  // GROUNDED-REPORT ORACLE (G1, grounded-report.ts): a time-relative report/headlines goal whose
+  // SURFACED answer consumed this run's search results (V4 edges), asserts the clock date, cites only
+  // consumed URLs, shares the goal's subject with the search, and has ≥N items each naming a fresh
+  // consumed result with on-topic commentary beyond its title and snippet — read from the UNTRUNCATED
+  // pool, never from `dig`. It only says reached or abstains. Thresholds and MODE are the shaped
+  // groundedReportPolicy (law 1). Only the END-OF-WALK gate passes `poolEvidence` (the interim check
+  // cannot end a walk on it); the engine path and the floor abstain.
+  //   OBSERVE (default, no policy or enabled≠true): the judge decides; G1's verdict is compared with
+  //     the judge's below and written as a shadow label (measured agreement, the promotion evidence).
+  //   DECIDE (enabled:true): G1's reach is returned (deterministic ⇒ α credit and mint), with the
+  //     judge in bounded shadow only when the policy names shadow_n / shadow_until.
+  let groundedObserved: GroundedReportVerdict | null = null;
+  if (poolEvidence && poolEvidence.length > 0) {
+    const pol = await resolveShapedPolicy("groundedReportPolicy");
+    const policy = groundedReportPolicyFrom(pol);
+    const groundedV = verifyGroundedReport({
+      goal, pool: poolEvidence, surfaced: deliverables ?? [], policy,
+      onAbstain: (why) => console.log(`[grounded-report-oracle] ABSTAINED for goal_hash=${goalHashOf(goal)} — ${why.slice(0, 240)}; the judge grades this one`),
+    });
+    if (groundedV && !policy.enabled) {
+      console.log(`[grounded-report-oracle] OBSERVE reached=true (the judge decides) — ${groundedV.reason.slice(0, 300)}`);
+      groundedObserved = groundedV;
+    } else if (groundedV) {
+      console.log(`[grounded-report-oracle] VERDICT reached=true — ${groundedV.reason.slice(0, 300)}`);
+      const shadowKey = dispatchContext.getStore()?.dispatchId ?? goalHashOf(goal);
+      void groundedReportShadow.run(groundedV, {
+        judge: () => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`),
+        // No built-in window: the shadow runs only when the policy names shadow_n (and shadow_until).
+        budget: async () => shadowBudgetFrom(pol, { n: 0, until: "9999-12-31T00:00:00Z" }),
+        log: (line) => console.log(line),
+        recordDisagreement: (o, j) => recordGroundedComparison(goal, shadowKey, o, j, "grounded-shadow-disagreement"),
+      }, shadowKey);
+      return groundedV;
     }
   }
 
@@ -4108,7 +4150,35 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       abstain: { kind: "cut-view", cuts },
     };
   }
-  return llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  // G1 OBSERVE: the judge's verdict stands; record whether G1 agreed (the promotion evidence).
+  if (groundedObserved && judged) {
+    const key = dispatchContext.getStore()?.dispatchId ?? goalHashOf(goal);
+    const agree = judged.reached === groundedObserved.reached;
+    groundedObserveTally.n++; if (agree) groundedObserveTally.agree++;
+    console.log(`[grounded-report-oracle] observe agree=${agree} judge=${judged.reached ? "reached" : "hollow"} tally=${groundedObserveTally.agree}/${groundedObserveTally.n} (promote at ≥90% of ≥10, policy enabled:true) — judge: ${String(judged.reason ?? "").slice(0, 200)}`);
+    recordGroundedComparison(goal, key, groundedObserved, judged, "grounded-report-observe");
+  }
+  return judged;
+}
+
+/** One G1-vs-judge comparison, as a non-binary automated label (never ground truth): the observe
+ *  window's agreement record, and a decide-mode shadow disagreement. Queryable by `source`. */
+function recordGroundedComparison(goal: string, key: string, o: { reached: boolean; reason: string }, j: { reached: boolean; reason?: string }, source: string): void {
+  const agree = o.reached === j.reached;
+  recordDeterministicLabel(
+    goal,
+    `${source}:${key}:${Date.now()}`,
+    "grounded-report-oracle",
+    { reached: o.reached, reason: `deterministic:${source}`, completion_shapes: [], deterministic: true },
+    {
+      verdict: "partial",
+      labeler: "automated",
+      confidence: 0.5,
+      source,
+      notes: `agree=${agree} oracle=${o.reached ? "reached" : "fail"} judge=${j.reached ? "reached" : "hollow"} | oracle: ${o.reason.slice(0, 240)} | judge: ${String(j.reason ?? "").slice(0, 240)}`,
+    },
+  );
 }
 
 /**
@@ -11222,6 +11292,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           undefined,
           interimView,
           [...terminalShapes, ...target],
+          // NO poolEvidence: G1 grades only at the end of the walk, so an interim check can never
+          // end the walk on G1 before the surfaced deliverable is produced.
         );
         if (interim && interim.reached === true) {
           earlyReachVerdict = interim;
@@ -11302,13 +11374,13 @@ If one of those sibling shapes is the action that would create what the goal ask
       console.log(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=${commandEvidence.length} shapes=${[...producedShapes].join(",").slice(0, 120)} digestLen=${(contentDigest ?? "").length} cmdEvidence=${JSON.stringify(commandEvidence.slice(0, 240))}`);
       const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [] };
       let verdict = earlyReachVerdict
-        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target]);
+        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target], poolEvidenceOf(poolImpulses));
       // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
       // before failing closed, so a correct/grounded answer is not lost to a momentary verifier outage.
       // (The prior loop only re-read the same null verdict without ever re-invoking the verifier — a no-op.)
       for (let _r = 0; verdict == null && _r < 2; _r++) {
         await new Promise((res) => setTimeout(res, 400 * (_r + 1)));
-        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target]);
+        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target], poolEvidenceOf(poolImpulses));
       }
       // COMPLETION SHAPES ARE CHOSEN IN CODE inside verifyGoalReached (every site, not only this
       // one), before /reach, recordGoalPath, gap filing and the seed-only flip read them.

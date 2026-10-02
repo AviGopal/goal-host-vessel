@@ -137,7 +137,7 @@ describe("source wiring", () => {
   test("both walk reach sites build the same judge view and pass it to the gate", () => {
     expect(src.match(/buildJudgeView\(/g) ?? []).toHaveLength(2);
     expect(src).toMatch(/interimCommandEvidence \|\| undefined,\s*undefined,\s*interimView,/);
-    expect(src.match(/walkEv, judgeView, \[\.\.\.terminalShapes, \.\.\.target\]\)/g) ?? []).toHaveLength(2);
+    expect(src.match(/walkEv, judgeView, \[\.\.\.terminalShapes, \.\.\.target\], poolEvidenceOf\(poolImpulses\)\)/g) ?? []).toHaveLength(2);
   });
   test("no judge digest is cut at a blind 8,000 after assembly", () => {
     expect(src).not.toMatch(/\[poolDigest, capturedDigest\]/);
