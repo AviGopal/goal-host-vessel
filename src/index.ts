@@ -157,9 +157,13 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
         if (substrate === FED_SUBSTRATE_ID) continue;
         const targetVessel = id.split("@")[0];
         try {
-          const fedR = await fetch(`${Config.fedTransportEgress}/egress/resolve?target=${encodeURIComponent(ma)}`, {
+          // The caller's own key travels as a header on this local hop; the transport moves it
+          // into the wire pointer (activeDispatches is trust_group at the far ingress). The
+          // pointer below never carries it.
+          const egressUrl = `${Config.fedTransportEgress}/egress/resolve?target=${encodeURIComponent(ma)}`;
+          const fedR = await fetch(egressUrl, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: transportHopHeaders(egressUrl, Config.fedTransportEgress, API_KEY),
             body: JSON.stringify({ impulse: { pointer: { type: "activeDispatches", _fedTargetVessel: targetVessel } } }),
             signal: AbortSignal.timeout(8_000),
           });
@@ -369,7 +373,7 @@ import { decideContinuation } from "./walk-continuation.js";
 import { pickSatisfierProducer, satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
-import { SHADOW_ROUTE_PREFIX, routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
+import { SHADOW_ROUTE_PREFIX, transportHopHeaders, routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
 import { createHash } from "node:crypto";
 import { orderRing } from "./mem-ring";
 import {
@@ -18550,6 +18554,7 @@ export {
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
   buildCompositeTraceFromChain,
+  resolveFleetActivityFeed,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 

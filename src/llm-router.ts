@@ -44,6 +44,28 @@ const authHeaders = (): Record<string, string> => ({
   ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}),
 });
 
+// THE CALLER'S CREDENTIAL RIDES THE LOCAL TRANSPORT HOP AS A HEADER, NEVER IN THE POINTER.
+//
+// The federation ingress admits a caller only by its own credential (federationShapePolicy:
+// llm_completion and activeDispatches are trust_group), and the transport never lends the
+// node's key. The local transport takes the caller's Authorization header and moves it into
+// the wire copy itself, stripped again at the far ingress before any log or trace. So the
+// caller hands its key to the transport as a header on that one hop, and the body it
+// builds — which is what goal-host traces — never holds it. Any other URL gets no header
+// from here: a discovered endpoint is not a place to send this node's key.
+const originOf = (u: string): string => {
+  try { return new URL(u).origin; } catch { return ""; }
+};
+/** Headers for a fetch to `url`: Authorization only when `url` is the local federation transport. */
+export function transportHopHeaders(
+  url: string,
+  egress: string = process.env["FED_TRANSPORT_EGRESS"] ?? "http://127.0.0.1:8401",
+  apiKey: string = API_KEY,
+): Record<string, string> {
+  const hop = originOf(url) !== "" && originOf(url) === originOf(egress);
+  return { "Content-Type": "application/json", ...(hop && apiKey ? { Authorization: `ApiKey ${apiKey}` } : {}) };
+}
+
 interface Producer { vesselId: string; endpoint: string; resolveUrl: string; }
 interface Arm { alpha: number; beta: number; }
 
@@ -313,7 +335,7 @@ async function routeOverRanked(
       try {
         r = await fetch(sel.resolveUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: transportHopHeaders(sel.resolveUrl),
           body: JSON.stringify(payload),
           signal: controller.signal,
         });
