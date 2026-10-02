@@ -397,7 +397,7 @@ import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
+import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
 import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
@@ -11196,16 +11196,18 @@ If one of those sibling shapes is the action that would create what the goal ask
       // REAL content was snapshotted at emit time into reachContentDigests keyed
       // by execId — fold the just-run step's captured digest in FIRST so the
       // judge sees genuine artifacts (the written + sensed note), not stubs. (2026-06-25)
-      const interimCaptured = (lastExecId && reachContentDigests.get(lastExecId)) || "";
+      const interimCaptured = (lastExecId && reachContentEntries.get(lastExecId)) || [];
 
       // JUDGE VIEW (judge-view.ts): the deliverable first at full length, evidence as title/url
-      // lines, bookkeeping excluded — the SAME builder as the end-of-walk site below.
+      // lines, bookkeeping excluded — the SAME builder as the end-of-walk site below. The captured
+      // step outputs go IN as entries (budgeted, deduplicated, every cut recorded); nothing is
+      // appended to the view afterwards, so the judge reads exactly what the cut record describes.
       const interimView = buildJudgeView(
-        poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content })),
+        [...interimCaptured, ...poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content }))],
         terminalShapes,
         target,
       );
-      const interimDigest = [interimCaptured, interimView.digest].filter(Boolean).join("\n");
+      const interimDigest = interimView.digest;
       try {
         const interimCommandEvidence = [...executorCommands.entries()]
           .filter(([sh]) => producedShapes.has(sh))
@@ -11254,7 +11256,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // shape-emitter, so the LLM verifier rejects genuine work non-deterministically.
     // Prefer the emit-time captured digest of the LAST step's real outputs (the
     // step that should have reached the goal); fall back to the running pool.
-    const capturedDigest = (lastExecId && reachContentDigests.get(lastExecId)) || "";
+    const capturedEntries = (lastExecId && reachContentEntries.get(lastExecId)) || [];
     // The walk frequently continues PAST the goal-reaching step into no-progress
     // junk steps, so the LAST step's captured digest is NOT necessarily the
     // goal-bearing one. The judge view below folds in the FULL accumulated pool
@@ -11276,12 +11278,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       .join("\n\n");
     // JUDGE VIEW (judge-view.ts) is what the judge reads: deliverable first at full length,
     // evidence as title/url lines, bookkeeping and stubs excluded, cuts recorded.
+    // The captured step outputs are entries of the SAME view (after the pool, so pool content wins
+    // the dedup), never a second digest joined after it outside the budget and the cut record.
     const judgeView = buildJudgeView(
-      poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content })),
+      [...poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content })), ...capturedEntries],
       terminalShapes,
       target,
     );
-    const contentDigest = [judgeView.digest, capturedDigest].filter(Boolean).join("\n");
+    const contentDigest = judgeView.digest;
     try {
       // Honour an early reach verdict captured mid-walk (before pollution) instead
       // of re-judging the now-polluted end-state pool. (2026-06-25)
@@ -14955,6 +14959,10 @@ if (DISABLE_SUBSCRIBERS) {
 // executionId, so verifyGoalReached judges genuine artifacts. Best-effort and
 // bounded; degrades to the store/pool digest when absent.
 const reachContentDigests = new Map<string, string>();
+// The same capture as POOL ENTRIES, for the walk's judge view (judge-view.ts capturedPoolEntries):
+// the walk feeds these into buildJudgeView instead of appending the 600/4,000-char string above
+// after the view, outside its budget and cut record. The string stays for the engine path.
+const reachContentEntries = new Map<string, PoolEntry[]>();
 const REACH_DIGEST_CAP = 100;
 function captureReachDigest(event: unknown): void {
   try {
@@ -14966,9 +14974,18 @@ function captureReachDigest(event: unknown): void {
     if (!execId || outIds.length === 0) return;
     const store = (host as { runtime?: { store?: { get(id: string): { content?: unknown; metadata?: { shape?: string } } | undefined } } })?.runtime?.store;
     if (!store) return;
-    const digest = outIds
+    const captured = outIds
       .map((id) => store.get(id))
-      .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp && imp.content !== undefined && imp.content !== null)
+      .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp && imp.content !== undefined && imp.content !== null);
+    const entries = capturedPoolEntries(captured.map((imp) => ({ shape: imp.metadata?.shape, content: imp.content })));
+    if (entries.length > 0) {
+      if (reachContentEntries.size >= REACH_DIGEST_CAP) {
+        const first = reachContentEntries.keys().next().value;
+        if (first !== undefined) reachContentEntries.delete(first);
+      }
+      reachContentEntries.set(execId, entries);
+    }
+    const digest = captured
       .map((imp) => {
         const s = imp.metadata?.shape ?? "?";
         let c: string;

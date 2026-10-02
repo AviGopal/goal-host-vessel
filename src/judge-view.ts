@@ -31,7 +31,9 @@ export const REST_CAP = 8000;
 export const DELIVERABLE_CAP = 24000;
 export const EVIDENCE_LINES_CAP = 40;
 
-export interface PoolEntry { shape: string; content: unknown }
+/** `produced`: the entry's full rendered length when it was clipped BEFORE reaching the view (the
+ *  emit-time capture below). The view records that clip as a cut, so no bound is invisible. */
+export interface PoolEntry { shape: string; content: unknown; produced?: number }
 export interface JudgeCut { shape: string; shown: number; produced: number }
 export interface JudgeView { digest: string; cuts: JudgeCut[]; deliverableCut: boolean }
 
@@ -51,6 +53,23 @@ export function renderContent(c: unknown): string {
   }
   if (typeof c === "string") return c;
   try { const s = JSON.stringify(c); return s === undefined ? "" : s; } catch { return String(c); }
+}
+
+/** The emit-time capture (index.ts captureReachDigest): a nested step's outputs snapshotted before
+ *  the engine evicts them, as POOL ENTRIES for this view rather than a second digest appended after
+ *  it. The walk used to join a 600-per-shape / 4,000-total string onto the view, outside the budget
+ *  and the cut record (gap slice-v-judge-digest-outside-cut-accounting…). Each entry is bounded at
+ *  the deliverable budget and the bound is carried as `produced`, so the view records it as a cut. */
+export function capturedPoolEntries(impulses: ReadonlyArray<{ shape?: string; content?: unknown }>, cap: number = DELIVERABLE_CAP): PoolEntry[] {
+  const out: PoolEntry[] = [];
+  for (const imp of impulses) {
+    if (imp.content === undefined || imp.content === null) continue;
+    const shape = imp.shape ?? "?";
+    const text = renderContent(imp.content);
+    if (text.length > cap) out.push({ shape, content: text.slice(0, cap), produced: text.length });
+    else out.push({ shape, content: imp.content });
+  }
+  return out;
 }
 
 /** Unwrap a resolver envelope (`{resolved, content: "…"}` / `{body:{content}}`) so the deliverable
@@ -106,15 +125,19 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
   const rest: string[] = [];
   let deliverableCut = false;
   let deliverableBudget = DELIVERABLE_CAP;
-  for (const { shape, content } of pool) {
+  for (const { shape, content, produced } of pool) {
     if (!shape || (JUDGE_EXCLUDED_SHAPES.has(shape) && !wanted(shape)) || isProvenanceStub(content)) continue;
     const key = renderContent(content);
     if (!key.trim() || seenContent.has(key)) continue; // identical content under two shape names
     seenContent.add(key);
+    // Clipped before it reached the view (the emit-time capture bound): a recorded cut, never a silent one.
+    const preClipped = typeof produced === "number" && produced > key.length;
+    const full = preClipped ? produced! : key.length;
     if (isDeliverable(shape)) {
       const text = deliverableText(content);
       const shown = text.slice(0, Math.max(0, deliverableBudget));
       if (shown.length < text.length) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: text.length }); }
+      else if (preClipped) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: produced! }); }
       deliverableBudget -= shown.length;
       deliverable.push(`- ${shape}: ${shown}`);
     } else if (EVIDENCE_SHAPES.has(shape)) {
@@ -123,11 +146,11 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
         if (lines.length > EVIDENCE_LINES_CAP) cuts.push({ shape, shown: EVIDENCE_LINES_CAP, produced: lines.length });
         for (const l of lines.slice(0, EVIDENCE_LINES_CAP)) evidence.push(`- ${shape}: ${l}`);
       } else {
-        if (key.length > PER_SHAPE_CAP) cuts.push({ shape, shown: PER_SHAPE_CAP, produced: key.length });
+        if (full > PER_SHAPE_CAP || preClipped) cuts.push({ shape, shown: Math.min(PER_SHAPE_CAP, key.length), produced: full });
         evidence.push(`- ${shape}: ${key.slice(0, PER_SHAPE_CAP)}`);
       }
     } else {
-      if (key.length > PER_SHAPE_CAP) cuts.push({ shape, shown: PER_SHAPE_CAP, produced: key.length });
+      if (full > PER_SHAPE_CAP || preClipped) cuts.push({ shape, shown: Math.min(PER_SHAPE_CAP, key.length), produced: full });
       rest.push(`- ${shape}: ${key.slice(0, PER_SHAPE_CAP)}`);
     }
   }
