@@ -399,7 +399,7 @@ import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, type PoolProvenance, type StepEdge } from "./walk-pool";
+import { findingsDigest, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, type PoolProvenance, type StepEdge } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -8285,7 +8285,7 @@ async function runGoalAsPoolWalk(
       // Feed the produced intermediate findings so the compute analyzes REAL data; the
       // reach gate then has a real artifact to grade instead of a hollow guess. Law 13:
       // the system owns payload synthesis — including binding the fetched inputs.
-      const _poolFindings = boundFindingsFromIntermediates();
+      const _poolFindings = boundFindingsFromIntermediates(shape);
       // FEEDBACK EDGE: on a hill-climb retry the prior attempt's verdict reason is injected here so the
       // model CORRECTS the named defect instead of re-deriving blind (the grade->next-attempt edge).
       const _fbPreamble = (typeof opts.priorVerdictFeedback === "string" && opts.priorVerdictFeedback.trim().length > 0)
@@ -8294,7 +8294,10 @@ async function runGoalAsPoolWalk(
       // THE CLOCK AT SYNTHESIS (reach-date.ts): a time-relative goal's writer reads the same host-clock
       // block arg extraction and the producer pick already bind; other goals' prompts are unchanged.
       const _clock = timeRelativeOffset(goal) !== null ? temporalGroundingBlock() : "";
-      pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
+      pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0 && terminalShapes.size === 0)
+        // V7: no terminal ⇒ the writer itself answers, under a neutral evidence frame (walk-pool.ts).
+        ? `${_clock}${_fbPreamble}${goal}\n\n${WRITER_EVIDENCE_FRAME}\n\n--- EVIDENCE ---\n${_poolFindings.slice(0, 120000)}`
+        : (_poolFindings && _poolFindings.trim().length > 0)
         ? `${_clock}${_fbPreamble}${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
         : `${_clock}${_fbPreamble}${goal}`;
       if (!(typeof pointer.max_tokens === "number" && (pointer.max_tokens as number) >= 4096)) pointer.max_tokens = 4096; // ensure the report can COMPLETE (satisfier default was capping it short)
@@ -8440,8 +8443,10 @@ If one of those sibling shapes is the action that would create what the goal ask
   // per resolve and the satisfier step reads to declare its edges. A shape that was produced but
   // not bound (a re-frame's goal-only prompt) declares nothing.
   let stepBound = new Set<string>();
-  const boundFindingsFromIntermediates = (): string => {
-    const f = findingsDigest(poolImpulses, terminalShapes);
+  const boundFindingsFromIntermediates = (writerShape?: string): string => {
+    // V7: the llm_completion writer passes its own shape, so with no terminal it still binds the
+    // pool's evidence (walk-pool.ts writerFindings); terminal writes keep findingsDigest unchanged.
+    const f = writerShape ? writerFindings(poolImpulses, terminalShapes, writerShape, chainProduced) : findingsDigest(poolImpulses, terminalShapes);
     for (const sh of f.shapes) stepBound.add(sh);
     return f.text;
   };

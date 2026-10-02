@@ -70,7 +70,7 @@ describe("verifyGoalReached: the asserted-date oracle precedes the judge", () =>
 describe("the writer reads the clock (source wiring)", () => {
   const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
   test("the llm_completion default prompt binds the shared host-clock block for time-relative goals", () => {
-    const i = src.indexOf("const _poolFindings = boundFindingsFromIntermediates()");
+    const i = src.indexOf("const _poolFindings = boundFindingsFromIntermediates(");
     const block = src.slice(i, i + 3000);
     expect(block).toMatch(/timeRelativeOffset\(goal\) !== null \? temporalGroundingBlock\(\)/);
     expect(block).toMatch(/\$\{_clock\}\$\{_fbPreamble\}\$\{goal\}/);

@@ -20,7 +20,7 @@ export interface PoolImpulseLike {
   content?: unknown;
 }
 
-import { isProvenanceStub } from "./judge-view";
+import { isProvenanceStub, JUDGE_EXCLUDED_SHAPES } from "./judge-view";
 
 // ── B4: declare consumption only when bound ────────────────────────────────────
 
@@ -129,3 +129,29 @@ export function hasRealEdge(tasks: ReadonlyArray<{ inputImpulseIds?: readonly st
   }
   return false;
 }
+
+// ── V7 (output-shapes step 2): the LLM writer binds findings when there is no terminal ──────────
+
+/**
+ * The findings an llm_completion synthesis binds. With terminal shapes, exactly what a terminal write
+ * binds (findingsDigest — unchanged). With NONE — every re-frame (388/388 passed no terminals), and
+ * every walk once the dead `obsidian:write_note` terminal leaves the vocabulary — the writer itself
+ * is the terminal, so the evidence already in the pool is bound instead of a goal-only prompt.
+ * That new binding admits only shapes a chain step produced (never seeds), and no bookkeeping shapes
+ * or provenance stubs (judge-view's exclusion set): `activity_template` catalogues and `error` rows
+ * are not evidence.
+ */
+export function writerFindings(pool: readonly PoolImpulseLike[], terminalShapes: ReadonlySet<string>, writerShape: string, chainProduced: ReadonlySet<string> = new Set()): { text: string; shapes: string[] } {
+  if (terminalShapes.size > 0) return findingsDigest(pool, terminalShapes);
+  // Only what a step of THIS chain produced is evidence: seeds (operator, endpoints, a standing-pool
+  // row the dispatch was handed) are context, not findings (qa probe bound all three).
+  const evidence = pool.filter((imp) => {
+    const sh = String((imp.metadata as { shape?: unknown } | undefined)?.shape ?? "");
+    return chainProduced.has(sh) && !JUDGE_EXCLUDED_SHAPES.has(sh) && !isProvenanceStub(imp.content);
+  });
+  return findingsDigest(evidence, new Set([writerShape]));
+}
+
+/** The frame the no-terminal writer reads its evidence under: a neutral answer frame. The
+ *  gap-clustering frame (7bbd7e8) stays on the terminal-bound path it was written for. */
+export const WRITER_EVIDENCE_FRAME = "Produce the FINAL answer NOW as your ENTIRE response — the actual result the goal asks for, fully written out. Do NOT reply with a plan or an intention to act. Base it ONLY on the evidence below; do not invent facts, items or sources that are not in it, and name the source (URL or record) each point comes from.";
