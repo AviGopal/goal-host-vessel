@@ -397,6 +397,7 @@ import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
+import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -1500,7 +1501,11 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
 // STATE, emergently). On not-reached we downgrade status to failed and β-penalise
 // the selected template so Thompson stops reinforcing hollow completions.
 interface GoalReachVerdict {
-  endedAt?: number; reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; preferredEndpoint?: string; }
+  endedAt?: number; reached: boolean; reason?: string; completion_shapes?: string[]; missing?: string[]; deterministic?: boolean; preferredEndpoint?: string;
+  /** An ABSTAIN (REALIGNMENT §9.2): the gate declined to grade, with the cut that made it decline.
+   *  Neither reached nor hollow — no α, no β, no gap filing, no retry; never the "verdict unknown"
+   *  (null) channel, which means the verifier could not be reached. */
+  abstain?: { kind: "cut-view"; cuts: JudgeCut[] }; }
 
 // ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
 // The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
@@ -2428,7 +2433,7 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   // countable goal to the LLM verifier (which rubber-stamps a wrong number: observed a
   // reached-command-cache replay that counted the drifted /vessels mirror — 10 vs clone 9,
   // 244 vs clone 269 — greened "the correct count" with no ground-truth comparison → hollow).
-  // verifyGoalReached is called on TWO digest shapes: the walk-surface poolDigest ("- shellResult:
+  // verifyGoalReached is called on TWO digest shapes: the walk-surface judge view ("- shellResult:
   // 10") AND the universalToolFallback digest (finalText + grounded tool outputs, e.g. "There are
   // 10 .ts files"). Extract from SHORT count-context lines in BOTH, skipping long JSON-blob lines
   // (activity_metrics etc.) whose incidental integers would poison the match.
@@ -3619,7 +3624,22 @@ async function rereadFileContentViaProducer(path: string): Promise<FileRead | nu
   } catch { return null; }
 }
 
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }): Promise<GoalReachVerdict | null> {
+/**
+ * The reach gate. Every caller — the walk (interim and end), the engine path and the floor — gets
+ * `completion_shapes` CHOSEN IN CODE here (judge-view.ts restrictCompletionShapes): an LLM-judged
+ * verdict names only shapes that were produced, bookkeeping excluded unless the goal's deliverables
+ * (`deliverables`, else the goal's inferred targets) name it. /reach, recordGoalPath and gap filing
+ * therefore never read a judge-invented name, whichever site asked.
+ */
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[]): Promise<GoalReachVerdict | null> {
+  const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView);
+  if (v && v.deterministic !== true) {
+    const keep = new Set(deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
+    v.completion_shapes = restrictCompletionShapes(v.completion_shapes, new Set(producedShapes), false, keep);
+  }
+  return v;
+}
+async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
   const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
@@ -4072,6 +4092,20 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
       completion_shapes: [],
     };
   }
+  // CUT VIEW ⇒ ABSTAIN (REALIGNMENT §9.2), computed in code from the view's cut record before the
+  // judge is called: a deliverable the view could not hold whole is not graded HOLLOW (no β) and
+  // not graded reached. It is its own explicit outcome carrying the cut — NOT null, which is the
+  // "verifier unreachable" channel and would re-call the verifier and log an outage.
+  if (judgeView?.deliverableCut) {
+    const cuts = judgeView.cuts.map((c) => ({ ...c }));
+    console.log(`[judge-view] ABSTAIN goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view; cuts=${JSON.stringify(cuts).slice(0, 300)}`);
+    return {
+      reached: false,
+      reason: `abstain:cut-view — the deliverable did not fit the judge's view (${cuts.map((c) => `${c.shape} ${c.shown}/${c.produced} chars`).join(", ").slice(0, 200)}); not graded`,
+      completion_shapes: [],
+      abstain: { kind: "cut-view", cuts },
+    };
+  }
   return llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
 }
 
@@ -4265,7 +4299,8 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   if (!goalText || !r) return;
   // Structural terminations and environment faults carry no correctable content; only a verdict
   // about PRODUCED content can teach the next attempt what to do differently.
-  if (/no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
+  // An ABSTAIN (§9.2) is not a verdict about the content either: nothing was graded.
+  if (/^abstain:/i.test(r) || /no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
   const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
   const list = goalFailureMemory.get(rec.hash) ?? [];
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
@@ -7248,6 +7283,8 @@ interface GoalSeekResult {
    * renders. Set only when such a goal genuinely reached; absent otherwise.
    */
   answerBody?: string;
+  /** Set when the reach gate ABSTAINED (§9.2) — the walk is neither reached nor hollow. */
+  abstain?: { kind: "cut-view"; cuts: JudgeCut[] };
 }
 
 // Normalise an activity id by stripping the `activity:⟨…⟩` wrapper the recommend +
@@ -10987,16 +11024,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       // judge sees genuine artifacts (the written + sensed note), not stubs. (2026-06-25)
       const interimCaptured = (lastExecId && reachContentDigests.get(lastExecId)) || "";
 
-      const interimPool = poolImpulses
-        .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
-        .map((imp) => {
-          const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
-          let c: string;
-          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
-          return `- ${s}: ${c.slice(0, 1500)}`;
-        })
-        .join("\n");
-      const interimDigest = [interimCaptured, interimPool].filter(Boolean).join("\n").slice(0, 8000);
+      // JUDGE VIEW (judge-view.ts): the deliverable first at full length, evidence as title/url
+      // lines, bookkeeping excluded — the SAME builder as the end-of-walk site below.
+      const interimView = buildJudgeView(
+        poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content })),
+        terminalShapes,
+        target,
+      );
+      const interimDigest = [interimCaptured, interimView.digest].filter(Boolean).join("\n");
       try {
         const interimCommandEvidence = [...executorCommands.entries()]
           .filter(([sh]) => producedShapes.has(sh))
@@ -11008,6 +11043,9 @@ If one of those sibling shapes is the action that would create what the goal ask
           `walk(${chain.length} steps): ${chain.map(normActivityId).join(" → ")}`,
           interimDigest || undefined,
           interimCommandEvidence || undefined,
+          undefined,
+          interimView,
+          [...terminalShapes, ...target],
         );
         if (interim && interim.reached === true) {
           earlyReachVerdict = interim;
@@ -11027,6 +11065,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   let goalReachReason: string | undefined;
   let answerBody: string | undefined;
   let reached = false;
+  let walkAbstain: GoalReachVerdict["abstain"];
 
   if (!lastTrace || chain.length === 0) {
     reached = false;
@@ -11044,40 +11083,14 @@ If one of those sibling shapes is the action that would create what the goal ask
     const capturedDigest = (lastExecId && reachContentDigests.get(lastExecId)) || "";
     // The walk frequently continues PAST the goal-reaching step into no-progress
     // junk steps, so the LAST step's captured digest is NOT necessarily the
-    // goal-bearing one (e.g. a goal answered by code_quality at step 1, then the
-    // walk wanders into an inert problem_detection at step 4 whose empty output
-    // became the captured digest). Always fold in the FULL accumulated pool — all
-    // content-bearing shapes — so a goal-satisfying output produced at an earlier
-    // step is visible to the reach-gate, not just the terminal task's output. Pool
-    // content goes first so substantive earlier outputs survive the length cap.
-    // (2026-06-24)
-    const poolDigest = poolImpulses
-      .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
-      .map((imp) => {
-        const s = (imp.metadata as { shape?: string } | undefined)?.shape ?? "?";
-        // An executable-result shape (shellResult, ...) arrives as {stdout, stderr, exit_code, ...}.
-        // Rendering the whole object pushes the digest line past the 160-char guard in
-        // extractEmittedNumbers / the file-count grader (stderr echoes the full command), so the
-        // measured value sitting in stdout is discarded and a countable recipe goal abstains with
-        // "measured N but the walk emitted no measurable value" — verified live by diagnostic
-        // 2026-08-27 (content held stdout:"1\n" but the JSON line was >160 chars, so it was dropped
-        // and reachContentDigests was empty). Render stdout itself: short, and exactly where the
-        // grader reads the count. Fail open to the JSON for any content without a string stdout.
-        let c: string;
-        const co = imp.content as { stdout?: unknown } | null | undefined;
-        if (co && typeof co === "object" && !Array.isArray(co) && typeof co.stdout === "string") {
-          c = String(co.stdout).trim();
-        } else {
-          try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
-        }
-        return `- ${s}: ${c.slice(0, 1500)}`;
-      })
-      .join("\n");
+    // goal-bearing one. The judge view below folds in the FULL accumulated pool
+    // (deliverable first), so an output produced at an earlier step stays visible.
+    // (2026-06-24; the executor-stdout rendering of 2026-08-27 lives in judge-view.ts
+    // renderContent, now shared with the interim site.)
 
-    // Human-facing digest (D3, 2026-07-26): SAME filter + 1500-char content cap as
-    // poolDigest, but WITHOUT the internal `- <shape>: ` prefix — used ONLY at the
-    // answerBody Basis and bridgeBody Findings sites below. poolDigest above stays
-    // verbatim so the reach-gate (contentDigest -> verifyGoalReached) keeps shape names.
+    // Human-facing digest (D3, 2026-07-26): the pool under a 1500-char content cap, WITHOUT
+    // the internal `- <shape>: ` prefix — used ONLY at the answerBody Basis and bridgeBody
+    // Findings sites below. The reach gate reads the judge view instead.
     const poolDigestHuman = poolImpulses
       .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
       .map((imp) => {
@@ -11087,11 +11100,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       })
       .filter((c) => c.trim().length > 0)
       .join("\n\n");
-    // Caps sized so a real content-bearing output (e.g. a code_annotation list of
-    // functions+line-numbers, or code_quality metrics) survives intact for the LLM
-    // judge — the shape-name-era 600/4000 caps truncated list outputs mid-content,
-    // making the gate report "content not shown" on genuinely-reached goals.
-    const contentDigest = [poolDigest, capturedDigest].filter(Boolean).join("\n").slice(0, 8000);
+    // JUDGE VIEW (judge-view.ts) is what the judge reads: deliverable first at full length,
+    // evidence as title/url lines, bookkeeping and stubs excluded, cuts recorded.
+    const judgeView = buildJudgeView(
+      poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content })),
+      terminalShapes,
+      target,
+    );
+    const contentDigest = [judgeView.digest, capturedDigest].filter(Boolean).join("\n");
     try {
       // Honour an early reach verdict captured mid-walk (before pollution) instead
       // of re-judging the now-polluted end-state pool. (2026-06-25)
@@ -11108,18 +11124,32 @@ If one of those sibling shapes is the action that would create what the goal ask
       console.log(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=${commandEvidence.length} shapes=${[...producedShapes].join(",").slice(0, 120)} digestLen=${(contentDigest ?? "").length} cmdEvidence=${JSON.stringify(commandEvidence.slice(0, 240))}`);
       const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [] };
       let verdict = earlyReachVerdict
-        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv);
+        ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target]);
       // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
       // before failing closed, so a correct/grounded answer is not lost to a momentary verifier outage.
       // (The prior loop only re-read the same null verdict without ever re-invoking the verifier — a no-op.)
       for (let _r = 0; verdict == null && _r < 2; _r++) {
         await new Promise((res) => setTimeout(res, 400 * (_r + 1)));
-        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv);
+        verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target]);
       }
+      // COMPLETION SHAPES ARE CHOSEN IN CODE inside verifyGoalReached (every site, not only this
+      // one), before /reach, recordGoalPath, gap filing and the seed-only flip read them.
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict == null ? false : verdict.reached === true;
       if (verdict == null) {
         goalReachReason = 'reach verifier unreachable after retries — verdict unknown, failing closed';
+      }
+      // ABSTAIN (§9.2): not reached, not hollow. Named in the log and on the walk result; the hollow
+      // branch below (β, gap filing) is skipped, and the callers' retries do not fire on it.
+      if (verdict?.abstain) {
+        walkAbstain = verdict.abstain;
+        goalReachReason = verdict.reason;
+        tap(`[goal-host-vessel] walk(${opts.surface}): ABSTAIN — ${verdict.reason}`);
+        // THE LABEL CARRIES THE CUT (§9.2): an automated, non-binary label — never ground truth.
+        recordDeterministicLabel(goal, lastExecId, lastPick || undefined, { ...verdict, deterministic: true }, {
+          verdict: "partial", labeler: "automated", confidence: 0.5, source: "judge-abstain-cut-view",
+          notes: `abstain:cut-view cuts=${JSON.stringify(verdict.abstain.cuts)}`,
+        });
       }
       // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): an obsidian-
       // surface question/request that "reached" on ONLY pre-existing seed shapes
@@ -11266,7 +11296,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       // site, which is how a WITHHELD verdict still got stamped reached:false there.
       let walkBetaWithheld = false;
       if (verdict) recordDeterministicLabel(goal, lastExecId, lastPick || undefined, verdict);
-      if (verdict && verdict.reached === false) {
+      if (verdict?.abstain) {
+        status = "failed";
+        walkBetaWithheld = true;
+      } else if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
         // NO BETA FOR OUR OWN MISSING ORACLE. `no-oracle-for-goal-class` means the gate
@@ -11909,7 +11942,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     // and names both operands, so one run decides between the candidates instead of another
     // dispatched guess.
     console.log(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
-    if (opts.learningMode !== "observe") void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
+    // ABSTAIN (§9.2): the path row's POST applies failure_delta / thompson_beta on reached=false, so an
+    // ungraded walk records no path row at all.
+    if (opts.learningMode !== "observe" && !walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
     {
       const _wid = opts.variables.dispatch_id;
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
@@ -11944,7 +11979,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // reaches with no engine trace, which is exactly the multi-satisfier composition case that
     // compounding depends on. Scoped as an `else if` so every path that already records is
     // untouched: this fires only when the guarded block was skipped, and it cannot double-write.
-    void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
+    if (!walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
     console.log(`[goal-host-vessel] recordGoalPath (traceless reach) path=${JSON.stringify(chain)} reached=${reached} goal="${goal.slice(0, 80)}"`);
     if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
@@ -11963,6 +11998,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     reached,
     answerBody,
     grounded: walkGroundedVerdict,
+    ...(walkAbstain ? { abstain: walkAbstain } : {}),
   };
 }
 
@@ -13310,6 +13346,13 @@ async function runGoalWithRecoveryInner(
             return merged.length > 0 ? merged : undefined;
           })(),
       });
+      // ABSTAIN (§9.2): the gate declined to grade a deliverable it could not see whole. No defect was
+      // named, so there is nothing for a retry, a suppression, a re-frame or the floor to correct:
+      // the walk's result IS the dispatch's result, named as an abstain.
+      if (walk.abstain) {
+        tap(`[goal-host-vessel] ${opts.surface}: walk: ABSTAIN — no retry, re-frame or floor (${walk.goalReachReason ?? "abstain"}) goal_hash=${goalHashOf(goal)}`);
+        return walk;
+      }
       // FEEDBACK-RETRY (hill-climb; the grade->next-attempt edge). Before the suppress-retry ABANDONS
       // the producer that just ran, or a cached recipe replays the same failure, re-run the SAME chain
       // ONCE with the judge's verdict fed into synthesis (priorVerdictFeedback) and the reached-command
@@ -13348,6 +13391,9 @@ async function runGoalWithRecoveryInner(
           const _fbDidNotEdit = (fbWalk.completionShapes ?? []).every((s) => !_fbEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
           if (!(_fbEditIntent && _fbDidNotEdit)) return fbWalk;
         }
+        // ABSTAIN first: a retry that took no NEW step (attempts 0 under carried steps) can still have
+        // abstained, and the attempts>0 choice below would drop it.
+        if (fbWalk.abstain) return fbWalk; // ABSTAIN (§9.2): ungraded — nothing further to correct
         walk = fbWalk.attempts > 0 ? fbWalk : walk;
       }
 
@@ -13423,6 +13469,7 @@ async function runGoalWithRecoveryInner(
           const _reRetryDidNotEdit = (retryWalk.completionShapes ?? []).every((s) => !_reEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
           if (!(_reEditIntent && _reRetryDidNotEdit)) return retryWalk;
         }
+        if (retryWalk.abstain) return retryWalk; // ABSTAIN (§9.2), checked before the attempts>0 choice
         walk = retryWalk.attempts > 0 ? retryWalk : walk;
       }
 
@@ -13510,7 +13557,9 @@ async function runGoalWithRecoveryInner(
           const altRetrieved = altProduced.some((sh) => RETRIEVAL_EVIDENCE.has(sh));
           const altSkippedPlannedRetrieval = plannedRetrieval.length > 0 && !altRetrieved;
           const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput) && !altSkippedPlannedRetrieval;
-          if (altWalkResult.reached && altHasSubstance) {
+          if (altWalkResult.abstain) {
+            return altWalkResult; // ABSTAIN (§9.2): the re-frame's deliverable was ungraded, not hollow
+          } else if (altWalkResult.reached && altHasSubstance) {
             walk = altWalkResult;
           } else if (altWalkResult.reached) {
             const why = altSkippedPlannedRetrieval
@@ -16791,6 +16840,13 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Honest goal-reach verdict, threaded up from the walk's GoalReachVerdict
       // through GoalSeekResult.reached — distinct from status (template exit).
       record.reached = seek.reached;
+      // ABSTAIN (§9.2): ungraded, so the record carries null — deliverReachVerdict then skips the
+      // /reach patch ("verdict is not a boolean"), and the false-verdict eviction and failure memory
+      // below (both keyed on reached === false) do not fire. The abstain and its cut are recorded.
+      if (seek.abstain) {
+        record.reached = null;
+        (record as { abstain?: unknown }).abstain = seek.abstain;
+      }
       const execution_path: WalkTier = classifyExecutionPath({
         ...seek,
         reusedPathway: (record as { reusedPathway?: boolean }).reusedPathway ?? null,
@@ -16827,7 +16883,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       dispatchContext.enterWith({ dispatchId: _costDid });
       const _spend = peekDispatchUsage(_costDid);
       (record as { cost?: { tokens_in: number; tokens_out: number; llm_calls: number; cost_usd: number; wall_ms: number } }).cost = { tokens_in: _spend.tokensIn, tokens_out: _spend.tokensOut, llm_calls: _spend.calls, cost_usd: _spend.costUsd, wall_ms: (record.endedAt ?? Date.now()) - record.startedAt };
-      if (learningMode !== "observe") void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
+      if (learningMode !== "observe" && !seek.abstain) void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
       record.walkLog = walkStepSink;
       const _seekExecId = seek.executionId ?? seek.result?.trace?.id;
       if (_seekExecId) {
@@ -16836,7 +16892,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         const _goalStr = String(goal ?? "");
         const _targetShapes = (typeof goal === "string" ? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes : undefined) ?? [];
         try {
-          record.executionId = await persistFailedWalkTrace(_goalStr, walkStepSink, seek.completionShapes, seek.goalReachReason, _targetShapes, "walk-terminated-unreached");
+          record.executionId = await persistFailedWalkTrace(_goalStr, walkStepSink, seek.completionShapes, seek.goalReachReason, _targetShapes, seek.abstain ? "walk-abstained" : "walk-terminated-unreached");
         } catch {
           record.executionId = `goal-seek:no-trace:${goalHashOf(_goalStr)}`;
         }
@@ -17431,8 +17487,9 @@ async function handleResolve(req: Request): Promise<Response> {
       const n = (__resolveInFlight.get(__rh) ?? 1) - 1;
       if (n <= 0) __resolveInFlight.delete(__rh); else __resolveInFlight.set(__rh, n);
     });
-    // Reward the LLM router for every routed selection this dispatch made.
-    void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
+    // Reward the LLM router for every routed selection this dispatch made — not on an ABSTAIN (§9.2),
+    // which graded nothing.
+    if (!seek.abstain) void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
 
     return Response.json({
       resolved: true,
@@ -17445,6 +17502,7 @@ async function handleResolve(req: Request): Promise<Response> {
       completionShapes: seek.completionShapes,
       attempts: seek.attempts,
       goalReachReason: seek.goalReachReason ?? null,
+      ...(seek.abstain ? { reached: null, abstain: seek.abstain } : {}),
     });
   } catch (err) {
     console.error("[goal-host-vessel] /resolve error:", err);
