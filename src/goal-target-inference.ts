@@ -469,6 +469,19 @@ export async function inferGoalTargetDecision(
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<GoalTargetDecision> {
+  // Deterministic route: time-relative news/headlines/current-events goals go to web_search before LLM/prose.
+  // Conservative: requires explicit time terms for generic "what is/what's happening" queries, so definitional
+  // questions stay on the prose route. Never fires if web_search is not advertised.
+  {
+  const lower = goal.toLowerCase();
+  const newsTerms = /\b(headlines?|top stories?|breaking news|current events?|news|ongoing events?)\b/;
+  const timeTerms = /\b(today|yesterday|now|currently|this (?:week|month|year)|past ?24 ?hours|last ?24 ?hours|tonight|this (?:morning|afternoon|evening)|latest|recent)\b/;
+  const happening = /\bwhat'?s?\s+happening\b/;
+  const shouldWebSearch = newsTerms.test(lower) && (timeTerms.test(lower) || /\bheadlines?\b/.test(lower) || /\bongoing events?\b/.test(lower) || (happening.test(lower) && timeTerms.test(lower)));
+  if (shouldWebSearch && knownShapes.includes("web_search")) {
+    return { shapes: ["web_search"], confidence: 0.66, alternatives: [] };
+  }
+  }
   const verbatimRead = deterministicVerbatimReadRoute(goal, knownShapes);
   const empty: GoalTargetDecision = verbatimRead ?? deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? namedAdvertisedShape(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
