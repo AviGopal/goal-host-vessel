@@ -51,8 +51,9 @@ export function isCountableQuestion(goal: string): boolean {
     // allow superlative-over-measurable-attribute forms like
     // "what are the 5 largest files (by size) ..." to remain countable.
     const measurableDomain =
-      /\b(files?|directories?|dirs?|folders?|modules?|packages?|functions?|classes?|commits?)\b/i.test(goal) ||
-      /\bby\s+(size|lines?|loc|length|bytes?|kb|mb|gb|age|date|mtime|ctime|commits?|changes?)\b/i.test(goal);
+      /\brepos\/[\w.-]+(?:\/[\w.\/-]*)?(?:\/|\b)/i.test(goal) ||
+      /\bby\s+(size|lines?|loc|length|bytes?|kb|mb|gb)\b/i.test(goal) ||
+      /\b(files?|directories?|modules?)\s+(by\s+)?(size|lines?|bytes?)/i.test(goal);
     if (!(superlative && measurableDomain)) return false;
   }
 
