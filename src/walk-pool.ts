@@ -21,6 +21,7 @@ export interface PoolImpulseLike {
 }
 
 import { isProvenanceStub, JUDGE_EXCLUDED_SHAPES } from "./judge-view";
+import { ANSWER_SHAPES } from "./reach-date";
 
 // ── B4: declare consumption only when bound ────────────────────────────────────
 
@@ -121,10 +122,13 @@ export function stepEdgeOf(pool: readonly PoolImpulseLike[], inputShapes: readon
 /** "≥ 2 tasks with real edges" (the slice's own criterion): some task consumed an impulse an EARLIER
  *  task of the same composite produced. Two output-bearing tasks with no such edge are two
  *  independent reads, not a recipe — they must not be minted as one. */
-export function hasRealEdge(tasks: ReadonlyArray<{ inputImpulseIds?: readonly string[]; outputImpulseIds?: readonly string[] }>): boolean {
+export function hasRealEdge(tasks: ReadonlyArray<{ inputImpulseIds?: readonly string[]; outputImpulseIds?: readonly string[] }>, firstNewStep = 0): boolean {
+  // `firstNewStep`: steps before it were carried from a prior attempt (V8). An edge counts only when
+  // its CONSUMER is a step this walk took — carried-to-carried edges were the prior attempt's.
   const produced = new Set<string>();
-  for (const t of tasks) {
-    if ((t.inputImpulseIds ?? []).some((id) => produced.has(id))) return true;
+  for (let i = 0; i < tasks.length; i++) {
+    const t = tasks[i]!;
+    if (i >= firstNewStep && (t.inputImpulseIds ?? []).some((id) => produced.has(id))) return true;
     for (const id of t.outputImpulseIds ?? []) produced.add(id);
   }
   return false;
@@ -155,3 +159,87 @@ export function writerFindings(pool: readonly PoolImpulseLike[], terminalShapes:
 /** The frame the no-terminal writer reads its evidence under: a neutral answer frame. The
  *  gap-clustering frame (7bbd7e8) stays on the terminal-bound path it was written for. */
 export const WRITER_EVIDENCE_FRAME = "Produce the FINAL answer NOW as your ENTIRE response — the actual result the goal asks for, fully written out. Do NOT reply with a plan or an intention to act. Base it ONLY on the evidence below; do not invent facts, items or sources that are not in it, and name the source (URL or record) each point comes from.";
+
+// ── V8: walks are additive — a retry or re-frame continues from the pool already built ───────────
+
+/** One recorded step of a prior attempt, with the impulses it produced, carried into the next walk. */
+export interface CarriedStep {
+  stepId: string;
+  executionId: string;
+  inputShapes: string[];
+  impulses: PoolImpulseLike[];
+  /** Shapes of `impulses` that a later step of the prior attempt consumed (intermediates there). */
+  consumedLater: string[];
+}
+
+/**
+ * The prior attempt's SUCCESSFUL INTERMEDIATES, grouped by the step that produced them: impulses a
+ * recorded step produced (they carry `producerExecutionId` — seeds, injected impulses and post-
+ * verdict renders do not), minus what must be re-derived: the answer/terminal shapes the verdict was
+ * about, bookkeeping shapes, provenance stubs, and whatever the caller excludes (a suppressed
+ * satisfier's output). Ids are kept: within one dispatch it is the same impulse.
+ */
+/** Content that records a FAILURE, not a result: a non-zero exit, `success:false`/`ok:false`, or an
+ *  error envelope with no payload. Carrying it forward would hand the retry a broken input as done. */
+export function isFailedContent(c: unknown): boolean {
+  if (!c || typeof c !== "object" || Array.isArray(c)) return false;
+  const o = c as Record<string, unknown>;
+  if (typeof o.exit_code === "number" && o.exit_code !== 0) return true;
+  if (typeof o.exitCode === "number" && o.exitCode !== 0) return true;
+  if (o.success === false || o.ok === false) return true;
+  const hasPayload = ["content", "body", "stdout", "results", "value", "data"].some((k) => o[k] !== undefined && o[k] !== null && o[k] !== "");
+  return typeof o.error === "string" && o.error.length > 0 && !hasPayload;
+}
+
+/**
+ * `targets`: the walk's target shapes. A target is carried only when a later step of the prior
+ * attempt CONSUMED it (it served as an intermediate, like the news goal's `web_search` feeding the
+ * writer). An unconsumed target was the attempt's answer — the thing the verdict judged — so it is
+ * re-derived; carrying it would make targetMet() true and the retry would never run (qa: a carried
+ * target `shellResult` turned FEEDBACK-RETRY into a no-op for compute goals).
+ */
+export function carryForward(pool: readonly PoolImpulseLike[], rederive: ReadonlySet<string>, targets?: ReadonlySet<string>): CarriedStep[] {
+  const shapeOfId = new Map<string, string>();
+  for (const imp of pool) shapeOfId.set(imp.id, String((imp.metadata as { shape?: unknown } | undefined)?.shape ?? ""));
+  const consumedShapes = new Set<string>();
+  for (const imp of pool) {
+    const ids = (imp.metadata as { consumedIds?: unknown } | undefined)?.consumedIds;
+    if (Array.isArray(ids)) for (const id of ids) { const sh = shapeOfId.get(String(id)); if (sh) consumedShapes.add(sh); }
+  }
+  const steps = new Map<string, CarriedStep>();
+  for (const imp of pool) {
+    const m = (imp.metadata ?? {}) as { shape?: unknown; producedBy?: unknown; producerExecutionId?: unknown; consumedIds?: unknown };
+    const shape = String(m.shape ?? "");
+    const exec = typeof m.producerExecutionId === "string" ? m.producerExecutionId : "";
+    const by = typeof m.producedBy === "string" ? m.producedBy : "";
+    if (!shape || !exec || !by || by === "seed" || by === "goal-host-walk") continue;
+    if (rederive.has(shape) || JUDGE_EXCLUDED_SHAPES.has(shape) || ANSWER_SHAPES.has(shape) || isProvenanceStub(imp.content)) continue;
+    if (isFailedContent(imp.content)) continue;
+    const key = `${by}\u0000${exec}`;
+    let s = steps.get(key);
+    if (!s) {
+      const consumed = Array.isArray(m.consumedIds) ? (m.consumedIds as unknown[]).map(String) : [];
+      s = { stepId: by, executionId: exec, inputShapes: [...new Set(consumed.map((id) => shapeOfId.get(id) ?? "").filter(Boolean))], impulses: [], consumedLater: [] };
+      steps.set(key, s);
+    }
+    s.impulses.push(imp);
+    if (consumedShapes.has(shape)) s.consumedLater.push(shape);
+  }
+  const all = [...steps.values()];
+  return targets ? carryForTarget(all, targets) : all;
+}
+
+/**
+ * The target rule, applied for the walk that RECEIVES the carry — its own target, not the target of
+ * the attempt that produced it (qa7: a re-frame to [shellResult] was handed a shellResult that was
+ * only an intermediate before, so targetMet() held at intake and nothing new ran). A shape that is a
+ * target HERE is carried only if a later step consumed it in the prior attempt.
+ */
+export function carryForTarget(steps: readonly CarriedStep[], targets: ReadonlySet<string>): CarriedStep[] {
+  return steps
+    .map((s) => ({ ...s, impulses: s.impulses.filter((imp) => {
+      const sh = String((imp.metadata as { shape?: unknown } | undefined)?.shape ?? "");
+      return !targets.has(sh) || s.consumedLater.includes(sh);
+    }) }))
+    .filter((s) => s.impulses.length > 0);
+}

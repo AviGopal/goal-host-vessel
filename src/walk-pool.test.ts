@@ -71,6 +71,6 @@ describe("qa follow-ups", () => {
   });
   test("wiring: the composite's mint/tag decision requires a real edge (source)", () => {
     const src = require("node:fs").readFileSync(`${import.meta.dir}/index.ts`, "utf8") as string;
-    expect(src).toContain(".length >= 2 && hasRealEdge(composite.tasks));");
+    expect(src).toMatch(/\.length >= 2 && hasRealEdge\(composite\.tasks(, carriedSteps)?\)\);/);
   });
 });

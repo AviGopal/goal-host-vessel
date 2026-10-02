@@ -399,7 +399,7 @@ import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, type PoolProvenance, type StepEdge } from "./walk-pool";
+import { findingsDigest, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -7309,6 +7309,9 @@ interface GoalSeekResult {
   abstain?: { kind: "cut-view"; cuts: JudgeCut[] };
   /** The route-around record a stalled walk emitted (route-around.ts); absent when it did not stall. */
   routeAround?: RouteAroundRecord;
+  /** ADDITIVE WALK (V8): this walk's successful intermediates, for the next attempt in the dispatch.
+   *  In-process only — never served or persisted. */
+  carry?: CarriedStep[];
 }
 
 /** Mirror a route-around record onto its dispatch record (bounded), where goalWalkState serves it.
@@ -7483,6 +7486,9 @@ async function runGoalAsPoolWalk(
     // still unproduced, and BINDS the terminal write's content from the produced
     // intermediate findings. Empty/undefined ⇒ no deferral (unchanged behaviour).
     terminalOutputShapes?: string[];
+    /** ADDITIVE WALK (V8): the prior attempt's successful steps in this dispatch. They enter the pool
+     *  and the chain as already-taken steps, so a retry or re-frame continues from what was built. */
+    carryFrom?: CarriedStep[];
     surface: string;
     /** Reason plane: caller-owned sink; walk decision lines are pushed here (additive to console.log). */
     stepSink?: string[];
@@ -9994,6 +10000,34 @@ If one of those sibling shapes is the action that would create what the goal ask
       tap(`[goal-host-vessel] walk(${opts.surface}): human-injected impulse added to pool shape=${inj.shape}`);
     }
   };
+  // ADDITIVE WALK (V8; output-shapes step 2, agentic-floor D P6): a retry / re-frame starts from the
+  // prior attempt's successful steps — their impulses (same ids) in the pool, the steps in the chain
+  // with their recorded edges — so it walks only the difference, and a composite it reaches carries
+  // the whole chain. Carried steps are not new attempts.
+  let carriedSteps = 0;
+  for (const c of carryForTarget(opts.carryFrom ?? [], target)) {
+    const fresh = c.impulses.filter((imp) => { const sh = String((imp.metadata as { shape?: unknown } | undefined)?.shape ?? ""); return sh && !producedShapes.has(sh) && !satisfierTried.has(sh); });
+    if (fresh.length === 0) continue;
+    const poolBefore = shapeArr();
+    const outShapes: string[] = [];
+    for (const imp of fresh) {
+      const sh = String((imp.metadata as { shape?: unknown }).shape);
+      producedShapes.add(sh);
+      poolImpulses.push({ ...(imp as Impulse), metadata: { ...(imp.metadata ?? {}), carriedFrom: c.executionId } } as Impulse);
+      outShapes.push(sh);
+    }
+    chain.push(c.stepId);
+    if (c.executionId) chainExecIds.push(c.executionId);
+    exclude.add(normActivityId(c.stepId));
+    const _carriedIn = c.inputShapes.filter((s) => chainProduced.has(s));
+    // The carried step's own (prior-attempt) consumption is recorded as its edge, but NOT fed to
+    // consumedInChain: in-walk credit and mint grounding must come from an edge into a NEW step.
+    ledgerStep(undefined, outShapes);
+    recordStepEdge(_carriedIn, outShapes);
+    recordStep({ selected: { templateId: c.stepId, source: "recovery" }, candidates: [], excluded: [], status: "carried", newShapes: outShapes, rationale: `carried from the prior attempt in this dispatch (execution ${c.executionId}) — the walk continues from the pool already built`, poolBefore, poolAfter: shapeArr() });
+    carriedSteps++;
+  }
+  if (carriedSteps > 0) tap(`[goal-host-vessel] walk(${opts.surface}): ADDITIVE — continuing from ${carriedSteps} step(s) of the prior attempt [${chain.join(", ")}]`);
   while (chain.length < MAX_STEPS && !targetMet()) {
     // Edge-blend half-life, resolved from the policy volume at USE TIME (law 1) rather
     // than read from a compiled-in constant. Unconfigured -> the previous literal, so
@@ -11897,7 +11931,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // ≥ 2 output-bearing tasks AND ≥ 1 real edge between them (walk-pool.ts hasRealEdge): with
           // recorded step edges a template step now carries real output ids, so the old count alone
           // would mint two unrelated reads as a recipe.
-          const compositeGrounded = mintGrounded || (composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(composite.tasks));
+          const compositeGrounded = mintGrounded || (composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(composite.tasks, carriedSteps));
           composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];
           // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
           //
@@ -12093,13 +12127,15 @@ If one of those sibling shapes is the action that would create what the goal ask
     status,
     selectedTemplateId: chain.length > 0 ? chain[chain.length - 1] : undefined,
     completionShapes,
-    attempts: chain.length,
+    attempts: chain.length - carriedSteps,
     goalReachReason,
     reached,
     answerBody,
     grounded: walkGroundedVerdict,
     ...(walkAbstain ? { abstain: walkAbstain } : {}),
     ...(routeAround ? { routeAround } : {}),
+    // No target rule here: the RECEIVING walk applies its own target (carryForTarget at intake).
+    carry: carryForward(poolImpulses, terminalShapes),
   };
 }
 
@@ -13488,6 +13524,7 @@ async function runGoalWithRecoveryInner(
           learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
+          carryFrom: walk.carry,
           priorVerdictFeedback: [_priorFailureFeedback, `- (this dispatch, the attempt just graded) ${walk.goalReachReason}`].filter(Boolean).join("\n"),
         });
         if (fbWalk.reached) {
@@ -13562,6 +13599,8 @@ async function runGoalWithRecoveryInner(
           preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
           suppressSatisfierShapes: [suppressedShape],
+          // ADDITIVE (V8): continue from what was built, minus the suppressed producer's output.
+          carryFrom: (walk.carry ?? []).map((c) => ({ ...c, impulses: c.impulses.filter((i) => String((i.metadata as { shape?: unknown } | undefined)?.shape) !== suppressedShape) })).filter((c) => c.impulses.length > 0 && c.stepId !== walk.selectedTemplateId),
         });
         if (retryWalk.reached) {
           // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
@@ -13601,6 +13640,7 @@ async function runGoalWithRecoveryInner(
             compositionChain: opts.compositionChain,
             expectedOutputShapes: altShapes,
             terminalOutputShapes: undefined,
+            carryFrom: walk.carry,
             surface: opts.surface,
             stepSink: opts.stepSink,
             learningSink: opts.learningSink,
