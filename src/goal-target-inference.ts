@@ -1,4 +1,5 @@
 import { registryFieldFor, registryRatioFor } from "./registry-field";
+import { verbatimReadTarget } from "./verbatim-read";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -338,6 +339,37 @@ function deterministicRegistryRoute(goal: string, knownShapes: string[]): GoalTa
 }
 
 /**
+ * "READ <abs path> AND TELL ME EXACTLY WHAT IT SAYS" — THE TARGET IS THE FILE READ.
+ *
+ * Measured on a fresh podman spoke during install acceptance: this goal inferred [] @0 three
+ * times, because the LLM and concept recall a spoke resolves on its hub were unavailable. With
+ * no target the walk ran unrelated pool activities and went HOLLOW without reading the file.
+ *
+ * Same construction as deterministicRegistryRoute: the rule is the SHARED parse
+ * (verbatimReadTarget) that the reach gate's verbatim oracle and the walk's path binding
+ * (index.ts) also use, so a goal routed here is one the producer can be handed a path for and
+ * the oracle can grade. Its abstentions come along: a second path, a transformation word
+ * (count, summarize, line N, edit, …) or a repo-relative path returns null and the goal falls
+ * through unchanged.
+ *
+ * knownShapes-guarded like its siblings: fileContent (local-tools) first, then fs_read
+ * (development-vessel; same {path} pointer). With neither advertised it declines — a target
+ * no producer serves would only file a capability gap. Read scope stays the producer's own
+ * containment; this route only names the path the goal already names.
+ */
+function deterministicVerbatimReadRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  if (!goal || verbatimReadTarget(goal) === null) return null;
+  // A read-then-persist ask ("... and save it as a memory note") is a composition; this route
+  // returns ONE shape and would drop the write. verbatimReadTarget does not exclude save/store/
+  // record, so guard here exactly as the env-gate sibling does.
+  if (_COMPOSITION_WRITE_CLAUSE.test(goal)) return null;
+  const producers = ["fileContent", "fs_read"].filter((s) => knownShapes.includes(s));
+  const primary = producers[0];
+  if (!primary) return null;
+  return { shapes: [primary], confidence: 0.8, alternatives: producers.slice(1).map((s) => [s]) };
+}
+
+/**
  * THE GOAL NAMED A SHAPE, AND THAT SHAPE IS ADVERTISED — SO IT IS THE PRODUCER.
  *
  * The countable-phrasing fallback below routes "how many / count / number of" to
@@ -438,7 +470,8 @@ export async function inferGoalTargetDecision(
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
 ): Promise<GoalTargetDecision> {
-  const empty: GoalTargetDecision = deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? namedAdvertisedShape(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
+  const verbatimRead = deterministicVerbatimReadRoute(goal, knownShapes);
+  const empty: GoalTargetDecision = verbatimRead ?? deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? namedAdvertisedShape(goal, knownShapes) ?? ((/(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
@@ -476,6 +509,11 @@ export async function inferGoalTargetDecision(
     const cached = decisionCache?.get(cacheKey);
     if (cached) return cached;
   }
+
+  // A verbatim read of one named absolute path is decided by the shared parse, not by the LLM:
+  // the oracle that grades it and the walk that binds its path use the same rule, so an LLM
+  // answer here could only disagree with both.
+  if (verbatimRead) return remember(verbatimRead);
 
   // COMPOSITION GUARD for every deterministic pre-LLM shortcut below.
   //

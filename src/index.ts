@@ -395,7 +395,7 @@ import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
-import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
+import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
@@ -8770,6 +8770,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       directArgsRaw = { command: registryCountCommandFor(goal, DISCOVERY_ENDPOINT)! };
       deterministicCommand = "registry-count";
       tap(`[goal-host-vessel] walk: DETERMINISTIC registry-count command for "${shape}" (field=${registryFieldFor(goal)}, chosen by the same rule the verifier applies)`);
+    } else if ((shape === "fileContent" || shape === "fs_read") && verbatimReadTarget(goal) !== null) {
+      // PATH BINDING for a verbatim read, from the same parse the target route and the verbatim
+      // oracle use. Without it the path came from llmExtractPointerArgs, and on a node whose LLM
+      // is unreachable (a fresh spoke) that is no args at all: the read cannot be made. The
+      // producer applies its own read containment; this only hands it the path the goal names.
+      directArgsRaw = { path: verbatimReadTarget(goal)! };
+      deterministicCommand = "verbatim-read";
+      tap(`[goal-host-vessel] walk: DETERMINISTIC verbatim-read path for "${shape}" (path=${verbatimReadTarget(goal)}, shared with the verbatim oracle) — SKIPPED pointer_arg synthesis`);
     } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
