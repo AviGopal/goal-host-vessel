@@ -129,14 +129,14 @@ describe("deterministic verbatim-read route", () => {
   test("routes to fileContent with no LLM, and the LLM cannot override it", async () => {
     const noLLM = await inferGoalTargetDecision(GOAL, SHAPES, {});
     expect(noLLM.shapes).toEqual(["fileContent"]);
-    expect(noLLM.alternatives).toEqual([["fs_read"]]);
+    expect(noLLM.alternatives).toEqual([]);
     const withLLM = await inferGoalTargetDecision(GOAL, SHAPES, llmSays(["memoryNote"]) as any);
     expect(withLLM.shapes).toEqual(["fileContent"]);
   });
 
-  test("falls back to fs_read when only development-vessel's reader is advertised", async () => {
+  test("never routes to fs_read (weaker containment), even when it is the only reader advertised", async () => {
     const d = await inferGoalTargetDecision(GOAL, SHAPES.filter((s) => s !== "fileContent"), {});
-    expect(d.shapes).toEqual(["fs_read"]);
+    expect(d.shapes).not.toContain("fs_read");
   });
 
   test("declines when no file reader is advertised (no target a producer cannot serve)", async () => {

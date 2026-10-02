@@ -352,10 +352,11 @@ function deterministicRegistryRoute(goal: string, knownShapes: string[]): GoalTa
  * (count, summarize, line N, edit, …) or a repo-relative path returns null and the goal falls
  * through unchanged.
  *
- * knownShapes-guarded like its siblings: fileContent (local-tools) first, then fs_read
- * (development-vessel; same {path} pointer). With neither advertised it declines — a target
- * no producer serves would only file a capability gap. Read scope stays the producer's own
- * containment; this route only names the path the goal already names.
+ * knownShapes-guarded like its siblings, and fileContent (local-tools) ONLY: development-vessel's
+ * fs_read has weaker containment (a lexical path check, no realpath, no systemd path blocks), so
+ * a deterministic, LLM-free route must never fall through to it. With fileContent not advertised
+ * it declines — a target no producer serves would only file a capability gap. Read scope stays
+ * the producer's own containment; this route only names the path the goal already names.
  */
 function deterministicVerbatimReadRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
   if (!goal || verbatimReadTarget(goal) === null) return null;
@@ -363,10 +364,8 @@ function deterministicVerbatimReadRoute(goal: string, knownShapes: string[]): Go
   // returns ONE shape and would drop the write. verbatimReadTarget does not exclude save/store/
   // record, so guard here exactly as the env-gate sibling does.
   if (_COMPOSITION_WRITE_CLAUSE.test(goal)) return null;
-  const producers = ["fileContent", "fs_read"].filter((s) => knownShapes.includes(s));
-  const primary = producers[0];
-  if (!primary) return null;
-  return { shapes: [primary], confidence: 0.8, alternatives: producers.slice(1).map((s) => [s]) };
+  if (!knownShapes.includes("fileContent")) return null;
+  return { shapes: ["fileContent"], confidence: 0.8, alternatives: [] };
 }
 
 /**
