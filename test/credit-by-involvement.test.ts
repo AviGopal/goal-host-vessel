@@ -58,7 +58,8 @@ describe("wiring (source)", () => {
     expect(src).toContain("if (_alreadyCredited.has(id))");
   });
   test("bookkeeping-only steps are excluded with the existing isBookkeepingOnly", () => {
-    expect(src).toMatch(/const _isStub = [\s\S]{0,400}isBookkeepingOnly\(imp\.content\)/);
+    expect(src).toMatch(/const stepIsStub = [\s\S]{0,400}isBookkeepingOnly\(imp\.content\)/);
+    expect(src).toContain("const _isStub = stepIsStub;");
     expect(src).toContain("involvedSteps(_edges, new Set(verdict.completion_shapes ?? []), _uncreditable, _isStub)");
   });
   test("verifiedWrites is keyed by satisfier step, not shape", () => {

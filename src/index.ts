@@ -399,7 +399,7 @@ import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, involvedSteps, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -7309,6 +7309,9 @@ interface GoalSeekResult {
   abstain?: { kind: "cut-view"; cuts: JudgeCut[] };
   /** The route-around record a stalled walk emitted (route-around.ts); absent when it did not stall. */
   routeAround?: RouteAroundRecord;
+  /** Output shapes of the steps that produced or fed the deliverable along recorded edges
+   *  (involvedSteps), carried steps included. */
+  fedDeliverableShapes?: string[];
   /** ADDITIVE WALK (V8): this walk's successful intermediates, for the next attempt in the dispatch.
    *  In-process only — never served or persisted. */
   carry?: CarriedStep[];
@@ -9892,6 +9895,11 @@ If one of those sibling shapes is the action that would create what the goal ask
   // STEP EDGES (walk-pool.ts, agentic-floor B2): what each chain step actually bound and produced,
   // indexed by its chain position — the composite's edges, instead of "step i consumed step i-1".
   const stepEdges = new Map<number, StepEdge>();
+  /** A step that produced only bookkeeping (no output impulse, or every output isBookkeepingOnly). */
+  const stepIsStub = (i: number): boolean => {
+    const ids = stepEdges.get(i)?.outputImpulseIds ?? [];
+    return ids.length === 0 || ids.every((id) => { const imp = poolImpulses.find((p) => p.id === id); return !imp || isBookkeepingOnly(imp.content); });
+  };
   const recordStepEdge = (inputShapes: string[], outputShapes: string[]): void => {
     stepEdges.set(chain.length - 1, stepEdgeOf(poolImpulses, inputShapes, outputShapes));
   };
@@ -11628,10 +11636,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           };
           // A receipt is not work: a step whose every output impulse is bookkeeping-only (or that
           // recorded no output impulse at all) is never a deliverable producer or the stand-in.
-          const _isStub = (i: number): boolean => {
-            const ids = _edges[i]?.outputImpulseIds ?? [];
-            return ids.length === 0 || ids.every((id) => { const imp = poolImpulses.find((p) => p.id === id); return !imp || isBookkeepingOnly(imp.content); });
-          };
+          const _isStub = stepIsStub;
           // ONCE PER DISPATCH: carried steps re-enter the chain on every retry, so a step already
           // α-credited in this dispatch (the per-dispatch learning sink) is not credited again.
           const _alreadyCredited = new Set((opts.learningSink?.alphaBetaDelta ?? []).filter((d) => d.dAlpha > 0).map((d) => d.templateId));
@@ -12162,6 +12167,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     ...(routeAround ? { routeAround } : {}),
     // No target rule here: the RECEIVING walk applies its own target (carryForTarget at intake).
     carry: carryForward(poolImpulses, terminalShapes),
+    fedDeliverableShapes: [...new Set(involvedSteps(chain.map((_, i) => stepEdges.get(i)), new Set(completionShapes ?? []), () => false, stepIsStub).flatMap((i) => stepEdges.get(i)?.outputShapes ?? []))],
   };
 }
 
@@ -13729,7 +13735,10 @@ async function runGoalWithRecoveryInner(
             "web_search", "webSearchResult", "web_search_result", "fs_read",
           ]);
           const plannedRetrieval = (seededOutputShapes ?? []).map((sh) => String(sh)).filter((sh) => RAW_INPUT.has(sh));
-          const altRetrieved = altProduced.some((sh) => RETRIEVAL_EVIDENCE.has(sh));
+          // Retrieval is what the re-frame's chain produced (steps it took AND steps it carried from
+          // the prior attempt) that FED the deliverable, not only the judge's completion shapes
+          // (walk-pool.ts walkRetrieved).
+          const altRetrieved = walkRetrieved(altProduced, altWalkResult.fedDeliverableShapes ?? [], RETRIEVAL_EVIDENCE);
           const altSkippedPlannedRetrieval = plannedRetrieval.length > 0 && !altRetrieved;
           const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput) && !altSkippedPlannedRetrieval;
           if (altWalkResult.abstain) {

@@ -279,3 +279,18 @@ export function involvedSteps(edges: ReadonlyArray<StepEdge | undefined>, delive
   }
   return [...seen].filter((i) => !uncreditable(i) && !isStub(i)).sort((a, b) => a - b);
 }
+
+// ── Acceptance fix 1: a re-frame that CARRIED its retrieval did retrieve ───────────────────────
+
+/**
+ * Did the walk retrieve anything THAT FED ITS ANSWER? The judge's completion shapes name the
+ * deliverable, not the steps that fed it, so they miss a retrieval that only fed the answer — and
+ * under V8 the retrieval can be a step CARRIED from the prior attempt (node 1, dispatch 1e3cd499: the
+ * re-frame continued from satisfier:web_search, reached, and was rejected as "answered WITHOUT
+ * retrieving anything"). `fedDeliverable` is the output shapes of the walk's involved steps
+ * (involvedSteps: producers of the deliverable plus everything that fed them along recorded edges),
+ * so a retrieval that ran but that nothing consumed does not count (qa9).
+ */
+export function walkRetrieved(completionShapes: readonly string[], fedDeliverable: readonly string[], retrievalEvidence: ReadonlySet<string>): boolean {
+  return [...completionShapes, ...fedDeliverable].some((sh) => retrievalEvidence.has(String(sh)));
+}
