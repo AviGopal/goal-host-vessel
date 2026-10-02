@@ -47,7 +47,7 @@ describe("credit failures are reported", () => {
     expect(i).toBeGreaterThan(-1);
     const block = s.slice(i - 200, i + 600);
     expect(block).toContain("alpha-credit NOT APPLIED");
-    expect(block).toContain("alpha-credited last pick");
+    expect(block).toContain("alpha-credited involved step"); // credit by involvement (§9.3): every involved step, each logged
   });
 
   it("both outcomes are distinguishable in the journal", async () => {

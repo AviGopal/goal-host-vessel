@@ -399,7 +399,7 @@ import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -8178,6 +8178,11 @@ async function runGoalAsPoolWalk(
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
   let lastRawResolveReason: string | null = null;
+  /** Satisfier STEPS (`satisfier:<shape>`) whose write effect this walk READ BACK independently
+   *  (verifyWritePersisted, or the action-then-read path). Keyed by step, not shape, so a template
+   *  writing the same shape is not vouched for by a satisfier's read-back. Only these writes can
+   *  earn reach credit (involvedSteps). */
+  const verifiedWrites = new Set<string>();
   /** Bumped on every rawResolve, so a caller can tell whether lastRawResolveReason is about ITS
    *  resolve or a previous shape's (vesselResolveShape can return null before resolving at all). */
   let rawResolveSeq = 0;
@@ -9565,12 +9570,14 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" persisted with an EMPTY body — not a genuine emit; treating as unsatisfied so reach is graded honestly (not a hollow green)`);
         // fall through: the terminal shape stays unsatisfied -> honest not-reached
       } else if (v !== null && "persisted" in v && v.persisted === true && _terminalWrite) {
+      verifiedWrites.add(`satisfier:${shape}`);
       // Do not short-circuit on terminal writes; allow learned-pathway/producers to run first.
       // Defer by adopting the independently-read content as the direct value so later branches can still emit it if nothing outranks it.
       try { direct = v.content as unknown; } catch {}
       recordExecutorCommand(directArgsRaw);
       // fall through without returning — reuse check must run before terminal-write satisfier
     } else if (v !== null && "persisted" in v && v.persisted === true) {
+        verifiedWrites.add(`satisfier:${shape}`);
         recordExecutorCommand(directArgsRaw);
         return { content: v.content, effect: effectTupleOf(shape, ep?.endpoint, v.content) };
       } else if (v !== null && "persisted" in v && v.persisted === false) {
@@ -9752,7 +9759,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // to the pool too (it's genuine output).
     addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`, { producedBy: `satisfier:${action.shape}` });
     const reread = await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs });
-    if (reread != null) { recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
+    if (reread != null) { verifiedWrites.add(`satisfier:${shape}`); recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
     // Action succeeded but re-read empty — still genuine progress (the artifact was
     // created). Surface the action result as the target's content rather than null,
     // so the walk advances and the reach-gate can judge the real artifact.
@@ -11611,15 +11618,34 @@ If one of those sibling shapes is the action that would create what the goal ask
         // occurred. This deliberately REDUCES credit volume; crediting an unverified answer
         // is what makes the posterior a record of activity rather than of correctness.
         if (verdict.deterministic === true || (!editEffectReach && consumedInChain.size > 0)) {
-          const _abCredit = await creditReachedTemplate(lastPick, verdict.reason ?? "goal reached");
-          opts.learningSink?.alphaBetaDelta.push(_abCredit);
-          // Report what HAPPENED, not what was attempted. This line used to fire
-          // unconditionally, so a credit that was rejected or lost still read as
-          // "alpha-credited" in the journal — the log asserting the opposite of the delta
-          // it had just been handed.
-          tap(_abCredit.dAlpha > 0
-            ? `[goal-host-vessel] walk(${opts.surface}): alpha-credited last pick ${lastPick} (+${_abCredit.dAlpha}) (substance-honest reach: ${verdict.reason}) goal_hash=${goalHashOf(goal)}`
-            : `[goal-host-vessel] walk(${opts.surface}): alpha-credit NOT APPLIED for ${lastPick} (dAlpha=0) despite a substance-honest reach: ${verdict.reason}`);
+          // CREDIT BY INVOLVEMENT (APPROACH.md §9.3): every chain step that produced a deliverable or
+          // fed one along a recorded edge (walk-pool.ts involvedSteps), not only the last pick. A
+          // write whose effect was not independently read back earns nothing.
+          const _edges = chain.map((_, i) => stepEdges.get(i));
+          const _uncreditable = (i: number): boolean => {
+            const outs = _edges[i]?.outputShapes ?? [];
+            return outs.length > 0 && outs.every((s) => isWriteShape(s)) && !verifiedWrites.has(chain[i] ?? "");
+          };
+          // A receipt is not work: a step whose every output impulse is bookkeeping-only (or that
+          // recorded no output impulse at all) is never a deliverable producer or the stand-in.
+          const _isStub = (i: number): boolean => {
+            const ids = _edges[i]?.outputImpulseIds ?? [];
+            return ids.length === 0 || ids.every((id) => { const imp = poolImpulses.find((p) => p.id === id); return !imp || isBookkeepingOnly(imp.content); });
+          };
+          // ONCE PER DISPATCH: carried steps re-enter the chain on every retry, so a step already
+          // α-credited in this dispatch (the per-dispatch learning sink) is not credited again.
+          const _alreadyCredited = new Set((opts.learningSink?.alphaBetaDelta ?? []).filter((d) => d.dAlpha > 0).map((d) => d.templateId));
+          const _involved = [...new Set(involvedSteps(_edges, new Set(verdict.completion_shapes ?? []), _uncreditable, _isStub).map((i) => chain[i]!).filter(Boolean))]
+            .filter((id) => { if (_alreadyCredited.has(id)) { tap(`[goal-host-vessel] walk(${opts.surface}): α-credit for ${id} already applied in this dispatch — not credited twice`); return false; } return true; });
+          if (_involved.length === 0) tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit — no involved step is creditable (unverified writes only)`);
+          for (const _stepId of _involved) {
+            const _abCredit = await creditReachedTemplate(_stepId, verdict.reason ?? "goal reached");
+            opts.learningSink?.alphaBetaDelta.push(_abCredit);
+            // Report what HAPPENED, not what was attempted (a rejected or lost credit is named so).
+            tap(_abCredit.dAlpha > 0
+              ? `[goal-host-vessel] walk(${opts.surface}): alpha-credited involved step ${_stepId} (+${_abCredit.dAlpha}) (substance-honest reach: ${verdict.reason}) goal_hash=${goalHashOf(goal)}`
+              : `[goal-host-vessel] walk(${opts.surface}): alpha-credit NOT APPLIED for ${_stepId} (dAlpha=0) despite a substance-honest reach: ${verdict.reason}`);
+          }
         } else if (consumedInChain.size === 0) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); } else if (consumedInChain.size > 0 && editEffectReach) {
           tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit for ${lastPick} — edit-effect reach via in-chain edge only (no landed sha); fileEditResult/fileWriteResult is advertised-not-applied, not substance`);
         }

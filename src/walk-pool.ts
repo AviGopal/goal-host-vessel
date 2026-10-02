@@ -243,3 +243,39 @@ export function carryForTarget(steps: readonly CarriedStep[], targets: ReadonlyS
     }) }))
     .filter((s) => s.impulses.length > 0);
 }
+
+// ── Acceptance fix 2: credit by involvement (APPROACH.md §9.3, the user's ruling) ───────────────
+
+/** A write shape: its "success" is a claim about an effect somewhere else. */
+export function isWriteShape(shape: string): boolean {
+  return /_write$/.test(shape) || /(^|:)write_note$/.test(shape) || /^(fs_write|fs_edit|fileWriteResult|fileEditResult)$/.test(shape);
+}
+
+/**
+ * The chain steps a reach credits: every step that produced a deliverable (the verdict's completion
+ * shapes), and every step whose output reached one of those along a recorded edge (V4). Before this,
+ * only the LAST pick was credited — on node 2 an empty "Untitled" panel write, while the
+ * web_search → llm_completion steps that produced the report got nothing. With no recorded producer
+ * of a deliverable, the last step stands in, as before. `uncreditable(i)` drops a step that must not
+ * earn credit (a write whose effect was not independently read back); the walk still traverses
+ * through it to the steps that fed it.
+ */
+export function involvedSteps(edges: ReadonlyArray<StepEdge | undefined>, deliverables: ReadonlySet<string>, uncreditable: (i: number) => boolean = () => false, isStub: (i: number) => boolean = () => false): number[] {
+  // `isStub(i)`: the step produced only bookkeeping (a receipt, no payload — isBookkeepingOnly). It
+  // is neither a deliverable producer nor the stand-in, and it earns nothing.
+  const n = edges.length;
+  const seeds: number[] = [];
+  for (let i = 0; i < n; i++) if (!isStub(i) && (edges[i]?.outputShapes ?? []).some((s) => deliverables.has(s))) seeds.push(i);
+  if (seeds.length === 0) { for (let i = n - 1; i >= 0; i--) if (!isStub(i)) { seeds.push(i); break; } }
+  const seen = new Set<number>(seeds);
+  const stack = [...seeds];
+  while (stack.length > 0) {
+    const i = stack.pop()!;
+    for (const id of edges[i]?.inputImpulseIds ?? []) {
+      for (let j = i - 1; j >= 0; j--) {
+        if ((edges[j]?.outputImpulseIds ?? []).includes(id)) { if (!seen.has(j)) { seen.add(j); stack.push(j); } break; }
+      }
+    }
+  }
+  return [...seen].filter((i) => !uncreditable(i) && !isStub(i)).sort((a, b) => a - b);
+}
