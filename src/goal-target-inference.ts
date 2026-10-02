@@ -479,6 +479,19 @@ export async function inferGoalTargetDecision(
   const happening = /\bwhat'?s?\s+happening\b/;
   const shouldWebSearch = newsTerms.test(lower) && (timeTerms.test(lower) || /\bheadlines?\b/.test(lower) || /\bongoing events?\b/.test(lower) || (happening.test(lower) && timeTerms.test(lower)));
   if (shouldWebSearch && knownShapes.includes("web_search")) {
+    // A news goal that is a QUESTION needs a writer step after the search. An imperative
+    // "search for" or "get links" goal should only return the search results.
+    const isQuestion = /^\s*(what|who|where|when|why|how|which|list|summarize|tell me|what'?s|are there)\b/i.test(goal);
+    if (isQuestion) {
+      const writerShape = knownShapes.includes("llm_completion")
+        ? "llm_completion"
+        : knownShapes.includes("llmCompletion")
+        ? "llmCompletion"
+        : null;
+      if (writerShape) {
+        return { shapes: ["web_search", writerShape], confidence: 0.66, alternatives: [] };
+      }
+    }
     return { shapes: ["web_search"], confidence: 0.66, alternatives: [] };
   }
   }
