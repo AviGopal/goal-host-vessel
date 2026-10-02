@@ -403,6 +403,7 @@ import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./rout
 import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
+import { isTransientFailure } from "./transient-failure";
 import type {
   EventSink,
   Impulse,
@@ -1037,6 +1038,8 @@ const ACTIVITY_API_ENDPOINT = process.env.ACTIVITY_API_ENDPOINT
 const PRODUCER_DISCOVERY_ENDPOINT = process.env.PRODUCER_DISCOVERY_ENDPOINT ?? "http://127.0.0.1:8080";
 const DISCOVERY_ENDPOINT = process.env.DISCOVERY_VESSEL_ENDPOINT ?? "http://127.0.0.1:8100";
 const DISCOVERY_SHAPES_ENDPOINT = `${DISCOVERY_ENDPOINT}/registry/shapes`;
+/** Pause before the one retry of a code-authored command that failed transiently (a restarting vessel answers 5xx for about a second). */
+const DETERMINISTIC_RETRY_DELAY_MS = 1_500;
 const API_KEY = process.env.GOAL_HOST_VESSEL_API_KEY ?? process.env.METABOB_API_KEY ?? "";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const LLM_VESSEL_ENDPOINT = process.env.LLM_VESSEL_ENDPOINT;
@@ -8265,6 +8268,20 @@ async function runGoalAsPoolWalkBody(
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
   let lastRawResolveReason: string | null = null;
+  /** Whether the LAST rawResolve failed transiently (transient-failure.ts): set at the failure,
+   *  where the HTTP status is still known, never re-derived from a reason a later step rewrote. */
+  let lastRawResolveTransient = false;
+  /** Per shape, the first TRANSIENT failure this walk saw, recorded when it happened. The
+   *  last-chance un-poison reads this rather than lastRawResolveReason, which the executor's
+   *  self-correction has overwritten by then ("the command produced no result"). */
+  const transientFailureByShape = new Map<string, string>();
+  const noteRawResolveFailure = (shape: string, reason: string, status?: number): void => {
+    lastRawResolveReason = reason;
+    lastRawResolveTransient = isTransientFailure(reason, status);
+    if (lastRawResolveTransient && !transientFailureByShape.has(shape)) {
+      transientFailureByShape.set(shape, typeof status === "number" ? `HTTP ${status}: ${reason}` : reason);
+    }
+  };
   /** Satisfier STEPS (`satisfier:<shape>`) whose write effect this walk READ BACK independently
    *  (verifyWritePersisted, or the action-then-read path). Keyed by step, not shape, so a template
    *  writing the same shape is not vouched for by a satisfier's read-back. Only these writes can
@@ -8362,6 +8379,7 @@ async function runGoalAsPoolWalkBody(
   }
   const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>): Promise<unknown | null> => {
     lastRawResolveReason = null;
+    lastRawResolveTransient = false;
     rawResolveSeq++;
     const base = poolVars();
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
@@ -8438,25 +8456,25 @@ async function runGoalAsPoolWalkBody(
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
       });
     } catch (e) {
-      lastRawResolveReason = `transport: ${String((e as Error).message ?? e).slice(0, 180)}`;
+      noteRawResolveFailure(shape, `transport: ${String((e as Error).message ?? e).slice(0, 180)}`);
       console.log(`[goal-host-vessel] walk rawResolve ${shape}: transport error — ${String((e as Error).message ?? e).slice(0, 140)}`);
       return null;
     }
     const bodyText = await resp.text();
-    if (!resp.ok) { lastRawResolveReason = bodyText.slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
+    if (!resp.ok) { noteRawResolveFailure(shape, bodyText.slice(0, 200), resp.status); console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
     let parsed: unknown;
     try { parsed = JSON.parse(bodyText); } catch { parsed = bodyText; }
     let content: unknown = parsed;
     const pObj = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : null;
     if (pObj) {
-      if (pObj["success"] === false) { lastRawResolveReason = String(pObj["error"] ?? "").slice(0, 200); console.log(`[goal-host-vessel] walk rawResolve ${shape}: success=false ${String(pObj["error"] ?? "").slice(0, 140)}`); return null; }
+      if (pObj["success"] === false) { noteRawResolveFailure(shape, String(pObj["error"] ?? "").slice(0, 200)); console.log(`[goal-host-vessel] walk rawResolve ${shape}: success=false ${String(pObj["error"] ?? "").slice(0, 140)}`); return null; }
       // A resolver that rejected the pointer returns { error: "..." } (e.g.
       // analysis-vessel's "filePaths is required") with no content/body. That is a
       // FAILURE, not produced content — without this the walk would "produce" the
       // shape with an error object as its content and fool the reach-gate. Return
       // null so the satisfier falls through to the unchanged bridge/escalate path.
       if (typeof pObj["error"] === "string" && pObj["error"].length > 0 && !("content" in pObj) && !("body" in pObj)) {
-        lastRawResolveReason = pObj["error"].slice(0, 200);
+        noteRawResolveFailure(shape, pObj["error"].slice(0, 200));
         console.log(`[goal-host-vessel] walk rawResolve ${shape}: resolver rejected — ${pObj["error"].slice(0, 140)}`);
         return null;
       }
@@ -8488,13 +8506,13 @@ async function runGoalAsPoolWalkBody(
         _c["trust"] === "rejected" ||
         (_isFetchEnvelope && !_hasRealPayload);
       if (_isExternalFailure) {
-        lastRawResolveReason = `external-evidence failure: ${JSON.stringify({ ok: _c["ok"], status: _c["status"], failure_mode: _c["failure_mode"], error: _c["error"] }).slice(0, 180)}`;
+        noteRawResolveFailure(shape, `external-evidence failure: ${JSON.stringify({ ok: _c["ok"], status: _c["status"], failure_mode: _c["failure_mode"], error: _c["error"] }).slice(0, 180)}`);
         console.log(`[goal-host-vessel] walk rawResolve ${shape}: external-evidence FAILURE envelope (ok=${String(_c["ok"])} status=${String(_c["status"])}) — not produced content, falling through`);
         return null;
       }
     }
     if (content == null || (typeof content === "string" && content.trim().length === 0) || (Array.isArray(content) && content.length === 0)) {
-      lastRawResolveReason = "resolver returned empty content";
+      noteRawResolveFailure(shape, "resolver returned empty content");
       console.log(`[goal-host-vessel] walk rawResolve ${shape}: empty content (HTTP ${resp.status})`);
       return null;
     }
@@ -8707,9 +8725,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
+    // A command BUILT IN CODE from the goal (registry-count / registry-ratio / file-count and its
+    // aggregate siblings), shared with the oracle that verifies it. Set only on those branches.
+    let deterministicCommand: string | null = null;
     const _aggCmd = shape === "shellResult" ? (buildFromClassRow(goal) ?? buildTwoSourceCompareCommand(goal) ?? buildRankAggregateCommand(goal) ?? buildAggregateCommand(goal) ?? buildGapRatioCommand(goal) ?? buildGapAggregateCommand(goal)) : null;
     if (_aggCmd) {
       directArgsRaw = { command: _aggCmd };
+      deterministicCommand = "file-count/aggregate";
       // Say which SCOPE was chosen rather than asserting agreement "by construction". The
       // oracle and this command deliberately share one parse, so they will always agree \u2014
       // that is only sound when the shared rule answers the question the GOAL asked, and
@@ -8729,6 +8751,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // quotient the goal asked for — and the oracle recomputes it from its OWN fetch rather
       // than trusting this stdout.
       directArgsRaw = { command: registryRatioCommandFor(goal, DISCOVERY_ENDPOINT)! };
+      deterministicCommand = "registry-ratio";
       const _rr = registryRatioFor(goal)!;
       tap(`[goal-host-vessel] walk: DETERMINISTIC registry-RATIO command for "${shape}" (${_rr.numerator} / ${_rr.denominator}, shared with the verifier)`);
     } else if (shape === "shellResult" && registryCountCommandFor(goal, DISCOVERY_ENDPOINT) !== null) {
@@ -8745,6 +8768,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // wrong column. Replaying that verbatim would preserve the defect the binding exists to
       // remove.
       directArgsRaw = { command: registryCountCommandFor(goal, DISCOVERY_ENDPOINT)! };
+      deterministicCommand = "registry-count";
       tap(`[goal-host-vessel] walk: DETERMINISTIC registry-count command for "${shape}" (field=${registryFieldFor(goal)}, chosen by the same rule the verifier applies)`);
     } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
@@ -9192,6 +9216,18 @@ If one of those sibling shapes is the action that would create what the goal ask
     let directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
     let direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+    // A TRANSIENT FAILURE OF A CODE-AUTHORED COMMAND IS RETRIED, NOT CORRECTED. The command
+    // was built in code from the goal and is verified by the same rule, so a 5xx / transport
+    // failure says the producer could not be asked — not that the command is wrong. Handing it
+    // to the self-correction loop rewrites a correct command and spends the walk's only shot;
+    // the walk then ends at 0 steps. The floor's shellResult call used to be the de-facto retry
+    // here, and the floor no longer offers a shell (floor-tools.ts). One bounded retry of the
+    // SAME command; model-synthesized commands never take this branch.
+    if (direct === null && deterministicCommand && lastRawResolveTransient) {
+      tap(`[goal-host-vessel] walk(${opts.surface}): DETERMINISTIC ${deterministicCommand} command for "${shape}" failed TRANSIENTLY (${String(transientFailureByShape.get(shape) ?? lastRawResolveReason).slice(0, 120)}) — retrying the same command once`);
+      await new Promise((r) => setTimeout(r, DETERMINISTIC_RETRY_DELAY_MS));
+      direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+    }
     if (_isExecShape && !terminalShapes.has(shape)) {
       let _tries = 0;
       // Hosts proven this dispatch to refuse us outright (401/403/quota). Populated from the
@@ -11051,13 +11087,17 @@ If one of those sibling shapes is the action that would create what the goal ask
               // clear the flag once so this last-chance scan re-attempts the resolve.
               // vesselResolveShape re-adds to satisfierTried, so it re-blacklists after;
               // a real outage still nulls via rawResolve → honest "no producer".
-              const _priorTransient = typeof lastRawResolveReason === "string"
-                && /external-evidence failure|cascading|no vessel advertising|rate.?limit|429|402|insufficient|exhaust|transport|timeout|empty content|fetch (threw|failed)/i.test(lastRawResolveReason);
+              // The failure is read where it was RECORDED for this shape (transientFailureByShape), not
+              // from lastRawResolveReason, which the self-correction loop has rewritten by now; the
+              // classification is the shared one (transient-failure.ts), which knows HTTP 5xx.
+              const _priorTransientReason = transientFailureByShape.get(missingShape)
+                ?? (isTransientFailure(lastRawResolveReason) ? String(lastRawResolveReason) : null);
+              const _priorTransient = _priorTransientReason !== null;
               const _vrRetried = satisfierRetry.get(missingShape) ?? 0;
               if (_vrEndpoint && satisfierTried.has(missingShape) && _priorTransient && _vrRetried < 1) {
                 satisfierRetry.set(missingShape, _vrRetried + 1);
                 satisfierTried.delete(missingShape);
-                tap(`[goal-host-vessel] walk: un-poisoning ${missingShape} for one bounded retry (prior failure transient: ${String(lastRawResolveReason).slice(0, 90)})`);
+                tap(`[goal-host-vessel] walk: un-poisoning ${missingShape} for one bounded retry (prior failure transient: ${String(_priorTransientReason).slice(0, 90)})`);
               }
               if (_vrEndpoint && !satisfierTried.has(missingShape)) {
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
@@ -14110,7 +14150,7 @@ async function runGoalWithRecoveryInner(
               resp = await fetch(composeUrl, composeInit());
             } catch (err1) {
               const m = String((err1 as Error)?.message ?? "");
-              if (!/timeout|timed out|fetch failed|ECONNREFUSED|ECONNRESET|socket|BUSY/i.test(m)) throw err1;
+              if (!isTransientFailure(m)) throw err1; // transient-failure.ts — the one shared classifier
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT transient compose failure (${m}) — retrying once in 5s`);
               await new Promise((r) => setTimeout(r, 5000));
               resp = await fetch(composeUrl, composeInit());
