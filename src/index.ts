@@ -396,6 +396,7 @@ import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, i
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
+import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import type {
   EventSink,
   Impulse,
@@ -8346,6 +8347,14 @@ If one of those sibling shapes is the action that would create what the goal ask
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
     satisfierTried.add(shape);
+    // NO WALK-SIDE FILESYSTEM WRITE, FROM EITHER SATISFIER SITE (fs-write-shapes.ts).
+    // The satisfier pick already excluded these shapes; the vessel-resolver producer
+    // scan reached this function anyway and wrote the live super-repo clone (10-01).
+    // Checked here, where every vessel resolve starts, so no call site can skip it.
+    if (isFsWriteShape(shape)) {
+      tap(`[goal-host-vessel] walk: vesselResolve REFUSED filesystem-write shape ${shape} — a walk-side write has no snapshot/rollback and cannot be credited without a landed sha; edits must route through feature_compose / patch_with_tools`);
+      return null;
+    }
     // DETERMINISTIC PRODUCER-LOOKUP: "how many/which vessels advertise|serve shape X" is
     // answered from the discovery registry via the walk's own AUTHED in-process resolve —
     // a synthesized shell curl cannot carry the key, and the old path replayed a stale
@@ -10024,7 +10033,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // so a satisfier write can corrupt the tree but can NEVER produce a reach. Excluding
       // these shapes removes a capability the walk did not actually have.
       // Edits belong on the drafter paths, which verify and can undo themselves.
-      const SATISFIER_FORBIDDEN_FS_WRITE = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
+      const SATISFIER_FORBIDDEN_FS_WRITE = FS_WRITE_SHAPES; // fs-write-shapes.ts — shared with vesselResolveShape below
       const _fsBlocked = eligibleForSatisfier.filter((s) => SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)));
       if (_fsBlocked.length > 0) {
         tap(`[goal-host-vessel] walk(${opts.surface}): satisfier REFUSED filesystem-write shapes ${JSON.stringify(_fsBlocked)} — the bare satisfier has no snapshot/rollback and an edit-effect reach is uncreditable without a landed sha; edits must route through feature_compose / patch_with_tools`);
