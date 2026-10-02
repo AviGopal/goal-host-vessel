@@ -198,3 +198,24 @@ describe("isCountableQuestion — a superlative over a MEASURABLE attribute stay
     expect(isCountableQuestion("What are the 3 biggest modules under repos/goal-host-vessel/src by size in bytes?")).toBe(true);
   });
 });
+
+describe("isCountableQuestion — a superlative is countable only when it names something a read-only command can measure", () => {
+  // FIX-QUALITY FOLLOW-UP to 7295de1. That landing re-admitted "what are the N largest files by
+  // size under repos/..." by VOCABULARY: a code noun (files, modules, packages, functions,
+  // commits) or a "by <attribute>" phrase. Code nouns are common in web questions, so popularity
+  // and importance rankings became shell counts. The rule is the FORM of the request: in
+  // enumeration form, a superlative is countable only when the question names a repos/ path or
+  // tree, a file path, or an explicit measurable unit (bytes, lines, size on disk, commits in a
+  // repo). A topic noun alone is not enough.
+  it("THE BREAK: 'the 5 most popular JavaScript packages this year' is a web question, not a count", () => {
+    expect(isCountableQuestion("What are the 5 most popular JavaScript packages this year?")).toBe(false);
+  });
+
+  it("'the 10 most important files in a legal case' is not a count", () => {
+    expect(isCountableQuestion("What are the 10 most important files in a legal case?")).toBe(false);
+  });
+
+  it("'the 3 most downloaded Python modules on PyPI' names no repo and no unit, so it is not a count", () => {
+    expect(isCountableQuestion("What are the 3 most downloaded Python modules on PyPI this month?")).toBe(false);
+  });
+});
