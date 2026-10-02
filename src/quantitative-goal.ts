@@ -46,7 +46,15 @@ export function isCountableQuestion(goal: string): boolean {
   // An enumeration-style goal ('list', 'top N', 'what are the N...') is not countable, even if it
   // contains a superlative like 'most', unless it also contains an explicit counting keyword
   // like 'how many'. This prevents misclassifying list-shaped goals as quantitative.
-  if (/\b(list\b|top\s+\w+|what\s+are\s+the|\d+\s+most|headlines|events|stories|items)\b/i.test(goal) && !countable) return false;
+  if (/\b(list\b|top\s+\w+|what\s+are\s+the|\d+\s+most|headlines|events|stories|items)\b/i.test(goal) && !countable) {
+    // Enumeration-style questions are generally not countable; however,
+    // allow superlative-over-measurable-attribute forms like
+    // "what are the 5 largest files (by size) ..." to remain countable.
+    const measurableDomain =
+      /\b(files?|directories?|dirs?|folders?|modules?|packages?|functions?|classes?|commits?)\b/i.test(goal) ||
+      /\bby\s+(size|lines?|loc|length|bytes?|kb|mb|gb|age|date|mtime|ctime|commits?|changes?)\b/i.test(goal);
+    if (!(superlative && measurableDomain)) return false;
+  }
 
   if (/\b(summar(?:y|ise|ize)|explain|describe|purpose of|overview|gist|walk me through)\b/i.test(goal)) return false;
   if (/\b(edit|insert|append|modify|replace|refactor)\b/i.test(goal)) return false;
