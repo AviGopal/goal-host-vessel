@@ -126,3 +126,47 @@ describe("isCountableQuestion — a creation goal is NOT a countable question", 
     expect(isCountableQuestion("How many files are under repos/x/src")).toBe(true);
   });
 });
+
+describe("isCountableQuestion — an ENUMERATION goal is NOT a countable question", () => {
+  // MEASURED LIVE (dispatch e0b6f056, after inference correctly targeted web_search): the
+  // news goal below matched the superlative "most" ("10 most important ongoing events"), so
+  // /run-goal APPENDED shellResult to the inferred targets and derivation made shellResult a
+  // required terminal. The deliverable of a LIST-shaped question is a report/list built from
+  // retrieved content, not a number: the walk ran a shell count (curl against a keyless news
+  // API) and nothing composed the web_search results into the answer.
+  //
+  // Class rule: "top N <things>", "list ...", "what are the N ...", headlines / events /
+  // stories / items asked for as a set are ENUMERATION. Only an explicit measurement ask
+  // ("how many", "number of", "count", a ratio, or a superlative over a measurable attribute
+  // like lines/size) makes a goal countable.
+  it("THE BREAK: the verbatim news goal is an enumeration, not a count", () => {
+    const g = "What are the top ten headlines for yesterday? And what are the 10 most important ongoing events and their updates?";
+    expect(isCountableQuestion(g)).toBe(false);
+  });
+
+  it("'list the top 5 X' is an enumeration, not a count", () => {
+    expect(isCountableQuestion("List the top 5 most popular JavaScript frameworks and what each is used for.")).toBe(false);
+  });
+
+  it("'what are the N most/biggest <things>' is an enumeration, not a count", () => {
+    expect(isCountableQuestion("What are the biggest news stories this week?")).toBe(false);
+    expect(isCountableQuestion("What are the 5 most significant ongoing conflicts and their latest developments?")).toBe(false);
+  });
+
+  it("CONTROL: the known-answer registry count stays countable", () => {
+    expect(isCountableQuestion("How many vessels are currently registered in the discovery registry? Report the number.")).toBe(true);
+  });
+
+  it("CONTROL: an imperative count stays countable", () => {
+    expect(isCountableQuestion("Count the files in repos/concept-db/src")).toBe(true);
+  });
+
+  it("CONTROL: an explicit count ABOUT enumerable things stays countable", () => {
+    expect(isCountableQuestion("How many headlines did yesterday's top-stories search return?")).toBe(true);
+    expect(isCountableQuestion("List the number of TypeScript files under repos/concept-db/src")).toBe(true);
+  });
+
+  it("CONTROL: a superlative over a measurable attribute stays countable", () => {
+    expect(isCountableQuestion("Which TypeScript module under repos/ribosome-vessel/src has the most lines? Give its filename.")).toBe(true);
+  });
+});
