@@ -1145,11 +1145,43 @@ const SYNTHETIC_EXECUTION_ID_PREFIXES = [
   "patch_with_tools:",
 ] as const;
 
-function deliverReachVerdict(
+/**
+ * The POST /reach body (slice Y1d). The verdict's REASON and the goal hash ride along so the
+ * store can classify the late not-reached verdict (activity-api /reach stamps
+ * metadata.verdict_class, Y1c) and count distinct goals per class. Before this the reason
+ * reached only the local failure memory, a jsonl no detector reads.
+ *  - No class is sent: classification happens once, at the store.
+ *  - Every reason is sent, structural ones too; the class gap generator, not the sender,
+ *    scopes to deterministic:*.
+ *  - The reason is capped at 600 chars; an absent / empty reason or hash is omitted, never
+ *    sent as "" (the store reads a missing hash as no goal).
+ * The spool replays this same line, so a redelivered verdict keeps its reason.
+ */
+export function reachVerdictBody(
+  executionId: string,
+  reached: boolean,
+  completionShapes: string[] | null | undefined,
+  reason?: string | null,
+  goalHash?: string | null,
+): string {
+  const r = typeof reason === "string" ? reason.trim() : "";
+  const h = typeof goalHash === "string" ? goalHash.trim() : "";
+  return JSON.stringify({
+    execution_id: executionId,
+    reached,
+    completion_shapes: completionShapes ?? [],
+    ...(r ? { reason: r.slice(0, 600) } : {}),
+    ...(h ? { goal_hash: h } : {}),
+  });
+}
+
+export function deliverReachVerdict(
   executionId: string | undefined,
   reached: unknown,
   completionShapes: string[] | null | undefined,
   origin: string,
+  reason?: string | null,
+  goalHash?: string | null,
 ): void {
   const skipReason =
     typeof executionId !== "string" || executionId.length === 0
@@ -1163,7 +1195,7 @@ function deliverReachVerdict(
     console.warn(`[goal-host-vessel] reach-patch NOT ATTEMPTED (${origin}): ${skipReason} — this execution stays ungraded and its arm learns nothing from it`);
     return;
   }
-  const _reachBody = JSON.stringify({ execution_id: executionId, reached, completion_shapes: completionShapes ?? [] });
+  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash);
   const _reachId = executionId as string;
   const _reachVerdict = reached as boolean;
   void (async () => {
@@ -13518,7 +13550,7 @@ async function runGoalWithRecoveryInner(
               };
             }
             if (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) {
-              deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable");
+              deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable", "deterministic:early-edit-intent-not-landed", goalHashOf(String(goal ?? "")));
             }
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
           } else {
@@ -17258,7 +17290,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // arrival, so delivery IS credit: a dropped patch is an arm that never learns from
       // an execution it actually ran. Delivery, retry and every skip reason live in
       // deliverReachVerdict so the throw path can report its verdict too.
-      deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete");
+      deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")));
       // A FALSE verdict must be able to un-bank what a TRUE verdict banked. Without this the
       // known-command library only ever grows: a command from a reach that later graded false
       // stayed on disk and was replayed by the next similar goal after every restart.
@@ -17341,7 +17373,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           record.executionId = await persistFailedWalkTrace(String(goal ?? ""), walkStepSink, (record as { completionShapes?: string[] | null }).completionShapes ?? null, record.error, [], "walk-threw");
         } catch { /* leave executionId as-is */ }
       }
-      if (!__isPinnedRefusal) deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw");
+      if (!__isPinnedRefusal) deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw", record.error, goalHashOf(String(goal ?? "")));
       // A dispatch that THREW never reached the classifier below, so it used to
       // terminalize with no executionPath at all — indistinguishable, to every
       // reader, from a run whose mechanism simply was not recorded. A throw is
