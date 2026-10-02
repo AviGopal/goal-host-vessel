@@ -180,3 +180,21 @@ describe("isCountableQuestion — an ENUMERATION goal is NOT a countable questio
     expect(isCountableQuestion("List the top ten news stories from yesterday.")).toBe(false);
   });
 });
+
+describe("isCountableQuestion — a superlative over a MEASURABLE attribute stays countable in enumeration form", () => {
+  // FIX-QUALITY FOLLOW-UP to b260a15. The enumeration exclusion matches VOCABULARY
+  // ('what are the', 'top N', topic nouns) without a counting keyword, so a superlative over a
+  // measurable attribute of an enumerable set, asked as "what are the N largest ...", lost its
+  // recompute verification and fell to the LLM judge. The class line is the FORM of the request:
+  // an enumeration of judged/ranked items (headlines, stories, frameworks by popularity) is not
+  // countable; a ranking by a measurable attribute (size, line count, commits) is.
+  it("THE BREAK: 'what are the 5 largest files by size' under a repo tree is countable", () => {
+    expect(isCountableQuestion("What are the 5 largest files by size under repos/concept-db/src?")).toBe(true);
+  });
+
+  it("'what are the 3 biggest modules ... by size in bytes' is countable", () => {
+    // No counting keyword at all ('line count' would already match 'count'): the measurable
+    // attribute alone must carry it.
+    expect(isCountableQuestion("What are the 3 biggest modules under repos/goal-host-vessel/src by size in bytes?")).toBe(true);
+  });
+});
