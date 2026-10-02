@@ -38,3 +38,24 @@ describe("the floor's offered tools", () => {
     expect(invPrompt).not.toContain("shellResult");
   });
 });
+
+describe("the floor's repo-wide code search (user ruling 10-02)", () => {
+  it("offers fs_grep — a search with the webSearchResult result form — and still no shell", () => {
+    expect(names).toContain("fs_grep");
+    const g = UNIVERSAL_READ_TOOLS.find((t) => t.name === "fs_grep")!;
+    expect(g.input_schema.required).toEqual(["pattern"]);
+    expect(g.description).toContain("results[]");
+    expect(g.description).toContain("repos/<vessel>");
+    for (const f of FLOOR_FORBIDDEN_TOOLS) expect(names).not.toContain(f);
+  });
+
+  it("offers only read tools: no write, edit, commit or shell shape is in the list", () => {
+    for (const n of names) expect(n).not.toMatch(/(_write|_create_write|^fs_write$|^fs_edit$|^git_commit|^code_(insert|replace|add_import)|shell|bash)/);
+  });
+
+  it("the floor prompt points the model at fs_grep for repo-wide search", () => {
+    const src = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
+    const floorPrompt = src.slice(src.indexOf("You are the substrate's universal executor."), src.indexOf("When finished, respond with the final answer/result"));
+    expect(floorPrompt).toContain("fs_grep");
+  });
+});
