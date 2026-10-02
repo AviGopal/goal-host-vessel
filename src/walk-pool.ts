@@ -294,3 +294,91 @@ export function involvedSteps(edges: ReadonlyArray<StepEdge | undefined>, delive
 export function walkRetrieved(completionShapes: readonly string[], fedDeliverable: readonly string[], retrievalEvidence: ReadonlySet<string>): boolean {
   return [...completionShapes, ...fedDeliverable].some((sh) => retrievalEvidence.has(String(sh)));
 }
+
+// ── Search provenance: a fetch of a URL a same-walk web search returned ─────────────────────────
+
+/**
+ * The user's ruling for development-vessel's `web_resource` trust gate (10-02): "allow any https URL
+ * that a web_search in the same walk returned". The gate must VERIFY that, not take the caller's word
+ * for it, so the walk passes a REFERENCE (`provenance: {dispatch_id, impulse_id}`) and the resolver
+ * re-reads the referenced impulse from where it lives — this walk's pool, through `goalWalkState`
+ * (index.ts, the `impulseId` read) — and checks the URL is among that impulse's results.
+ *
+ * Only an impulse a SEARCH SATISFIER put in the pool qualifies: a `poolImpulse_write` injection is
+ * open to any authenticated caller and lands with producedBy "goal-host-walk" and no producing
+ * execution, so a forged search result cannot vouch for a URL. development-vessel applies the same
+ * predicate (web-resource.ts) when it verifies; this side only chooses which reference to send.
+ */
+export const SEARCH_RESULT_SHAPES: ReadonlySet<string> = new Set(["webSearchResult", "web_search"]);
+export const SEARCH_PRODUCERS: ReadonlySet<string> = new Set(["satisfier:webSearchResult", "satisfier:web_search"]);
+/** The fetch shapes that accept a search-provenance reference (http_response delegates to web_resource). */
+export const PROVENANCE_FETCH_SHAPES: ReadonlySet<string> = new Set(["web_resource", "http_response"]);
+
+/** The result URLs a search impulse's content carries (`results: [{title, url, snippet}]`), tolerating a JSON string body. */
+export function searchResultUrls(content: unknown): string[] {
+  let c: unknown = content;
+  if (typeof c === "string") { try { c = JSON.parse(c); } catch { return []; } }
+  if (!c || typeof c !== "object") return [];
+  const o = c as Record<string, unknown>;
+  const results = Array.isArray(o["results"]) ? o["results"] : (o["body"] && typeof o["body"] === "object" ? (o["body"] as Record<string, unknown>)["results"] : undefined);
+  if (!Array.isArray(results)) return [];
+  return results.map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>)["url"] : undefined)).filter((u): u is string => typeof u === "string" && u.length > 0);
+}
+
+/** True iff the impulse is a search result a search satisfier of this walk produced. */
+export function isSatisfierSearchImpulse(imp: PoolImpulseLike): boolean {
+  const m = (imp.metadata ?? {}) as { shape?: unknown; producedBy?: unknown; producerExecutionId?: unknown };
+  return SEARCH_RESULT_SHAPES.has(String(m.shape ?? ""))
+    && SEARCH_PRODUCERS.has(String(m.producedBy ?? ""))
+    && typeof m.producerExecutionId === "string" && m.producerExecutionId.length > 0;
+}
+
+/** The pool id of the first satisfier-produced search impulse whose results contain `url`, else null. */
+export function searchProvenanceFor(pool: readonly PoolImpulseLike[], url: string): string | null {
+  if (typeof url !== "string" || !url) return null;
+  for (const imp of pool) {
+    if (isSatisfierSearchImpulse(imp) && searchResultUrls(imp.content).includes(url)) return imp.id;
+  }
+  return null;
+}
+
+/** One pool impulse in full, as `goalWalkState {impulseId}` serves it (the 2000-char preview cannot vouch for a URL past the cut). */
+export function walkStateImpulse(pool: readonly PoolImpulseLike[] | undefined, impulseId: string): { id: string; shape: string | null; producedBy: string | null; producerExecutionId: string | null; content: unknown } | null {
+  const imp = (pool ?? []).find((i) => i.id === impulseId);
+  if (!imp) return null;
+  const m = (imp.metadata ?? {}) as { shape?: unknown; producedBy?: unknown; producerExecutionId?: unknown };
+  return {
+    id: imp.id,
+    shape: typeof m.shape === "string" ? m.shape : null,
+    producedBy: typeof m.producedBy === "string" ? m.producedBy : null,
+    producerExecutionId: typeof m.producerExecutionId === "string" ? m.producerExecutionId : null,
+    content: imp.content,
+  };
+}
+
+/**
+ * The live pools by dispatch id, so `goalWalkState` can serve a search result in full. The walk's
+ * pool is a closure local; the record mirrored onto executionStore holds only capped previews.
+ * runGoalAsPoolWalk registers its pool at start and forgets it in its `finally`, so the map holds
+ * RUNNING walks only. LIVE_POOL_CAP is a backstop far above walk concurrency, not the lifetime
+ * mechanism: reaching it means a walk leaked its registration, and is logged.
+ */
+const LIVE_POOL_CAP = 256;
+const livePools = new Map<string, readonly PoolImpulseLike[]>();
+export function rememberLivePool(dispatchId: unknown, pool: readonly PoolImpulseLike[]): void {
+  if (typeof dispatchId !== "string" || !dispatchId) return;
+  livePools.delete(dispatchId);
+  livePools.set(dispatchId, pool);
+  while (livePools.size > LIVE_POOL_CAP) {
+    const oldest = livePools.keys().next().value; if (oldest === undefined) break;
+    livePools.delete(oldest);
+    console.warn(`[walk-pool] live pool registry over ${LIVE_POOL_CAP}: evicted ${oldest} — a walk did not unregister its pool`);
+  }
+}
+/** Called from the walk's `finally`: the pool stops being served the moment the walk ends. */
+export function forgetLivePool(dispatchId: unknown): void {
+  if (typeof dispatchId === "string") livePools.delete(dispatchId);
+}
+export function livePool(dispatchId: string): readonly PoolImpulseLike[] | undefined {
+  return livePools.get(dispatchId);
+}

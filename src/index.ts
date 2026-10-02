@@ -399,7 +399,7 @@ import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -7475,7 +7475,17 @@ function readCandidateShapes(x: any, k: number = SELECTION_TUNING_DEFAULTS.edgeB
 // tuning constant. When the walk cannot take even one shape-feasible step
 // (chain.length === 0), runGoalWithRecovery falls through to the single-template
 // recovery loop — graceful degradation, not a break.
-async function runGoalAsPoolWalk(
+// The walk's pool is registered for goalWalkState {impulseId} while it runs (walk-pool.ts) and
+// unregistered when the walk ends, on every exit path — so a finished walk's pool is never served
+// and a running walk's pool is never the one evicted to make room.
+async function runGoalAsPoolWalk(goal: string, opts: Parameters<typeof runGoalAsPoolWalkBody>[1]): Promise<GoalSeekResult> {
+  try {
+    return await runGoalAsPoolWalkBody(goal, opts);
+  } finally {
+    forgetLivePool(opts.variables.dispatch_id);
+  }
+}
+async function runGoalAsPoolWalkBody(
   goal: string,
   opts: {
     variables: Record<string, unknown>;
@@ -7629,6 +7639,10 @@ async function runGoalAsPoolWalk(
   const producedShapes = new Set<string>();
   let commandReuseFired = false; // Tier-2 lexical rebind fired this walk -> record as learned_pathway
   const poolImpulses: Impulse[] = [];
+  // goalWalkState {impulseId} serves one impulse of this pool in full (walk-pool.ts): the read a
+  // web_resource search-provenance check makes. The array is registered by reference, so every later
+  // push is visible to that read.
+  rememberLivePool(opts.variables.dispatch_id, poolImpulses);
   // PROVENANCE (walk-pool.ts, agentic-floor B1): ids unique per dispatch, `producedBy` the real
   // producer, and the producing execution / consumed ids where the step knows them.
   const mkImpulse = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): Impulse => ({
@@ -8284,6 +8298,20 @@ async function runGoalAsPoolWalk(
     // The shape is resolved LAST: a synthesized `type` must never change it (see resolve-pointer.ts).
     const pointer: Record<string, unknown> = buildResolvePointer(shape, base as Record<string, unknown>, extraArgs);
     if ((shape === "shellResult" || shape === "shell" || shape === "bash" || shape === "bounded_shell" || shape === "gitCommitResult" || shape === "git_commit") && !pointer.execution_id && dispatchContext.getStore()?.dispatchId) pointer.execution_id = dispatchContext.getStore()!.dispatchId;
+    // SEARCH PROVENANCE (web_resource trust gate, user ruling 10-02: "allow any https URL that a
+    // web_search in the same walk returned"). The walk sends a REFERENCE to the search impulse that
+    // returned the URL — never a claim — and development-vessel re-reads that impulse through
+    // goalWalkState {impulseId} and checks the URL is among its results. A synthesized `provenance`
+    // is dropped first: only the walk names one, and only for an impulse a search satisfier produced.
+    if (PROVENANCE_FETCH_SHAPES.has(shape)) {
+      delete pointer.provenance;
+      const _wid = opts.variables.dispatch_id;
+      const _pid = typeof _wid === "string" && typeof pointer.url === "string" ? searchProvenanceFor(poolImpulses, pointer.url) : null;
+      if (_pid) {
+        pointer.provenance = { dispatch_id: _wid, impulse_id: _pid };
+        tap(`[goal-host-vessel] walk(${opts.surface}): ${shape} url is a result of search impulse ${_pid} — passing it as provenance for the trust gate to verify`);
+      }
+    }
     // llm_completion / llmCompletion resolvers REQUIRE a non-empty `prompt`. The LLM
     // pointer-arg extractor does not reliably synthesize one for a bare inferred
     // llm_completion target (a pure question), so the resolver rejects "body must
@@ -17502,6 +17530,20 @@ async function handleResolve(req: Request): Promise<Response> {
     if (!wid) return Response.json({ resolved: false, shape: "goalWalkState", error: "dispatchId is required" }, { status: 400 });
     const rec = executionStore.get(wid);
     if (!rec) return Response.json({ resolved: false, shape: "goalWalkState", error: "dispatch not found" }, { status: 404 });
+    // ONE IMPULSE IN FULL (walk-pool.ts walkStateImpulse): the read development-vessel's web_resource
+    // makes to verify a search-provenance reference. The poolProvenance preview below is capped at
+    // 2000 chars, so a URL past the cut could not be vouched for from it. Read-only.
+    const _impId = (typeof body.impulseId === "string" ? body.impulseId : undefined)
+      ?? (typeof pointer.impulseId === "string" ? pointer.impulseId : undefined);
+    if (_impId) {
+      // ONLY A SEARCH SATISFIER'S RESULT is served. /resolve answers the federation ingress, dispatch
+      // ids are listed by activeDispatches and pool ids are predictable, so serving any impulse in
+      // full would publish every running walk's pool content. The one reader of this read
+      // (development-vessel web_resource) accepts nothing else anyway; anything else is a 404.
+      const _imp = (livePool(wid) ?? []).find((i) => i.id === _impId);
+      const impulse = _imp && isSatisfierSearchImpulse(_imp) ? walkStateImpulse(livePool(wid), _impId) : null;
+      return Response.json({ resolved: impulse !== null, shape: "goalWalkState", body: { dispatchId: rec.dispatchId, status: rec.status, impulse } }, { status: impulse ? 200 : 404 });
+    }
     maybeConsumeOracleLabel(rec);
     return Response.json({
       resolved: true,
