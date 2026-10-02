@@ -398,6 +398,7 @@ import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { buildJudgeView, restrictCompletionShapes, type JudgeCut } from "./judge-view";
+import { findingsDigest, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, type PoolProvenance, type StepEdge } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -7031,6 +7032,10 @@ function buildCompositeTraceFromChain(
   tags?: string[],
   poolImpulses?: Array<{ id: string; metadata?: { shape?: string } }>,
   goalSignature?: string,
+  /** Per-step edges recorded as the walk ran (agentic-floor B2). When given, a step declares exactly
+   *  what it bound and produced; a step with no record declares no input. Absent ⇒ the positional
+   *  fallback below, for callers that recorded none. */
+  stepEdges?: Array<StepEdge | undefined>,
 ): ExecutionTrace {
   const shapeOf = (id: string): string => (id.startsWith("satisfier:") ? id.slice("satisfier:".length) : id);
   // Map each produced shape to its REAL pool-impulse id so the composite trace's
@@ -7047,6 +7052,22 @@ function buildCompositeTraceFromChain(
   }
   const tasks = chain.map((id, i) => {
     const sh = shapeOf(id);
+    if (stepEdges) {
+      const e = stepEdges[i];
+      const outs = (e?.outputShapes ?? (id.startsWith("satisfier:") ? [sh] : [])).filter((s) => producedShapes.includes(s));
+      return {
+        taskId: `compose-step-${i + 1}`,
+        description: `produce ${outs.join(", ") || sh} (composition step ${i + 1})`,
+        resolverId: sh,
+        resolverTier: "pattern" as const,
+        inputImpulseIds: [...(e?.inputImpulseIds ?? [])],
+        outputImpulseIds: e ? [...e.outputImpulseIds] : [],
+        inputShapes: [...(e?.inputShapes ?? [])],
+        outputShapes: outs,
+        servesIntent: goalSignature,
+        success: true,
+      };
+    }
     const outId = shapeToImpulseId.get(sh);
     const prevSh = i > 0 ? shapeOf(chain[i - 1]) : undefined;
     const prevId = prevSh ? shapeToImpulseId.get(prevSh) : undefined;
@@ -7587,15 +7608,29 @@ async function runGoalAsPoolWalk(
   const producedShapes = new Set<string>();
   let commandReuseFired = false; // Tier-2 lexical rebind fired this walk -> record as learned_pathway
   const poolImpulses: Impulse[] = [];
-  let impulseSeq = 0;
-  const mkImpulse = (shape: string, content: unknown, summary?: string): Impulse => ({
-    id: `walk-${shape}-${++impulseSeq}`,
+  // PROVENANCE (walk-pool.ts, agentic-floor B1): ids unique per dispatch, `producedBy` the real
+  // producer, and the producing execution / consumed ids where the step knows them.
+  const mkImpulse = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): Impulse => ({
+    id: poolImpulseId(opts.variables.dispatch_id, shape),
     pointer: { type: "memo" },
-    metadata: { shape, summary: summary ?? `pool impulse (${shape})`, producedBy: "goal-host-walk", goalSignature: goalHashOf(goal) },
+    metadata: {
+      shape, summary: summary ?? `pool impulse (${shape})`, producedBy: prov?.producedBy ?? "goal-host-walk", goalSignature: goalHashOf(goal),
+      ...(prov?.producerExecutionId ? { producerExecutionId: prov.producerExecutionId } : {}),
+      ...(prov?.consumedIds ? { consumedIds: [...prov.consumedIds] } : {}),
+    },
     loaded: true,
     content: shape === 'memoryNote' ? (content as {value: string}).value : content,
   });
-  const addToPool = (shape: string, content: unknown, summary?: string): void => {
+  /** Stamp what a step learned after its impulse entered the pool (the satisfier's trace id is
+   *  minted after addToPool). Touches only the impulse this walk produced for `shape`. */
+  const stampProvenance = (shape: string, p: Partial<PoolProvenance>): void => {
+    const imp = poolImpulses.find((i) => String((i.metadata as { shape?: unknown }).shape) === shape);
+    if (!imp) return;
+    const m = imp.metadata as Record<string, unknown>;
+    if (p.producerExecutionId) m.producerExecutionId = p.producerExecutionId;
+    if (p.consumedIds) m.consumedIds = [...p.consumedIds];
+  };
+  const addToPool = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): void => {
     const widEv = opts.variables.dispatch_id;
     if (typeof widEv === "string") {
       const recEv = executionStore.get(widEv);
@@ -7605,7 +7640,7 @@ async function runGoalAsPoolWalk(
     }
     if (!shape || producedShapes.has(shape)) return;
     producedShapes.add(shape);
-    poolImpulses.push(mkImpulse(shape, content, summary));
+    poolImpulses.push(mkImpulse(shape, content, summary, prov));
   };
   // DATA-FLOW BINDING: expose each pool impulse's CONTENT as a variable keyed by
   // its shape, so a downstream task's `{{shape}}` placeholder interpolates from
@@ -8375,24 +8410,20 @@ If one of those sibling shapes is the action that would create what the goal ask
   // findings (e.g. problem_detection's problems[]) instead of a goal-text placeholder
   // — the difference between a genuine composition and a hollow one. Returns "" when
   // no intermediate content is available (caller then falls back to LLM-extracted args).
+  // BOUND-ONLY CONSUMPTION (walk-pool.ts, agentic-floor B4): every findings block actually built
+  // for a resolve records the shapes it carried into `stepBound`, which vesselResolveShape resets
+  // per resolve and the satisfier step reads to declare its edges. A shape that was produced but
+  // not bound (a re-frame's goal-only prompt) declares nothing.
+  let stepBound = new Set<string>();
   const boundFindingsFromIntermediates = (): string => {
-    if (terminalShapes.size === 0) return "";
-    const parts: string[] = [];
-    for (const imp of poolImpulses) {
-      const sh = (imp.metadata as { shape?: string } | undefined)?.shape;
-      if (!sh || terminalShapes.has(sh) || sh === "goal") continue;
-      let c: string;
-      try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content, null, 2); }
-      catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
-      if (!c || c.trim().length === 0 || c.trim() === "{}" || c.trim() === "[]") continue;
-      parts.push(`## ${sh}\n\n\`\`\`json\n${c.slice(0, 8000)}\n\`\`\``);
-    }
-    if (parts.length === 0) return "";
-    return `# Findings\n\n${parts.join("\n\n")}\n`;
+    const f = findingsDigest(poolImpulses, terminalShapes);
+    for (const sh of f.shapes) stepBound.add(sh);
+    return f.text;
   };
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
     satisfierTried.add(shape);
+    stepBound = new Set<string>();
     // NO WALK-SIDE FILESYSTEM WRITE, FROM EITHER SATISFIER SITE (fs-write-shapes.ts).
     // The satisfier pick already excluded these shapes; the vessel-resolver producer
     // scan reached this function anyway and wrote the live super-repo clone (10-01).
@@ -8488,6 +8519,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _trimmed = _stdout.trim();
           if (_trimmed && _trimmed.length <= 64 && !_trimmed.includes("\n") && !/error|not found|no such|command not/i.test(_trimmed)) {
             _directComputed = _trimmed;
+            stepBound = new Set<string>(["shellResult"]); // the shell value is bound, not the findings block
           }
         }
         if (_directComputed === null && !(boundBody && boundBody.trim().length > 0)) {
@@ -9682,7 +9714,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // Re-read the target now that the action ran; pass the action's args (e.g. path)
     // so the read targets the just-created artifact. Add the produced action shape
     // to the pool too (it's genuine output).
-    addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`);
+    addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`, { producedBy: `satisfier:${action.shape}` });
     const reread = await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs });
     if (reread != null) { recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
     // Action succeeded but re-read empty — still genuine progress (the artifact was
@@ -9693,7 +9725,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   };
 
   // Goal impulse (shape "goal").
-  addToPool("goal", { goal }, goal.slice(0, 200));
+  addToPool("goal", { goal }, goal.slice(0, 200), { producedBy: "seed" });
 
     // ── Hydrate walk pool from substrate standing pool (2026-07-03) ──────────
     // Fetch open poolImpulse records from development-vessel via discovery-based
@@ -9731,7 +9763,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _impulses = _sj?.impulses ?? [];
         for (const impulse of _impulses) {
           if (impulse.shape && impulse.body) {
-            addToPool(impulse.shape, impulse.body);
+            addToPool(impulse.shape, impulse.body, undefined, { producedBy: "seed" });
           }
         }
       }
@@ -9748,12 +9780,12 @@ If one of those sibling shapes is the action that would create what the goal ask
           : undefined) ??
         (typeof o.shape === "string" ? (o.shape as string) : undefined);
       if (shape) {
-        addToPool(shape, "content" in o ? o.content : o, `seed var ${k}`);
+        addToPool(shape, "content" in o ? o.content : o, `seed var ${k}`, { producedBy: "seed" });
         continue;
       }
     }
     // Plain variable value — expose it as a named shape so a consumer declaring it can bind.
-    addToPool(k, v, `seed var ${k}`);
+    addToPool(k, v, `seed var ${k}`, { producedBy: "seed" });
   }
 
   const target = new Set<string>(opts.expectedOutputShapes ?? []);
@@ -9814,6 +9846,12 @@ If one of those sibling shapes is the action that would create what the goal ask
   // Effect surface of every satisfied shape this walk touched — the evidence
   // path_signature throws away. Deduped and sorted at send time.
   const effectLedger = new Set<string>();
+  // STEP EDGES (walk-pool.ts, agentic-floor B2): what each chain step actually bound and produced,
+  // indexed by its chain position — the composite's edges, instead of "step i consumed step i-1".
+  const stepEdges = new Map<number, StepEdge>();
+  const recordStepEdge = (inputShapes: string[], outputShapes: string[]): void => {
+    stepEdges.set(chain.length - 1, stepEdgeOf(poolImpulses, inputShapes, outputShapes));
+  };
   const ledgerStep = (inputShapes: string[] | undefined, newOutputs: string[]): void => {
   // Normalize satisfier shapes: treat "foo" and "satisfier:foo" as equivalent for
   // producer->consumer matching. Without this, steps that declare inputShapes without the
@@ -9870,7 +9908,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // produced it, via what) so the pool's content is causally attributable to intent AT ANY
     // MOMENT via goalWalkState — not just stamped-but-dark on the impulse metadata.
     (rec as { poolProvenance?: unknown }).poolProvenance = poolImpulses.map((im) => {
-      const m = (im.metadata ?? {}) as { shape?: string; goalSignature?: string; producedBy?: string };
+      const m = (im.metadata ?? {}) as { shape?: string; goalSignature?: string; producedBy?: string; producerExecutionId?: string; consumedIds?: string[] };
       // EVIDENCE LEDGER (2026-07-27): surface a CAPPED preview of each pool impulse's
       // CONTENT so a human can inspect what the walk actually produced — for BOTH reached
       // and failed walks (mirrorWalkState runs every iteration regardless of outcome) — and
@@ -9882,9 +9920,12 @@ If one of those sibling shapes is the action that would create what the goal ask
       try { c = typeof im.content === "string" ? im.content : JSON.stringify(im.content); } catch { c = String(im.content); }
       const hasContent = typeof c === "string" && c.trim().length > 0;
       return {
+        id: im.id,
         shape: m.shape,
         goalSignature: m.goalSignature ?? null,
         producedBy: m.producedBy ?? null,
+        producerExecutionId: m.producerExecutionId ?? null,
+        consumedIds: m.consumedIds ?? [],
         ...(hasContent
           ? { contentPreview: c.slice(0, 2000), chars: c.length, truncated: c.length > 2000 }
           : { chars: 0 }),
@@ -10193,7 +10234,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           lastRawResolveReason = _emptyRead.slice(0, 200);
         }
         if (resolved && !_emptyRead) {
-          addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`);
+          addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`, { producedBy: `satisfier:${satisfiableNow}` });
           if (resolved.effect) effectLedger.add(resolved.effect);
           // Record the satisfier as a GENUINE step: synthesize a minimal
           // ExecutionTrace so the walk's downstream accounting (chain.length > 0 →
@@ -10267,17 +10308,20 @@ If one of those sibling shapes is the action that would create what the goal ask
           };
           satisfierTraces.push(synthTrace);
           chain.push(satId);
-          // CONSUMPTION-EDGE DECLARATION: a compute (llmCompletion) or terminal-write
-          // satisfier is genuinely bound from the produced intermediates
-          // (boundFindingsFromIntermediates feeds its prompt/body), so it CONSUMES them.
-          // Declaring those inputs makes consumedInChain register the real
-          // producer->consumer edge, so a read->compute->write walk earns a credited
-          // reach and crystallizes. A leading read (no binding) declares nothing and
-          // stays uncredited — the gate stays honest; we stop hiding a real edge.
+          // CONSUMPTION-EDGE DECLARATION, BOUND-ONLY (CONSUMPTION-EDGE-ANALYSIS, agentic-floor
+          // B4): a compute (llmCompletion) or terminal-write satisfier consumes EXACTLY the
+          // shapes its resolve bound into its prompt/body (stepBound, recorded where the
+          // findings block / direct value was built). Declaring those inputs makes
+          // consumedInChain register the real producer->consumer edge, so a
+          // read->compute->write walk earns a credited reach and crystallizes. A step that
+          // bound nothing — a leading read, a re-frame's goal-only prompt, an extractor-
+          // supplied prompt — declares nothing and stays uncredited.
           const _consumedInputs = (satisfiableNow === "llmCompletion" || satisfiableNow === "llm_completion" || terminalShapes.has(satisfiableNow))
-            ? [...chainProduced].filter((s) => s !== "goal" && s !== satisfiableNow && !terminalShapes.has(s))
+            ? boundConsumption(stepBound, chainProduced, satisfiableNow, terminalShapes)
             : [];
           ledgerStep(_consumedInputs.length > 0 ? _consumedInputs : undefined, [satisfiableNow]);
+          recordStepEdge(_consumedInputs, [satisfiableNow]);
+          stampProvenance(satisfiableNow, { producerExecutionId: synthTrace.id, consumedIds: poolIdsOf(poolImpulses, _consumedInputs) });
           if (_consumedInputs.length > 0) { const _inIds = poolImpulses.filter((i) => _consumedInputs.includes(String((i.metadata as { shape?: unknown }).shape))).map((i) => i.id); synthTrace.inputImpulseIds = _inIds; const _t0 = synthTrace.tasks[0]; if (_t0) { _t0.inputImpulseIds = _inIds; (_t0 as { inputShapes?: string[] }).inputShapes = [..._consumedInputs]; } }
           { const _outImp = poolImpulses.find((i) => String((i.metadata as { shape?: unknown }).shape) === satisfiableNow); if (_outImp) { synthTrace.outputImpulseIds = [_outImp.id]; const _t1 = synthTrace.tasks[0]; if (_t1) _t1.outputImpulseIds = [_outImp.id]; } }
           exclude.add(normActivityId(satId));
@@ -10561,7 +10605,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const t = branchResults[i];
           chain.push(c.id);
           exclude.add(normActivityId(c.id));
-          if (!t) continue;
+          if (!t) { recordStepEdge([], []); continue; }
           if (t.id) chainExecIds.push(t.id);
           totalDurationMs += t.durationMs ?? 0;
           totalCostUsd += t.costUsd ?? 0;
@@ -10575,8 +10619,9 @@ If one of those sibling shapes is the action that would create what the goal ask
           for (const s of branchShapes) {
             if (!producedShapes.has(s)) branchProducedNew = true;
             if (s === T) branchProducedT = true;
-            addToPool(s, { producedBy: c.id, executionId: t.id }, `produced by ${c.id} (horizontal)`);
+            addToPool(s, { producedBy: c.id, executionId: t.id }, `produced by ${c.id} (horizontal)`, { producedBy: c.id, ...(t.id ? { producerExecutionId: t.id } : {}), consumedIds: poolIdsOf(poolImpulses, declaredBound(c.inputShapes, iterPoolBefore)) });
           }
+          recordStepEdge(declaredBound(c.inputShapes, iterPoolBefore), t.status !== "failed" ? branchShapes : []);
           if (branchProducedNew) producedCount++;
           // The genuine producer of T wins as the step's representative trace.
           if (t.status !== "failed" && (bestTrace === null || branchProducedT)) {
@@ -10839,7 +10884,7 @@ If one of those sibling shapes is the action that would create what the goal ask
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
                 const _vrResolved = await vesselResolveShape(missingShape);
                 if (_vrResolved) {
-                  addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`);
+                  addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`, { producedBy: `satisfier:${missingShape}` });
                   const _vrSatId = `satisfier:${missingShape}`;
                   const _vrSynthTrace: ExecutionTrace = {
                     id: `walk-satisfier-${++satisfierSeq}-${Date.now()}`,
@@ -10863,6 +10908,8 @@ If one of those sibling shapes is the action that would create what the goal ask
                   satisfierTraces.push(_vrSynthTrace);
                   chain.push(_vrSatId);
                   ledgerStep(undefined, [missingShape]);
+                  recordStepEdge([], [missingShape]);
+                  stampProvenance(missingShape, { producerExecutionId: _vrSynthTrace.id, consumedIds: [] });
                   exclude.add(normActivityId(_vrSatId));
                   chainExecIds.push(_vrSynthTrace.id);
                   lastTrace = _vrSynthTrace;
@@ -10932,6 +10979,9 @@ If one of those sibling shapes is the action that would create what the goal ask
 
     // (e) MERGE OUTPUTS — pull genuinely-new shapes from the trace tasks into the pool.
     const beforeSize = producedShapes.size;
+    // What this template step bound: its declared inputs that the pool held before it ran.
+    const _pickBound = declaredBound(pick.inputShapes, iterPoolBefore);
+    const _pickConsumedIds = poolIdsOf(poolImpulses, _pickBound);
     // Advance the pool ONLY by shapes the activity GENUINELY produced — actual
     // output shapes from SUCCESSFUL tasks of this execution. No optimistic
     // declared-shape advancement: a composition step counts only if the data was
@@ -10954,13 +11004,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         const shape = imp.metadata?.shape;
         if (!shape || shape === "activityExecutionSummary") continue;
         if (imp.content === undefined || imp.content === null) continue;
-        addToPool(shape, imp.content, `produced by ${pick.id}`);
+        addToPool(shape, imp.content, `produced by ${pick.id}`, { producedBy: pick.id, producerExecutionId: trace.id, consumedIds: _pickConsumedIds });
       }
       // Fallback: declared output shapes whose content we could not recover
       // still advance reachability (keep the walk progressing) as a stub.
       for (const s of (t.outputShapes ?? [])) {
         if (s && s !== "activityExecutionSummary" && !producedShapes.has(s)) {
-          addToPool(s, { producedBy: pick.id, executionId: trace.id }, `produced by ${pick.id} (stub)`);
+          addToPool(s, { producedBy: pick.id, executionId: trace.id }, `produced by ${pick.id} (stub)`, { producedBy: pick.id, producerExecutionId: trace.id, consumedIds: _pickConsumedIds });
         }
       }
     }
@@ -10968,6 +11018,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     exclude.add(normActivityId(pick.id));
     const _stepNew = [...producedShapes].filter((s) => !iterPoolBefore.includes(s));
     if (trace.status !== "failed") ledgerStep(pick.inputShapes, _stepNew);
+    recordStepEdge(_pickBound, trace.status !== "failed" ? _stepNew : []);
     recordStep({
       selected: {
         templateId: pick.id, source: pickSource,
@@ -11796,8 +11847,11 @@ If one of those sibling shapes is the action that would create what the goal ask
           // the ribosome ("verdict=not-reached (tag:reached:false)") SKIPPED extraction
           // and NO learned-composition-* template was ever persisted (hub 404, verified).
           // Build first, then tag with compositeGrounded so tag and mint decision agree.
-          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal));
-          const compositeGrounded = mintGrounded || composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2;
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)));
+          // ≥ 2 output-bearing tasks AND ≥ 1 real edge between them (walk-pool.ts hasRealEdge): with
+          // recorded step edges a template step now carries real output ids, so the old count alone
+          // would mint two unrelated reads as a recipe.
+          const compositeGrounded = mintGrounded || (composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(composite.tasks));
           composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];
           // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
           //
@@ -18153,6 +18207,7 @@ export {
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
+  buildCompositeTraceFromChain,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 
