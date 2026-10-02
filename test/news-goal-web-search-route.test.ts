@@ -75,3 +75,73 @@ describe("news goals route to web_search before the model is asked", () => {
     expect(d.shapes).not.toContain("web_search");
   });
 });
+
+// Check-first test for gap a-news-question-targets-the-raw-search-results-so-no-step-synthesizes-an-answer.
+//
+// With the route above in place, the verbatim goal below inferred ["web_search"] and nothing
+// else (goal_hash d0241cd4; node 1 dispatch 20345418, node 2 dispatch c91b2840, 9 and 13
+// attempts, both reached:false). web_search returned real results every time, and the judge
+// ruled each HOLLOW ("only links to news sources", "does not list the top ten headlines"). No
+// step ever read those results and wrote the answer, because the target WAS the search
+// result: once it was in the pool the walk had nothing left to produce.
+//
+// A news QUESTION asks for an answer composed from evidence. The search is the means; the
+// deliverable is a written answer built from what the search returned. So the target is the
+// search followed by the evidence-bound writer: llm_completion (or llmCompletion where only
+// that is advertised). The walk already binds chain-produced evidence into that writer's
+// prompt, and the satisfier takes targets in list order, so the search has to come first.
+// llm_completion_dispatch is not that writer: it dispatches a named template and failed
+// "Template not found" on this same goal.
+//
+// The targets are exact on purpose. Extra shapes make reach harder, not easier: every listed
+// target has to be produced before the goal counts as reached.
+
+const NEWS_QUESTION = "What are the top ten headlines for yesterday? And what are the 10 most important ongoing events and their updates?";
+
+describe("a news question targets an answer written from the search results", () => {
+  it("THE BREAK: the verbatim headlines question targets web_search, then llm_completion", async () => {
+    const m = dispatcherModel();
+    const d = await inferGoalTargetDecision(NEWS_QUESTION, KNOWN, { complete: m.complete });
+    expect(d.shapes).toEqual(["web_search", "llm_completion"]);
+    expect(m.calls()).toBe(0);
+  });
+
+  it("where only llmCompletion is advertised, the news question targets web_search, then llmCompletion", async () => {
+    const m = dispatcherModel();
+    const known = [...KNOWN.filter((s) => s !== "llm_completion"), "llmCompletion"];
+    const d = await inferGoalTargetDecision(NEWS_QUESTION, known, { complete: m.complete });
+    expect(d.shapes).toEqual(["web_search", "llmCompletion"]);
+    expect(m.calls()).toBe(0);
+  });
+
+  it("a short news question also targets web_search, then llm_completion", async () => {
+    const m = dispatcherModel();
+    const d = await inferGoalTargetDecision("What are today's top stories?", KNOWN, { complete: m.complete });
+    expect(d.shapes).toEqual(["web_search", "llm_completion"]);
+    expect(m.calls()).toBe(0);
+  });
+
+  // Controls: these pass today and must keep passing.
+  it("control: an ask to search and return the links keeps web_search alone", async () => {
+    const m = dispatcherModel();
+    const d = await inferGoalTargetDecision(
+      "Search the web for the latest news about the Artemis program and return the links.",
+      KNOWN, { complete: m.complete },
+    );
+    expect(d.shapes).toEqual(["web_search"]);
+  });
+
+  it("control: with no evidence-bound writer advertised, the news question does not fall back to the dispatcher", async () => {
+    const m = dispatcherModel();
+    const known = KNOWN.filter((s) => s !== "llm_completion" && s !== "llmCompletion");
+    const d = await inferGoalTargetDecision(NEWS_QUESTION, known, { complete: m.complete });
+    expect(d.shapes).toEqual(["web_search"]);
+  });
+
+  it("control: a definitional what-is question keeps the prose route", async () => {
+    const m = dispatcherModel();
+    const d = await inferGoalTargetDecision("What is an ephemeris?", KNOWN, { complete: m.complete });
+    expect(d.shapes).toEqual(["llm_completion_dispatch"]);
+    expect(m.calls()).toBe(0);
+  });
+});
