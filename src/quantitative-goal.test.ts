@@ -169,4 +169,14 @@ describe("isCountableQuestion — an ENUMERATION goal is NOT a countable questio
   it("CONTROL: a superlative over a measurable attribute stays countable", () => {
     expect(isCountableQuestion("Which TypeScript module under repos/ribosome-vessel/src has the most lines? Give its filename.")).toBe(true);
   });
+
+  it("CONTROL: superlatives over measurable repo quantities stay countable", () => {
+    expect(isCountableQuestion("Which file is largest under repos/concept-db/src?")).toBe(true);
+    expect(isCountableQuestion("Which vessel repo has the most commits in the last 30 days?")).toBe(true);
+  });
+
+  it("CONTROL: a plain 'top N headlines' ask stays non-countable", () => {
+    expect(isCountableQuestion("What are the top 10 headlines today?")).toBe(false);
+    expect(isCountableQuestion("List the top ten news stories from yesterday.")).toBe(false);
+  });
 });
