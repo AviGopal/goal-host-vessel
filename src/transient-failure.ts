@@ -14,7 +14,7 @@
 
 /** Failure text that names a condition of the moment, not of the request. */
 export const TRANSIENT_FAILURE_PATTERN =
-  /external-evidence failure|cascading|no vessel advertising|rate.?limit|429|402|insufficient|exhaust|transport|timeout|timed out|empty content|fetch (threw|failed)|ECONNREFUSED|ECONNRESET|socket|BUSY|\bHTTP 5\d\d\b|unavailable/i;
+  /external-evidence failure|cascading|no vessel advertising|rate.?limit|\b429\b|\b402\b|insufficient|exhaust|transport|timeout|timed out|empty content|fetch (threw|failed)|ECONNREFUSED|ECONNRESET|socket|BUSY|\bHTTP 5\d\d\b|unavailable/i;
 
 /** An HTTP status that describes the server's moment (5xx, 429), not the request. */
 export function isTransientHttpStatus(status: number): boolean {
@@ -23,6 +23,9 @@ export function isTransientHttpStatus(status: number): boolean {
 
 /** Whether a failure is transient: by status when one is known, else by its text. */
 export function isTransientFailure(reason: string | null | undefined, status?: number): boolean {
-  if (typeof status === "number" && Number.isFinite(status) && isTransientHttpStatus(status)) return true;
+  // A known status is the answer: a 400 whose body happens to say "timeout" was still
+  // refused for its REQUEST and must not be retried verbatim. Text decides only when no
+  // response arrived (transport errors carry no status).
+  if (typeof status === "number" && Number.isFinite(status)) return isTransientHttpStatus(status);
   return typeof reason === "string" && TRANSIENT_FAILURE_PATTERN.test(reason);
 }
