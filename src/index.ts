@@ -396,6 +396,7 @@ import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, i
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
+import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import type {
@@ -3797,6 +3798,18 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
         ),
       }, shadowKey);
       return verbatimV;
+    }
+  }
+
+  // ASSERTED-DATE ORACLE (reach-date.ts): the judge has no clock, so a time-relative deliverable
+  // that asserts a stale "today" is graded here, deterministically, against the host clock — never
+  // by telling the judge the date in prose (8a85cfa / 2c26fcb did not hold). In-date or undated
+  // output abstains, so every other goal reaches the next oracle / the judge unchanged.
+  {
+    const dateV = verifyAssertedDate(goal, dig);
+    if (dateV) {
+      console.log(`[reach-date-oracle] VERDICT reached=false — ${dateV.reason.slice(0, 200)}`);
+      return dateV;
     }
   }
 
@@ -7722,8 +7735,7 @@ async function runGoalAsPoolWalk(
     if (!execField && correction) { const mm = correction.match(/\b(command|cmd|script|sql)\b/i); if (mm) execField = mm[1].toLowerCase(); }
     if (!execField) { const _em = shape.match(/(^|[_-])(sql|script|cmd|command)([_-]|$|result|query)/i); if (_em) execField = _em[2].toLowerCase(); else if (/(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command"; }
     if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic. PREFER threading an ALREADY-PRODUCED pool operand by its SHAPE as a {{shape}} or {{shape.field}} placeholder (e.g. "wc -l {{fileContent.path}}", or compute over {{shellResult}}) — placeholders are interpolated deterministically from the pool (shell-quoted for you), so the command becomes a FUNCTION of threaded inputs; ONLY inline a literal path/value when NO produced pool shape supplies that operand (it is named solely in the goal). Do NOT wrap {{...}} placeholders in quotes yourself. Output ONLY the computed value to stdout — do NOT write, tee, redirect (> or >>), or save the result to any file/note/path; for COUNTING lines/words/characters/bytes of a FILE, run wc DIRECTLY on the file path (wc -l FILE for lines, wc -w FILE for words, wc -c FILE for bytes, wc -m FILE for characters) and take the leading number — do NOT read the file and re-serialize/JSON-encode its content first (re-encoding changes the character/byte count); PERSISTING the result is a SEPARATE downstream step, and a command that pipes the value into tee/a file frequently mangles the count (produces the wrong number). Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}. AVAILABLE INTERPRETERS: bash, jq, bun, awk, perl — there is NO python, python3, node, or bc in this container. For any arithmetic or string computation you would normally reach for python (digit sums, factorials, primality, parsing), synthesize it with bun -e \x27<javascript>\x27, or perl -e \x27<perl>\x27, or awk — NEVER python or python3. Example: goal "sum the digits of 391" -> {"${execField}":"bun -e \x27console.log([...String(391)].reduce((a,c)=>a+ +c,0))\x27"}.\n\nVALUES THAT ARE NOT IN THIS REPOSITORY. This guidance is otherwise entirely filesystem-shaped, and that framing has produced literal nonsense: a goal asking for a distance "in astronomical units" was synthesized as \x60find /workspace/git/super-repo/astronomical units -maxdepth 1 -type f | wc -l\x60 — a NOUN PHRASE FROM THE GOAL TREATED AS A DIRECTORY. Never build a path out of goal wording; only inline a path the goal actually names. When the value asked for is a live, current or external fact — a market price, a measurement, an astronomical quantity at the present instant — it is NOT on this disk and no amount of find/grep/wc will produce it. This container HAS outbound internet access, so RETRIEVE it: curl a public HTTP API. Two constraints that are properties of this container, not preferences. (1) There are NO third-party API keys or credentials configured here, so any endpoint requiring authentication WILL fail — measured: a real astronomy API returned "Unauthorized (API key is missing…)" as plain text with HTTP 401 — and you must choose an endpoint that serves the data with NO key. (2) Do NOT pipe a fetch straight into jq: if the endpoint answers with an error page, HTML, or plain text, jq reports only "Invalid numeric literal" and the body that would have told you what went wrong is consumed and gone. PRINT the response first with a GENEROUS byte count (\x60curl -s '<url>' | head -c 4000\x60 — a few hundred bytes typically shows only a banner or licence header while the DATA sits thousands of characters further in), or request a format the endpoint genuinely serves, and parse only once you have seen it.\n\n`;
-    const nowIso = new Date().toISOString();
-    const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
+    const temporalGrounding = temporalGroundingBlock();
     // SUBSTRATE SELF-INVENTORY KNOWLEDGE (2026-07-27, assess-the-unknown-with-the-known). A goal
     // asking about the RUNNING substrate's own inventory — how many vessels/shapes/resolvers are
     // registered, what is registered, is X healthy — is answerable from the substrate's KNOWN
@@ -8182,9 +8194,12 @@ async function runGoalAsPoolWalk(
       const _fbPreamble = (typeof opts.priorVerdictFeedback === "string" && opts.priorVerdictFeedback.trim().length > 0)
         ? `Earlier attempts at this goal (or a similar one) were graded NOT REACHED for these reasons:\n${opts.priorVerdictFeedback.trim().slice(0, 1200)}\nProduce a CORRECTED final artifact that avoids EXACTLY those defects — if an attempt was "incomplete", cover every class in the records; if member ids were wrong or invented, use ONLY ids that appear verbatim in the records below; if a count was wrong, count the listed members and state that number.\n\n`
         : "";
+      // THE CLOCK AT SYNTHESIS (reach-date.ts): a time-relative goal's writer reads the same host-clock
+      // block arg extraction and the producer pick already bind; other goals' prompts are unchanged.
+      const _clock = timeRelativeOffset(goal) !== null ? temporalGroundingBlock() : "";
       pointer.prompt = (_poolFindings && _poolFindings.trim().length > 0)
-        ? `${_fbPreamble}${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
-        : `${_fbPreamble}${goal}`;
+        ? `${_clock}${_fbPreamble}${goal}\n\nProduce the FINAL artifact NOW as your ENTIRE response — the actual result the goal asks for (the clustered classes, each with member gap ids and a testable invariant), fully written out. Do NOT reply with a plan or an intention to act; do NOT invent, assume, or use placeholder records. Analyze ONLY the records below. Cover EVERY class present in the records — do not stop mid-class and do not omit any class; per class give the class name, the member gap ids on one line, and a one-sentence invariant.\n\n--- PRODUCED INPUT DATA ---\n${_poolFindings.slice(0, 120000)}`
+        : `${_clock}${_fbPreamble}${goal}`;
       if (!(typeof pointer.max_tokens === "number" && (pointer.max_tokens as number) >= 4096)) pointer.max_tokens = 4096; // ensure the report can COMPLETE (satisfier default was capping it short)
     }
     // KEYSTONE: thread produced pool-shape content into the executor command deterministically,
@@ -8296,8 +8311,7 @@ async function runGoalAsPoolWalk(
     const constraintBlock = obsidianWrite
       ? `\n\nKNOWN CONSTRAINT: obsidian note paths must be vault-relative, start with "Substrate/", and end in ".md" (e.g. "Substrate/<descriptive-name>.md"). The write action also requires a non-empty "content" field. Emit a valid path on the FIRST attempt.`
       : "";
-    const nowIso = new Date().toISOString();
-    const temporalGrounding = `CURRENT DATE/TIME (authoritative, from the substrate host clock): ${nowIso} (today's date: ${nowIso.slice(0, 10)}). Any relative temporal reference in the goal — "today", "tonight", "yesterday", "this week", a daily-note date, a dated filename — MUST be computed from this value. NEVER guess or invent a date.\n\n`;
+    const temporalGrounding = temporalGroundingBlock();
     const prompt = `${temporalGrounding}The goal needs the impulse shape "${target}" to exist, but resolving it directly returned nothing (it does not exist yet). The vessel that owns "${target}" also offers these resolver shapes that may PRODUCE/CREATE it: ${JSON.stringify(siblings)}.${constraintBlock}
 
 GOAL: ${goal}${correctionBlock}
@@ -8385,7 +8399,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (!raw) return raw;
       if (!LLM_VESSEL_ENDPOINT) return raw;
       try {
-        const prompt = `You are producing the FINAL artifact to store for a goal, from raw material an earlier step produced. Do NOT dump the raw material; TRANSFORM it into exactly what the goal asks to persist — structured, concise, and usable (e.g. a how-to, a note, a summary, a structured record), in the form the goal specifies. \n\nGOAL: ${goal}\n\nTARGET ARTIFACT SHAPE: ${targetShape}\n\nRAW MATERIAL (from investigation/intermediate steps):\n${raw.slice(0, 8000)}\n\nRespond with ONLY the final artifact content to store (plain text; no preamble, no code fences).`;
+        const prompt = `${timeRelativeOffset(goal) !== null ? temporalGroundingBlock() : ""}You are producing the FINAL artifact to store for a goal, from raw material an earlier step produced. Do NOT dump the raw material; TRANSFORM it into exactly what the goal asks to persist — structured, concise, and usable (e.g. a how-to, a note, a summary, a structured record), in the form the goal specifies. \n\nGOAL: ${goal}\n\nTARGET ARTIFACT SHAPE: ${targetShape}\n\nRAW MATERIAL (from investigation/intermediate steps):\n${raw.slice(0, 8000)}\n\nRespond with ONLY the final artifact content to store (plain text; no preamble, no code fences).`;
         const rr = await routedComplete(goalHashOf(goal), "terminal_content_process", {
           prompt, model: "auto",
         });
