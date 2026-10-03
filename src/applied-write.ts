@@ -20,7 +20,7 @@
  *     again.
  */
 import type { ExecutionTrace } from "@avigopal/ias-executor-ts";
-import { isStoreWriteShape, stripOperatorMarker } from "./resolve-pointer";
+import { isStoreWriteShape, stripEndpointOverrides, stripOperatorMarker } from "./resolve-pointer";
 
 /** A shape whose resolve MUTATES a store (resolve-pointer.ts isStoreWriteShape). */
 export const isAppliedWriteShape = isStoreWriteShape;
@@ -169,7 +169,8 @@ export function walkResolveBody(
 
 /** The whole POST body of a walk write, top level and impulse.pointer included, loses any
  *  `operator` marker (resolve-pointer.ts stripOperatorMarker). buildResolvePointer already
- *  strips the pointer; this covers the body around it. */
+ *  strips the pointer; this covers the body around it. Endpoint-override fields (Url / Endpoint
+ *  suffixes, resolve-pointer.ts stripEndpointOverrides) are dropped from the body the same way. */
 export function stripWalkOperatorMarker(shape: string, body: Record<string, unknown>): Record<string, unknown> {
-  return stripOperatorMarker(shape, body);
+  return stripEndpointOverrides(shape, stripOperatorMarker(shape, body));
 }

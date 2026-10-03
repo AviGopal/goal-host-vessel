@@ -14,7 +14,7 @@ export function buildResolvePointer(
 ): Record<string, unknown> {
   const { type: _synthesizedType, ...args } = (extraArgs ?? {}) as Record<string, unknown>;
   const { type: _baseType, ...pool } = base ?? {};
-  return stripOperatorMarker(shape, { ...pool, ...args, type: shape });
+  return stripEndpointOverrides(shape, stripOperatorMarker(shape, { ...pool, ...args, type: shape }));
 }
 
 /** A shape whose resolve MUTATES a store: the `_write` suffix family plus the vault note write. */
@@ -51,6 +51,44 @@ export function stripOperatorMarker<T extends Record<string, unknown>>(shape: st
     return out;
   };
   return strip(obj, 0) as T;
+}
+
+/** A field name that can redirect where the owning vessel sends a request: ends with Url, Endpoint,
+ *  _url or _endpoint, any case (the bare names `url` and `endpoint` included). */
+export const ENDPOINT_OVERRIDE_KEY = /(url|endpoint)$/i;
+
+/**
+ * NO WALK-BUILT WRITE CARRIES AN ENDPOINT OVERRIDE.
+ *
+ * development-vessel attaches its node key to fetch URLs that a resolve pointer field can override
+ * (pointer.devVesselImpulsesUrl, pointer.obsidianEndpoint, and more). Every pointer built here is
+ * walk-built by construction (pool variables plus synthesized args, the LLM's output passed through
+ * verbatim; see stripOperatorMarker), so on a store-write shape (isStoreWriteShape: every `_write`,
+ * the gap-filing substrateGap_write included) a field whose name matches ENDPOINT_OVERRIDE_KEY is
+ * dropped: at the top level, and one level into a `pointer` or `impulse` object (so impulse.pointer
+ * too). A deeper field, such as the written record's own data, is left alone, and so is any
+ * non-write pointer (http_fetch's `url` is its input). One line names the dropped fields, never
+ * their values. The input is never mutated.
+ */
+export function stripEndpointOverrides<T extends Record<string, unknown>>(shape: string, obj: T): T {
+  if (!isStoreWriteShape(shape)) return obj;
+  const dropped: string[] = [];
+  const isPlain = (v: unknown): v is Record<string, unknown> => {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+    const proto = Object.getPrototypeOf(v);
+    return proto === Object.prototype || proto === null;
+  };
+  const strip = (o: Record<string, unknown>, path: string, nestLeft: number): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(o)) {
+      if (ENDPOINT_OVERRIDE_KEY.test(k)) { dropped.push(path + k); continue; }
+      out[k] = nestLeft > 0 && (k === "pointer" || k === "impulse") && isPlain(v) ? strip(v, `${path}${k}.`, nestLeft - 1) : v;
+    }
+    return out;
+  };
+  const out = strip(obj, "", 2);
+  if (dropped.length) console.warn(`[goal-host] endpoint-override strip: walk-built ${shape} dropped ${dropped.join(", ")}`);
+  return out as T;
 }
 
 /**
