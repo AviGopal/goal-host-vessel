@@ -19,6 +19,10 @@ export interface OracleLabelRow {
   verdict?: string;
   notes?: string;
   labeler?: string;
+  /** "calibration" marks a blind-calibration-sheet verdict; such a row influences nothing. */
+  purpose?: string;
+  window_id?: string;
+  sample_draw_id?: string;
 }
 
 /** The slice of DispatchRecord the consumer reads and writes. */
@@ -40,12 +44,25 @@ export interface OracleLabelDeps {
   fetchImpl?: typeof fetch;
 }
 
-/** Number of corpus rows read per consumption. */
-export const ORACLE_LABEL_FETCH_LIMIT = 1;
+/**
+ * Number of corpus rows read per consumption. More than one so a newer calibration row
+ * cannot hide an older ordinary verdict on the same execution.
+ */
+export const ORACLE_LABEL_FETCH_LIMIT = 10;
 
-/** Choose the row the consumer acts on. */
+/**
+ * A calibration label (purpose "calibration") comes from a BLIND calibration sheet: a human
+ * judges sealed runs to measure the judge's accuracy. It must INFLUENCE NOTHING — no reach
+ * override, no latch, no disagreement gap — or the measurement feeds back into the thing it
+ * measures (law 12). The surface reads these rows for its calibration report; nothing else may.
+ */
+export function isCalibrationLabel(label: OracleLabelRow | undefined): boolean {
+  return label?.purpose === "calibration";
+}
+
+/** Choose the row the consumer acts on: the newest row that is not a calibration label. */
 export function pickConsumableLabel(labels: OracleLabelRow[]): OracleLabelRow | undefined {
-  return labels[0];
+  return labels.find((l) => !isCalibrationLabel(l));
 }
 
 /**
@@ -73,6 +90,11 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     let labels: OracleLabelRow[] = [];
     try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as OracleLabelRow[]) : []; } catch { labels = []; }
     const label = pickConsumableLabel(labels);
+    const skippedCalibration = labels.length - labels.filter((l) => !isCalibrationLabel(l)).length;
+    if (skippedCalibration > 0) {
+      console.log(`[oracle-label] skipped ${skippedCalibration} calibration label(s) for ${labelExecId} (purpose=calibration influences nothing)`);
+    }
+    if (!label && skippedCalibration > 0) return;
     const labelVerdict = label?.verdict;
     if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") {
       const reason = labels.length === 0 ? "no_labels" : (labelVerdict === undefined ? "verdict_field_missing" : "verdict_unrecognised");
