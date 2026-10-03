@@ -25,6 +25,7 @@ import { betaSample } from './beta-sample';
 import { quoteUrlsWithAmpersands, COMMAND_KEYS } from './command-repair';
 import { Config } from './config';
 import { landedShaForGoal } from './landed-sha';
+import { quiesceRefusal } from './quiesce';
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
 
@@ -16536,6 +16537,10 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // Reject new dispatches while draining for a graceful restart (cutover) so the
   // in-flight set can reach zero; the caller retries against the fresh instance.
   if (draining) return Response.json({ error: "goal-host draining for restart — retry", draining: true }, { status: 503 });
+  // Pull-sync quiesce (see src/quiesce.ts): while its fresh marker exists, refuse NEW
+  // walks retryably so in-flight falls to zero before the restart; running walks continue.
+  const quiesceRefused = quiesceRefusal();
+  if (quiesceRefused) return quiesceRefused;
   let body: Record<string, unknown>;
   try {
     const parsed = await req.json();
