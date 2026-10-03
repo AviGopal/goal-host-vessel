@@ -414,7 +414,7 @@ import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
-import { interpolateExecPlaceholders } from "./exec-placeholder";
+import { spliceExecPlaceholders } from "./exec-placeholder";
 import type {
   EventSink,
   Impulse,
@@ -8514,8 +8514,28 @@ async function runGoalAsPoolWalkBody(
     for (const _ef of ["command", "cmd", "script", "sql"]) {
       const _c = pointer[_ef];
       if (typeof _c === "string" && _c.includes("{{")) {
-        const _interp = interpolateExecPlaceholders(_c, base);
-        if (_interp !== _c) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: threaded pool shapes into ${_ef} deterministically (command is now a function of threaded inputs)`); pointer[_ef] = _interp; }
+        // A pool value (web/fetched/LLM content) must never become shell syntax when it is spliced
+        // into an LLM-written command that the shell resolver runs as root. The splice is quote-
+        // context aware and REFUSES any context it cannot make safe; a refusal is a walk failure
+        // (not a guess), so it takes the same path as a resolver failure and falls through.
+        const _spliced = spliceExecPlaceholders(_c, base);
+        // `sql` is not a shell string: single-quote shell escaping ('\'' ) is wrong for SQL (which
+        // doubles quotes) and would still let a value break out of a SQL literal. No walk resolver
+        // consumes a `sql` pointer field today, so rather than guess a SQL-correct binding here we
+        // refuse any sql carrying a resolvable value — the honest path until a parameterised binder
+        // exists. (A benign sql with no active value is left exactly as-is.)
+        if (_ef === "sql") {
+          if (_spliced.ok && _spliced.command === _c) continue; // nothing resolvable to splice
+          noteRawResolveFailure(shape, "exec-placeholder: refused — pool value spliced into a sql field (no parameterised binder)");
+          console.log(`[goal-host-vessel] walk rawResolve ${shape}: refused threading a pool value into a sql field — shell quoting is wrong for SQL`);
+          return null;
+        }
+        if (!_spliced.ok) {
+          noteRawResolveFailure(shape, _spliced.reason);
+          console.log(`[goal-host-vessel] walk rawResolve ${shape}: ${_spliced.reason} (field ${_ef}) — not threading a value that could become shell syntax`);
+          return null;
+        }
+        if (_spliced.command !== _c) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: threaded pool shapes into ${_ef} deterministically (command is now a function of threaded inputs)`); pointer[_ef] = _spliced.command; }
       }
     }
     let resp: Response;
