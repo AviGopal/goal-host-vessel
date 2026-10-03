@@ -413,6 +413,7 @@ import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindi
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
+import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import type {
   EventSink,
   Impulse,
@@ -9430,8 +9431,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // Strip quoted spans first, then look for operators in what remains — that is where a
           // metacharacter would actually be interpreted. An unbalanced quote leaves its tail in the
           // remainder and so still fails closed.
-          const _unquoted = _fetchPart.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
-          const _safe = /^(curl|wget)\b/.test(_fetchPart) && !/[;&>|]|\$\(|`/.test(_unquoted);
+          const _safe = fetchPrefixIsReRunnable(_fetchPart);
           if (_safe) {
             const _probe = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: `${_fetchPart} | head -c 20000` }));
             const _probeTxt = typeof _probe === "string" ? _probe : JSON.stringify(_probe ?? "");
@@ -9617,10 +9617,10 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_dumpBody.slice(0, 12000)}`;
           const _xr = await ufExecuteTool("llm_completion_dispatch", { prompt: _xq, max_tokens: 60 }, new Set<string>(["llm_completion_dispatch"]));
           if (_xr.ok) {
-            const _val = String(_xr.result).replace(/^[\s"'`]+|[\s"'`]+$/g, "").split(/\s+/)[0] ?? "";
-            const _plausible = _val.length > 0 && _val !== "NONE" && /\d/.test(_val) && _val.length <= 40;
-            if (_plausible && _dumpBody.includes(_val)) {
-              directArgsRaw = { ...directArgsRaw, command: `echo ${JSON.stringify(_val)}` };
+            const _step = planFetchedValueStep(String(_xr.result), _dumpBody);
+            const _val = _step.value;
+            if (_step.kind === "command") {
+              directArgsRaw = { ...directArgsRaw, command: _step.command };
               directArgs = bindBody(directArgsRaw);
               const _xre = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
               if (_xre != null) direct = _xre;
@@ -9628,7 +9628,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" EXTRACTED ${JSON.stringify(_val)} from the fetched body (verified verbatim in ${_dumpBody.length} bytes) — bound as echo, no re-fetch`);
               if (!_deg) break;
             } else {
-              console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extraction REJECTED (${_plausible ? "not found verbatim in the fetched body" : "not a plausible value"}: ${JSON.stringify(_val.slice(0, 40))}) — falling through to normal correction`);
+              console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extraction REJECTED (${_step.reason === "not_verbatim" ? "not found verbatim in the fetched body" : "not a plausible value"}: ${JSON.stringify(_val.slice(0, 40))}) — falling through to normal correction`);
             }
           }
         }
