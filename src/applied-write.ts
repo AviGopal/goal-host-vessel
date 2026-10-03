@@ -13,7 +13,8 @@
  *
  * Two pieces live here:
  *   - `settleVerifiedWrite`: the decision taken after `verifyWritePersisted` reads a write back,
- *     moved verbatim from the satisfier in index.ts (index.ts keeps the logging and the returns).
+ *     moved from the satisfier in index.ts (index.ts keeps the logging and the returns). A
+ *     terminal write that reads back persisted now ends the attempt instead of falling through.
  *   - `createAppliedWriteLedger`: one per walk. Every applied write records through it, and the
  *     retry sites ask it whether a terminal write already verified in this walk may be applied
  *     again.
@@ -49,9 +50,11 @@ export function settleVerifiedWrite(
   if (v !== null && "persisted" in v && v.persisted === true && terminalWrite && persistedBodyEmpty(v.content)) {
     return { kind: "empty_terminal" };
   } else if (v !== null && "persisted" in v && v.persisted === true && terminalWrite) {
-    // Do not short-circuit on terminal writes; allow learned-pathway/producers to run first.
-    // Defer by adopting the independently-read content as the direct value so later branches can still emit it if nothing outranks it.
-    return { kind: "terminal_persisted", returns: false, content: v.content };
+    // A verified, APPLIED write ends the attempt. Falling through here (the old "defer so later
+    // branches can still emit it") could not un-apply the write: the read-back was dropped, the
+    // action-then-read path picked a sibling that failed and returned null, and the walk applied
+    // the same write again from its retry, producer-scan and bridge sites.
+    return { kind: "terminal_persisted", returns: true, content: v.content };
   } else if (v !== null && "persisted" in v && v.persisted === true) {
     return { kind: "persisted", returns: true, content: v.content };
   } else if (v !== null && "persisted" in v && v.persisted === false) {
@@ -90,14 +93,62 @@ export interface AppliedWriteLedger {
   appliedCount(shape: string): number;
 }
 
-export function createAppliedWriteLedger(_opts: AppliedWriteLedgerOptions): AppliedWriteLedger {
-  const applied = new Map<string, number>();
+let appliedWriteSeq = 0;
+
+/** The durable record of one applied write. It is a SATELLITE: id `walk-satisfier-...` and
+ *  templateId `satisfier:<shape>`, with NO `reached:` tag, so activity-api's classifyReach falls
+ *  through to isHollowSatellite and grades it `ungraded` (skip). A write is evidence of an effect,
+ *  not a verdict on the goal; the walk's own verdict lands on the walk's trace. */
+export function appliedWriteTrace(
+  shape: string,
+  write: AppliedWrite,
+  attempt: number,
+  opts: Pick<AppliedWriteLedgerOptions, "terminalShapes" | "tags" | "parentExecutionId" | "now">,
+): ExecutionTrace {
+  const at = (opts.now ?? Date.now)();
+  const terminal = opts.terminalShapes.has(shape);
   return {
-    recordApplied(shape: string, _write: AppliedWrite): void {
-      applied.set(shape, (applied.get(shape) ?? 0) + 1);
+    id: `walk-satisfier-write-${++appliedWriteSeq}-${at}`,
+    templateId: `satisfier:${shape}`,
+    templateName: `applied write (${shape}) at ${write.site}`,
+    status: "completed",
+    parentExecutionId: opts.parentExecutionId?.(),
+    inputImpulseIds: [],
+    outputImpulseIds: [],
+    tasks: [{
+      taskId: "write-apply",
+      description: `apply ${shape} via ${write.endpoint ?? "connected vessel"} (walk site ${write.site}, attempt ${attempt})`,
+      resolverId: shape,
+      resolverTier: "pattern",
+      inputImpulseIds: [],
+      outputImpulseIds: [],
+      outputShapes: [shape],
+      success: true,
+    }],
+    costUsd: 0,
+    durationMs: 0,
+    tags: [...(opts.tags ?? []).filter((t) => !t.startsWith("reached:")), "satellite:non_terminal", `satisfier_shape:${shape}`, "write_applied", `write_site:${write.site}`],
+    metadata: { satisfier: true, write_applied: true, shape, site: write.site, attempt, terminal, endpoint: write.endpoint ?? null },
+  };
+}
+
+export function createAppliedWriteLedger(opts: AppliedWriteLedgerOptions): AppliedWriteLedger {
+  const applied = new Map<string, number>();
+  const verified = new Set<string>();
+  return {
+    recordApplied(shape: string, write: AppliedWrite): void {
+      const attempt = (applied.get(shape) ?? 0) + 1;
+      applied.set(shape, attempt);
+      try {
+        void Promise.resolve(opts.persist(appliedWriteTrace(shape, write, attempt, opts))).catch((e) => {
+          console.warn(`[goal-host] applied-write trace for ${shape} not persisted (this write stays untraced): ${(e as Error).message}`);
+        });
+      } catch (e) {
+        console.warn(`[goal-host] applied-write trace for ${shape} not built (this write stays untraced): ${(e as Error).message}`);
+      }
     },
-    markVerified(_shape: string): void { /* not yet consulted */ },
-    mayApply(_shape: string): boolean { return true; },
+    markVerified(shape: string): void { verified.add(shape); },
+    mayApply(shape: string): boolean { return !(opts.terminalShapes.has(shape) && verified.has(shape)); },
     appliedCount(shape: string): number { return applied.get(shape) ?? 0; },
   };
 }

@@ -8670,8 +8670,10 @@ If one of those sibling shapes is the action that would create what the goal ask
   };
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
-    if (refuseReapply(shape, "satisfier")) return null;
     satisfierTried.add(shape);
+    // After satisfierTried.add, so a refused shape stays tried: the producer scan's un-poison relies on
+    // this function re-adding it.
+    if (refuseReapply(shape, "satisfier")) return null;
     stepBound = new Set<string>();
     // NO WALK-SIDE FILESYSTEM WRITE, FROM EITHER SATISFIER SITE (fs-write-shapes.ts).
     // The satisfier pick already excluded these shapes; the vessel-resolver producer
