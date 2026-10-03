@@ -45,10 +45,15 @@ export interface OracleLabelDeps {
 }
 
 /**
- * Number of corpus rows read per consumption. More than one so a newer calibration row
- * cannot hide an older ordinary verdict on the same execution.
+ * One row per consumption: the newest NON-calibration row. activity-api serves the exclusion
+ * (`exclude_purpose`: rows whose purpose is absent or differs), so any number of newer
+ * calibration rows cannot hide an ordinary verdict — the bound a client-side filter over a
+ * fixed window had. The client-side check below stays as a second layer: an activity-api
+ * that predates exclude_purpose ignores it and may return a calibration row, which is then
+ * skipped (the ordinary verdict under it is picked up once activity-api is upgraded).
  */
-export const ORACLE_LABEL_FETCH_LIMIT = 10;
+export const ORACLE_LABEL_FETCH_LIMIT = 1;
+export const ORACLE_LABEL_EXCLUDE_PURPOSE = "calibration";
 
 /**
  * A calibration label (purpose "calibration") comes from a BLIND calibration sheet: a human
@@ -79,7 +84,7 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     const labelRes = await doFetch(`${deps.activityApiEndpoint}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...auth },
-      body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: ORACLE_LABEL_FETCH_LIMIT } }),
+      body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: ORACLE_LABEL_FETCH_LIMIT, exclude_purpose: ORACLE_LABEL_EXCLUDE_PURPOSE } }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!labelRes.ok) {
