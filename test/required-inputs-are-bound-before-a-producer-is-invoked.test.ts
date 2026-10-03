@@ -5,6 +5,7 @@ import { join } from "node:path";
 // NAMESPACE import on purpose: the gate does not exist at base, and a named import of a missing
 // export fails the whole file at link time, which would turn the base-green controls red too.
 import * as rp from "../src/resolve-pointer";
+import ts from "typescript";
 
 /**
  * A PRODUCER'S REQUIRED INPUTS ARE BOUND BEFORE THE WALK INVOKES IT (check-first).
@@ -94,33 +95,74 @@ const goalImpulse = { metadata: { shape: "goal" }, content: { goal: GOAL } };
 const bookkeeping = { metadata: { shape: "execution_receipt" }, content: { executionId: "exec-1", producedBy: "walk", timestamp: "2026-10-03T10:00:00Z" } };
 const upstreamData = { metadata: { shape: "vesselRestartLog" }, content: "concept-db restarted 09:41 (OOM); goal-host restarted 09:58 (deploy)" };
 
+// ── CROSS-REPO CONTRACT FIXTURES ────────────────────────────────────────────────────────────────
+// Vessels cannot import the super-repo's packages/ (packages/verdict-token/verdict-token.ts says so;
+// none of the four ends has a file: dependency on packages/, and each repo's CI clones it alone).
+// Until the shared definition exists, each end asserts against a FIXTURE copied verbatim from the
+// emitter's test. Blocks are delimited so a super-repo check can compare them byte for byte.
+// CONTRACT-FIXTURE synthesize_from BEGIN (emitter: development-vessel test/resolvers/llm-completion-dispatch-refuses-a-missing-prompt.test.ts)
+const SYNTHESIZE_FROM_GOAL_AND_UPSTREAM = "goal_and_upstream";
+// CONTRACT-FIXTURE synthesize_from END
+// CONTRACT-FIXTURE malformed_request_carrier BEGIN (emitter: goal-host-vessel test/required-inputs-are-bound-before-a-producer-is-invoked.test.ts)
+const CARRIER_FORMAT = "dev-vessel <shape> resolver returned structuredError (failure_mode=<token>): <detail>";
+const formatCarrier = (shape: string, token: string, detail: string): string =>
+  CARRIER_FORMAT.replace("<shape>", () => shape).replace("<token>", () => token).replace("<detail>", () => detail);
+const carrierToken = (reason: string): string | null =>
+  /\bresolver returned structuredError \(failure_mode=([a-z0-9_]+)\)/.exec(reason)?.[1] ?? null;
+// CONTRACT-FIXTURE malformed_request_carrier END
+
 // The contract development-vessel must serve for llm_completion_dispatch (pinned by its twin test).
 const LLM_DISPATCH_CONTRACT: Contract = {
   shape: "llm_completion_dispatch",
   known: true,
   fields: [
-    { name: "prompt", required: true, type: "string", synthesize_from: "goal_and_upstream" },
+    { name: "prompt", required: true, type: "string", synthesize_from: SYNTHESIZE_FROM_GOAL_AND_UPSTREAM },
     { name: "system_prompt", required: false, type: "string" },
     { name: "max_tokens", required: false, type: "number" },
   ],
 };
 
-const SRC = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
-const GATE_SRC = readFileSync(new URL("../src/resolve-pointer.ts", import.meta.url), "utf8");
-
-/** The slice of an invocation site from its start to its producer POST (`resp = await fetch(`). */
-function siteSlice(startMarker: string): string {
-  const i = SRC.indexOf(startMarker);
-  expect(i, `invocation site '${startMarker}' must exist in index.ts`).toBeGreaterThan(-1);
-  const j = SRC.indexOf("resp = await fetch(", i);
-  expect(j, `invocation site '${startMarker}' must POST to its producer`).toBeGreaterThan(i);
-  return SRC.slice(i, j);
+// ── STRUCTURAL PINS READ THE SYNTAX TREE, NOT THE TEXT ──────────────────────────────────────────
+// Order and presence are judged on TypeScript AST positions of CALLS inside the named function, so
+// whitespace, comments, local renames and line moves do not matter; only the calls and their order do.
+const INDEX_PATH = new URL("../src/index.ts", import.meta.url).pathname;
+const GATE_PATH = new URL("../src/resolve-pointer.ts", import.meta.url).pathname;
+const _sf = new Map<string, ts.SourceFile>();
+function sourceOf(path: string): ts.SourceFile {
+  let sf = _sf.get(path);
+  if (!sf) { sf = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS); _sf.set(path, sf); }
+  return sf;
 }
-const SITES = [
-  "const rawResolve = async (",
-  "function buildProxyResolver(",
-  "function buildDiscoveryProxyResolver(",
-];
+function walk(node: ts.Node, visit: (n: ts.Node) => void): void { visit(node); node.forEachChild((c) => walk(c, visit)); }
+/** The function named `name`: a function declaration, or a const bound to an arrow/function expression. */
+function fnNamed(path: string, name: string): ts.Node {
+  let found: ts.Node | undefined;
+  walk(sourceOf(path), (n) => {
+    if (found) return;
+    if (ts.isFunctionDeclaration(n) && n.name?.text === name) found = n;
+    else if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.initializer
+      && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) found = n.initializer;
+  });
+  expect(found !== undefined, `function '${name}' must exist in ${path.split("/").slice(-2).join("/")}`).toBe(true);
+  return found!;
+}
+const calleeName = (c: ts.CallExpression | ts.NewExpression): string => {
+  const e = c.expression;
+  return ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : "";
+};
+/** Start positions of every call to `callee` inside `fn`, in source order. */
+function callsTo(fn: ts.Node, callee: string): number[] {
+  const out: number[] = [];
+  walk(fn, (n) => { if (ts.isCallExpression(n) && calleeName(n) === callee) out.push(n.getStart()); });
+  return out;
+}
+/** The producer POST: the LAST fetch call in the site (the discovery proxy fetches discovery first). */
+const producerPost = (fn: ts.Node): number => {
+  const f = callsTo(fn, "fetch");
+  expect(f.length, "the site must POST to its producer").toBeGreaterThan(0);
+  return f[f.length - 1]!;
+};
+const SITES = ["rawResolve", "buildProxyResolver", "buildDiscoveryProxyResolver"];
 
 describe("CONTROL — a fully bound pointer is invoked as built (base behaviour the fix must keep)", () => {
   it("buildResolvePointer leaves a fully bound pointer unchanged (pool < args, shape last)", () => {
@@ -132,7 +174,11 @@ describe("CONTROL — a fully bound pointer is invoked as built (base behaviour 
   });
 
   it("every invocation site builds its producer pointer with buildResolvePointer before the POST", () => {
-    for (const s of SITES) expect(siteSlice(s).includes("buildResolvePointer("), s).toBe(true);
+    for (const name of SITES) {
+      const fn = fnNamed(INDEX_PATH, name);
+      const b = callsTo(fn, "buildResolvePointer");
+      expect(b.length > 0 && b[0]! < producerPost(fn), `${name} must build its pointer with buildResolvePointer before the POST`).toBe(true);
+    }
   });
 });
 
@@ -229,7 +275,7 @@ describe("GENERALITY — the same contract with an invented shape and invented i
     shape: "zq_orbit_digest",
     known: true,
     fields: [
-      { name: "brief_for_reasoner", required: true, type: "string", synthesize_from: "goal_and_upstream" },
+      { name: "brief_for_reasoner", required: true, type: "string", synthesize_from: SYNTHESIZE_FROM_GOAL_AND_UPSTREAM },
       { name: "epoch_selector", required: true, type: "string" },
       { name: "verbosity", required: false, type: "number" },
     ],
@@ -265,43 +311,92 @@ describe("GENERALITY — the same contract with an invented shape and invented i
   });
 
   it("the gate's source names no shape or field: no 'prompt' or 'llm_completion' literal in resolve-pointer.ts", () => {
-    expect(GATE_SRC).toContain("bindRequiredInputs");
-    expect(GATE_SRC).not.toMatch(/["'`]prompt["'`]/);
-    expect(GATE_SRC).not.toMatch(/llm_completion|llmCompletion/);
+    fnNamed(GATE_PATH, "bindRequiredInputs"); // presence
+    // Every literal and every name in the module (comments are not code and are ignored).
+    const named: string[] = [];
+    walk(sourceOf(GATE_PATH), (n) => {
+      if (ts.isStringLiteralLike(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) named.push(n.text);
+      else if (ts.isIdentifier(n) || ts.isPrivateIdentifier(n)) named.push(n.text);
+    });
+    expect(named.filter((t) => t === "prompt"), "no 'prompt' literal or name in the gate").toEqual([]);
+    expect(named.filter((t) => /llm_?completion/i.test(t)), "no llm_completion literal or name in the gate").toEqual([]);
   });
 });
 
 describe("MUST-FAIL — wiring: every invocation site gates before its producer POST", () => {
   it("each of rawResolve, buildProxyResolver and buildDiscoveryProxyResolver calls bindRequiredInputs after buildResolvePointer and before the POST", () => {
-    for (const s of SITES) {
-      const slice = siteSlice(s);
-      const b = slice.indexOf("buildResolvePointer(");
-      const g = slice.indexOf("bindRequiredInputs(");
-      expect(g, `${s} must call bindRequiredInputs before its producer POST`).toBeGreaterThan(-1);
-      expect(g, `${s} must gate AFTER building the pointer`).toBeGreaterThan(b);
+    for (const name of SITES) {
+      const fn = fnNamed(INDEX_PATH, name);
+      const b = callsTo(fn, "buildResolvePointer")[0] ?? -1;
+      const g = callsTo(fn, "bindRequiredInputs");
+      const post = producerPost(fn);
+      expect(g.length > 0, `${name} must call bindRequiredInputs`).toBe(true);
+      expect(g.some((p) => p > b && p < post), `${name} must gate AFTER building the pointer and BEFORE the producer POST`).toBe(true);
     }
   });
 
   it("each site reads the contract at use time through requiredInputContract, which resolves resolver_schema", () => {
-    for (const s of SITES) expect(siteSlice(s).includes("requiredInputContract("), `${s} must read the contract via requiredInputContract`).toBe(true);
-    const def = SRC.search(/(?:async function requiredInputContract\(|const requiredInputContract = async)/);
-    expect(def, "index.ts must define requiredInputContract").toBeGreaterThan(-1);
-    expect(SRC.slice(def, def + 2500).includes('type: "resolver_schema"'), "requiredInputContract must resolve resolver_schema").toBe(true);
+    for (const name of SITES) {
+      const fn = fnNamed(INDEX_PATH, name);
+      expect(callsTo(fn, "requiredInputContract").some((p) => p < producerPost(fn)), `${name} must read the contract via requiredInputContract before the POST`).toBe(true);
+    }
+    const reader = fnNamed(INDEX_PATH, "requiredInputContract");
+    const literals: string[] = [];
+    walk(reader, (n) => { if (ts.isStringLiteralLike(n)) literals.push(n.text); });
+    expect(literals.includes("resolver_schema"), "requiredInputContract must resolve resolver_schema").toBe(true);
   });
 
   it("on refusal rawResolve records the reason via noteRawResolveFailure and returns null; the proxies throw it", () => {
-    const raw = siteSlice(SITES[0]!);
-    const g = raw.indexOf("bindRequiredInputs(");
-    const after = raw.slice(g);
-    expect(g, "rawResolve must call bindRequiredInputs").toBeGreaterThan(-1);
-    expect(/noteRawResolveFailure\(shape,\s*[\w.]+\.reason/.test(after), "rawResolve must record the refusal reason").toBe(true);
-    expect(after.includes("return null"), "rawResolve must not invoke on refusal").toBe(true);
-    for (const s of SITES.slice(1)) {
-      const sl = siteSlice(s);
-      const g2 = sl.indexOf("bindRequiredInputs(");
-      expect(g2, `${s} must call bindRequiredInputs`).toBeGreaterThan(-1);
-      expect(/throw new Error\([\w.]+\.reason\)/.test(sl.slice(g2)), `${s} must throw the refusal reason`).toBe(true);
+    const isReason = (e: ts.Node | undefined): boolean => !!e && ts.isPropertyAccessExpression(e) && e.name.text === "reason";
+    // rawResolve: an `if` between the gate and the POST whose branch records <x>.reason and returns null.
+    const raw = fnNamed(INDEX_PATH, "rawResolve");
+    const gate0 = callsTo(raw, "bindRequiredInputs")[0] ?? Number.MAX_SAFE_INTEGER;
+    const post = producerPost(raw);
+    let rawOk = false;
+    walk(raw, (n) => {
+      if (rawOk || !ts.isIfStatement(n) || n.getStart() < gate0 || n.getStart() > post) return;
+      let records = false; let returnsNull = false;
+      walk(n.thenStatement, (m) => {
+        if (ts.isCallExpression(m) && calleeName(m) === "noteRawResolveFailure" && m.arguments.some((a) => isReason(a))) records = true;
+        if (ts.isReturnStatement(m) && m.expression?.kind === ts.SyntaxKind.NullKeyword) returnsNull = true;
+      });
+      rawOk = records && returnsNull;
+    });
+    expect(rawOk, "rawResolve must record the refusal reason and return null before the POST").toBe(true);
+    // proxies: `throw new Error(<x>.reason)` between the gate and the POST.
+    for (const name of SITES.slice(1)) {
+      const fn = fnNamed(INDEX_PATH, name);
+      const g = callsTo(fn, "bindRequiredInputs")[0] ?? Number.MAX_SAFE_INTEGER;
+      const p = producerPost(fn);
+      let throws = false;
+      walk(fn, (n) => {
+        if (ts.isThrowStatement(n) && n.getStart() > g && n.getStart() < p && n.expression && ts.isNewExpression(n.expression)
+          && calleeName(n.expression) === "Error" && isReason(n.expression.arguments?.[0])) throws = true;
+      });
+      expect(throws, `${name} must throw the refusal reason before the POST`).toBe(true);
     }
+  });
+});
+
+describe("CONTRACT CONFORMANCE (green at base) — goal-host emits the malformed_request carrier in the fixture's format", () => {
+  it("buildProxyResolver's structuredError throw has the fixture's skeleton, and its reason is failure_mode=<token>", () => {
+    const fn = fnNamed(INDEX_PATH, "buildProxyResolver");
+    const skeleton = (t: ts.TemplateExpression): string => t.head.text + t.templateSpans.map((sp) => "${}" + sp.literal.text).join("");
+    const throws: string[] = []; const reasons: string[] = [];
+    walk(fn, (n) => {
+      if (ts.isThrowStatement(n) && n.expression && ts.isNewExpression(n.expression) && n.expression.arguments?.[0] && ts.isTemplateExpression(n.expression.arguments[0])) throws.push(skeleton(n.expression.arguments[0]));
+      if (ts.isTemplateExpression(n) && n.head.text === "failure_mode=") reasons.push(skeleton(n));
+    });
+    const want = CARRIER_FORMAT.replace("<shape>", "${}").replace("failure_mode=<token>", "${}").replace("<detail>", "${}");
+    expect(throws).toContain(want);
+    expect(reasons).toContain("failure_mode=${}");
+  });
+
+  it("the fixture's formatter and parser round-trip", () => {
+    const r = formatCarrier("llm_completion_dispatch", "malformed_request", "pointer must include a non-empty 'prompt' string");
+    expect(r).toBe("dev-vessel llm_completion_dispatch resolver returned structuredError (failure_mode=malformed_request): pointer must include a non-empty 'prompt' string");
+    expect(carrierToken(r)).toBe("malformed_request");
+    expect(carrierToken("dev-vessel x resolver returned structuredError (status=500): boom")).toBeNull();
   });
 });
 
