@@ -381,6 +381,7 @@ import {
   DiscoveryRegistrationLoop,
   createLLMPort,
   ActivityApiAdapter,
+  foreignConsumption,
 } from "@avigopal/ias-executor-ts";
 import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-executor-ts/adapters";
 // ONE definition, imported by both the command builders and their reach oracles. It lives
@@ -7265,6 +7266,24 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
   const executionId = trace?.id;
   if (!executionId) return;
   if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
+  // Never extract a run that consumed another execution's impulse: the template would
+  // encode a cross-bound recipe (measured: a ribosome-extract run cross-bound and minted
+  // a template from another run's trace, which an unrelated goal then ran).
+  {
+    const fc = foreignConsumption({
+      id: executionId,
+      tasks: (trace.tasks ?? []) as ExecutionTrace["tasks"],
+      compositionChain: trace.compositionChain,
+      inputImpulseIds: (trace as { inputImpulseIds?: string[] }).inputImpulseIds ?? [],
+    });
+    if (fc.status === "foreign") {
+      console.log(`[goal-host-vessel] reach->mint: SKIP ${executionId} — consumed another execution's impulse(s): ${fc.foreign.map((f) => `${f.taskId}<-${f.impulseId}@${f.producerExecutionId ?? "?"}`).join(",")}`);
+      return;
+    }
+    if (fc.status === "unknown" && (trace.tasks ?? []).length > 0) {
+      console.warn(`[goal-host-vessel] reach->mint: ${executionId} carries no consumedProvenance — extracting without the foreign-impulse check (stale ias-executor-ts dist?)`);
+    }
+  }
   
   // Causal attempt ledger: never crystallize a walk that landed an unaccounted commit.
   // The scan ingests the git-hook spool first, so a commit made seconds ago is seen.
@@ -10037,6 +10056,22 @@ If one of those sibling shapes is the action that would create what the goal ask
   const chainExecIds: string[] = [...(opts.compositionChain ?? [])]; // recorded composition chain (execution ids)
   const exclude = new Set<string>();   // normalised activity ids already used / rejected
   let lastTrace: ExecutionTrace | null = null;
+  // Walk steps that consumed ANOTHER execution's impulse (ias-executor-ts
+  // foreignConsumption). The shared store let concurrent runs bind each other's
+  // data; a step fed foreign data can complete and look reached while having
+  // answered a different run's question. Read at the reach verdict below.
+  const walkForeignConsumption: string[] = [];
+  const noteForeignConsumption = (stepId: string, trace: ExecutionTrace): void => {
+    const fc = foreignConsumption(trace);
+    if (fc.status === "foreign") {
+      const d = fc.foreign.map((f) => `${f.taskId}<-${f.impulseId}@${f.producerExecutionId ?? "?"}`).join(",");
+      walkForeignConsumption.push(`${stepId}(${trace.id}): ${d}`);
+      console.warn(`[goal-host-vessel] walk(${opts.surface}): FOREIGN-IMPULSE step ${stepId} exec=${trace.id} consumed another execution's impulse(s): ${d}`);
+    } else if (fc.status === "unknown" && (trace.tasks ?? []).length > 0) {
+      // Deliberately non-blocking: a trace from an engine predating consumedProvenance.
+      console.warn(`[goal-host-vessel] walk(${opts.surface}): step ${stepId} exec=${trace.id} carries no consumedProvenance — foreign-impulse gate cannot check it (stale ias-executor-ts dist?)`);
+    }
+  };
   let lastExecId: string | undefined = opts.parentExecutionId;
   const satisfierTraces: ExecutionTrace[] = [];
   let lastPick = "";
@@ -10852,6 +10887,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             }
           }),
         );
+        branchResults.forEach((t, i) => { if (t) noteForeignConsumption(bundle[i]!.id, t); });
         // JOIN by shape-union: pull genuinely-produced shapes from SUCCESSFUL tasks
         // of every successful branch into the pool. Record every executed branch.
         const beforeBundle = producedShapes.size;
@@ -11249,6 +11285,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     lastTrace = trace;
     lastPick = pick.id;
     lastExecId = trace.id;
+    noteForeignConsumption(pick.id, trace);
     if (trace.status === "failed") pickFailures.set(pick.id, String(trace.reason ?? "template execution failed").slice(0, 200));
     if (trace.id) chainExecIds.push(trace.id);
     totalDurationMs += trace.durationMs ?? 0;
@@ -11470,6 +11507,18 @@ If one of those sibling shapes is the action that would create what the goal ask
       // one), before /reach, recordGoalPath, gap filing and the seed-only flip read them.
       completionShapes = verdict?.completion_shapes ?? null;
       reached = verdict == null ? false : verdict.reached === true;
+      // PROVENANCE GATE (placed first, so no reached===true consumer below sees a reach
+      // this revokes): a step that consumed another execution's impulse did not
+      // reach THIS goal, whatever its output looks like — it may have answered a
+      // concurrent run's question. Applies to deterministic reaches too: a landed sha
+      // built from foreign input is still the wrong change.
+      if (reached === true && walkForeignConsumption.length > 0) {
+        reached = false;
+        const _fr = `provenance:foreign-impulse-consumed — ${walkForeignConsumption.length} walk step(s) bound another execution's impulse: ${walkForeignConsumption.join(" | ").slice(0, 600)}`;
+        if (verdict) { (verdict as GoalReachVerdict).reached = false; (verdict as GoalReachVerdict).reason = _fr; }
+        goalReachReason = _fr;
+        tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED — ${_fr}`);
+      }
       if (verdict == null) {
         goalReachReason = 'reach verifier unreachable after retries — verdict unknown, failing closed';
       }
@@ -14845,7 +14894,17 @@ async function runGoalWithRecoveryInner(
         if (verdict) recordDeterministicLabel(String(goal), execId, selId, verdict);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;
-        if (verdict && verdict.reached === false) {
+        // PROVENANCE GATE: a run that consumed another execution's impulse did not reach
+        // THIS goal. Not reached, not credited, not extracted — and not β-penalised either:
+        // the template did not fail, the shared store fed it another run's data.
+        const _fcRun = result?.trace ? foreignConsumption(result.trace as ExecutionTrace) : null;
+        const _foreignRun = _fcRun?.status === "foreign";
+        if (_foreignRun) {
+          reached = false;
+          status = "failed";
+          goalReachReason = `provenance:foreign-impulse-consumed — ${_fcRun!.foreign.map((f) => `${f.taskId}<-${f.impulseId}@${f.producerExecutionId ?? "?"}`).join(",").slice(0, 400)}`;
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: NOT REACHED via ${selId} — ${goalReachReason}`);
+        } else if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
           opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached", goal));
