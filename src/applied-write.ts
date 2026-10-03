@@ -152,3 +152,23 @@ export function createAppliedWriteLedger(opts: AppliedWriteLedgerOptions): Appli
     appliedCount(shape: string): number { return applied.get(shape) ?? 0; },
   };
 }
+
+/** The body rawResolve POSTs for one walk resolve, moved verbatim from index.ts. The LLM
+ *  resolver reads a TOP-LEVEL `prompt` (a prompt nested only in impulse.pointer is ignored,
+ *  verified live), so it is threaded up for llm_completion. `extras` are the caller/dispatch
+ *  fields index.ts adds for that case. */
+export function walkResolveBody(
+  shape: string,
+  pointer: Record<string, unknown>,
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const body: Record<string, unknown> = (shape === "llm_completion" || shape === "llmCompletion") && typeof pointer.prompt === "string"
+    ? { impulse: { pointer }, prompt: pointer.prompt, ...extras }
+    : { impulse: { pointer } };
+  return stripWalkOperatorMarker(shape, body);
+}
+
+/** Not yet applied: returns the body unchanged. */
+export function stripWalkOperatorMarker(_shape: string, body: Record<string, unknown>): Record<string, unknown> {
+  return body;
+}

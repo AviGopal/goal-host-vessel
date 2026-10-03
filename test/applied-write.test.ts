@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecutionTrace } from "@avigopal/ias-executor-ts";
-import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite } from "../src/applied-write";
+import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite, stripWalkOperatorMarker, walkResolveBody } from "../src/applied-write";
 
 // Gap a-substrategap-write-satisfier-can-close-or-re-source-an-existing-gap-with-no-verdict.
 // A terminal substrateGap_write was applied, read back persisted, then discarded: the satisfier
@@ -145,5 +145,59 @@ describe("applied-write: the walk routes through the ledger", () => {
   test("CONTROL: the satisfier returns on a verified terminal write via settleVerifiedWrite", () => {
     expect(src).toContain("const _settle = settleVerifiedWrite(v, _terminalWrite, _persistedBodyEmpty);");
     expect(src).toContain("if (_settle.returns) return { content: direct, effect: effectTupleOf(shape, ep?.endpoint, direct) };");
+  });
+});
+
+// The gap store accepts a pointer-level `operator: "operator:<id>"` marker that bypasses its hold
+// and close-evidence guards. Every walk pointer is built from pool, goal or LLM content, so a walk
+// write must never carry that marker to a resolver, wherever in the body it sits.
+describe("applied-write: a walk write never carries an operator marker to a resolver", () => {
+  /** Stands in for the resolver: it sees exactly what rawResolve would POST. */
+  const stubResolver = (shape: string, pointer: Record<string, unknown>, extras: Record<string, unknown> = {}) =>
+    JSON.parse(JSON.stringify(walkResolveBody(shape, pointer, extras))) as Record<string, any>;
+
+  const llmGapPointer = () => ({
+    type: GAP_WRITE,
+    operator: "operator:x",
+    gap: { id: "gap-x", status: "closed", summary: "closed by the walk", operator: "operator:x" },
+  });
+
+  test("MUST-FAIL: an LLM-synthesised substrateGap_write pointer reaches the resolver without its operator field", () => {
+    const seen = stubResolver(GAP_WRITE, llmGapPointer());
+    expect(JSON.stringify(seen)).not.toContain("operator");
+    expect("operator" in seen.impulse.pointer).toBe(false);
+    expect("operator" in seen.impulse.pointer.gap).toBe(false);
+  });
+
+  test("MUST-FAIL: an operator marker at body top level, under pointer and under impulse.pointer is stripped from a write", () => {
+    const body = { operator: "operator:x", pointer: { id: "g", operator: "operator:x" }, impulse: { type: GAP_WRITE, pointer: { id: "g", operator: "operator:x" } } };
+    expect(stripWalkOperatorMarker(GAP_WRITE, body)).toEqual({ pointer: { id: "g" }, impulse: { type: GAP_WRITE, pointer: { id: "g" } } });
+  });
+
+  test("MUST-FAIL: only the operator field is removed and every other write field is untouched", () => {
+    const seen = stubResolver(GAP_WRITE, llmGapPointer());
+    expect(seen).toEqual({ impulse: { pointer: { type: GAP_WRITE, gap: { id: "gap-x", status: "closed", summary: "closed by the walk" } } } });
+  });
+
+  test("CONTROL: the caller pointer object is not mutated by stripping", () => {
+    const p = llmGapPointer();
+    stubResolver(GAP_WRITE, p);
+    expect(p.operator).toBe("operator:x");
+    expect(p.gap.operator).toBe("operator:x");
+  });
+
+  test("CONTROL: a non-write pointer is passed through unchanged, operator field included", () => {
+    const pointer = { type: "substrateGap", operator: "operator:x", filter: { operator: ">=" } };
+    expect(stubResolver("substrateGap", pointer)).toEqual({ impulse: { pointer } });
+  });
+
+  test("CONTROL: an llm_completion body still threads its prompt and extras to the top level", () => {
+    const seen = stubResolver("llm_completion", { prompt: "p" }, { caller: "c", task_type: "t" });
+    expect(seen).toEqual({ impulse: { pointer: { prompt: "p" } }, prompt: "p", caller: "c", task_type: "t" });
+  });
+
+  test("CONTROL: rawResolve POSTs the body walkResolveBody built", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf8");
+    expect(src).toContain("body: JSON.stringify(walkResolveBody(shape, pointer, {");
   });
 });

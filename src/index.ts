@@ -394,7 +394,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
-import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite } from "./applied-write";
+import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite, walkResolveBody } from "./applied-write";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
@@ -8526,11 +8526,9 @@ async function runGoalAsPoolWalkBody(
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
         // The LLM resolver reads a TOP-LEVEL `prompt` (a prompt nested only in
         // impulse.pointer is ignored — verified live). Thread it up for llm_completion.
-        body: JSON.stringify(
-          (shape === "llm_completion" || shape === "llmCompletion") && typeof pointer.prompt === "string"
-            ? { impulse: { pointer }, prompt: pointer.prompt, caller: "goal-host:walk_llm_completion", task_type: "walk_llm_completion", ...(dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) }
-            : { impulse: { pointer } }
-        ),
+        // walkResolveBody (applied-write.ts) also strips any `operator` marker from a write's body:
+        // every walk pointer is built from pool, goal or LLM content, never from an operator.
+        body: JSON.stringify(walkResolveBody(shape, pointer, { caller: "goal-host:walk_llm_completion", task_type: "walk_llm_completion", ...(dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) })),
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
       });
     } catch (e) {
