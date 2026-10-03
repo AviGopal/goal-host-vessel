@@ -130,7 +130,7 @@ export const NON_ANSWER_PHRASES = /\b(?:it|that|this|the answer) (?:really )?dep
 const LLM_WRITER_SHAPES: ReadonlySet<string> = new Set([...ANSWER_SHAPES, "llm_completion_dispatch"]);
 /** Dispatch seeds and placeholders: present in every chain, evidence of nothing. */
 const SEED_SHAPES: ReadonlySet<string> = new Set(["goal", "dispatch_id", "universal_fallback_result"]);
-/** The floor's own testimony that it executed no tool (index.ts universalToolFallback). */
+/** The floor's banner (index.ts universalToolFallback): stripped from the answer text, never read as evidence. */
 const ZERO_TOOLS_BANNER = "[GROUNDING: ZERO tools were executed";
 const FLOOR_OBSERVATIONS_MARKER = "\n--- grounded tool outputs ---";
 
@@ -174,9 +174,11 @@ export function isNonAnswer(answer: string): boolean {
 }
 
 /** Did the chain consult any source in-run? Any produced shape that is not an LLM writer, a seed or a
- *  write; never when the floor testifies it ran zero tools. */
-export function hasInRunSource(producedShapes: string[], digest: string): boolean {
-  if (digest.trimStart().startsWith(ZERO_TOOLS_BANNER)) return false;
+ *  write. SHAPES ONLY: the floor's "[GROUNDING: ZERO tools were executed" banner is the floor's own
+ *  self-report, and it is wrong for the agentic llm_completion_dispatch wrapper, which runs its tools
+ *  internally and reports none (a replay over node 1's verdicts since 09-26 found it refusing 10
+ *  substrate-state answers that cited real query results). No rule reads it. */
+export function hasInRunSource(producedShapes: string[]): boolean {
   return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s));
 }
 
@@ -207,7 +209,7 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
   }
 
   if (CURRENT_INFORMATION_CUES.test(goal)) {
-    if (!hasInRunSource(producedShapes, digest)) {
+    if (!hasInRunSource(producedShapes)) {
       return notReached("unsourced-current-information", `the goal asks for current information and the chain consulted no source in-run (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory cannot be current`);
     }
     const target = new Date(now.getTime() + (timeRelativeOffset(goal) ?? 0) * DAY_MS);

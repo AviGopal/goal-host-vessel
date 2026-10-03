@@ -79,16 +79,18 @@ describe("reach grounding: current-information goals need an in-run source", () 
     expect(v?.reached).toBe(false);
   });
 
-  it("a floor answer carrying the zero-tools grounding banner is not reached even when its target shapes name web_search", async () => {
+  it("a floor run whose shapes are only a seed and an llm writer on a world-news goal is not reached", async () => {
     const j = rubberStamp();
     const v = await judgeReach({
       goal: "Give me today's headlines about global markets",
-      producedShapes: ["web_search", "llm_completion"],
-      taskSummary: "universal ReAct floor: 0/0 tool call(s) OK",
-      contentDigest: "[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED.]\n\nMarkets were mixed as investors weighed central bank signals and earnings reports.",
+      producedShapes: ["universal_fallback_result", "llm_completion"],
+      taskSummary: "universal ReAct floor",
+      contentDigest: "Markets were mixed as investors weighed central bank signals and earnings reports.",
       now: NOW,
     }, j.complete);
     expect(v?.reached).toBe(false);
+    expect(v?.reason.startsWith("deterministic:unsourced-current-information")).toBe(true);
+    expect(j.prompts.length).toBe(0);
   });
 });
 
@@ -242,6 +244,20 @@ describe("reach grounding controls: the judge still decides what survives the ga
       "Which database engine should a small analytics team choose?",
       "It depends on scale, but for most small teams PostgreSQL is the better default because it handles analytical queries well and is easy to operate.",
     ), j.complete);
+    expect(v?.reached).toBe(true);
+  });
+
+  it("control - a floor report on the current state of an overlay with a report shape and the zero-tools banner is left to the judge", async () => {
+    const j = rubberStamp();
+    const v = await judgeReach({
+      goal: "Report the current state of the replication overlay: coverage and blocking reason",
+      producedShapes: ["replication_verification_report"],
+      taskSummary: "universal ReAct floor: 0/0 tool call(s) OK",
+      contentDigest: "[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED.]\n\nBased on the replication query results: coverage is 27 of 30 nodes, and there is no blocking reason.",
+      now: NOW,
+    }, j.complete);
+    expect(v?.deterministic).toBe(false);
+    expect(j.prompts.length).toBe(1);
     expect(v?.reached).toBe(true);
   });
 
