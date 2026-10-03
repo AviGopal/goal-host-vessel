@@ -24,30 +24,9 @@ import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
 import { quoteUrlsWithAmpersands, COMMAND_KEYS } from './command-repair';
 import { Config } from './config';
+import { landedShaForGoal } from './landed-sha';
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
-
-async function landedShaForGoal(goal: string): Promise<string | null> {
-  try {
-    const response = await fetch(`${Config.discoveryEndpoint}/resolve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pointer: { type: 'goal_path_sha', goal },
-      }),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) {
-      console.warn(`Failed to resolve SHA for goal '${goal.slice(0, 50)}...': ${response.status} ${response.statusText}`);
-      return null;
-    }
-    const json = await response.json();
-    return json?.content?.sha ?? null;
-  } catch (e) {
-    console.error(`Error resolving SHA for goal '${goal.slice(0, 50)}...': ${e}`);
-    return null;
-  }
-}
 
 // ── fleetActivityFeed ────────────────────────────────────────────────────────
 
@@ -284,7 +263,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   try {
     const gr = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status: "open", limit: 50 } } }),
       signal: AbortSignal.timeout(5_000),
     });
@@ -310,7 +289,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   try {
     const br = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ impulse: { type: "poolImpulse", shape: "boredomSelectionSnapshot", limit: 5 } }),
       signal: AbortSignal.timeout(5_000),
     });
@@ -3366,7 +3345,7 @@ async function fetchGapCategoryCounts(status: "open" | "closed"): Promise<Map<st
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status, limit: 2000 } } }),
       signal: AbortSignal.timeout(8_000),
     });
@@ -3442,7 +3421,7 @@ async function rejectWrongTopCategoryGapId(goal: string, dig: string): Promise<G
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status: "open", limit: 100000 } } }),
       signal: AbortSignal.timeout(8_000),
     });
@@ -13008,7 +12987,7 @@ async function runGoalWithRecoveryInner(
       if (hydrateGapId) {
         const hydRes = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify({ impulse: { type: "substrateGap", id: hydrateGapId } }),
           signal: AbortSignal.timeout(8_000),
         });
