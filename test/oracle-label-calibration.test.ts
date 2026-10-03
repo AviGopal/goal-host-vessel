@@ -19,7 +19,12 @@ const DEV = "http://dev.test";
 
 type Call = { url: string; body: any };
 
-function stubFetch(rows: unknown[]) {
+/**
+ * A stub activity-api. `honourExclude` models an activity-api that serves `exclude_purpose`
+ * (rows whose purpose is absent or differs); without it the stub behaves like an OLD
+ * activity-api that ignores the field and returns the newest rows regardless.
+ */
+function stubFetch(rows: unknown[], opts: { honourExclude?: boolean } = {}) {
   const calls: Call[] = [];
   const impl = (async (input: any, init?: any) => {
     const url = String(input);
@@ -27,7 +32,11 @@ function stubFetch(rows: unknown[]) {
     calls.push({ url, body });
     if (url.startsWith(ACT)) {
       const limit = Number(body?.pointer?.limit ?? 20);
-      return new Response(JSON.stringify({ success: true, content: JSON.stringify(rows.slice(0, limit)) }), { status: 200 });
+      const ex = body?.pointer?.exclude_purpose;
+      const visible = opts.honourExclude && typeof ex === "string" && ex
+        ? rows.filter((r) => (r as { purpose?: string }).purpose !== ex)
+        : rows;
+      return new Response(JSON.stringify({ success: true, content: JSON.stringify(visible.slice(0, limit)) }), { status: 200 });
     }
     return new Response("{}", { status: 200 });
   }) as unknown as typeof fetch;
@@ -84,7 +93,8 @@ describe("oracle-label consumer: calibration labels influence nothing", () => {
     const rec = sealedRun(true);
     // corpus order is created_at DESC: the calibration row is newest
     const olderHumanLabel = { ...ordinaryHumanLabel, notes: "operator: the artifact is missing the open-gap list" };
-    const { impl, calls } = stubFetch([calibrationLabel, olderHumanLabel]);
+    // The exclusion is served by activity-api (exclude_purpose); this stub honours it.
+    const { impl, calls } = stubFetch([calibrationLabel, olderHumanLabel], { honourExclude: true });
     await consumeOracleLabel(rec, { activityApiEndpoint: ACT, devVesselEndpoint: DEV, apiKey: "", fetchImpl: impl });
     await settle();
     expect(rec.reached).toBe(false);
@@ -93,6 +103,45 @@ describe("oracle-label consumer: calibration labels influence nothing", () => {
     expect(rec.humanReachNotes).toBe(olderHumanLabel.notes);
     expect(gapWrites(calls)).toHaveLength(1);
     expect(JSON.stringify(gapWrites(calls)[0].body)).not.toContain("win-2026-10-03");
+  });
+
+  it("MUST-FAIL: the read asks activity-api to exclude calibration rows at limit 1, so ANY number of newer calibration rows cannot hide the human row", async () => {
+    const rec = sealedRun(true);
+    const humanRow = { ...ordinaryHumanLabel, notes: "operator: the artifact is missing the open-gap list" };
+    const fifteen = Array.from({ length: 15 }, (_, i) => ({ ...calibrationLabel, sample_draw_id: `draw-${i}` }));
+    const { impl, calls } = stubFetch([...fifteen, humanRow], { honourExclude: true });
+    await consumeOracleLabel(rec, { activityApiEndpoint: ACT, devVesselEndpoint: DEV, apiKey: "", fetchImpl: impl });
+    await settle();
+    const read = calls.find((c) => c.url.startsWith(ACT))!;
+    expect(read.body.pointer).toEqual({ type: "goal_verification_label", execution_id: "exec-sealed-1", limit: 1, exclude_purpose: "calibration" });
+    expect(rec.reached).toBe(false);
+    expect(rec.humanGraded).toBe(true);
+    expect(rec.humanReachNotes).toBe(humanRow.notes);
+    expect(rec.learning!.oracleLabelWritten).toBe(true);
+    expect(gapWrites(calls)).toHaveLength(1);
+  });
+
+  it("MUST-FAIL (second layer): an OLD activity-api that ignores exclude_purpose and returns a calibration row first does not get it applied — skipped, logged, not graded", async () => {
+    const rec = sealedRun(true);
+    const before = JSON.parse(JSON.stringify(rec));
+    // ignores exclude_purpose; at limit 1 the newest row is all it returns
+    const { impl, calls } = stubFetch([calibrationLabel]);
+    const logged: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { logged.push(a.map(String).join(" ")); };
+    try {
+      await consumeOracleLabel(rec, { activityApiEndpoint: ACT, devVesselEndpoint: DEV, apiKey: "", fetchImpl: impl });
+      await settle();
+    } finally {
+      console.log = origLog;
+    }
+    expect(rec.reached).toBe(true);
+    expect(rec.humanGraded).toBeUndefined();
+    expect(rec.goalReachReason).toBe(before.goalReachReason);
+    expect(rec.learning!.oracleLabelWritten).toBe(false);
+    expect(gapWrites(calls)).toHaveLength(0);
+    expect(logged.some((l) => l.includes("[oracle-label] skipped") && l.includes("calibration"))).toBe(true);
+    expect(logged.some((l) => l.includes("HUMAN reach override"))).toBe(false);
   });
 
   it("CONTROL: the same label WITHOUT purpose:\"calibration\" overrides reached and files the disagreement gap", async () => {
