@@ -148,7 +148,15 @@ describe("oracle-label read cache: a calibration row never freezes the label rea
     const src = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     const idx = src.indexOf("responseCache.set(key");
     expect(idx).toBeGreaterThan(-1);
-    const guard = src.slice(Math.max(0, idx - 400), idx);
-    expect(guard).toMatch(/purpose[\s\S]{0,40}calibration/);
+    // the CONDITION guarding the set, not a comment near it
+    const before = src.slice(Math.max(0, idx - 600), idx);
+    const cond = before.slice(before.lastIndexOf("if ("));
+    const m = cond.match(/!\/(purpose[^/]*calibration)\/\.test\(text\)/);
+    expect(m).not.toBeNull();
+    // and that regex matches the escaped form activity-api actually returns
+    const re = new RegExp(m![1]!);
+    const body = JSON.stringify({ success: true, content: JSON.stringify([{ verdict: "achieved", labeler: "human", purpose: "calibration" }]) });
+    expect(re.test(body)).toBe(true);
+    expect(re.test(JSON.stringify({ success: true, content: JSON.stringify([{ verdict: "achieved", labeler: "human" }]) }))).toBe(false);
   });
 });
