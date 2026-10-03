@@ -27,9 +27,10 @@
  * pagination tests still never pass. So the gate is the run itself: this file spawns
  * `bun test ./test/active-dispatches-pagination.test.ts` in a child and requires at least seven
  * distinct passing tests, zero failures, a clean exit, and no load error. The child gets a
- * MINIMAL env built from scratch (PATH, HOME, NO_COLOR) — never a copy of process.env: under an
- * agent harness (CLAUDECODE / AI_AGENT and similar) bun suppresses its per-test "(pass)" lines,
- * which would turn this test red for a reason unrelated to the pagination file. Output goes to a
+ * MINIMAL env built from scratch (PATH, HOME, NO_COLOR) — never a copy of process.env: with
+ * CLAUDECODE=1 or AGENT=1 set (measured on bun 1.3.14; AI_AGENT has no effect) bun suppresses its
+ * per-test "(pass)" lines while still printing "(fail)" lines and the summary, which would turn
+ * this test red for a reason unrelated to the pagination file. Output goes to a
  * temp FILE, not a pipe (bun test output through a pipe can truncate).
  */
 import { describe, expect, test } from "bun:test";
@@ -41,6 +42,44 @@ const TEST_DIR = dirname(new URL(import.meta.url).pathname);
 const TARGET = join(TEST_DIR, "active-dispatches-pagination.test.ts");
 const REPO_ROOT = resolve(TEST_DIR, "..");
 const MIN_PASSING = 7;
+
+/** The seven ORIGINAL pagination tests (describe > name), pinned by exact name so that renaming
+ *  or gutting them reads as red, not as "some other seven tests passed". Trivial bodies under
+ *  these names remain an accepted residual. */
+const PAGINATION_DESCRIBE = "activeDispatches pagination";
+const PINNED_PAGINATION_TESTS = [
+  "returns all results with no options, sorted by startedAt, limited to 50",
+  "filters by status 'running', limit 1, offset 0",
+  "retrieves subsequent running jobs with increasing offset",
+  "returns empty for a failed-status query with no matches",
+  "handles limit beyond total",
+  "handles offset beyond total",
+  "handles invalid limit/offset values gracefully (non-positive, non-numeric)",
+];
+
+/** CONTRACT NAME: the activeDispatches handler in src/index.ts must delegate its pagination to
+ *  `paginateDispatches`, exported by src/active-dispatches.ts. The pagination tests exercise that
+ *  module, so they only test production behaviour if the handler calls it — a copy that the
+ *  handler never calls is the same defect as the re-implementation they replace. */
+const CONTRACT_EXPORT = "paginateDispatches";
+const INDEX = join(REPO_ROOT, "src", "index.ts");
+
+/** The `if (type === "activeDispatches") { … }` branch of src/index.ts, with // comments
+ *  stripped so a mention in a comment does not count as a call. Null when the branch is gone. */
+function activeDispatchesHandlerRegion(src: string): string | null {
+  const start = src.indexOf('if (type === "activeDispatches")');
+  if (start < 0) return null;
+  const next = src.indexOf("\n  if (type ===", start + 1);
+  const region = src.slice(start, next > start ? next : start + 4000);
+  return region.replace(/\/\/.*$/gm, "");
+}
+
+let childRun: Promise<ChildRun> | null = null;
+/** One child run shared by the tests that read it. */
+function paginationRun(): Promise<ChildRun> {
+  childRun ??= runPaginationFile();
+  return childRun;
+}
 
 type ChildRun = { exitCode: number | null; output: string };
 
@@ -159,7 +198,7 @@ describe("active-dispatches-pagination.test.ts can load", () => {
   });
 
   test("its pagination tests RUN AND PASS in a child bun (>=7 passing, 0 failing, no load error)", async () => {
-    const { exitCode, output } = await runPaginationFile();
+    const { exitCode, output } = await paginationRun();
     const loadErrors = output.split("\n").filter((l) => /Unhandled error|SyntaxError|Cannot find module|ReferenceError/.test(l));
     const failing = output.split("\n").filter((l) => l.startsWith("(fail)"));
     const passing = passingNames(output);
@@ -171,6 +210,25 @@ describe("active-dispatches-pagination.test.ts can load", () => {
     expect(output).toMatch(/Ran \d+ tests? across 1 file/);
     expect(exitCode).toBe(0);
   }, 60_000);
+
+  test("each of its seven original tests passes BY NAME in the child run (renaming or gutting is not a fix)", async () => {
+    const { output } = await paginationRun();
+    const passing = passingNames(output);
+    const missing = PINNED_PAGINATION_TESTS.map((n) => `${PAGINATION_DESCRIBE} > ${n}`).filter((n) => !passing.has(n));
+    expect(missing).toEqual([]);
+  }, 60_000);
+
+  test("src/index.ts's activeDispatches handler calls the extracted paginateDispatches from ./active-dispatches", () => {
+    const src = readFileSync(INDEX, "utf8");
+    const importsContract = new RegExp(
+      `import\\s*\\{[^}]*\\b${CONTRACT_EXPORT}\\b[^}]*\\}\\s*from\\s*["']\\./active-dispatches(?:\\.js|\\.ts)?["']`,
+    ).test(src);
+    expect(importsContract ? "imports it" : `src/index.ts has no import { ${CONTRACT_EXPORT} } from "./active-dispatches"`).toBe("imports it");
+    const region = activeDispatchesHandlerRegion(src);
+    expect(region === null ? "activeDispatches branch not found in src/index.ts" : "found").toBe("found");
+    const calls = new RegExp(`\\b${CONTRACT_EXPORT}\\s*\\(`).test(region ?? "");
+    expect(calls ? "handler calls it" : `the activeDispatches branch never calls ${CONTRACT_EXPORT}(…)`).toBe("handler calls it");
+  });
 
   test("control: the export scanner sees src/index.ts's multi-line export list", () => {
     const exported = valueExports(join(TEST_DIR, "..", "src", "index.ts"));
