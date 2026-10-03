@@ -397,6 +397,7 @@ import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { spliceExecPlaceholders } from "./exec-placeholder";
+import { consumeOracleLabel, type OracleLabelRecord } from "./oracle-label-consumer";
 import type {
   EventSink,
   Impulse,
@@ -17606,83 +17607,13 @@ async function handleRunGoal(req: Request): Promise<Response> {
 
 function maybeConsumeOracleLabel(record: DispatchRecord): void {
   // Poll-time oracle-label consumption — SHARED by GET /executions/:id AND the
-  // goalWalkState resolve branch. The Obsidian panel polls goalWalkState, so the
-  // consumer MUST run there too; otherwise a human reach override is written to the
-  // oracle corpus, shown 'recorded', and silently NEVER applied on the read path.
-  // Fire-and-forget; the oracleLabelWritten latch makes repeated invocation idempotent.
-  // A HUMAN verdict corrects record.reached + surfaces directed notes (corrective, law 13);
-  // reach is NEVER posterior-written — the arm already earns reach credit via
-  // v_shape_conditioned_score (FROM execution.success), so re-writing a β would
-  // double-count and could β-condemn a correctly-selected arm on an unreachable goal (law 12).
-  const learn = record.learning;
-  if (record.status !== "running" && learn && !learn.oracleLabelWritten && record.executionId) {
-    const labelExecId = record.executionId;
-    void (async () => {
-      try {
-        const labelRes = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: JSON.stringify({ pointer: { type: "goal_verification_label", execution_id: labelExecId, limit: 1 } }),
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (!labelRes.ok) {
-          console.warn(`[oracle-label] NOT consumed exec=${labelExecId} reason=fetch_not_ok status=${labelRes.status}`);
-          return;
-        }
-        const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
-        let labels: Array<{ verdict?: string; notes?: string; labeler?: string }> = [];
-        try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as Array<{ verdict?: string; notes?: string; labeler?: string }>) : []; } catch { labels = []; }
-        const label = labels[0];
-        const labelVerdict = label?.verdict;
-        if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") {
-          const reason = labels.length === 0 ? "no_labels" : (labelVerdict === undefined ? "verdict_field_missing" : "verdict_unrecognised");
-          console.warn(`[oracle-label] NOT consumed exec=${labelExecId} reason=${reason} n_labels=${labels.length} verdict=${String(labelVerdict)} labeler=${label?.labeler ?? "<none>"}`);
-          return;
-        }
-        // SOURCE-AWARE LATCH: only a HUMAN verdict burns the consumption latch.
-        // recordDeterministicLabel (:2439) mirrors EVERY oracle verdict into the
-        // corpus as a deterministic/automated row at verdict time, so a machine
-        // label is always present before the operator can speak. Burning the
-        // latch on it made the human branch below structurally unreachable —
-        // 0 "HUMAN reach override" lines in 48h against 81 machine consumptions.
-        // Leaving the latch unburned for machine labels is sufficient: the corpus
-        // read is ORDER BY created_at DESC LIMIT 1 (activity-api
-        // src/routes/impulses.ts:2764), so a later human row is already labels[0]
-        // on the next poll. No limit change is needed.
-        if (label?.labeler === "human") learn.oracleLabelWritten = true;
-        if (label?.labeler === "human") {
-          const priorReached = record.reached;
-          record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
-          // ORACLE-DISAGREEMENT WIRE (2026-09-19). Ground-truth labels sat in the
-          // corpus with zero readers turning contradiction into work: a human verdict
-          // that CONTRADICTS the system's own reach verdict is direct evidence the
-          // grading pipeline judged this goal class wrongly, and until now the label
-          // only corrected this one record. Mint the repair gap automatically —
-          // deduplicated by execution id (idempotent upsert), fire-and-forget,
-          // fail-open, with the failure logged in the catch so a silent drop is
-          // observable.
-          if (priorReached !== null && record.reached !== null && priorReached !== record.reached) {
-            const dgapId = "gap-oracle-label-disagreement-" + String(labelExecId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60);
-            void fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-              body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { id: dgapId, source: "human_reported", summary: `Human ground-truth label contradicts the system reach verdict for execution ${labelExecId}: system graded reached=${String(priorReached)}, human graded ${labelVerdict}. Goal: ${String(record.goal ?? "").slice(0, 200)}. Human notes: ${String(label?.notes ?? "").slice(0, 300)}. The grading pipeline judged this goal class wrongly; determine why the verdicts diverge and repair the grader for the class, preserving honest grading.`, detected_at: new Date().toISOString() } } } }),
-              signal: AbortSignal.timeout(10_000),
-            }).then((r) => console.log(`[oracle-label] disagreement gap ${dgapId} filed (http ${r.status})`)).catch((e) => console.warn(`[oracle-label] disagreement gap filing failed (non-fatal): ${(e as Error).message}`));
-          }
-          (record as { humanGraded?: boolean }).humanGraded = true;
-          const notes = typeof label?.notes === "string" ? label.notes.trim() : "";
-          (record as { humanReachNotes?: string }).humanReachNotes = notes;
-          record.goalReachReason = `[human override: ${notes || ("reached=" + String(record.reached))}] ${record.goalReachReason ?? ""}`.slice(0, 600);
-          console.log(`[oracle-label] HUMAN reach override verdict=${labelVerdict} for ${labelExecId} -> record.reached=${record.reached} (no posterior β-penalty)`);
-        } else {
-          console.log(`[oracle-label] consumed automated verdict=${labelVerdict} for ${labelExecId} (no override)`);
-        }
-      } catch (e) {
-        console.warn(`[oracle-label] consumption failed (non-fatal): ${(e as Error).message}`);
-      }
-    })();
-  }
+  // goalWalkState resolve branch. Fire-and-forget; the oracleLabelWritten latch makes
+  // repeated invocation idempotent. The consumer lives in ./oracle-label-consumer.
+  void consumeOracleLabel(record as unknown as OracleLabelRecord, {
+    activityApiEndpoint: ACTIVITY_API_ENDPOINT,
+    devVesselEndpoint: DEV_VESSEL_ENDPOINT,
+    apiKey: API_KEY,
+  });
 }
 
 async function handleResolve(req: Request): Promise<Response> {
