@@ -245,6 +245,15 @@ describe("reach grounding controls: the judge still decides what survives the ga
     expect(v?.reached).toBe(true);
   });
 
+  it("control - a goal asking for interview questions is not a non-answer when it gets questions", async () => {
+    const j = rubberStamp();
+    const v = await judgeReach(llmOnly(
+      "Write three interview questions for a backend engineering role",
+      "- How would you design an idempotent payment endpoint?\n- When would you choose a queue over a direct call?\n- How do you find a slow query?",
+    ), j.complete);
+    expect(v?.reached).toBe(true);
+  });
+
   it("control - a latest-commit question about a repo file answered from a shell read is left to the judge", async () => {
     const j = rubberStamp();
     const v = await judgeReach({

@@ -115,18 +115,26 @@ export function assertedDates(digest: string): Asserted[] {
   const found: Asserted[] = [];
   for (const seg of digestSegments(digest)) {
     if (!seg.shape || !ANSWER_SHAPES.has(seg.shape)) continue;
-    // JSON-escaped content (a report inside {"content":"…"}) keeps its words; unescape newlines only.
-    const text = seg.text.replace(/\\n/g, "\n");
-    // A report inside a JSON envelope: read the frame from the start of its text.
-    const body = text.replace(/^\s*\{[^"]*"(?:content|text|body)"\s*:\s*"/, "");
-    const fm = body.match(FRAME_AS_OF_RE);
-    if (fm) { const d = parseDateAt(body.slice(fm[0].length, fm[0].length + 60)); if (d) found.push(d); }
-    ANCHOR_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = ANCHOR_RE.exec(text)) !== null) {
-      const d = parseDateAt(text.slice(m.index + m[0].length, m.index + m[0].length + 60));
-      if (d) found.push(d);
-    }
+    found.push(...assertedDatesInText(seg.text));
+  }
+  return found;
+}
+
+/** The current/report dates ONE answer text asserts (the per-segment body of `assertedDates`,
+ *  shared with reach-grounding.ts, which picks its own answer texts). */
+export function assertedDatesInText(segText: string): Asserted[] {
+  const found: Asserted[] = [];
+  // JSON-escaped content (a report inside {"content":"…"}) keeps its words; unescape newlines only.
+  const text = segText.replace(/\\n/g, "\n");
+  // A report inside a JSON envelope: read the frame from the start of its text.
+  const body = text.replace(/^\s*\{[^"]*"(?:content|text|body)"\s*:\s*"/, "");
+  const fm = body.match(FRAME_AS_OF_RE);
+  if (fm) { const d = parseDateAt(body.slice(fm[0].length, fm[0].length + 60)); if (d) found.push(d); }
+  ANCHOR_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ANCHOR_RE.exec(text)) !== null) {
+    const d = parseDateAt(text.slice(m.index + m[0].length, m.index + m[0].length + 60));
+    if (d) found.push(d);
   }
   return found;
 }

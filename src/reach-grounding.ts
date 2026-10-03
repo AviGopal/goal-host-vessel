@@ -7,8 +7,20 @@
  * as `complete`, so a test can stand in for the model. Importing index.ts boots the host, so the
  * judge was unreachable from a unit test until now.
  *
- * `now` is accepted on the input for the run clock; nothing reads it at this commit.
+ * GROUNDING GATES (gap the-llm-reach-judge-accepts-ungrounded-answers-to-current-information-and-
+ * self-description-goals). Held-out probes measured the judge granting reach to a current-information
+ * goal answered by one llm_completion_dispatch step with no source (template text, or a fabricated
+ * stale "today"), to self-description goals answered with the backing model's persona, and to a
+ * hedge that commits to nothing. Prose in the judge prompt has not held for this class (8a85cfa,
+ * 2c26fcb), so `groundingPreGate` decides these DETERMINISTICALLY before the model is asked; it only
+ * ever says not-reached or abstains, and the judge decides everything that survives it. The run date
+ * is also put into the judge prompt (gap reach-judge-and-synthesis-lack-the-current-date…), the same
+ * host-clock block synthesis reads — a context fact, never the check.
+ *
+ * Every rule reads the chain's SHAPES (roles below) and the ANSWER text only; the cue lists are the
+ * named exported constants, kept here so they are reviewable in one place.
  */
+import { ANSWER_SHAPES, assertedDatesInText, digestSegments, isStaleDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 
 export interface ReachJudgeInput {
   goal: string;
@@ -78,10 +90,138 @@ export function parseReachJudgeText(text: unknown): ReachJudgeVerdict | null {
 /** The LLM reach judge: prompt, model call, sanitised verdict. null = the judge could not be consulted. */
 export async function judgeReach(input: ReachJudgeInput, complete: ReachJudgeComplete): Promise<ReachJudgeVerdict | null> {
   const { goal, producedShapes, taskSummary, contentDigest, commandEvidence } = input;
-  const prompt = buildReachJudgePrompt(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  const now = input.now ?? new Date();
+  const gated = groundingPreGate({ ...input, now });
+  if (gated) return gated;
+  const prompt = temporalGroundingBlock(now) + buildReachJudgePrompt(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
   try {
     const text = await complete(prompt);
     if (text === null) return null;
     return parseReachJudgeText(text);
   } catch { return null; }
+}
+
+// ── Grounding gates ─────────────────────────────────────────────────────────────────────────────
+
+/** Goals that need information about the world NOW. A heuristic cue list (flagged): "now" alone is
+ *  NOT in it ("now explain …"). "current"/"latest" also hit questions about the substrate's own
+ *  state ("the latest commit touching repos/…"); those are not blocked, because the source rule
+ *  below accepts ANY non-LLM producer as a source, so a shell/file/registry read passes to the judge. */
+export const CURRENT_INFORMATION_CUES = /\b(?:today'?s?|tonight|yesterday'?s?|right now|at the moment|currently|current|latest|this (?:week'?s?|month'?s?|morning|afternoon|evening)|news|headlines?|breaking)\b/i;
+
+/** Goals asking the substrate to describe ITSELF (the deictic "you"/"this system"). */
+export const SELF_DESCRIPTION_CUES = /\b(?:what|who) are you\b|\bdescribe yourself\b|\btell me about yourself\b|\bintroduce yourself\b|\bwhat can you do\b|\bwhat(?: is|'s) this (?:system|substrate)\b|\bwhat (?:this|the) (?:system|substrate) is\b/i;
+
+/** Producers of the substrate's knowledge about itself, as the live registry names them (the set the
+ *  wrong-subject gap lists; "registry" is read through a shell call, matched by REGISTRY_READ_RE). */
+export const SELF_KNOWLEDGE_SHAPES: ReadonlySet<string> = new Set([
+  "shape_producer_inventory", "learned_topology_snapshot", "substrate_health_tick", "self_fact_reconcile",
+  "memoryNote", "docs_align_scan", "vessel_health_report", "vessel_completeness_report", "topologyCoverage",
+  "substrateBootstrap", "substrateObservable", "discovery_vessel_registry_observer",
+]);
+/** A command that read the discovery registry (/registry, /registry/stats, /registry/shapes). */
+const REGISTRY_READ_RE = /\/registry\b/;
+
+/** Sentences that commit to nothing: a hedge, a request to clarify, or an offer instead of an answer.
+ *  A sentence is non-committal when it matches this OR ends in "?". Heuristic phrase list (flagged). */
+export const NON_ANSWER_PHRASES = /\b(?:it|that|this|the answer) (?:really )?depends\b|\bdepends (?:on|entirely)\b|\b(?:could|can) you (?:clarify|specify|tell me|provide|share|give me)\b|\bplease (?:clarify|specify|provide|let me know)\b|\blet me know\b|\bwould you like (?:me|to)\b|\bi (?:can|could) (?:fetch|look|search|check|find|help|provide|get)\b|\bi (?:do not|don't) have (?:access|real-time|the ability|browsing|internet)\b|\bas an ai\b/i;
+
+/** LLM writers: their output is the answer, never a source. */
+const LLM_WRITER_SHAPES: ReadonlySet<string> = new Set([...ANSWER_SHAPES, "llm_completion_dispatch"]);
+/** Dispatch seeds and placeholders: present in every chain, evidence of nothing. */
+const SEED_SHAPES: ReadonlySet<string> = new Set(["goal", "dispatch_id", "universal_fallback_result"]);
+/** The floor's own testimony that it executed no tool (index.ts universalToolFallback). */
+const ZERO_TOOLS_BANNER = "[GROUNDING: ZERO tools were executed";
+const FLOOR_OBSERVATIONS_MARKER = "\n--- grounded tool outputs ---";
+
+/** The text inside a dispatcher envelope ({"success":true,"shape":"llmTextCompletion","body":{"text":…}}). */
+function unwrapAnswer(raw: string): string {
+  const t = raw.trim();
+  const pick = (o: any): string | null => {
+    if (typeof o === "string") return o;
+    if (!o || typeof o !== "object") return null;
+    for (const k of ["text", "content", "answer"]) if (typeof o[k] === "string") return o[k];
+    return o.body !== undefined ? pick(o.body) : null;
+  };
+  try { const v = pick(JSON.parse(t)); if (v !== null) return v; } catch { /* truncated or not JSON */ }
+  const m = t.match(/"(?:text|content|answer)"\s*:\s*"((?:[^"\\]|\\.)*)/);
+  if (m) { try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]!.replace(/\\n/g, "\n"); } }
+  return t;
+}
+
+/** The answer texts of a digest: labelled LLM-writer segments; for an unlabelled digest (the floor)
+ *  the authored part — banner removed, tool observations cut. */
+export function answerTexts(digest: string): string[] {
+  const segs = digestSegments(digest);
+  if (segs.length > 0 && segs.every((s) => s.shape === null)) {
+    let t = digest.startsWith(ZERO_TOOLS_BANNER) ? digest.slice(digest.indexOf("]") + 1) : digest;
+    const cut = t.indexOf(FLOOR_OBSERVATIONS_MARKER);
+    if (cut >= 0) t = t.slice(0, cut);
+    return t.trim() ? [t.trim()] : [];
+  }
+  return segs.filter((s) => s.shape !== null && LLM_WRITER_SHAPES.has(s.shape)).map((s) => unwrapAnswer(s.text)).filter((t) => t.trim().length > 0);
+}
+
+/** Non-answer: EVERY clause of the answer is non-committal (NON_ANSWER_PHRASES, or a question).
+ *  Clauses are sentences, further split at "but" and ";", so "it depends on X, but Y is the better
+ *  default" commits (its second clause asserts something) while "it depends on your needs" does not. */
+export function isNonAnswer(answer: string): boolean {
+  const clauses = answer.replace(/[*_#>`]/g, " ")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .flatMap((x) => { const q = x.trim().endsWith("?"); return x.split(/,?\s+but\s+|;\s*/i).map((c) => (q ? `${c.trim().replace(/[.!?]$/, "")}?` : c.trim())); })
+    .filter((x) => /[A-Za-z0-9]/.test(x));
+  return clauses.length > 0 && clauses.every((x) => x.endsWith("?") || NON_ANSWER_PHRASES.test(x));
+}
+
+/** Did the chain consult any source in-run? Any produced shape that is not an LLM writer, a seed or a
+ *  write; never when the floor testifies it ran zero tools. */
+export function hasInRunSource(producedShapes: string[], digest: string): boolean {
+  if (digest.trimStart().startsWith(ZERO_TOOLS_BANNER)) return false;
+  return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s));
+}
+
+const DAY_MS = 86_400_000;
+const notReached = (code: string, why: string): ReachJudgeVerdict => ({
+  reached: false, deterministic: true, completion_shapes: [], reason: `deterministic:${code} — ${why}`,
+});
+
+/**
+ * The deterministic gates in front of the LLM judge. Returns not-reached or null (abstain: the judge
+ * decides). Rules, in order:
+ *  1. NON-ANSWER: every clause of the answer is a hedge, a request to clarify, an offer, or a question.
+ *     Goals that ask for questions (ask / question…) are exempt: all-question output is their deliverable.
+ *  2. UNSOURCED CURRENT INFORMATION: a CURRENT_INFORMATION_CUES goal whose chain has no in-run source.
+ *  3. STALE TODAY: a current-information answer asserting a current/report date ("Today is …",
+ *     "Today, …", a leading "As of …") off the run clock (±1 day, after the goal's yesterday/tomorrow
+ *     offset). Other dates in the answer (yesterday's items, history) are not read.
+ *  4. WRONG SUBJECT: a SELF_DESCRIPTION_CUES goal whose chain used no SELF_KNOWLEDGE_SHAPES producer and
+ *     read no registry.
+ */
+export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJudgeVerdict | null {
+  const { goal, producedShapes, now } = input;
+  const digest = (input.contentDigest ?? "").trim();
+  const answers = answerTexts(digest);
+
+  if (!/\b(?:ask|question)/i.test(goal) && answers.length > 0 && answers.every(isNonAnswer)) {
+    return notReached("non-answer", "every clause of the answer is a hedge, a request to clarify, an offer or a question; it commits to no answer");
+  }
+
+  if (CURRENT_INFORMATION_CUES.test(goal)) {
+    if (!hasInRunSource(producedShapes, digest)) {
+      return notReached("unsourced-current-information", `the goal asks for current information and the chain consulted no source in-run (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory cannot be current`);
+    }
+    const target = new Date(now.getTime() + (timeRelativeOffset(goal) ?? 0) * DAY_MS);
+    const stale = answers.flatMap(assertedDatesInText).filter((d) => isStaleDate(d, target));
+    if (stale.length > 0) {
+      return notReached("stale-asserted-date", `the answer asserts "${stale[0]!.text.trim()}" as the current/report date; the run clock reads ${now.toISOString().slice(0, 10)} (target ${target.toISOString().slice(0, 10)}, ±1 day)`);
+    }
+  }
+
+  if (SELF_DESCRIPTION_CUES.test(goal)) {
+    const selfKnown = producedShapes.some((s) => SELF_KNOWLEDGE_SHAPES.has(s)) || REGISTRY_READ_RE.test(input.commandEvidence ?? "");
+    if (!selfKnown) {
+      return notReached("ungrounded-self-description", `the goal asks the substrate to describe itself and the chain consulted no self-knowledge producer (${[...SELF_KNOWLEDGE_SHAPES].slice(0, 4).join(", ")}, …) and read no registry; a model's own persona is the wrong subject`);
+    }
+  }
+  return null;
 }

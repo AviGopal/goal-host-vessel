@@ -61,7 +61,9 @@ describe("verifyGoalReached: the asserted-date oracle precedes the judge", () =>
   test("positive control: today's date abstains, and the judge decides as before", async () => {
     judgeCalls = 0;
     const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
-    const v = await verifyGoalReached(NEWS, SHAPES, "walk(1 steps): satisfier:llm_completion", `- llm_completion: Today is ${today}. Here are the main headlines: 1. ...`);
+    // The chain carries a web_search: an UNSOURCED news answer is now refused before the judge by
+    // reach-grounding.ts (unsourced-current-information), which is not what this control isolates.
+    const v = await verifyGoalReached(NEWS, ["goal", "web_search", "llm_completion"], "walk(2 steps): web_search -> llm_completion", `- web_search: {"results":[{"title":"Main headline","url":"https://news.example.org/a"}]}\n- llm_completion: Today is ${today}. Here are the main headlines: 1. ...`);
     expect(judgeCalls).toBeGreaterThan(0);
     expect(v?.reached).toBe(true);
   }, 20_000);
