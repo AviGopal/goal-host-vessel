@@ -344,9 +344,9 @@ export function spliceExecPlaceholders(cmd: string, vars: Record<string, unknown
 }
 
 /**
- * Back-compat shim for callers that want the string form. Returns the spliced command, or—on a
- * refusal—the ORIGINAL command unchanged, so a caller that cannot act on a refusal does not run a
- * guessed-at command. Callers that CAN handle a refusal should use spliceExecPlaceholders.
+ * Alias of spliceExecPlaceholders kept under the original name for tests/callers that import it.
+ * Returns the same ExecSplice ({ok:true,command} | {ok:false,reason}); every caller must act on a
+ * refusal (a refusal is NOT a command) — the sole production caller (index.ts) does.
  */
 export const interpolateExecPlaceholders = (cmd: string, vars: Record<string, unknown>): ExecSplice =>
   spliceExecPlaceholders(cmd, vars);
