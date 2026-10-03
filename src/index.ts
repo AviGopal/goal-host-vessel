@@ -381,8 +381,12 @@ import {
   DiscoveryRegistrationLoop,
   createLLMPort,
   ActivityApiAdapter,
-  foreignConsumption,
 } from "@avigopal/ias-executor-ts";
+// NAMESPACE import, deliberately: `foreignConsumption` ships in a newer ias-executor-ts dist
+// than some nodes may have loaded, and a NAMED import of a missing export fails at module
+// link (the vessel would not start). The gate reads it optionally and degrades loudly.
+import * as iasExecutor from "@avigopal/ias-executor-ts";
+import { makeForeignConsumptionGate } from "./foreign-consumption-gate";
 import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-executor-ts/adapters";
 // ONE definition, imported by both the command builders and their reach oracles. It lives
 // in its own module so it can be tested against real source — index.ts boots a server on
@@ -7262,6 +7266,21 @@ async function resolveMaxExtractionDepth(): Promise<number> {
   _maxExtractionDepthAt = Date.now();
   return _maxExtractionDepth;
 }
+// One gate per process: the "ias-executor too old" log + gap fire once, not per walk.
+const foreignConsumptionGate = makeForeignConsumptionGate({
+  lib: iasExecutor as unknown as Record<string, unknown>,
+  log: (line) => console.warn(line),
+  writeGap: async (gap) => {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { ...gap, detected_at: new Date().toISOString() } } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    try { await r.body?.cancel(); } catch { /* swallow */ }
+    console.warn(`[foreign-consumption] filed gap ${gap.id} (http ${r.status})`);
+  },
+});
 async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string): Promise<void> {
   const executionId = trace?.id;
   if (!executionId) return;
@@ -7269,20 +7288,20 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
   // Never extract a run that consumed another execution's impulse: the template would
   // encode a cross-bound recipe (measured: a ribosome-extract run cross-bound and minted
   // a template from another run's trace, which an unrelated goal then ran).
+  // Not strict: the trace here is often goal-host-synthesised (walk composite), and every
+  // engine trace feeding a mint was already checked strictly at the reach gate.
   {
-    const fc = foreignConsumption({
+    const g = foreignConsumptionGate.check({
       id: executionId,
       tasks: (trace.tasks ?? []) as ExecutionTrace["tasks"],
       compositionChain: trace.compositionChain,
       inputImpulseIds: (trace as { inputImpulseIds?: string[] }).inputImpulseIds ?? [],
-    });
-    if (fc.status === "foreign") {
-      console.log(`[goal-host-vessel] reach->mint: SKIP ${executionId} — consumed another execution's impulse(s): ${fc.foreign.map((f) => `${f.taskId}<-${f.impulseId}@${f.producerExecutionId ?? "?"}`).join(",")}`);
+    }, { strict: false });
+    if (g.block) {
+      console.log(`[goal-host-vessel] reach->mint: SKIP ${executionId} — ${g.reason}`);
       return;
     }
-    if (fc.status === "unknown" && (trace.tasks ?? []).length > 0) {
-      console.warn(`[goal-host-vessel] reach->mint: ${executionId} carries no consumedProvenance — extracting without the foreign-impulse check (stale ias-executor-ts dist?)`);
-    }
+    if (g.status === "unverified") console.warn(`[goal-host-vessel] reach->mint: ${executionId} ${g.reason} (synthesised trace; source steps were checked at the reach gate)`);
   }
   
   // Causal attempt ledger: never crystallize a walk that landed an unaccounted commit.
@@ -10062,14 +10081,11 @@ If one of those sibling shapes is the action that would create what the goal ask
   // answered a different run's question. Read at the reach verdict below.
   const walkForeignConsumption: string[] = [];
   const noteForeignConsumption = (stepId: string, trace: ExecutionTrace): void => {
-    const fc = foreignConsumption(trace);
-    if (fc.status === "foreign") {
-      const d = fc.foreign.map((f) => `${f.taskId}<-${f.impulseId}@${f.producerExecutionId ?? "?"}`).join(",");
-      walkForeignConsumption.push(`${stepId}(${trace.id}): ${d}`);
-      console.warn(`[goal-host-vessel] walk(${opts.surface}): FOREIGN-IMPULSE step ${stepId} exec=${trace.id} consumed another execution's impulse(s): ${d}`);
-    } else if (fc.status === "unknown" && (trace.tasks ?? []).length > 0) {
-      // Deliberately non-blocking: a trace from an engine predating consumedProvenance.
-      console.warn(`[goal-host-vessel] walk(${opts.surface}): step ${stepId} exec=${trace.id} carries no consumedProvenance — foreign-impulse gate cannot check it (stale ias-executor-ts dist?)`);
+    // Strict: this trace came straight from this process's engine.
+    const g = foreignConsumptionGate.check(trace, { strict: true });
+    if (g.block) {
+      walkForeignConsumption.push(`${stepId}(${trace.id}): ${g.reason}`);
+      console.warn(`[goal-host-vessel] walk(${opts.surface}): PROVENANCE-BLOCK step ${stepId} exec=${trace.id} — ${g.reason}`);
     }
   };
   let lastExecId: string | undefined = opts.parentExecutionId;
@@ -11514,7 +11530,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // built from foreign input is still the wrong change.
       if (reached === true && walkForeignConsumption.length > 0) {
         reached = false;
-        const _fr = `provenance:foreign-impulse-consumed — ${walkForeignConsumption.length} walk step(s) bound another execution's impulse: ${walkForeignConsumption.join(" | ").slice(0, 600)}`;
+        const _fr = `provenance-gate: ${walkForeignConsumption.length} walk step(s) consumed another execution's impulse or carry unverifiable provenance: ${walkForeignConsumption.join(" | ").slice(0, 600)}`;
         if (verdict) { (verdict as GoalReachVerdict).reached = false; (verdict as GoalReachVerdict).reason = _fr; }
         goalReachReason = _fr;
         tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED — ${_fr}`);
@@ -14897,12 +14913,11 @@ async function runGoalWithRecoveryInner(
         // PROVENANCE GATE: a run that consumed another execution's impulse did not reach
         // THIS goal. Not reached, not credited, not extracted — and not β-penalised either:
         // the template did not fail, the shared store fed it another run's data.
-        const _fcRun = result?.trace ? foreignConsumption(result.trace as ExecutionTrace) : null;
-        const _foreignRun = _fcRun?.status === "foreign";
-        if (_foreignRun) {
+        const _gRun = result?.trace ? foreignConsumptionGate.check(result.trace as ExecutionTrace, { strict: true }) : null;
+        if (_gRun?.block) {
           reached = false;
           status = "failed";
-          goalReachReason = `provenance:foreign-impulse-consumed — ${_fcRun!.foreign.map((f) => `${f.taskId}<-${f.impulseId}@${f.producerExecutionId ?? "?"}`).join(",").slice(0, 400)}`;
+          goalReachReason = _gRun.reason;
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: NOT REACHED via ${selId} — ${goalReachReason}`);
         } else if (verdict && verdict.reached === false) {
           status = "failed";
