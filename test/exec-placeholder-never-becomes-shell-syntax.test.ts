@@ -151,6 +151,15 @@ describe("exec-placeholder: a pool value never executes in any quote context (MU
     ["awk program body", `awk 'BEGIN{print "{{x}}"}'`, `"; system("touch PWNED"); "`],
     ["bash arithmetic test", `[[ {{x}} -eq 1 ]] && echo one`, "a[$(touch${IFS}PWNED)]"],
     ["arithmetic expansion", `echo $(( {{x}} + 1 ))`, "a[$(touch${IFS}PWNED)]"],
+    ["value redirected then piped into sh", `echo {{x}} 2>&1 | sh`, "touch PWNED"],
+    ["value from a brace group piped into sh", `{ echo {{x}}; } | sh`, "touch PWNED"],
+    ["value from a subshell piped into sh", `(echo {{x}}) | sh`, "touch PWNED"],
+    ["value piped into a wrapped interpreter", `echo {{x}} | sudo -u root sh`, "touch PWNED"],
+    ["wrapper takes the value as its command", `timeout 5 {{x}} PWNED`, "touch"],
+    ["nice wrapper takes the value as its command", `nice -n 5 {{x}} PWNED`, "touch"],
+    ["let evaluates the value as arithmetic", `let "z = {{x}}"`, "a[$(touch${IFS}PWNED)]"],
+    ["ansi-c dollar-quoting", `printf %s $'{{x}}'`, "x'$(touch${IFS}PWNED)'y"],
+    ["heredoc body carrying a value", `cat <<EOF\nval: {{x}}\nEOF`, DOLLAR_PAREN],
   ];
   for (const [ctxName, template, payload] of nested) {
     test(`exec-placeholder: ${ctxName} with a pool value is refused and creates no sentinel`, () => {
@@ -201,6 +210,21 @@ describe("exec-placeholder: benign values still flow (CONTROL, green at base and
     for (const r of runEach(`printf %s {{x}} | tr a-z A-Z`, "hello world")) {
       expect({ shell: r.shell, ok: r.spliced.ok, stdout: r.stdout }).toEqual({ shell: r.shell, ok: true, stdout: "HELLO WORLD" });
     }
+  });
+
+  test("exec-placeholder control: a value in a fetch arg piped as DATA into a program filter is produced", () => {
+    // The value is in curl's own argv (safe), not jq's program; jq reads DATA on stdin.
+    const r = splice(`curl -s "{{x}}" | jq -r .name`, { x: "http://example.invalid/a" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.command).toBe(`curl -s ""'http://example.invalid/a'"" | jq -r .name`);
+  });
+
+  test("exec-placeholder control: a command whose only placeholder is unbound is returned unchanged even beside an expansion", () => {
+    // Regression: the safety lexer must not refuse a command that carries no value to splice.
+    const t = `echo "$(date +%s)" {{unbound}}`;
+    const r = splice(t, { x: "v" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.command).toBe(t);
   });
 
   test("exec-placeholder control: object fields and content keys are threaded", () => {

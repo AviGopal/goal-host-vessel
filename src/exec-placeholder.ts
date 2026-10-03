@@ -44,21 +44,43 @@ export type ExecSplice =
   | { ok: false; reason: string };
 
 /**
- * Interpreters whose INPUT (stdin or argv) is a PROGRAM: a pool value reaching one is parsed as
- * code, so any command that invokes one (as its own command word or piped into one) and also
- * carries a placeholder is refused. Command wrappers that pass through to a real command word are
- * skipped first so `sudo sh …` is still seen as `sh`.
+ * TIER A — interpreters that execute a PROGRAM read from stdin OR argv (and `eval`/`let`, which
+ * evaluate a string). A pool value anywhere in a command that invokes one of these can reach the
+ * program it runs — piped in, redirected in, or spliced as an argument — so the command is refused
+ * when ANY word of ANY segment is one of these. This is a HEURISTIC with a fail-closed lexer
+ * behind it: it over-refuses a benign `echo bash` and does not know every interpreter (dc's `!`,
+ * `less`/`vim`/`git -c`, `tar --to-command` are off-list); it is deliberately coarse on the
+ * safe side. The names are matched by basename, after pass-through wrappers are skipped.
  */
-export const INTERPRETER_COMMANDS = new Set<string>([
+export const TIER_A_INTERPRETERS = new Set<string>([
   "sh", "bash", "dash", "zsh", "ksh", "ash", "csh", "tcsh",
-  "eval", "source", ".", "exec", "xargs", "env", "su",
+  "eval", "let", "source", ".", "exec", "xargs", "env", "su",
   "python", "python2", "python3", "perl", "ruby", "node", "bun", "deno", "php", "lua",
-  "osascript", "ssh", "awk", "gawk", "mawk", "nawk", "jq", "yq", "sed", "find",
+  "osascript", "ssh",
 ]);
 
-/** Pass-through wrappers skipped to find the real command word. */
+/**
+ * TIER B — interpreters whose PROGRAM is an argv argument (not stdin). A value piped into one of
+ * these is DATA, not program (`cat … | jq '.x'` is fine), so these are refused only when they are
+ * the command word of the SAME segment that carries the placeholder — i.e. the value is in their
+ * own argv, where the program body / expression lives.
+ */
+export const TIER_B_INTERPRETERS = new Set<string>([
+  "awk", "gawk", "mawk", "nawk", "jq", "yq", "sed", "find",
+]);
+
+/** Both tiers, for callers/tests that want the whole set. */
+export const INTERPRETER_COMMANDS = new Set<string>([...TIER_A_INTERPRETERS, ...TIER_B_INTERPRETERS]);
+
+/**
+ * Pass-through wrappers. A segment led by one of these that carries a placeholder is refused
+ * outright: finding the wrapped command word means parsing each wrapper's own options (`timeout`
+ * takes a duration, `nice -n N`, `sudo -u U`), and getting that wrong lets `timeout 5 {{x}}` run
+ * the value as the command. The shell resolver already bounds and roots the command, so the walk
+ * has no need to emit its own wrapper around a threaded value.
+ */
 const WRAPPER_COMMANDS = new Set<string>([
-  "sudo", "nice", "nohup", "timeout", "time", "command", "builtin", "stdbuf", "ionice", "setsid",
+  "sudo", "nice", "nohup", "timeout", "time", "command", "builtin", "stdbuf", "ionice", "setsid", "doas", "chroot", "unbuffer",
 ]);
 
 type Quote = "none" | "single" | "double";
@@ -73,13 +95,14 @@ const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_:]+)(?:\.([a-zA-Z0-9_]+))?\s*\}\}/y;
  * refusal when it sits in a context no outer quoting can tame), plus the segment/word structure
  * used to attribute a placeholder to an interpreter's program text.
  */
-function lex(cmd: string): { placeholders: Placeholder[]; segments: Segment[] } | { fatal: string } {
+function lex(cmd: string): { placeholders: Placeholder[]; segments: Segment[]; heredoc: boolean } | { fatal: string } {
   const placeholders: Placeholder[] = [];
   const segments: Segment[] = [];
   let quote: Quote = "none";
   // Nesting that makes a placeholder re-evaluated as code; any open one refuses a placeholder.
   let backtick = 0, dollarParen = 0, arithmetic = 0, paramExpansion = 0, dblBracket = 0;
   let comment = false;
+  let heredoc = false; // an unquoted `<<` opens a heredoc whose body may expand a spliced value
   let seg: Segment = { words: [], pipeFromPrev: false, hasPlaceholder: false };
   let word: Word | null = null;
   let wordIsFirstChar = true; // first non-space char of a word, for assignment-prefix detection
@@ -168,6 +191,7 @@ function lex(cmd: string): { placeholders: Placeholder[]; segments: Segment[] } 
       case "`": backtick = backtick > 0 ? 0 : 1; i++; continue;
     }
 
+    if (c === "$" && (cmd[i + 1] === "'" || cmd[i + 1] === '"')) { return { fatal: "ANSI-C / locale quoting ($' or $\")" }; }
     if (c === "$" && cmd[i + 1] === "(" && cmd[i + 2] === "(") { arithmetic++; i += 3; continue; }
     if (c === "$" && cmd[i + 1] === "(") { dollarParen++; i += 2; continue; }
     if (c === "$" && cmd[i + 1] === "{") { paramExpansion++; i += 2; continue; }
@@ -187,6 +211,8 @@ function lex(cmd: string): { placeholders: Placeholder[]; segments: Segment[] } 
       startSeg(false); i++; continue;
     }
     if (c === "(" || c === ")" || c === "{" || c === "}") { startSeg(false); i++; continue; }
+    // `<<` opens a heredoc (but `<<<` is a here-STRING, which feeds DATA on stdin, not a body).
+    if (c === "<" && cmd[i + 1] === "<" && cmd[i + 2] !== "<") { heredoc = true; endWord(); wordIsFirstChar = true; i += 2; continue; }
     if (c === "<" || c === ">") { endWord(); wordIsFirstChar = true; i++; continue; }
 
     // ordinary character
@@ -200,18 +226,28 @@ function lex(cmd: string): { placeholders: Placeholder[]; segments: Segment[] } 
   if (quote !== "none") return { fatal: "unterminated quote" };
   if (backtick || dollarParen || arithmetic || paramExpansion || dblBracket) return { fatal: "unterminated expansion" };
   segments.push(seg);
-  return { placeholders, segments };
+  return { placeholders, segments, heredoc };
 }
 
-/** The resolved command word of a segment (wrappers skipped), lower-cased basename, or null. */
+const basenameOf = (text: string): string => (text.split("/").pop() ?? text).toLowerCase();
+
+/** The command word of a segment (wrappers skipped), its basename, or null when none/placeholder. */
 function commandWordOf(seg: Segment): string | null {
   for (const w of seg.words) {
     if (w.hasAssignmentPrefix) continue; // leading NAME=val assignment, not the command
     if (w.text.includes("{{")) return null; // placeholder IS the command word → caller refuses
-    const base = w.text.split("/").pop() ?? w.text;
-    const lower = base.toLowerCase();
+    const lower = basenameOf(w.text);
     if (WRAPPER_COMMANDS.has(lower)) continue;
     return lower;
+  }
+  return null;
+}
+
+/** The leading (first) word of a segment, wrappers NOT skipped, its basename, or null. */
+function leadWordOf(seg: Segment): { base: string; isPlaceholder: boolean } | null {
+  for (const w of seg.words) {
+    if (w.hasAssignmentPrefix) continue;
+    return { base: basenameOf(w.text), isPlaceholder: w.text.includes("{{") };
   }
   return null;
 }
@@ -224,47 +260,71 @@ function commandWordOf(seg: Segment): string | null {
  */
 export function spliceExecPlaceholders(cmd: string, vars: Record<string, unknown>): ExecSplice {
   if (!cmd.includes("{{")) return { ok: true, command: cmd };
+
+  // Resolve which placeholders carry a real value BEFORE lexing. A command whose placeholders are
+  // all unknown or null carries no value and so imposes no safety constraint — it is returned
+  // UNCHANGED (the pre-fix behaviour), even if it contains a $( ) that the lexer would refuse.
+  const bound = (sh: string, field?: string): boolean => sh in vars && _valForPlaceholder(vars[sh], field) != null;
+  let anyBound = false;
+  for (const m of cmd.matchAll(/\{\{\s*([a-zA-Z0-9_:]+)(?:\.([a-zA-Z0-9_]+))?\s*\}\}/g)) {
+    if (bound(m[1], m[2])) { anyBound = true; break; }
+  }
+  if (!anyBound) return { ok: true, command: cmd };
+
   const lexed = lex(cmd);
   if ("fatal" in lexed) return { ok: false, reason: `exec-placeholder: refused — ${lexed.fatal}` };
-  const { placeholders, segments } = lexed;
+  const { placeholders, segments, heredoc } = lexed;
 
-  // Only placeholders with a KNOWN shape and a non-null value are spliced; the rest stay literal
-  // and cannot carry a value, so they impose no safety constraint.
-  const active = placeholders.filter((p) => p.sh in vars && _valForPlaceholder(vars[p.sh], p.field) != null);
+  const active = placeholders.filter((p) => bound(p.sh, p.field));
   if (active.length === 0) return { ok: true, command: cmd };
 
-  // (1) context refusals recorded during lexing
+  // (1) a heredoc anywhere + a value to splice: an unquoted-delimiter body expands the value, so
+  // refuse rather than reason about which body the value lands in.
+  if (heredoc) return { ok: false, reason: "exec-placeholder: refused — heredoc body" };
+
+  // (2) context refusals recorded during lexing (backtick / $( / $(( / ${ / [[ / comment)
   for (const p of active) if (p.refuse) return { ok: false, reason: `exec-placeholder: refused — ${p.refuse} carrying ${p.sh}` };
 
-  // (2) a placeholder that is (part of) the command word, or part of a NAME=value assignment word,
-  // or an argument to / piped into a program interpreter, is refused.
-  for (let s = 0; s < segments.length; s++) {
-    const seg = segments[s];
-    if (!seg.hasPlaceholder) continue;
-    if (!seg.words.some((w) => w.text.includes("{{") && active.some((a) => a.start >= w.start && a.end <= w.end))) continue;
-    // command-word / assignment-word
+  // (3) TIER A: an interpreter that runs a program from stdin OR argv (or eval/let) appearing as
+  // ANY word of ANY segment — the value could be piped, redirected, or spliced into its program.
+  for (const seg of segments) {
+    for (const w of seg.words) {
+      if (w.text.includes("{{") && w.text.replace(/\{\{[^}]*\}\}/g, "").length === 0) continue; // the word IS only a placeholder, handled below
+      if (TIER_A_INTERPRETERS.has(basenameOf(w.text))) {
+        return { ok: false, reason: `exec-placeholder: refused — command invokes the interpreter '${basenameOf(w.text)}'` };
+      }
+    }
+  }
+
+  // (4) per segment carrying a value: command-word / assignment-word / wrapper-lead / TIER-B.
+  for (const seg of segments) {
+    const carries = seg.words.some((w) => w.text.includes("{{") && active.some((a) => a.start >= w.start && a.end <= w.end));
+    if (!carries) continue;
+
+    // wrapper-led segment with a value: refuse (the wrapped command word cannot be found safely).
+    const lead = leadWordOf(seg);
+    if (lead && !lead.isPlaceholder && WRAPPER_COMMANDS.has(lead.base)) {
+      return { ok: false, reason: `exec-placeholder: refused — placeholder in a segment led by the wrapper '${lead.base}'` };
+    }
+
+    // command-word position / assignment word
     let sawCommand = false;
     for (const w of seg.words) {
       const inWord = active.some((a) => a.start >= w.start && a.end <= w.end);
       if (w.hasAssignmentPrefix) { if (inWord) return { ok: false, reason: "exec-placeholder: refused — placeholder in an assignment word" }; continue; }
       if (!sawCommand) {
-        const base = (w.text.split("/").pop() ?? w.text).toLowerCase();
-        if (WRAPPER_COMMANDS.has(base) && !inWord) continue;
+        if (WRAPPER_COMMANDS.has(basenameOf(w.text)) && !inWord) continue;
         if (inWord) return { ok: false, reason: "exec-placeholder: refused — placeholder in command-word position" };
         sawCommand = true;
       }
     }
-    // interpreter as this segment's own command word
+
+    // TIER B: value is in the argv of an interpreter whose program is an argument (awk/jq/sed/…).
     const cw = commandWordOf(seg);
-    if (cw && INTERPRETER_COMMANDS.has(cw)) return { ok: false, reason: `exec-placeholder: refused — placeholder reaches the program of '${cw}'` };
-    // piped into a downstream interpreter (stdin becomes its program)
-    for (let t = s + 1; t < segments.length && segments[t].pipeFromPrev; t++) {
-      const dcw = commandWordOf(segments[t]);
-      if (dcw && INTERPRETER_COMMANDS.has(dcw)) return { ok: false, reason: `exec-placeholder: refused — value piped into '${dcw}'` };
-    }
+    if (cw && TIER_B_INTERPRETERS.has(cw)) return { ok: false, reason: `exec-placeholder: refused — placeholder reaches the program of '${cw}'` };
   }
 
-  // (3) safe splice: rebuild left-to-right, closing/reopening the surrounding quote correctly.
+  // (5) safe splice: rebuild left-to-right, closing/reopening the surrounding quote correctly.
   let out = "";
   let cursor = 0;
   for (const p of active) {
