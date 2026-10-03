@@ -83,13 +83,14 @@ describe("oracle-label consumer: calibration labels influence nothing", () => {
   it("MUST-FAIL: a newer calibration label does not MASK an older ordinary human verdict", async () => {
     const rec = sealedRun(true);
     // corpus order is created_at DESC: the calibration row is newest
-    const { impl, calls } = stubFetch([calibrationLabel, ordinaryHumanLabel]);
+    const olderHumanLabel = { ...ordinaryHumanLabel, notes: "operator: the artifact is missing the open-gap list" };
+    const { impl, calls } = stubFetch([calibrationLabel, olderHumanLabel]);
     await consumeOracleLabel(rec, { activityApiEndpoint: ACT, devVesselEndpoint: DEV, apiKey: "", fetchImpl: impl });
     await settle();
     expect(rec.reached).toBe(false);
     expect(rec.humanGraded).toBe(true);
     expect(rec.humanReachNotes).not.toContain("blind sheet:");
-    expect(rec.humanReachNotes).toBe(ordinaryHumanLabel.notes);
+    expect(rec.humanReachNotes).toBe(olderHumanLabel.notes);
     expect(gapWrites(calls)).toHaveLength(1);
     expect(JSON.stringify(gapWrites(calls)[0].body)).not.toContain("win-2026-10-03");
   });
