@@ -20,11 +20,10 @@
  *     again.
  */
 import type { ExecutionTrace } from "@avigopal/ias-executor-ts";
+import { isStoreWriteShape, stripOperatorMarker } from "./resolve-pointer";
 
-/** A shape whose resolve MUTATES a store: the `_write` suffix family plus the vault note write. */
-export function isAppliedWriteShape(shape: string): boolean {
-  return /_write$/.test(shape) || /(^|:)write_note$/.test(shape);
-}
+/** A shape whose resolve MUTATES a store (resolve-pointer.ts isStoreWriteShape). */
+export const isAppliedWriteShape = isStoreWriteShape;
 
 export type WriteVerification = { persisted: true; content: unknown } | { persisted: false } | null;
 
@@ -168,7 +167,9 @@ export function walkResolveBody(
   return stripWalkOperatorMarker(shape, body);
 }
 
-/** Not yet applied: returns the body unchanged. */
-export function stripWalkOperatorMarker(_shape: string, body: Record<string, unknown>): Record<string, unknown> {
-  return body;
+/** The whole POST body of a walk write, top level and impulse.pointer included, loses any
+ *  `operator` marker (resolve-pointer.ts stripOperatorMarker). buildResolvePointer already
+ *  strips the pointer; this covers the body around it. */
+export function stripWalkOperatorMarker(shape: string, body: Record<string, unknown>): Record<string, unknown> {
+  return stripOperatorMarker(shape, body);
 }
