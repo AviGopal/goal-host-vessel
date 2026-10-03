@@ -2064,7 +2064,10 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
             // Cache only when it's clearly an automated achieved label with no override present.
             try {
               const text = await res.clone().text();
-              if (/\b"verdict"\s*:\s*"achieved"\b/i.test(text) && !/\boverride\b\s*:/i.test(text)) {
+              // Never cache a body carrying a calibration row (purpose "calibration"): the cache is
+              // never re-read, so a calibration "achieved" would hide a later ordinary human verdict.
+              // activity-api returns rows as a JSON string in `content`, so quotes may be escaped.
+              if (/\b"verdict"\s*:\s*"achieved"\b/i.test(text) && !/\boverride\b\s*:/i.test(text) && !/purpose\\?"\s*:\s*\\?"calibration/.test(text)) {
                 responseCache.set(key, { bodyText: text, status: res.status });
               }
             } catch { /* ignore */ }
