@@ -57,36 +57,63 @@ export function stripOperatorMarker<T extends Record<string, unknown>>(shape: st
  *  _url or _endpoint, any case (the bare names `url` and `endpoint` included). */
 export const ENDPOINT_OVERRIDE_KEY = /(url|endpoint)$/i;
 
+/** A field name that carries a credential: ends with api_key / apiKey / apikey / token, any case. The model
+ *  never supplies credentials; a vessel's own keys come from its environment. */
+export const CREDENTIAL_KEY = /(api_?key|apikey|token)$/i;
+
 /**
- * NO WALK-BUILT WRITE CARRIES AN ENDPOINT OVERRIDE.
+ * URL AS DATA. The shapes whose contract takes a URL as their INPUT, not as a place to send a request
+ * on someone's behalf, and the one field that carries it. Each was checked against its resolver:
+ *   http_fetch     development-vessel resolvers/http-fetch.ts     pointer.url is the URL fetched
+ *   http_response  development-vessel resolvers/http-response.ts  pointer.url (delegates to web_resource)
+ *   web_resource   development-vessel resolvers/web-resource.ts   pointer.url (trust-gated fetch)
+ * plus the camelCase shape names the walk uses for the same producers (httpResponse, webResource).
+ * No resolver_schema contract (development-vessel, concept-db) lists any other url / endpoint input.
+ * Adding a shape here is a deliberate decision: it lets the walk name that shape's URL.
+ */
+export const URL_AS_DATA: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["http_fetch", new Set(["url"])],
+  ["http_response", new Set(["url"])],
+  ["httpResponse", new Set(["url"])],
+  ["web_resource", new Set(["url"])],
+  ["webResource", new Set(["url"])],
+]);
+
+/**
+ * NO WALK-BUILT POINTER CARRIES AN ENDPOINT OVERRIDE OR A CREDENTIAL.
  *
- * development-vessel attaches its node key to fetch URLs that a resolve pointer field can override
- * (pointer.devVesselImpulsesUrl, pointer.obsidianEndpoint, and more). Every pointer built here is
- * walk-built by construction (pool variables plus synthesized args, the LLM's output passed through
- * verbatim; see stripOperatorMarker), so on a store-write shape (isStoreWriteShape: every `_write`,
- * the gap-filing substrateGap_write included) a field whose name matches ENDPOINT_OVERRIDE_KEY is
- * dropped: at the top level, and one level into a `pointer` or `impulse` object (so impulse.pointer
- * too). A deeper field, such as the written record's own data, is left alone, and so is any
- * non-write pointer (http_fetch's `url` is its input). One line names the dropped fields, never
- * their values. The input is never mutated.
+ * Several vessels attach their node key to fetch URLs that a resolve pointer field can override
+ * (development-vessel's devVesselImpulsesUrl / obsidianEndpoint, llm-resolver's
+ * tool_dispatch_endpoint, and more). Every pointer built here is walk-built by construction (pool
+ * variables plus synthesized args, the LLM's output passed through verbatim; see stripOperatorMarker).
+ * So on EVERY shape (2e233b5 covered store writes only), these fields are dropped, at the top level and
+ * one level into a `pointer` or `impulse` object (so impulse.pointer too):
+ *   - a field whose name matches ENDPOINT_OVERRIDE_KEY, except a URL_AS_DATA shape's own URL field;
+ *   - a field whose name matches CREDENTIAL_KEY.
+ * A deeper field (a written record's own data, such as gap.evidence_url) is left alone. One line names
+ * the dropped fields, never their values. The input is never mutated.
+ *
+ * An operator's pointer never passes here: the cockpit and the inbound resolve routes send it to the
+ * owning vessel directly, and templates resolve their task configs in the executor, not through the walk.
  */
 export function stripEndpointOverrides<T extends Record<string, unknown>>(shape: string, obj: T): T {
-  if (!isStoreWriteShape(shape)) return obj;
+  const dataFields = URL_AS_DATA.get(shape);
   const dropped: string[] = [];
   const isPlain = (v: unknown): v is Record<string, unknown> => {
     if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
     const proto = Object.getPrototypeOf(v);
     return proto === Object.prototype || proto === null;
   };
-  const strip = (o: Record<string, unknown>, path: string, nestLeft: number): Record<string, unknown> => {
+  const strip = (o: Record<string, unknown>, path: string, nestLeft: number, top: boolean): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(o)) {
-      if (ENDPOINT_OVERRIDE_KEY.test(k)) { dropped.push(path + k); continue; }
-      out[k] = nestLeft > 0 && (k === "pointer" || k === "impulse") && isPlain(v) ? strip(v, `${path}${k}.`, nestLeft - 1) : v;
+      const urlAsData = dataFields?.has(k) === true && (top || path === "impulse.pointer." || path === "pointer.");
+      if ((ENDPOINT_OVERRIDE_KEY.test(k) && !urlAsData) || CREDENTIAL_KEY.test(k)) { dropped.push(path + k); continue; }
+      out[k] = nestLeft > 0 && (k === "pointer" || k === "impulse") && isPlain(v) ? strip(v, `${path}${k}.`, nestLeft - 1, false) : v;
     }
     return out;
   };
-  const out = strip(obj, "", 2);
+  const out = strip(obj, "", 2, true);
   if (dropped.length) console.warn(`[goal-host] endpoint-override strip: walk-built ${shape} dropped ${dropped.join(", ")}`);
   return out as T;
 }
