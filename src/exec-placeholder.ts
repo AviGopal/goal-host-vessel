@@ -54,19 +54,22 @@ export type ExecSplice =
  */
 export const TIER_A_INTERPRETERS = new Set<string>([
   "sh", "bash", "dash", "zsh", "ksh", "ash", "csh", "tcsh",
-  "eval", "let", "source", ".", "exec", "xargs", "env", "su",
+  "eval", "let", "trap", "source", ".", "exec", "xargs", "env", "su",
   "python", "python2", "python3", "perl", "ruby", "node", "bun", "deno", "php", "lua",
   "osascript", "ssh",
 ]);
 
 /**
- * TIER B — interpreters whose PROGRAM is an argv argument (not stdin). A value piped into one of
- * these is DATA, not program (`cat … | jq '.x'` is fine), so these are refused only when they are
- * the command word of the SAME segment that carries the placeholder — i.e. the value is in their
- * own argv, where the program body / expression lives.
+ * TIER B — commands whose PROGRAM / evaluated expression is an argv argument (not stdin). A value
+ * piped into one is DATA, not program (`cat … | jq '.x'` is fine), so these are refused only when
+ * they are the command word of the SAME segment that carries the placeholder — i.e. the value is
+ * in their own argv. Besides the stream processors (awk/jq/sed/find), this includes the shell
+ * builtins that arithmetic-evaluate an array SUBSCRIPT in a variable-name argument
+ * (`declare 'a[$(cmd)]=1'`, `read 'a[$(cmd)]'`): a single-quoted value does not stop that eval.
  */
 export const TIER_B_INTERPRETERS = new Set<string>([
   "awk", "gawk", "mawk", "nawk", "jq", "yq", "sed", "find",
+  "declare", "typeset", "local", "export", "readonly", "unset", "read", "mapfile", "readarray",
 ]);
 
 /** Both tiers, for callers/tests that want the whole set. */
@@ -319,9 +322,13 @@ export function spliceExecPlaceholders(cmd: string, vars: Record<string, unknown
       }
     }
 
-    // TIER B: value is in the argv of an interpreter whose program is an argument (awk/jq/sed/…).
+    // TIER B: value is in the argv of an interpreter whose program is an argument (awk/jq/sed/…)
+    // or a builtin that evaluates a variable-name argument's subscript (declare/read/…).
     const cw = commandWordOf(seg);
     if (cw && TIER_B_INTERPRETERS.has(cw)) return { ok: false, reason: `exec-placeholder: refused — placeholder reaches the program of '${cw}'` };
+    // `printf -v VAR` arithmetic-evaluates VAR's subscript just like declare; refuse that form
+    // specifically (printf WITHOUT -v is the common, safe stdout path and stays allowed).
+    if (cw === "printf" && seg.words.some((w) => w.text === "-v")) return { ok: false, reason: "exec-placeholder: refused — placeholder reaches a 'printf -v' target variable" };
   }
 
   // (5) safe splice: rebuild left-to-right, closing/reopening the surrounding quote correctly.

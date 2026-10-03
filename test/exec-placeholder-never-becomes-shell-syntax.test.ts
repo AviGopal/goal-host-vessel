@@ -160,6 +160,11 @@ describe("exec-placeholder: a pool value never executes in any quote context (MU
     ["let evaluates the value as arithmetic", `let "z = {{x}}"`, "a[$(touch${IFS}PWNED)]"],
     ["ansi-c dollar-quoting", `printf %s $'{{x}}'`, "x'$(touch${IFS}PWNED)'y"],
     ["heredoc body carrying a value", `cat <<EOF\nval: {{x}}\nEOF`, DOLLAR_PAREN],
+    ["trap action string single-quoted", `trap '{{x}}' EXIT`, "touch PWNED"],
+    ["trap action string double-quoted", `trap "{{x}}" EXIT`, "touch PWNED"],
+    ["declare evaluates a subscript", `declare {{x}}`, "a[$(touch${IFS}PWNED)]=1"],
+    ["read evaluates a subscript", `read {{x}}`, "a[$(touch${IFS}PWNED)]"],
+    ["printf -v evaluates a target subscript", `printf -v {{x}} %s hi`, "a[$(touch${IFS}PWNED)]"],
   ];
   for (const [ctxName, template, payload] of nested) {
     test(`exec-placeholder: ${ctxName} with a pool value is refused and creates no sentinel`, () => {
@@ -181,7 +186,7 @@ describe("exec-placeholder: a pool value never executes in any quote context (MU
   });
 
   test("exec-placeholder: a placeholder in command position or in a heredoc body is refused", () => {
-    for (const t of [`{{x}} --version`, `cat <<EOF\n{{x}}\nEOF`, `X={{x}} env`]) {
+    for (const t of [`{{x}} --version`, `cat <<EOF\n{{x}}\nEOF`, `X={{x}} printf %s hi`]) {
       expect({ t, refused: !splice(t, { x: "v" }).ok }).toEqual({ t, refused: true });
     }
   });
