@@ -21,13 +21,60 @@
  * and fills it with fixtures in beforeEach, and importing index.ts would let the 5 s persist
  * timer write those fixtures over the real dispatch store. Repoint the import instead (to a
  * small module that owns the pagination logic, or a local Map).
+ *
+ * LOADING IS NECESSARY, NOT SUFFICIENT. A static import check alone is gameable: deleting the
+ * import line, or gutting the file to an empty describe, satisfies it while the seven
+ * pagination tests still never pass. So the gate is the run itself: this file spawns
+ * `bun test ./test/active-dispatches-pagination.test.ts` in a child and requires at least seven
+ * distinct passing tests, zero failures, a clean exit, and no load error. The child gets a
+ * MINIMAL env built from scratch (PATH, HOME, NO_COLOR) — never a copy of process.env: under an
+ * agent harness (CLAUDECODE / AI_AGENT and similar) bun suppresses its per-test "(pass)" lines,
+ * which would turn this test red for a reason unrelated to the pagination file. Output goes to a
+ * temp FILE, not a pipe (bun test output through a pipe can truncate).
  */
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const TEST_DIR = dirname(new URL(import.meta.url).pathname);
 const TARGET = join(TEST_DIR, "active-dispatches-pagination.test.ts");
+const REPO_ROOT = resolve(TEST_DIR, "..");
+const MIN_PASSING = 7;
+
+type ChildRun = { exitCode: number | null; output: string };
+
+/** Run the pagination file in its own bun process; capture stdout+stderr to temp files. */
+async function runPaginationFile(): Promise<ChildRun> {
+  const dir = mkdtempSync(join(tmpdir(), "pagination-run-"));
+  const outPath = join(dir, "stdout.log");
+  const errPath = join(dir, "stderr.log");
+  try {
+    const env: Record<string, string> = { NO_COLOR: "1" };
+    if (process.env.PATH) env.PATH = process.env.PATH;
+    if (process.env.HOME) env.HOME = process.env.HOME;
+    const child = Bun.spawn([process.execPath, "test", "./test/active-dispatches-pagination.test.ts"], {
+      cwd: REPO_ROOT,
+      env,
+      stdin: "ignore",
+      stdout: Bun.file(outPath),
+      stderr: Bun.file(errPath),
+    });
+    const exitCode = await child.exited;
+    const read = (p: string) => (existsSync(p) ? readFileSync(p, "utf8") : "");
+    // Strip ANSI even with NO_COLOR set, so parsing never depends on the terminal mode.
+    const output = (read(outPath) + "\n" + read(errPath)).replace(/\x1b\[[0-9;]*m/g, "");
+    return { exitCode, output };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function passingNames(output: string): Set<string> {
+  const names = new Set<string>();
+  for (const m of output.matchAll(/^\(pass\) (.+?)(?: \[[\d.]+m?s\])?$/gm)) names.add(m[1]!);
+  return names;
+}
 
 /** Top-level value exports of a module, by static scan. `export type` / `export interface`
  *  are erased at runtime and cannot break an import, so they are not counted. */
@@ -102,6 +149,28 @@ describe("active-dispatches-pagination.test.ts can load", () => {
   test("every named import it takes from a relative module is a value export of that module", () => {
     expect(unresolvedImports(TARGET)).toEqual([]);
   });
+
+  test("it never imports src/index.ts (whose top level boots the host and rewrites the dispatch store)", () => {
+    const src = readFileSync(TARGET, "utf8");
+    const indexImports = src
+      .split("\n")
+      .filter((l) => /(?:from\s+|import\s*\(\s*|require\s*\(\s*)["']\.\.\/src(?:\/index(?:\.ts)?)?["']/.test(l));
+    expect(indexImports).toEqual([]);
+  });
+
+  test("its pagination tests RUN AND PASS in a child bun (>=7 passing, 0 failing, no load error)", async () => {
+    const { exitCode, output } = await runPaginationFile();
+    const loadErrors = output.split("\n").filter((l) => /Unhandled error|SyntaxError|Cannot find module|ReferenceError/.test(l));
+    const failing = output.split("\n").filter((l) => l.startsWith("(fail)"));
+    const passing = passingNames(output);
+    const diagnosis = { exitCode, passing: [...passing], failing, loadErrors, tail: output.slice(-1500) };
+    expect(diagnosis.loadErrors).toEqual([]);
+    expect(diagnosis.failing).toEqual([]);
+    expect(passing.size >= MIN_PASSING ? "enough" : diagnosis).toBe("enough");
+    // Only the pagination file ran: a filter that matched other files would make the count meaningless.
+    expect(output).toMatch(/Ran \d+ tests? across 1 file/);
+    expect(exitCode).toBe(0);
+  }, 60_000);
 
   test("control: the export scanner sees src/index.ts's multi-line export list", () => {
     const exported = valueExports(join(TEST_DIR, "..", "src", "index.ts"));
