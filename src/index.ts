@@ -9617,18 +9617,20 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_dumpBody.slice(0, 12000)}`;
           const _xr = await ufExecuteTool("llm_completion_dispatch", { prompt: _xq, max_tokens: 60 }, new Set<string>(["llm_completion_dispatch"]));
           if (_xr.ok) {
-            const _step = planFetchedValueStep(String(_xr.result), _dumpBody);
+            // FETCHED TEXT NEVER REACHES A SHELL (fetched-value.ts). The value was bound as
+            // `echo "<value>"` and run through the shell resolver, so a fetched body carrying
+            // `$(cmd)1` executed as root. The value is already in hand: build the executor's
+            // result from it directly. `directArgsRaw` keeps the fetch command that produced the
+            // body — the true provenance of these bytes, and what the reach judge should see.
+            const _step = planFetchedValueStep(String(_xr.result), _dumpBody, shape);
             const _val = _step.value;
-            if (_step.kind === "command") {
-              directArgsRaw = { ...directArgsRaw, command: _step.command };
-              directArgs = bindBody(directArgsRaw);
-              const _xre = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
-              if (_xre != null) direct = _xre;
+            if (_step.kind === "impulse") {
+              direct = _step.impulse;
               _deg = _degenerateReason(direct);
-              tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" EXTRACTED ${JSON.stringify(_val)} from the fetched body (verified verbatim in ${_dumpBody.length} bytes) — bound as echo, no re-fetch`);
+              tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" EXTRACTED ${JSON.stringify(_val)} from the fetched body (verified verbatim in ${_dumpBody.length} bytes) — bound directly as the result, no shell, no re-fetch`);
               if (!_deg) break;
             } else {
-              console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extraction REJECTED (${_step.reason === "not_verbatim" ? "not found verbatim in the fetched body" : "not a plausible value"}: ${JSON.stringify(_val.slice(0, 40))}) — falling through to normal correction`);
+              console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extraction REJECTED (${_step.reason === "not_verbatim" ? "not found verbatim in the fetched body" : _step.reason === "charset" ? "outside the strict value charset" : "not a plausible value"}: ${JSON.stringify(_val.slice(0, 40))}) — falling through to normal correction`);
             }
           }
         }
