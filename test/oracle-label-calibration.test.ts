@@ -138,3 +138,17 @@ describe("oracle-label consumer: calibration labels influence nothing", () => {
     expect(src).not.toContain("gap-oracle-label-disagreement-");
   });
 });
+
+describe("oracle-label read cache: a calibration row never freezes the label read", () => {
+  // index.ts patches globalThis.fetch to cache goal_verification_label responses that contain
+  // an "achieved" verdict, and never re-reads a cached body. If a calibration row is what made
+  // the response cacheable, a later ordinary human verdict on the same execution would never be
+  // read — the calibration label would have influenced consumption.
+  it("MUST-FAIL: the cache condition refuses a response carrying a calibration row", async () => {
+    const src = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    const idx = src.indexOf("responseCache.set(key");
+    expect(idx).toBeGreaterThan(-1);
+    const guard = src.slice(Math.max(0, idx - 400), idx);
+    expect(guard).toMatch(/purpose[\s\S]{0,40}calibration/);
+  });
+});
