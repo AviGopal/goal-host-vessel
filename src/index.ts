@@ -386,7 +386,7 @@ import {
 // than some nodes may have loaded, and a NAMED import of a missing export fails at module
 // link (the vessel would not start). The gate reads it optionally and degrades loudly.
 import * as iasExecutor from "@avigopal/ias-executor-ts";
-import { makeForeignConsumptionGate } from "./foreign-consumption-gate";
+import { makeForeignConsumptionGate, type ForeignConsumptionVerdict } from "./foreign-consumption-gate";
 import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-executor-ts/adapters";
 // ONE definition, imported by both the command builders and their reach oracles. It lives
 // in its own module so it can be tested against real source — index.ts boots a server on
@@ -7145,7 +7145,7 @@ function buildCompositeTraceFromChain(
   durationMs: number,
   costUsd: number,
   tags?: string[],
-  poolImpulses?: Array<{ id: string; metadata?: { shape?: string } }>,
+  poolImpulses?: Array<{ id: string; metadata?: { shape?: string; producerExecutionId?: string } }>,
   goalSignature?: string,
   /** Per-step edges recorded as the walk ran (agentic-floor B2). When given, a step declares exactly
    *  what it bound and produced; a step with no record declares no input. Absent ⇒ the positional
@@ -7165,6 +7165,27 @@ function buildCompositeTraceFromChain(
     const sh = imp.metadata?.shape;
     if (sh && !shapeToImpulseId.has(sh)) shapeToImpulseId.set(sh, imp.id);
   }
+  // PROVENANCE for the composite's inputs, from the walk's OWN pool (a per-walk array: it
+  // cannot hold another dispatch's impulses). A pool impulse produced by a step execution
+  // names that execution, which is in this composite's compositionChain (chainExecIds), so
+  // foreignConsumption can verify it; one produced by goal-host itself (seed, satisfier)
+  // has no producing execution. An input id NOT in the pool gets no entry, so the strict
+  // reach->mint gate refuses the composite instead of trusting it.
+  const poolById = new Map((poolImpulses ?? []).map((p) => [p.id, p] as const));
+  const chainSet = new Set(chainExecIds);
+  const provenanceOf = (ids: string[]) => {
+    if (!poolImpulses || ids.some((id) => !poolById.has(id))) return {};
+    return {
+      consumedProvenance: ids.map((id) => {
+        const producer = poolById.get(id)?.metadata?.producerExecutionId ?? null;
+        return {
+          impulseId: id,
+          producerExecutionId: producer,
+          origin: producer === null ? ("ambient" as const) : chainSet.has(producer) ? ("ancestor" as const) : ("foreign" as const),
+        };
+      }),
+    };
+  };
   const tasks = chain.map((id, i) => {
     const sh = shapeOf(id);
     if (stepEdges) {
@@ -7176,6 +7197,7 @@ function buildCompositeTraceFromChain(
         resolverId: sh,
         resolverTier: "pattern" as const,
         inputImpulseIds: [...(e?.inputImpulseIds ?? [])],
+        ...provenanceOf([...(e?.inputImpulseIds ?? [])]),
         outputImpulseIds: e ? [...e.outputImpulseIds] : [],
         inputShapes: [...(e?.inputShapes ?? [])],
         outputShapes: outs,
@@ -7192,6 +7214,7 @@ function buildCompositeTraceFromChain(
       resolverId: sh,
       resolverTier: "pattern" as const,
       inputImpulseIds: prevId ? [prevId] : [],
+      ...provenanceOf(prevId ? [prevId] : []),
       outputImpulseIds: outId ? [outId] : [],
       inputShapes: prevSh ? [prevSh] : [],
       outputShapes: producedShapes.includes(sh) ? [sh] : [],
@@ -7281,27 +7304,29 @@ const foreignConsumptionGate = makeForeignConsumptionGate({
     console.warn(`[foreign-consumption] filed gap ${gap.id} (http ${r.status})`);
   },
 });
-async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string): Promise<void> {
+async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string, carriedProvenanceVerdict?: ForeignConsumptionVerdict | null): Promise<void> {
   const executionId = trace?.id;
   if (!executionId) return;
   if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
   // Never extract a run that consumed another execution's impulse: the template would
   // encode a cross-bound recipe (measured: a ribosome-extract run cross-bound and minted
   // a template from another run's trace, which an unrelated goal then ran).
-  // Not strict: the trace here is often goal-host-synthesised (walk composite), and every
-  // engine trace feeding a mint was already checked strictly at the reach gate.
+  // STRICT. Missing or foreign provenance refuses the mint. The only way past without a
+  // re-check is the gate's own strict verdict for THIS execution id, carried from the
+  // reach gate by the caller (checkForMint verifies the gate issued it). Satisfier and
+  // composite traces assembled after reach carry none and are checked on their own
+  // provenance.
   {
-    const g = foreignConsumptionGate.check({
+    const g = foreignConsumptionGate.checkForMint({
       id: executionId,
       tasks: (trace.tasks ?? []) as ExecutionTrace["tasks"],
       compositionChain: trace.compositionChain,
       inputImpulseIds: (trace as { inputImpulseIds?: string[] }).inputImpulseIds ?? [],
-    }, { strict: false });
+    }, carriedProvenanceVerdict);
     if (g.block) {
-      console.log(`[goal-host-vessel] reach->mint: SKIP ${executionId} — ${g.reason}`);
+      console.log(`[goal-host-vessel] reach->mint: REFUSED ${executionId} — ${g.reason}${g.carriedForward ? " (carried reach-gate verdict)" : ""}`);
       return;
     }
-    if (g.status === "unverified") console.warn(`[goal-host-vessel] reach->mint: ${executionId} ${g.reason} (synthesised trace; source steps were checked at the reach gate)`);
   }
   
   // Causal attempt ledger: never crystallize a walk that landed an unaccounted commit.
@@ -10080,9 +10105,12 @@ If one of those sibling shapes is the action that would create what the goal ask
   // data; a step fed foreign data can complete and look reached while having
   // answered a different run's question. Read at the reach verdict below.
   const walkForeignConsumption: string[] = [];
+  // Strict verdict per step execution id, carried to reach->mint for the SAME execution.
+  const stepProvenanceVerdicts = new Map<string, ForeignConsumptionVerdict>();
   const noteForeignConsumption = (stepId: string, trace: ExecutionTrace): void => {
     // Strict: this trace came straight from this process's engine.
     const g = foreignConsumptionGate.check(trace, { strict: true });
+    if (trace.id) stepProvenanceVerdicts.set(trace.id, g);
     if (g.block) {
       walkForeignConsumption.push(`${stepId}(${trace.id}): ${g.reason}`);
       console.warn(`[goal-host-vessel] walk(${opts.surface}): PROVENANCE-BLOCK step ${stepId} exec=${trace.id} — ${g.reason}`);
@@ -12186,7 +12214,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const mintGrounded = isGroundedHonestReach(verdict, { commandEvidence, consumedInChain: consumedInChain.size, editEffectReach });
         walkGroundedVerdict = mintGrounded;
         if (!satisfierOnly) {
-          if (opts.learningMode !== "observe") void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal));
+          if (opts.learningMode !== "observe") void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal), lastTrace.id ? stepProvenanceVerdicts.get(lastTrace.id) : undefined);
         } else if (chain.length >= 2) {
           // CARRY THE VERDICT THE WALK ALREADY COMPUTED (2026-08-09).
           //
@@ -14927,7 +14955,7 @@ async function runGoalWithRecoveryInner(
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           if (isSubstanceHonestReach(verdict)) { opts.learningSink?.alphaBetaDelta.push(await creditReachedTemplate(selId, verdict.reason ?? "goal reached")); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
-          if (opts.learningMode !== "observe") void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string));  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
+          if (opts.learningMode !== "observe") void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string), _gRun);  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     } else if (!goal && status === "completed" && selId) {

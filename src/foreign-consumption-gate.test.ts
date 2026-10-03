@@ -74,7 +74,7 @@ describe("foreign-consumption gate: export present", () => {
   });
 
   test("passes a clean run", () => {
-    expect(gate.check(cleanTrace, { strict: true })).toEqual({ block: false, status: "clean" });
+    expect(gate.check(cleanTrace, { strict: true })).toMatchObject({ block: false, status: "clean", executionId: "exec_me", strict: true });
   });
 
   test("BOUNDED fail-open: missing provenance on a consuming task blocks in strict mode", () => {
@@ -91,14 +91,69 @@ describe("foreign-consumption gate: export present", () => {
   });
 });
 
+describe("reach->mint is STRICT", () => {
+  test("refuses on MISSING provenance when the export is present", () => {
+    const { gate } = harness(ias as unknown as Record<string, unknown>);
+    const v = gate.checkForMint(noProvenanceTrace);
+    expect(v).toMatchObject({ block: true, status: "unverified", carriedForward: false });
+    expect(v.reason).toContain("provenance:unverifiable");
+  });
+
+  test("refuses on FOREIGN provenance", () => {
+    const { gate } = harness(ias as unknown as Record<string, unknown>);
+    const v = gate.checkForMint(foreignTrace);
+    expect(v).toMatchObject({ block: true, status: "foreign", carriedForward: false });
+    expect(v.reason).toContain("exec_other");
+  });
+
+  test("passes when it carries the gate's own strict verdict for the SAME execution", () => {
+    const { gate } = harness(ias as unknown as Record<string, unknown>);
+    const atReach = gate.check(cleanTrace, { strict: true });
+    // The trace handed to the mint lacks provenance (e.g. re-shaped by the caller): the
+    // carried same-execution verdict is what lets it through, and the result says so.
+    const v = gate.checkForMint({ ...noProvenanceTrace, id: cleanTrace.id }, atReach);
+    expect(v).toMatchObject({ block: false, status: "clean", carriedForward: true, executionId: "exec_me" });
+  });
+
+  test("a carried verdict is NOT accepted by assumption: other execution, non-strict, or not issued by the gate", () => {
+    const { gate } = harness(ias as unknown as Record<string, unknown>);
+    const otherExec = gate.check({ ...cleanTrace, id: "exec_someone_else" }, { strict: true });
+    const nonStrict = gate.check(cleanTrace, { strict: false });
+    const lookalike = { block: false, status: "clean" as const, executionId: "exec_me", strict: true };
+    for (const carried of [otherExec, nonStrict, lookalike]) {
+      const v = gate.checkForMint({ ...noProvenanceTrace, id: "exec_me" }, carried);
+      expect(v).toMatchObject({ block: true, status: "unverified", carriedForward: false });
+    }
+    // A carried verdict that itself blocked still blocks.
+    const blocked = gate.check(foreignTrace, { strict: true });
+    expect(gate.checkForMint(foreignTrace, blocked)).toMatchObject({ block: true, carriedForward: true });
+  });
+
+  test("export missing: mint behaviour unchanged — non-blocking, loud once, gap once", () => {
+    const { gate, logs, gaps } = harness({});
+    for (const t of [noProvenanceTrace, foreignTrace, cleanTrace]) {
+      expect(gate.checkForMint(t)).toMatchObject({ block: false, status: "unavailable" });
+    }
+    gate.check(cleanTrace, { strict: true });
+    expect(logs.filter((l) => l === GATE_UNAVAILABLE_LOG)).toHaveLength(1);
+    expect(gaps).toEqual([GATE_UNAVAILABLE_GAP]);
+  });
+});
+
 describe("wiring in index.ts", () => {
   test("no NAMED import of foreignConsumption (a missing export would fail module link); the gate is used", async () => {
     const src = await Bun.file(new URL("./index.ts", import.meta.url)).text();
     const namedImports = [...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*"@avigopal\/ias-executor-ts"/g)].map((m) => m[1]!);
     expect(namedImports.some((names) => /\bforeignConsumption\b/.test(names))).toBe(false);
     expect(src).toMatch(/import \* as iasExecutor from "@avigopal\/ias-executor-ts"/);
-    // walk step loop, horizontal fan-out (via the shared helper), runGoal attempt, reach->mint
-    expect((src.match(/foreignConsumptionGate\.check\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    // walk steps (shared helper) and runGoal attempt check strictly; reach->mint uses checkForMint
+    expect((src.match(/foreignConsumptionGate\.check\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((src.match(/foreignConsumptionGate\.checkForMint\(/g) ?? []).length).toBe(1);
+    // no non-strict gate call anywhere in index.ts
+    expect(src).not.toMatch(/strict:\s*false/);
+    // every mint call site either carries a verdict or relies on the strict re-check
+    const mintCalls = [...src.matchAll(/mintReachedTrace\(([^;]*)\);/g)].map((m) => m[1]!);
+    expect(mintCalls.length).toBeGreaterThanOrEqual(3);
     // called from the step loop and from each horizontal fan-out branch
     expect((src.match(/noteForeignConsumption\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });

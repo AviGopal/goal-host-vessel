@@ -21,11 +21,14 @@
  * BOUNDED FAIL-OPEN. When the export IS present, the engine that ran the trace records
  * provenance on every task that consumed anything (same release). A task that consumed
  * impulses yet carries no `consumedProvenance` is then not "old data", it is unverifiable,
- * and in `strict` mode it blocks. Strict applies where the trace comes straight from this
- * process's engine (walk steps, runGoal attempts). It is NOT applied to the reach->mint
- * check, whose input is often a goal-host-synthesised trace (walk composites, satisfier
- * records) that never passed through the engine; every engine trace feeding a mint has
- * already been checked strictly at the walk/runGoal reach gate.
+ * and in `strict` mode it blocks.
+ *
+ * REACH->MINT IS ALWAYS STRICT (`checkForMint`). A mint may skip re-checking only by
+ * presenting the strict verdict this gate issued for THE SAME execution id at the reach
+ * gate -- a verdict object the gate itself minted (tracked in a private WeakSet), so a path
+ * cannot claim to be reach-gated by assumption or by building a lookalike object. Anything
+ * else -- a satisfier record, a walk composite assembled after reach, a trace with no
+ * carried verdict -- is checked strictly on its own provenance.
  *
  * Remaining fail-open, by design and stated: a node whose ias-executor-ts predates the
  * export (loud + gap, above), until consumedProvenance crosses the trace-sink wire on all
@@ -69,6 +72,10 @@ export interface ForeignConsumptionVerdict {
   block: boolean;
   status: "clean" | "foreign" | "unverified" | "unknown" | "unavailable";
   reason?: string;
+  /** The execution this verdict is about. */
+  executionId?: string;
+  /** True when produced by a strict check (the only kind a mint may carry forward). */
+  strict?: boolean;
 }
 
 type TraceLike = Pick<ExecutionTrace, "id" | "tasks" | "compositionChain" | "inputImpulseIds">;
@@ -91,9 +98,35 @@ export function makeForeignConsumptionGate(deps: ForeignConsumptionGateDeps) {
     }
   };
 
+  // Verdicts this gate issued from a STRICT check. Only these can be carried to a mint.
+  const issuedStrict = new WeakSet<ForeignConsumptionVerdict>();
+
+  const check = (trace: TraceLike, opts: { strict: boolean }): ForeignConsumptionVerdict => {
+    const v = evaluate(trace, opts);
+    if (v.status === "unavailable") return v;
+    const stamped: ForeignConsumptionVerdict = { ...v, executionId: trace.id, strict: opts.strict };
+    if (opts.strict) issuedStrict.add(stamped);
+    return stamped;
+  };
+
   return {
     available: fc !== null,
-    check(trace: TraceLike, opts: { strict: boolean }): ForeignConsumptionVerdict {
+    check,
+    /**
+     * Strict check for reach->mint. `carried` short-circuits ONLY when it is a verdict this
+     * gate issued from a strict check of the same execution id; otherwise the trace is
+     * checked strictly here. Export missing: unchanged (loud once, non-blocking).
+     */
+    checkForMint(trace: TraceLike, carried?: ForeignConsumptionVerdict | null): ForeignConsumptionVerdict & { carriedForward: boolean } {
+      if (!fc) return { ...check(trace, { strict: true }), carriedForward: false };
+      if (carried && issuedStrict.has(carried) && carried.strict === true && carried.executionId === trace.id) {
+        return { ...carried, carriedForward: true };
+      }
+      return { ...check(trace, { strict: true }), carriedForward: false };
+    },
+  };
+
+  function evaluate(trace: TraceLike, opts: { strict: boolean }): ForeignConsumptionVerdict {
       if (!fc) {
         reportUnavailable();
         return { block: false, status: "unavailable" };
@@ -113,6 +146,5 @@ export function makeForeignConsumptionGate(deps: ForeignConsumptionGateDeps) {
         return opts.strict ? { block: true, status: "unverified", reason } : { block: false, status: "unverified", reason };
       }
       return { block: false, status: v.status === "unknown" ? "unknown" : "clean" };
-    },
-  };
+  }
 }
