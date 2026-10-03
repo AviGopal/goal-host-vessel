@@ -1,0 +1,2 @@
+const re = /(foo|bar)/i;
+const ok = /\b(foo|bar)\b/i;
