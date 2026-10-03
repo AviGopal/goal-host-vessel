@@ -394,6 +394,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
+import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite } from "./applied-write";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
@@ -8331,6 +8332,19 @@ async function runGoalAsPoolWalkBody(
    *  writing the same shape is not vouched for by a satisfier's read-back. Only these writes can
    *  earn reach credit (involvedSteps). */
   const verifiedWrites = new Set<string>();
+  /** Every *_write this walk APPLIED (applied-write.ts): each one is durably traced where it is
+   *  applied, whatever the walk does next, and a terminal write verified persisted is never
+   *  re-applied by a retry site. Records go to the trace sink directly, not persistSatisfierTrace,
+   *  so the dispatch's LLM spend stays attributed to the satellite/reach rows it already lands on. */
+  const appliedWrites = createAppliedWriteLedger({
+    persist: async (t) => {
+      try { await satisfierTraceSink.record(t); }
+      catch (e) { console.warn(`[goal-host] applied-write trace persistence failed for ${t.id} (non-fatal, this write stays untraced): ${(e as Error).message}`); }
+    },
+    terminalShapes,
+    tags: opts.tags ?? [],
+    parentExecutionId: () => { try { return lastExecId; } catch { return undefined; } },
+  });
   /** Bumped on every rawResolve, so a caller can tell whether lastRawResolveReason is about ITS
    *  resolve or a previous shape's (vesselResolveShape can return null before resolving at all). */
   let rawResolveSeq = 0;
@@ -8421,7 +8435,7 @@ async function runGoalAsPoolWalkBody(
       return null;
     }
   }
-  const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>): Promise<unknown | null> => {
+  const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>, site = "walk"): Promise<unknown | null> => {
     lastRawResolveReason = null;
     lastRawResolveTransient = false;
     rawResolveSeq++;
@@ -8580,7 +8594,17 @@ async function runGoalAsPoolWalkBody(
       console.log(`[goal-host-vessel] walk rawResolve ${shape}: empty content (HTTP ${resp.status})`);
       return null;
     }
+    // APPLIED WRITE (applied-write.ts): this is rawResolve's only success return, so every walk
+    // resolve that a vessel ACCEPTED for a *_write is recorded here, at the moment it was applied,
+    // before any later branch can discard the result. `site` names the caller.
+    if (isAppliedWriteShape(shape)) appliedWrites.recordApplied(shape, { site, endpoint, result: content });
     return content;
+  };
+  /** A terminal write this walk already applied and read back persisted is not applied again. */
+  const refuseReapply = (shape: string, site: string): boolean => {
+    if (appliedWrites.mayApply(shape)) return false;
+    tap(`[goal-host-vessel] walk(${opts.surface}): ${site} NOT re-applying terminal write "${shape}" — it was already applied and read back persisted in this walk (applied ${appliedWrites.appliedCount(shape)}x)`);
+    return true;
   };
   // LLM-pick the ACTION shape (+args) that PRODUCES the missing target, among the
   // target vessel's other live shapes. This is what turns a read-only target
@@ -8646,6 +8670,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   };
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
+    if (refuseReapply(shape, "satisfier")) return null;
     satisfierTried.add(shape);
     stepBound = new Set<string>();
     // NO WALK-SIDE FILESYSTEM WRITE, FROM EITHER SATISFIER SITE (fs-write-shapes.ts).
@@ -9287,7 +9312,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     };
     let directArgs = bindBody(directArgsRaw);
     if (boundBody) console.log(`[goal-host-vessel] walk(${opts.surface}): bound terminal "${shape}" content: processed ${boundBody?.length ?? 0} raw chars -> ${processedBody?.length ?? 0} artifact chars`);
-    let direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+    let direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs, "satisfier-direct");
     // A TRANSIENT FAILURE OF A CODE-AUTHORED COMMAND IS RETRIED, NOT CORRECTED. The command
     // was built in code from the goal and is verified by the same rule, so a 5xx / transport
     // failure says the producer could not be asked — not that the command is wrong. Handing it
@@ -9298,7 +9323,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (direct === null && deterministicCommand && lastRawResolveTransient) {
       tap(`[goal-host-vessel] walk(${opts.surface}): DETERMINISTIC ${deterministicCommand} command for "${shape}" failed TRANSIENTLY (${String(transientFailureByShape.get(shape) ?? lastRawResolveReason).slice(0, 120)}) — retrying the same command once`);
       await new Promise((r) => setTimeout(r, DETERMINISTIC_RETRY_DELAY_MS));
-      direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+      direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs, "satisfier-transient-retry");
     }
     if (_isExecShape && !terminalShapes.has(shape)) {
       let _tries = 0;
@@ -9776,21 +9801,23 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (direct != null) {
       const v = await verifyWritePersisted(shape, direct);
       const _terminalWrite = terminalShapes.has(shape) && (/_write$/.test(shape) || shape === "write_note");
-      if (v !== null && "persisted" in v && v.persisted === true && _terminalWrite && _persistedBodyEmpty(v.content)) {
+      const _settle = settleVerifiedWrite(v, _terminalWrite, _persistedBodyEmpty);
+      if (_settle.kind === "empty_terminal") {
         tap(`[goal-host-vessel] walk(${opts.surface}): terminal write "${shape}" persisted with an EMPTY body — not a genuine emit; treating as unsatisfied so reach is graded honestly (not a hollow green)`);
         // fall through: the terminal shape stays unsatisfied -> honest not-reached
-      } else if (v !== null && "persisted" in v && v.persisted === true && _terminalWrite) {
+      } else if (_settle.kind === "terminal_persisted") {
       verifiedWrites.add(`satisfier:${shape}`);
-      // Do not short-circuit on terminal writes; allow learned-pathway/producers to run first.
-      // Defer by adopting the independently-read content as the direct value so later branches can still emit it if nothing outranks it.
-      try { direct = v.content as unknown; } catch {}
+      appliedWrites.markVerified(shape);
+      try { direct = _settle.content as unknown; } catch {}
       recordExecutorCommand(directArgsRaw);
-      // fall through without returning — reuse check must run before terminal-write satisfier
-    } else if (v !== null && "persisted" in v && v.persisted === true) {
+      // A verified, applied write ENDS this satisfier attempt (settleVerifiedWrite).
+      if (_settle.returns) return { content: direct, effect: effectTupleOf(shape, ep?.endpoint, direct) };
+    } else if (_settle.kind === "persisted") {
         verifiedWrites.add(`satisfier:${shape}`);
+        appliedWrites.markVerified(shape);
         recordExecutorCommand(directArgsRaw);
-        return { content: v.content, effect: effectTupleOf(shape, ep?.endpoint, v.content) };
-      } else if (v !== null && "persisted" in v && v.persisted === false) {
+        return { content: _settle.content, effect: effectTupleOf(shape, ep?.endpoint, _settle.content) };
+      } else if (_settle.kind === "not_persisted") {
         tap(`[goal-host-vessel] walk: write "${shape}" claimed success but effect NOT independently readable — treating as non-persistence`);
         // fall through to action-then-read / bridge / escalate
       } else {
@@ -9848,9 +9875,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     if (lastRawResolveReason) {
       const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
-      if (correctedRaw) {
+      if (correctedRaw && !refuseReapply(shape, "arg-correction")) {
         const mergedArgs = { ...directArgsRaw, ...correctedRaw };
-        const corrected = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody(mergedArgs));
+        const corrected = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody(mergedArgs), "satisfier-arg-correction");
         if (corrected != null) { recordExecutorCommand(mergedArgs); console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
       }
     }
@@ -9936,7 +9963,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     action = { shape: action.shape, args: bindBody(action.args) };
     let actionEp = await endpointForShape(action.shape);
     if (!actionEp) return null;
-    let actionResult = await rawResolve(action.shape, actionEp.endpoint, actionEp.resolvePath, action.args);
+    let actionResult = await rawResolve(action.shape, actionEp.endpoint, actionEp.resolvePath, action.args, "satisfier-action");
     if (actionResult == null) return null; // action vessel rejected/empty → fall through
     // If the vessel soft-refused the args, retry ONCE with its reason as a correction.
     const refusal = refusalReason(actionResult);
@@ -9950,7 +9977,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // (e.g. content), which would write an empty artifact. Keep the original
         // content/body and let the corrected field win.
         const mergedArgs = bindBody(retryAction.shape === action.shape ? { ...action.args, ...retryAction.args } : retryAction.args);
-        const retryResult = retryEp ? await rawResolve(retryAction.shape, retryEp.endpoint, retryEp.resolvePath, mergedArgs) : null;
+        const retryResult = retryEp ? await rawResolve(retryAction.shape, retryEp.endpoint, retryEp.resolvePath, mergedArgs, "satisfier-action-retry") : null;
         if (retryResult != null && !refusalReason(retryResult)) {
           action = { shape: retryAction.shape, args: mergedArgs }; actionEp = retryEp!; actionResult = retryResult;
         } else {
@@ -9968,8 +9995,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     // so the read targets the just-created artifact. Add the produced action shape
     // to the pool too (it's genuine output).
     addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`, { producedBy: `satisfier:${action.shape}` });
-    const reread = await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs });
-    if (reread != null) { verifiedWrites.add(`satisfier:${shape}`); recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
+    const reread = refuseReapply(shape, "action-then-read re-read") ? null : await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs }, "satisfier-reread");
+    if (reread != null) { verifiedWrites.add(`satisfier:${shape}`); appliedWrites.markVerified(shape); recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
     // Action succeeded but re-read empty — still genuine progress (the artifact was
     // created). Surface the action result as the target's content rather than null,
     // so the walk advances and the reach-gate can judge the real artifact.
@@ -12018,7 +12045,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               try {
                 const ep = await endpointForShape("concept_create_write");
                 if (ep) {
-                  const res = await rawResolve("concept_create_write", ep.endpoint, ep.resolvePath, { conceptData });
+                  const res = await rawResolve("concept_create_write", ep.endpoint, ep.resolvePath, { conceptData }, "bridge-concept");
                   if (res != null) {
                     try { const parsed = typeof res === "string" ? JSON.parse(res) : res; const c = parsed as { id?: string }; if (c && typeof c.id === "string") { conceptId = c.id; conceptTitle = titleText; } } catch { conceptId = undefined; }
                     ok = true; detail = conceptId ? `concept ${conceptId}` : "concept created (id not parsed)";
@@ -12054,7 +12081,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               try {
                 const ep = await endpointForShape("obsidian:write_note");
                 if (ep) {
-                  const res = await rawResolve("obsidian:write_note", ep.endpoint, ep.resolvePath, { path: conceptNotePath, content: conceptNoteBody, dispatch_id: dispatchId, goal, reached: true });
+                  const res = await rawResolve("obsidian:write_note", ep.endpoint, ep.resolvePath, { path: conceptNotePath, content: conceptNoteBody, dispatch_id: dispatchId, goal, reached: true }, "bridge-concept-note");
                   ok = noteWroteOk(res); detail = ok ? `wrote ${conceptNotePath}` : (lastRawResolveReason ?? "write refused");
                 } else { detail = "no vessel advertises obsidian:write_note"; }
               } catch (e) { detail = `note write error: ${(e as Error).message}`.slice(0, 200); }
@@ -12135,7 +12162,7 @@ If one of those sibling shapes is the action that would create what the goal ask
                 try {
                   const ep = await endpointForShape(shape);
                   if (!ep) { sinkAttempts.push(`${shape}: unadvertised`); continue; }
-                  const res = await rawResolve(shape, ep.endpoint, ep.resolvePath, sinkArgs(shape));
+                  const res = await rawResolve(shape, ep.endpoint, ep.resolvePath, sinkArgs(shape), "bridge-sink");
                   if (noteWroteOk(res)) {
                     ok = true; usedSink = shape;
                     detail = `wrote ${/:write_note$/.test(shape) ? notePath : titleText} via ${shape}`;

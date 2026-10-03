@@ -71,13 +71,17 @@ describe("wiring (source)", () => {
     expect(src).not.toContain("creditReachedTemplate(lastPick, verdict.reason");
   });
   test("only an independently-read write enters verifiedWrites", () => {
-    // every add sits in a branch that READ the effect back: persisted===true, or a non-null re-read
+    // every add sits in a branch that READ the effect back: persisted===true, or a non-null re-read.
+    // The read-back decision lives in applied-write.ts settleVerifiedWrite, whose persisted kinds
+    // are returned only under v.persisted === true (test/applied-write.test.ts controls).
     for (const m of src.matchAll(/verifiedWrites\.add\(/g)) {
       const ctx = src.slice(Math.max(0, m.index! - 260), m.index!);
-      expect(/v\.persisted === true|reread != null/.test(ctx)).toBe(true);
+      expect(/_settle\.kind === "(terminal_)?persisted"|reread != null/.test(ctx)).toBe(true);
     }
     const i = src.indexOf('claimed success but effect NOT independently readable');
-    const branch = src.slice(src.lastIndexOf("v.persisted === false", i), i);
+    const from = src.lastIndexOf('_settle.kind === "not_persisted"', i);
+    expect(from).toBeGreaterThan(0);
+    const branch = src.slice(from, i);
     expect(branch).not.toContain("verifiedWrites.add(");
   });
 });
