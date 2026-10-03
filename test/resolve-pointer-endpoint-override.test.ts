@@ -70,12 +70,26 @@ describe("a walk-built write pointer cannot carry an endpoint override", () => {
     expect(warnings.filter((w) => w.includes("endpoint-override")).length).toBe(0);
   });
 
-  test("CONTROL: a non-write shape keeps url / endpoint / filePath fields untouched", () => {
-    const p = buildResolvePointer("http_fetch", {}, { url: "https://example.org/a", filePath: "/w/a.ts", resolveEndpoint: "x" });
-    expect(p).toEqual({ url: "https://example.org/a", filePath: "/w/a.ts", resolveEndpoint: "x", type: "http_fetch" });
+  // (r3) The strip covers EVERY shape now, not only writes. Only a shape whose contract takes a URL as its
+  // DATA keeps that one field (http_fetch / http_response / web_resource `url`, URL_AS_DATA); any other
+  // endpoint-shaped field on those shapes is still an override and is dropped.
+  test("CONTROL: http_fetch keeps its `url` (the URL it fetches is its input) and its filePath", () => {
+    const p = buildResolvePointer("http_fetch", {}, { url: "https://example.org/a", filePath: "/w/a.ts" });
+    expect(p).toEqual({ url: "https://example.org/a", filePath: "/w/a.ts", type: "http_fetch" });
     const body = walkResolveBody("http_fetch", p);
     expect(body).toEqual({ impulse: { pointer: p } });
     expect(warnings.filter((w) => w.includes("endpoint-override")).length).toBe(0);
+  });
+
+  test("CONTROL: web_resource and http_response keep their `url` too", () => {
+    for (const shape of ["web_resource", "http_response"]) {
+      expect(buildResolvePointer(shape, {}, { url: "https://example.org/a" })).toEqual({ url: "https://example.org/a", type: shape });
+    }
+  });
+
+  test("MUST-FAIL (r3): on a URL-as-data shape, any OTHER endpoint field is still an override and is dropped", () => {
+    const p = buildResolvePointer("http_fetch", {}, { url: "https://example.org/a", resolveEndpoint: ATTACKER });
+    expect(p).toEqual({ url: "https://example.org/a", type: "http_fetch" });
   });
 
   test("CONTROL: an operator/cockpit-originated pointer is never rebuilt here — goal-host's inbound resolve routes do not strip", () => {
@@ -89,5 +103,50 @@ describe("a walk-built write pointer cannot carry an endpoint override", () => {
     expect(handler).not.toMatch(/stripEndpointOverrides|buildResolvePointer|walkResolveBody/);
     const v2 = src.slice(src.indexOf('url.pathname === "/v2/impulses/resolve"'), src.indexOf('url.pathname === "/v2/impulses/resolve"') + 3000);
     expect(v2).not.toMatch(/stripEndpointOverrides|buildResolvePointer|walkResolveBody/);
+  });
+});
+
+describe("(r3) the strip covers every walk-built shape, and credentials too", () => {
+  test("MUST-FAIL: an llm_completion_dispatch built from LLM args reaches the resolver without tool_dispatch_endpoint or tool_dispatch_api_key", () => {
+    const p = toolPointer("llm_completion_dispatch", {
+      prompt: "p",
+      tool_dispatch_endpoint: ATTACKER,
+      tool_dispatch_api_key: "model-chosen-key",
+    }, { execution_id: "d1" });
+    expect(p).toEqual({ prompt: "p", execution_id: "d1", type: "llm_completion_dispatch" });
+    const body = walkResolveBody("llm_completion_dispatch", p);
+    expect(JSON.stringify(body)).not.toContain("attacker.invalid");
+    expect(JSON.stringify(body)).not.toContain("model-chosen-key");
+  });
+
+  test("MUST-FAIL: a non-write scan shape loses endpoint overrides (devVesselImpulsesUrl, obsidianEndpoint)", () => {
+    const p = buildResolvePointer("ui_legibility_scan", {}, { devVesselImpulsesUrl: ATTACKER, obsidianEndpoint: ATTACKER, px_floor: 12 });
+    expect(p).toEqual({ px_floor: 12, type: "ui_legibility_scan" });
+  });
+
+  test("MUST-FAIL: credential-shaped fields are dropped on any shape: api_key, apiKey, apikey, *_token, token", () => {
+    const p = buildResolvePointer("web_search", { auth_token: "t0" }, { query: "q", api_key: "a", apiKey: "b", APIKEY: "c", github_token: "d", token: "e", pointer: { apiKey: "f", id: "x" } });
+    expect(p).toEqual({ query: "q", pointer: { id: "x" }, type: "web_search" });
+  });
+
+  test("MUST-FAIL: the walk body around an llm_completion pointer is stripped too", () => {
+    const body = walkResolveBody("llm_completion", { prompt: "p", type: "llm_completion" }, { caller: "goal-host:walk_llm_completion", tool_dispatch_endpoint: ATTACKER });
+    expect(JSON.stringify(body)).not.toContain("attacker.invalid");
+    expect((body as Record<string, unknown>).caller).toBe("goal-host:walk_llm_completion");
+  });
+
+  test("MUST-FAIL: one log line names the dropped fields (endpoint and credential), never their values", () => {
+    buildResolvePointer("llm_completion_dispatch", {}, { prompt: "p", tool_dispatch_endpoint: ATTACKER, tool_dispatch_api_key: "model-chosen-key" });
+    const hits = warnings.filter((w) => w.includes("endpoint-override"));
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toContain("tool_dispatch_endpoint");
+    expect(hits[0]).toContain("tool_dispatch_api_key");
+    expect(hits[0]).not.toContain("attacker.invalid");
+    expect(hits[0]).not.toContain("model-chosen-key");
+  });
+
+  test("CONTROL: ordinary fields that only resemble the patterns survive (max_tokens, token_count, urls, endpoint_count)", () => {
+    const p = buildResolvePointer("llm_completion_dispatch", {}, { prompt: "p", max_tokens: 60, token_count: 3, urls: ["https://a"], endpoint_count: 2 });
+    expect(p).toEqual({ prompt: "p", max_tokens: 60, token_count: 3, urls: ["https://a"], endpoint_count: 2, type: "llm_completion_dispatch" });
   });
 });
