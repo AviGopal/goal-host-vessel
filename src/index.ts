@@ -398,7 +398,7 @@ import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, type OracleLabelRecord } from "./oracle-label-consumer";
-import { orderProducers, isLoopbackEndpoint } from "./producer-order";
+import { orderProducers, buildShapeProducerCache, pickProducerRoute, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
   Impulse,
@@ -8199,33 +8199,8 @@ async function runGoalAsPoolWalkBody(
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
   const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
-    const mapped = shapeEndpointMap.get(shape);
-    if (mapped?.endpoint && !(opts.variables as Record<string, unknown> | undefined)?.target_vessel_id && process.env.PREFER_LIBP2P_ROUTE !== "1") return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
-    try {
-      const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
-        signal: AbortSignal.timeout(5_000),
-      });
-      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[]; origin?: string }> } };
-      const vessels = dj?.content?.vessels ?? [];
-      const targetVid = (opts.variables as Record<string, unknown> | undefined)?.target_vessel_id;
-      // Transport failover (2026-07-02): iterate discovery candidates instead of
-      // blindly taking vessels[0] — a vessel that died inside discovery's 5-min
-      // TTL window would otherwise be returned and the resolve would fail with no
-      // other producer of the shape ever tried. Order: target_vessel_id match
-      // first (when given), then discovery order. Peer/libp2p candidates are
-      // accepted without probing (reachability is mediated by relay/gateway);
-      // plain candidates are probed via /health (1.5s). If nothing passes the
-      // probe, fall back to the first candidate — never regress below status quo.
-      const target = typeof targetVid === "string" && targetVid
-        ? vessels.find((x) => x.vesselId === targetVid || x.id === targetVid)
-        : undefined;
-      // Walk locality: local producers (origin "local" or a loopback host) first,
-      // then overlay/peer rows, then the rest, discovery order kept within each
-      // class (producer-order.ts). The target_vessel_id match, when given, stays pinned first.
-      const ordered = target ? [target, ...orderProducers(vessels.filter((x) => x !== target))] : orderProducers(vessels);
+    // routeFor turns one producer row (discovery or cached registry row) into a
+    // resolve route: absolute resolve_endpoint, libp2p egress, peer gateway, or plain.
       const routeFor = (v: { id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[]; origin?: string }) => {
   // When resolve_endpoint is absolute, use its origin and path
   if (v.resolve_endpoint?.startsWith('http://') || v.resolve_endpoint?.startsWith('https://')) {
@@ -8263,22 +8238,47 @@ async function runGoalAsPoolWalkBody(
         const resolvePath = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
         return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
       };
-      let first: { endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null = null;
-      for (const cand of ordered) {
-			if (!cand?.endpoint) continue;
-			const route = routeFor(cand);
-			// Loopback candidates are probed via /health so a dead local row fails over to
-			// the next producer; any other candidate (a non-loopback local host, overlay,
-			// peer) is accepted unprobed — its reachability is mediated by relay/gateway.
-			if (!isLoopbackEndpoint(cand.endpoint)) return route;
-			if (first === null) first = route;
-        
-        try {
-          const probe = await fetch(`${cand.endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
-          if (probe.ok) return route;
-        } catch { /* dead candidate — try the next producer of this shape */ }
-      }
-      return first;
+    // Loopback local rows are probed via /health (1.5s); the pick rule is pickProducerRoute.
+    const probeHealth = async (endpoint: string): Promise<boolean> => {
+      const probe = await fetch(`${endpoint.replace(/\/+$/, "")}/health`, { signal: AbortSignal.timeout(1_500) });
+      return probe.ok;
+    };
+    // Registry cache first: every producer row of the shape, ordered local-first at fill
+    // (buildShapeProducerCache), picked with the same rule as the discovery path below.
+    // Skipped (discovery decides) under target_vessel_id or PREFER_LIBP2P_ROUTE, as before.
+    const mapped = shapeEndpointMap.get(shape);
+    if (mapped?.endpoint && !(opts.variables as Record<string, unknown> | undefined)?.target_vessel_id && process.env.PREFER_LIBP2P_ROUTE !== "1") {
+      return (await pickProducerRoute(mapped.rows, routeFor, probeHealth)) ?? { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
+    }
+    try {
+      const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[]; origin?: string }> } };
+      const vessels = dj?.content?.vessels ?? [];
+      const targetVid = (opts.variables as Record<string, unknown> | undefined)?.target_vessel_id;
+      // Transport failover (2026-07-02): iterate discovery candidates instead of
+      // blindly taking vessels[0] — a vessel that died inside discovery's 5-min
+      // TTL window would otherwise be returned and the resolve would fail with no
+      // other producer of the shape ever tried. Order: target_vessel_id match
+      // first (when given), then discovery order. Peer/libp2p candidates are
+      // accepted without probing (reachability is mediated by relay/gateway);
+      // plain candidates are probed via /health (1.5s). If nothing passes the
+      // probe, fall back to the first candidate — never regress below status quo.
+      const target = typeof targetVid === "string" && targetVid
+        ? vessels.find((x) => x.vesselId === targetVid || x.id === targetVid)
+        : undefined;
+      // Walk locality: local producers (origin "local" or a loopback host) first,
+      // then overlay/peer rows, then the rest, discovery order kept within each
+      // class (producer-order.ts). The target_vessel_id match, when given, stays pinned first.
+      const ordered = target ? [target, ...orderProducers(vessels.filter((x) => x !== target))] : orderProducers(vessels);
+      // Loopback local candidates are probed and fall through when dead; any other
+      // candidate (a non-loopback local host, overlay, peer) is accepted unprobed —
+      // its reachability is mediated by relay/gateway. All dead: the first candidate.
+      return await pickProducerRoute(ordered, routeFor, probeHealth);
     } catch { return null; }
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
@@ -15532,7 +15532,11 @@ const registeredProxyShapes = new Set<string>();
 // shape -> {endpoint, resolvePath} captured at registration time from the vessel
 // registry (which carries endpoints), because the per-resolve vesselCapability
 // lookup returns a null endpoint. The discovery-proxy uses this map first.
-const shapeEndpointMap = new Map<string, { endpoint: string; resolvePath: string }>();
+// Each entry also keeps EVERY producer row of the shape (`rows`), ordered local-first
+// (producer-order.ts buildShapeProducerCache); `endpoint`/`resolvePath` are the head row's,
+// for callers that need one address. The walk picks from `rows` (pickProducerRoute).
+type CachedProducerRow = ProducerRow & { vesselId?: string; id?: string; shapes?: string[]; resolve_endpoint?: string; libp2p_multiaddr?: string[]; discoveredVia?: string; peerEndpoint?: string };
+const shapeEndpointMap = new Map<string, { endpoint: string; resolvePath: string; rows: CachedProducerRow[] }>();
 
 /**
  * Interpolate {{var}} and {{a.b}} placeholders in a value. Mirrors the
@@ -16000,7 +16004,7 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     } finally {
       clearTimeout(t);
     }
-    const j = await r.json() as { content?: { vessels?: Array<{ shapes?: string[]; endpoint?: string; resolve_endpoint?: string }> } };
+    const j = await r.json() as { content?: { vessels?: CachedProducerRow[] } };
     const vessels = j?.content?.vessels ?? [];
     // Register a discovery-routed proxy for EVERY cross-vessel shape (not just
     // obsidian:) so the executor can dispatch any resolver the substrate
@@ -16012,14 +16016,18 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     // vesselCapability lookup returns null).
     const all = new Set<string>();
     for (const v of vessels) {
-      const ep = typeof v.endpoint === "string" ? v.endpoint.replace(/\/+$/, "") : "";
-      const rp = asResolvePath(typeof v.resolve_endpoint === "string" ? v.resolve_endpoint : undefined);
       for (const s of (v.shapes ?? [])) {
-        if (typeof s === "string" && s) {
-          all.add(s);
-          if (ep) shapeEndpointMap.set(s, { endpoint: ep, resolvePath: rp });
-        }
+        if (typeof s === "string" && s) all.add(s);
       }
+    }
+    // Every producer row per shape, ordered local-first (never last-writer-wins).
+    for (const [s, rows] of buildShapeProducerCache(vessels)) {
+      const head = rows[0]!;
+      shapeEndpointMap.set(s, {
+        endpoint: String(head.endpoint).replace(/\/+$/, ""),
+        resolvePath: asResolvePath(typeof head.resolve_endpoint === "string" ? head.resolve_endpoint : undefined),
+        rows,
+      });
     }
     if (all.size > 0) {
       shapes = [...all];

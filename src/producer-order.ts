@@ -63,3 +63,54 @@ export function orderProducers<T extends ProducerRow>(rows: readonly T[]): T[] {
   for (const row of rows) buckets[producerClass(row)].push(row);
   return [...buckets[0], ...buckets[1], ...buckets[2]];
 }
+
+/**
+ * Per-shape producer cache from a discovery vesselRegistry dump: every row with a
+ * non-empty endpoint, listed under each string shape it advertises, ordered by
+ * orderProducers. Rows are kept whole (origin, protocol, multiaddr), so the walk
+ * routes a cached row exactly as it routes a discovery row.
+ *
+ * Failure mode this guards: the cache kept ONE endpoint per shape, last registry
+ * row winning, and the walk returned it before consulting discovery — so a local
+ * producer lost to an overlay row listed after it.
+ */
+export function buildShapeProducerCache<T extends ProducerRow & { shapes?: unknown }>(rows: readonly T[]): Map<string, T[]> {
+  const byShape = new Map<string, T[]>();
+  for (const row of rows) {
+    if (typeof row.endpoint !== "string" || !row.endpoint) continue;
+    if (!Array.isArray(row.shapes)) continue;
+    for (const s of row.shapes) {
+      if (typeof s !== "string" || !s) continue;
+      const list = byShape.get(s);
+      if (list) { if (!list.includes(row)) list.push(row); } else byShape.set(s, [row]);
+    }
+  }
+  for (const [s, list] of byShape) byShape.set(s, orderProducers(list));
+  return byShape;
+}
+
+/**
+ * The walk's pick over an ordered producer list. Rows without an endpoint are
+ * skipped. A local loopback row is probed (probe false or throwing = dead) and,
+ * when dead, the pick falls through to the next row; any other row (a local row
+ * on a non-loopback host, an overlay or peer row) is accepted unprobed, since its
+ * reachability is mediated by the relay/gateway. When every candidate was a dead
+ * local row, the first one is returned — never below the status quo. Empty: null.
+ */
+export async function pickProducerRoute<T extends ProducerRow, R>(
+  rows: readonly T[],
+  routeFor: (row: T) => R,
+  probe: (endpoint: string) => Promise<boolean>,
+): Promise<R | null> {
+  let first: R | null = null;
+  for (const row of rows) {
+    if (typeof row?.endpoint !== "string" || !row.endpoint) continue;
+    const route = routeFor(row);
+    if (!(producerClass(row) === 0 && isLoopbackEndpoint(row.endpoint))) return route;
+    if (first === null) first = route;
+    try {
+      if (await probe(row.endpoint)) return route;
+    } catch { /* dead candidate — try the next producer of this shape */ }
+  }
+  return first;
+}
