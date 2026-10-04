@@ -398,6 +398,7 @@ import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, type OracleLabelRecord } from "./oracle-label-consumer";
+import { orderProducers, isLoopbackEndpoint } from "./producer-order";
 import type {
   EventSink,
   Impulse,
@@ -8207,7 +8208,7 @@ async function runGoalAsPoolWalkBody(
         body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }),
         signal: AbortSignal.timeout(5_000),
       });
-      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }> } };
+      const dj = await dr.json() as { content?: { vessels?: Array<{ id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[]; origin?: string }> } };
       const vessels = dj?.content?.vessels ?? [];
       const targetVid = (opts.variables as Record<string, unknown> | undefined)?.target_vessel_id;
       // Transport failover (2026-07-02): iterate discovery candidates instead of
@@ -8221,8 +8222,11 @@ async function runGoalAsPoolWalkBody(
       const target = typeof targetVid === "string" && targetVid
         ? vessels.find((x) => x.vesselId === targetVid || x.id === targetVid)
         : undefined;
-      const ordered = target ? [target, ...vessels.filter((x) => x !== target)] : vessels;
-      const routeFor = (v: { id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[] }) => {
+      // Walk locality: local producers (origin "local" or a loopback host) first,
+      // then overlay/peer rows, then the rest, discovery order kept within each
+      // class (producer-order.ts). The target_vessel_id match, when given, stays pinned first.
+      const ordered = target ? [target, ...orderProducers(vessels.filter((x) => x !== target))] : orderProducers(vessels);
+      const routeFor = (v: { id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[]; origin?: string }) => {
   // When resolve_endpoint is absolute, use its origin and path
   if (v.resolve_endpoint?.startsWith('http://') || v.resolve_endpoint?.startsWith('https://')) {
     try {
@@ -8260,31 +8264,13 @@ async function runGoalAsPoolWalkBody(
         return { endpoint: (v.endpoint ?? "").replace(/\/+$/, ""), resolvePath };
       };
       let first: { endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null = null;
-      const isIPLoopback = (ip: string) => {
-        // Source: https://en.wikipedia.org/wiki/Loopback#Loopback_addresses
-        // IPv4: 127.0.0.0/8
-        // IPv6: ::1/128
-        const ipRx = /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1)$/;
-        return ipRx.test(ip);
-      };
-
-      const sortedCandidates = ordered.sort((a, b) => {
-        const aIsLoopback = isIPLoopback(new URL(a.endpoint!).hostname);
-        const bIsLoopback = isIPLoopback(new URL(b.endpoint!).hostname);
-
-        if (aIsLoopback && !bIsLoopback) return 1; // 'a' is loopback, 'b' is not, 'a' comes after 'b'
-        if (!aIsLoopback && bIsLoopback) return -1; // 'a' is not loopback, 'b' is, 'a' comes before 'b'
-        return 0;
-      });
-
-      for (const cand of sortedCandidates) {
+      for (const cand of ordered) {
 			if (!cand?.endpoint) continue;
 			const route = routeFor(cand);
-			// Prefer non-loopback endpoints. Discovery sometimes returns the loopback address for
-			// the publishing vessel, and callers on other machines will try that first
-			// since discovery sometimes sorts them ahead of the external address. This check
-			// means we return the first valid non-loopback route immediately.
-			if (!isIPLoopback(new URL(cand.endpoint!).hostname)) return route;
+			// Loopback candidates are probed via /health so a dead local row fails over to
+			// the next producer; any other candidate (a non-loopback local host, overlay,
+			// peer) is accepted unprobed — its reachability is mediated by relay/gateway.
+			if (!isLoopbackEndpoint(cand.endpoint)) return route;
 			if (first === null) first = route;
         
         try {
