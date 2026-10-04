@@ -444,13 +444,6 @@ const DISPATCH_DROP_LOG_PATH = Config.dispatchDropLogPath;
 const GOAL_HOST_ENDPOINT = Config.goalHostEndpoint;
 const FED_TRANSPORT_EGRESS = Config.fedTransportEgress;
 
-/**
- * Resolve the HTTP endpoint to use for a discovered vessel record.
- * When discoveredVia === 'peer', the vessel lives on a remote substrate;
- * route through peerEndpoint (the peer discovery URL) so the request
- * reaches the correct substrate boundary. Also returns resolved_by_vessel_id
- * for provenance capture on execution traces.
- */
 const asResolvePath = (rp: string | undefined): string => {
   if (!rp) return "/resolve";
   if (rp.startsWith("http://") || rp.startsWith("https://")) {
@@ -462,70 +455,6 @@ const asResolvePath = (rp: string | undefined): string => {
     }
   }
   return rp;
-};
-
-interface EgressResult {
-  ok: boolean;
-  endpoint: string;
-}
-
-async function routeThroughEgress(cand: string, egress: string): Promise<EgressResult> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-  try {
-    const resp = await fetch(egress, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ candidate: cand }),
-      signal: controller.signal,
-    });
-    if (!resp.ok) {
-      throw new Error(`egress ${egress} returned ${resp.status}`);
-    }
-    const data = (await resp.json()) as { endpoint?: unknown };
-    const endpoint = typeof data.endpoint === "string" ? data.endpoint : "";
-    return { ok: endpoint.length > 0, endpoint };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function endpointForShape(
-  v: Record<string, unknown>,
-): Promise<{ endpoint: string; resolvedByVesselId?: string }> {
-  if (v.discoveredVia === 'peer') {
-    // Add logic to prefer routing through peerEndpoint
-  }
-  if (v.discoveredVia === "peer" && typeof v.peerEndpoint === "string" && v.peerEndpoint) {
-    return {
-      endpoint: v.peerEndpoint,
-      resolvedByVesselId: typeof v.vesselId === "string" ? v.vesselId : undefined,
-    }
-  }
-  const libp2pCands = Array.isArray(v.libp2pCandidates) ? v.libp2pCandidates as string[] : [];
-  const egressCandidates = Array.isArray(v.egressCandidates) ? v.egressCandidates as string[] : [];
-  for (const cand of libp2pCands) {
-    for (const egress of egressCandidates) {
-      try {
-        const res = await routeThroughEgress(cand, egress);
-        if (res.ok) return { endpoint: res.endpoint, resolvedByVesselId: typeof v.vesselId === "string" ? v.vesselId : undefined };
-      } catch {
-        continue;
-      }
-    }
-  }
-  if (egressCandidates.length > 0) {
-    try {
-      const res = await routeThroughEgress(egressCandidates[0]!, egressCandidates[0]!);
-      if (res.ok) return { endpoint: res.endpoint, resolvedByVesselId: typeof v.vesselId === "string" ? v.vesselId : undefined };
-    } catch {
-      // fall through to default
-    }
-  }
-  return {
-    endpoint: typeof v.endpoint === "string" ? v.endpoint : "",
-    resolvedByVesselId: undefined,
-  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
