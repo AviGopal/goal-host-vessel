@@ -96,3 +96,88 @@ describe("count-question fallback — reviving it must not reopen the compositio
     expect(d.shapes).not.toEqual(["shellResult"]);
   });
 });
+
+// ── STRENGTHENED (class, not examples) ───────────────────────────────────────────────────────
+// The single-goal check above can be passed by a patch that adds a `how many` alternation
+// somewhere upstream and leaves the 0x08 bytes in place. The class is "a regex in the edit-site
+// file carries a control byte where an escape was meant", so it is checked two ways:
+//  (1) a lint over the edit-site file ONLY (src/goal-target-inference.ts — the whole-src lint
+//      above also needs src/index.ts, which is not this gap's file);
+//  (2) the fallback's own vocabulary, one phrasing per DISTINCT alternation, must route to
+//      [shellResult] with no LLM — a patch special-casing one phrase fails the rest.
+// Controls pin `\b` semantics: deleting the bytes (instead of restoring `\b`) makes the
+// alternations match inside words (summary ⊃ sum, accountant ⊃ count, computer ⊃ compute), and
+// an always-fire fallback routes non-count goals to shellResult. Both must stay off shellResult.
+const EDIT_SITE = join(SRC, "goal-target-inference.ts");
+
+// Each phrasing exercises a different alternation of the fallback; none names a shape, a file,
+// a news term or a persistence clause, so no earlier deterministic router can claim it.
+const COUNTABLE: string[] = [
+  "compute 17 times 23",
+  "calculate the average of 4, 8 and 15",
+  "multiply 12 by 12",
+  "divide 100 by 7",
+  "sum the integers from 1 to 10",
+  "count the vowels in the word banana",
+  "how many prime numbers are below fifty",
+  "what is the number of weekdays in a leap year",
+  "sort these words alphabetically: pear apple fig",
+  "reverse the word substrate",
+  "give the sha256 of the word hello",
+  "hash the string abc with md5",
+  "give me the digest of the phrase open sesame",
+  "report the count of vowels in onomatopoeia",
+];
+
+// Alternations appear only INSIDE longer words; with `\b` restored none of these match.
+const SUBSTRING_ONLY: string[] = [
+  "give me a summary of the design",
+  "who is the accountant for this project",
+  "explain the computer architecture of the fleet",
+  "what does that hashtag mean",
+  "describe the unsorted backlog policy",
+  "listen carefully and describe what the vessel does",
+];
+
+describe("regex-control-bytes class: the edit-site file and the fallback vocabulary", () => {
+  it("MUST-FAIL: no regex literal or RegExp string in src/goal-target-inference.ts contains a control byte", () => {
+    const hits = controlBytesInRegexes(readFileSync(EDIT_SITE, "latin1"))
+      .map((h) => `goal-target-inference.ts:${h.line}:${h.col} byte 0x${h.byte.toString(16).padStart(2, "0")}`);
+    expect(hits).toEqual([]);
+  });
+
+  it("MUST-FAIL: with no LLM, every countable phrasing across the fallback's alternations routes to [shellResult]", async () => {
+    const misses: string[] = [];
+    for (const goal of COUNTABLE) {
+      const d = await inferGoalTargetDecision(goal, ["shellResult"], {});
+      if (JSON.stringify(d.shapes) !== JSON.stringify(["shellResult"])) misses.push(`${goal} -> ${JSON.stringify(d.shapes)}`);
+    }
+    expect(misses).toEqual([]);
+  });
+
+  it("CONTROL: with no LLM, a goal holding an alternation only inside a longer word is NOT routed to [shellResult] (\\b, not deleted bytes)", async () => {
+    const wrong: string[] = [];
+    for (const goal of SUBSTRING_ONLY) {
+      const d = await inferGoalTargetDecision(goal, ["shellResult"], {});
+      if (JSON.stringify(d.shapes) === JSON.stringify(["shellResult"])) wrong.push(goal);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("CONTROL: with no LLM, a non-countable goal is NOT routed to [shellResult] (the fallback is not always-on)", async () => {
+    for (const goal of ["explain why the walk backward-chains", "describe the role of the discovery registry"]) {
+      const d = await inferGoalTargetDecision(goal, ["shellResult"], {});
+      expect(d.shapes).not.toEqual(["shellResult"]);
+    }
+  });
+
+  it("CONTROL: with no LLM, countable goals that also persist a result are NOT truncated to [shellResult]", async () => {
+    for (const goal of [
+      "compute the sha256 of hello and save it to a memory note",
+      "sum the integers from 1 to 10 and record the result in a note",
+    ]) {
+      const d = await inferGoalTargetDecision(goal, ["shellResult", "memoryNote_write"], {});
+      expect(d.shapes).not.toEqual(["shellResult"]);
+    }
+  });
+});
