@@ -38,10 +38,17 @@ export function goalRequestsDurableArtifact(goal: string): boolean {
   return verb && noun;
 }
 
+function prohibitsAnyMutation(goal: string): boolean {
+  const negatedVerbClause = /\b(?:do not|don't|never|please do not|you must not|do NOT)\b\s+(?:just\s+)?(?:change|edit|modify|update|delete|rename|refactor|fix|touch|add|remove|write(?:\s+to)?|create|implement|extend|apply(?:\s+edits\s+to)?)[\s\S]{0,80}\b(?:anything|any file|the source|a single line of it|the file)\b/i;
+  const withoutGerund = /\bwithout\s+(?:writing|creating|generating|authoring|scaffolding)\b[\s\S]{0,80}\b(?:anything|any file|files?)\b/i;
+  const readOnlyNo = /\bread-?only\b[\s\S]{0,80}\bno\s+(?:writing|creating|scaffolding)\b/i;
+  return negatedVerbClause.test(goal) || withoutGerund.test(goal) || readOnlyNo.test(goal);
+}
+
 export function isEditIntentGoal(goal: string): boolean {
   return (
     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) &&
-    /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose|create|creates|creating|author|authors|authoring|write|writes|writing|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal)
+    /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose|create|creates|creating|author|authors|authoring|write|writes|writing|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal) && !prohibitsAnyMutation(goal)
   );
 }
 
@@ -63,6 +70,7 @@ export function goalDemandsLandedEdit(goal: string | undefined): boolean {
   const asksForCodeChange =
     /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal) || isPathlessCodeChangeGoal(goal);
   if (!asksForCodeChange) return false;
+  if (prohibitsAnyMutation(goal)) return false;
   const mutationVerb =
     /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow|close)\b/i.test(goal);
   if (mutationVerb) return true;
