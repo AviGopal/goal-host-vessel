@@ -7153,10 +7153,17 @@ function walkFailureMode(o: {
   produced: string[];
   satisfierFailures: Map<string, string>;
   pickFailures: Map<string, string>;
+  /** Each executed pick's declared output shapes; a pick failure counts only for an output never produced. */
+  pickOutputs?: Map<string, string[]>;
 }): { type: string; reason: string } {
   const produced = new Set(o.produced);
   const unresolved = [...o.satisfierFailures].filter(([shape]) => !produced.has(shape)).map(([, r]) => r);
-  const pickReasons = [...o.pickFailures.values()];
+  // A pick failure is the walk's cause only if its pick declared an output the walk never produced —
+  // a pick routed around by a later producer of the same shape is not (the same rule as satisfiers).
+  const pickReasons = [...o.pickFailures]
+    .filter(([id]) => (o.pickOutputs?.get(id) ?? []).some((s) => !produced.has(s)))
+    .map(([, r]) => r);
+  // Precedence: an unresolved satisfier failure (keyed by the needed shape) before a pick failure.
   const stepFailure = unresolved[unresolved.length - 1] ?? pickReasons[pickReasons.length - 1];
   if (stepFailure) return { type: "execution_error", reason: stepFailure.slice(0, 500) };
   const unproduced = o.missing.filter((m) => !produced.has(m));
@@ -7822,6 +7829,8 @@ async function runGoalAsPoolWalkBody(
   // per-shape reason that lastRawResolveReason (last-wins) loses by the time the walk stalls.
   const satisfierFailures = new Map<string, string>();
   const pickFailures = new Map<string, string>();
+  // Each executed pick's declared output shapes (walkFailureMode: attribute a pick failure only to a shape never produced).
+  const pickOutputs = new Map<string, string[]>();
   let routeAround: RouteAroundRecord | undefined;
   for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
   // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): ste
@@ -11230,6 +11239,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
     //     with the accumulated pool impulses + thread parent/composition ids so the
     //     steps form a recorded chain.
+    pickOutputs.set(pick.id, [...(pick.outputShapes ?? [])]);
     let template: ActivityTemplate | null = null;
     try {
       template = await getTemplateLocalFirst(pick.id);
@@ -11725,7 +11735,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // never grades. Gated by the SAME evidence standard as the β above, ≥ 2 steps, never minted.
         const _lastIsSatisfier = (lastTrace?.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
         if (!_noOracle && !_betaWithheldForSymmetry && chain.length >= 2 && _lastIsSatisfier) {
-          const _walkFailure = walkFailureMode({ verdictReason: verdict.reason ?? "goal not reached", missing: verdict.missing ?? [], produced: [...producedShapes], satisfierFailures, pickFailures });
+          const _walkFailure = walkFailureMode({ verdictReason: verdict.reason ?? "goal not reached", missing: verdict.missing ?? [], produced: [...producedShapes], satisfierFailures, pickFailures, pickOutputs });
           const _failedComposite = buildFailedCompositeTrace(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? [])], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)), _walkFailure);
           void (async () => {
             try {
