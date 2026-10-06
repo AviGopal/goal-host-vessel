@@ -58,9 +58,21 @@ describe("(a) MUST-FAIL — walkFailureMode carries the walk's actual failure cl
     expect(wfm({ verdictReason: "not reached", missing: ["summary"], produced: ["analysis"], satisfierFailures: new Map([["summary", "llm_completion: fetch failed"]]), pickFailures: new Map() }))
       .toEqual({ type: "execution_error", reason: "llm_completion: fetch failed" });
   });
-  test("a failed engine pick counts too (its reason)", () => {
-    expect(wfm({ verdictReason: "not reached", missing: [], produced: ["analysis"], satisfierFailures: new Map(), pickFailures: new Map([["activity:⟨x⟩", "runTemplate threw: request timed out"]]) }))
+  test("a failed engine pick whose output the walk never produced counts (its reason)", () => {
+    expect(wfm({ verdictReason: "not reached", missing: [], produced: ["analysis"], satisfierFailures: new Map(), pickFailures: new Map([["activity:⟨x⟩", "runTemplate threw: request timed out"]]), pickOutputs: new Map([["activity:⟨x⟩", ["summary"]]]) }))
       .toEqual({ type: "execution_error", reason: "runTemplate threw: request timed out" });
+  });
+  test("(i) a pick that failed \"fetch failed\" but was routed around (its output produced later) does not decide the class: the judge's rejection does", () => {
+    expect(wfm({ verdictReason: CONTENT.reason, missing: [], produced: ["analysis", "report"], satisfierFailures: new Map(), pickFailures: new Map([["activity:⟨flaky⟩", "llm_completion: fetch failed"]]), pickOutputs: new Map([["activity:⟨flaky⟩", ["analysis"]]]) }))
+      .toEqual(CONTENT);
+  });
+  test("a failed pick with no known output shape is not attributable to a missing shape and does not decide the class", () => {
+    expect(wfm({ verdictReason: CONTENT.reason, missing: [], produced: ["analysis", "report"], satisfierFailures: new Map(), pickFailures: new Map([["activity:⟨effect⟩", "fetch failed"]]), pickOutputs: new Map() }))
+      .toEqual(CONTENT);
+  });
+  test("(ii) precedence: an unresolved SATISFIER failure (keyed by the needed shape itself) wins over an unresolved pick failure", () => {
+    expect(wfm({ verdictReason: "not reached", missing: ["summary"], produced: ["analysis"], satisfierFailures: new Map([["summary", "satisfier: HTTP 503 service unavailable"]]), pickFailures: new Map([["activity:⟨x⟩", "cannot parse producer output"]]), pickOutputs: new Map([["activity:⟨x⟩", ["summary"]]]) }))
+      .toEqual({ type: "execution_error", reason: "satisfier: HTTP 503 service unavailable" });
   });
   test("a needed shape nothing could produce (no recorded failure) ⇒ cascading (information availability, not the producers)", () => {
     const f = wfm({ verdictReason: "missing summary", missing: ["summary"], produced: ["analysis"], satisfierFailures: new Map(), pickFailures: new Map() });
@@ -105,9 +117,12 @@ describe("MUST-FAIL — wiring of the not-reached branch (source)", () => {
     expect(branch).toMatch(/if \(!_noOracle && !_betaWithheldForSymmetry && chain\.length >= 2 && _lastIsSatisfier\) \{/);
   });
   test("(a) it carries walkFailureMode built from this walk's verdict, failures and produced shapes", () => {
-    expect(branch).toContain("walkFailureMode({ verdictReason: verdict.reason ?? \"goal not reached\", missing: verdict.missing ?? [], produced: [...producedShapes], satisfierFailures, pickFailures })");
+    expect(branch).toContain("walkFailureMode({ verdictReason: verdict.reason ?? \"goal not reached\", missing: verdict.missing ?? [], produced: [...producedShapes], satisfierFailures, pickFailures, pickOutputs })");
     expect(branch).toContain("buildFailedCompositeTrace(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? [])], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)), _walkFailure)");
     expect(branch).toMatch(/satisfierTraceSink\.record\(_failedComposite/);
+  });
+  test("(i) each executed pick's output shapes are recorded where it runs", () => {
+    expect(src).toContain("pickOutputs.set(pick.id, [...(pick.outputShapes ?? [])]);");
   });
   test("a failed composite is never minted", () => {
     const at = branch.indexOf("buildFailedCompositeTrace(");
