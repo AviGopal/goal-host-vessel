@@ -373,6 +373,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // import, so anything defined here is untestable and this parse has now produced both a
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
+import { decideEscalationTarget } from "./escalation-target";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite, walkResolveBody } from "./applied-write";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
@@ -14558,12 +14559,17 @@ async function runGoalWithRecoveryInner(
                 executionId: `feature_compose:${_preLandedSha}`,
               };
             }
-            try {
+            // A NEW file escalates only with is_new_file, and only when it is absent from origin/dev,
+            // the push clone and the runtime tree; an excluded target makes no call (escalation-target.ts).
+            const _escTarget = decideEscalationTarget(String(editFile));
+            if (_escTarget.kind === "refuse") {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION REFUSED for ${editFile}: ${_escTarget.reason} — returning the compose failure`);
+            } else try {
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION — feature_compose verdict=${verdict || "(none)"} for ${editFile}; escalating to patch_with_tools (byte-anchored route)`);
               const pwtResp = await fetch(composeUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-                body: JSON.stringify({ impulse: { pointer: { type: "patch_with_tools", proposal_text: `${spec}\n\nPRIOR FEATURE-COMPOSE FAILURE ON THIS FILE (do not repeat it): ${failWhy}`, target_file: editFile, max_attempts: 2 } } }),
+                body: JSON.stringify({ impulse: { pointer: { type: "patch_with_tools", proposal_text: `${spec}\n\nPRIOR FEATURE-COMPOSE FAILURE ON THIS FILE (do not repeat it): ${failWhy}`, target_file: editFile, max_attempts: 2, ...(_escTarget.kind === "new_file" ? { is_new_file: true } : {}) } } }),
                 signal: AbortSignal.timeout(240_000),
               });
               if (pwtResp.ok) {
