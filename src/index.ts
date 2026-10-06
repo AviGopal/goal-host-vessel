@@ -7137,6 +7137,49 @@ function buildCompositeTraceFromChain(
 }
 
 /**
+ * The failure class a NOT-REACHED walk carries to the learner (credit from use). activity-api grades
+ * producers by the consumer's failure class (computeDeltas), so the walk reports what actually went
+ * wrong instead of a bare failure the learner can only blame strictly:
+ *   - an unresolved step failure (a satisfier resolve or an engine pick that failed on a shape the
+ *     walk never produced) ⇒ execution_error with its reason verbatim — activity-api's one classifier
+ *     decides whether that is environmental (outage, timeout) or the arm's fault;
+ *   - a needed shape no step produced and none failed on ⇒ cascading: an information-availability
+ *     non-reach, not the producers' output;
+ *   - otherwise the judge rejected the produced content ⇒ verifier_negative with the verdict reason.
+ */
+function walkFailureMode(o: {
+  verdictReason: string;
+  missing: string[];
+  produced: string[];
+  satisfierFailures: Map<string, string>;
+  pickFailures: Map<string, string>;
+}): { type: string; reason: string } {
+  const produced = new Set(o.produced);
+  const unresolved = [...o.satisfierFailures].filter(([shape]) => !produced.has(shape)).map(([, r]) => r);
+  const pickReasons = [...o.pickFailures.values()];
+  const stepFailure = unresolved[unresolved.length - 1] ?? pickReasons[pickReasons.length - 1];
+  if (stepFailure) return { type: "execution_error", reason: stepFailure.slice(0, 500) };
+  const unproduced = o.missing.filter((m) => !produced.has(m));
+  if (unproduced.length > 0) return { type: "cascading", reason: `no producer for: ${unproduced.join(", ")}`.slice(0, 500) };
+  return { type: "verifier_negative", reason: o.verdictReason.slice(0, 500) };
+}
+
+/**
+ * The composite of a NOT-REACHED walk (credit from use). Same construction as the reached path's
+ * composite — the recorded step edges and each task's consumedProvenance — but status "failed", tagged
+ * reached:false, and carrying the walk's failure class (walkFailureMode), so activity-api blames the
+ * producers whose output the failing consumer used only when the failure is theirs to share. Never
+ * minted: a failed walk is not a recipe.
+ */
+function buildFailedCompositeTrace(
+  ...args: [...Parameters<typeof buildCompositeTraceFromChain>, { type: string; reason: string }]
+): ExecutionTrace {
+  const failureMode = args[9];
+  const t = buildCompositeTraceFromChain(...(args.slice(0, 9) as Parameters<typeof buildCompositeTraceFromChain>));
+  return { ...t, status: "failed", failureMode, tags: [...(t.tags ?? []), "composite:true", "reached:false"] } as ExecutionTrace;
+}
+
+/**
  * The extraction-depth bound, read as a shape and cached.
  *
  * Mirrors ribosome-vessel's read of the same `extractionPolicy` shape so the two paths
@@ -11674,6 +11717,24 @@ If one of those sibling shapes is the action that would create what the goal ask
           // that defect again, one level down: the no-oracle gap is a missing VERIFIER, this
           // one is a missing EDGE, and they call for different repairs.
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising would let this arm only ever lose; the gap is the missing producer→consumer edge, not the pathway`);
+        }
+        // CREDIT FROM USE ON FAILURE: tell activity-api whose output the failing consumer used, and why it
+        // failed. ONE carrier per walk, mirroring the reached branch: an engine-last walk is graded through
+        // its own last trace (POST /reach applies chain credit with that row's failure_mode and provenance),
+        // so the composite is recorded only for a satisfier-last walk, whose walk-satisfier- trace /reach
+        // never grades. Gated by the SAME evidence standard as the β above, ≥ 2 steps, never minted.
+        const _lastIsSatisfier = (lastTrace?.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
+        if (!_noOracle && !_betaWithheldForSymmetry && chain.length >= 2 && _lastIsSatisfier) {
+          const _walkFailure = walkFailureMode({ verdictReason: verdict.reason ?? "goal not reached", missing: verdict.missing ?? [], produced: [...producedShapes], satisfierFailures, pickFailures });
+          const _failedComposite = buildFailedCompositeTrace(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? [])], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)), _walkFailure);
+          void (async () => {
+            try {
+              await satisfierTraceSink.record(_failedComposite as unknown as ExecutionTrace);
+              console.log(`[goal-host-vessel] failed composite recorded id=${_failedComposite.id} failure=${_walkFailure.type}`);
+            } catch (e) {
+              console.warn(`[goal-host-vessel] failed composite record FAILED id=${_failedComposite.id}: ${(e as Error)?.message ?? String(e)}`);
+            }
+          })();
         }
         // Say which of the two actually happened. This line printed "β-penalised last pick"
         // unconditionally, including on the branch immediately above that WITHHOLDS β — so
@@ -18489,6 +18550,8 @@ export {
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
+  buildFailedCompositeTrace,
+  walkFailureMode,
   buildCompositeTraceFromChain,
   resolveFleetActivityFeed,
 };
