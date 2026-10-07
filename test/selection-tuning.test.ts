@@ -37,7 +37,7 @@ async function withPolicy(contents: string): Promise<string> {
 describe("selection tuning — the unconfigured path is the old behaviour", () => {
   it("returns the compiled-in default when no policy file exists", async () => {
     const root = await mkdtemp(join(tmpdir(), "seltune-empty-"));
-    expect(await resolveSelectionTuning(root)).toEqual({ edgeBlendK: 10, maxWalkSteps: 40, horizontalK: 4 });
+    expect(await resolveSelectionTuning(root)).toEqual({ edgeBlendK: 10, maxWalkSteps: 40, horizontalK: 4, satisfierFlushDeadlineMs: 20_000 });
   });
 
   it("the default is what edge-blend.ts previously hardcoded", () => {

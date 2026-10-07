@@ -6737,13 +6737,37 @@ const satisfierTraceSink = new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_K
  * each awaited before the next, every trace not yet persisted except `except` (the satisfier-last trace the durable
  * path re-posts with its reach tag), each exactly once.
  */
-export function makeSatisfierFlusher<T extends { id: string }>(traces: T[], persist: (t: T) => Promise<void>): (except?: T) => Promise<void> {
+export function makeSatisfierFlusher<T extends { id: string }>(
+  traces: T[],
+  persist: (t: T) => Promise<void>,
+  // BOUNDED (qa): each flush waits at most this long in total (resolved per flush; the walk passes the shaped
+  // selection-tuning satisfierFlushDeadlineMs). Past it the flush logs and returns, the walk continues, and the trace
+  // stays queued: its post keeps running and the next flush re-awaits it, so it is never posted twice.
+  deadlineMs: () => number | Promise<number> = () => 20_000,
+): (except?: T) => Promise<void> {
   const persisted = new Set<string>();
+  const inflight = new Map<string, Promise<void>>();
   return async (except?: T) => {
+    const budget = Math.max(0, Number(await deadlineMs()) || 0);
+    const end = Date.now() + budget;
     for (const t of traces) {
       if (t === except || persisted.has(t.id)) continue;
-      persisted.add(t.id); // before the await: a concurrent flush must not post it twice
-      await persist(t);
+      let p = inflight.get(t.id);
+      if (!p) {
+        const settle = () => { persisted.add(t.id); inflight.delete(t.id); };
+        p = persist(t).then(settle, settle); // persistSatisfierTrace never throws; a rejection still settles once
+        inflight.set(t.id, p); // before the await: a concurrent flush re-awaits it instead of posting again
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = await Promise.race([
+        p.then(() => true),
+        new Promise<boolean>((r) => { timer = setTimeout(() => r(false), Math.max(0, end - Date.now())); (timer as { unref?: () => void }).unref?.(); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (!done) {
+        console.warn(`[goal-host-vessel] satisfier flush timed out after ${budget}ms at ${t.id}, continuing (it stays queued for the next flush)`);
+        return;
+      }
     }
   };
 }
@@ -10083,7 +10107,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   };
   let lastExecId: string | undefined = opts.parentExecutionId;
   const satisfierTraces: ExecutionTrace[] = [];
-  const flushSatisfierTraces = makeSatisfierFlusher(satisfierTraces, persistSatisfierTrace);
+  const flushSatisfierTraces = makeSatisfierFlusher(satisfierTraces, persistSatisfierTrace, async () => (await resolveSelectionTuning()).satisfierFlushDeadlineMs);
   let lastPick = "";
   let totalDurationMs = 0;
   let totalCostUsd = 0;

@@ -63,12 +63,16 @@ export interface SelectionTuning {
   /** Horizontal fan-out width. Credit is later DIVIDED by this, so it scales every posterior
    *  update on a fanned step — the most behavioural constant of the three. */
   horizontalK: number;
+  /** How long the walk waits for its satisfier step traces to persist before a pick or composite (ms). Past it the
+   *  walk continues and the traces stay queued: a hung trace store must not stall reach for a bookkeeping write. */
+  satisfierFlushDeadlineMs: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
   edgeBlendK: EDGE_BLEND_K,
   maxWalkSteps: 40,
   horizontalK: 4,
+  satisfierFlushDeadlineMs: 20_000,
 });
 
 /** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
@@ -80,6 +84,7 @@ const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
   edgeBlendK: undefined,
   maxWalkSteps: process.env["GOAL_HOST_WALK_MAX_STEPS"],
   horizontalK: process.env["GOAL_HOST_HORIZONTAL_K"],
+  satisfierFlushDeadlineMs: undefined,
 };
 
 function resolveField(key: keyof SelectionTuning, authored: unknown): number {
@@ -148,6 +153,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       edgeBlendK: isUsableEdgeBlendK(k) ? k : SELECTION_TUNING_DEFAULTS.edgeBlendK,
       maxWalkSteps: resolveField("maxWalkSteps", parsed["maxWalkSteps"]),
       horizontalK: resolveField("horizontalK", parsed["horizontalK"]),
+      satisfierFlushDeadlineMs: resolveField("satisfierFlushDeadlineMs", parsed["satisfierFlushDeadlineMs"]),
     };
   } catch {
     // No policy file is the shipped state, and it must still honour the env tier — otherwise
@@ -156,6 +162,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       edgeBlendK: SELECTION_TUNING_DEFAULTS.edgeBlendK,
       maxWalkSteps: resolveField("maxWalkSteps", undefined),
       horizontalK: resolveField("horizontalK", undefined),
+      satisfierFlushDeadlineMs: resolveField("satisfierFlushDeadlineMs", undefined),
     };
   }
 
