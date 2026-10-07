@@ -6727,6 +6727,26 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
 // trace — same body contract, same status/failure mapping. Best-effort: a record()
 // failure never throws into / slows the walk.
 const satisfierTraceSink = new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? "");
+/**
+ * PRODUCER BEFORE CONSUMER (2026-10-07). A walk's satisfier step traces were kept in memory and POSTed only at walk end,
+ * fire-and-forget, after the reach judge, while every later engine pick trace (which names the steps in its
+ * compositionChain) and both walk composites were POSTed first. activity-api credits an ancestor at the consumer's
+ * ingest by reading the ancestor's execution row, so each such step was looked up before it existed (node 1, 10-07:
+ * every chain-credit miss was a walk-satisfier step whose row landed ~2 min after its consumers). The walk now awaits
+ * flush() before each runTemplate, before each composite record and at walk end. flush(except) persists, in order and
+ * each awaited before the next, every trace not yet persisted except `except` (the satisfier-last trace the durable
+ * path re-posts with its reach tag), each exactly once.
+ */
+export function makeSatisfierFlusher<T extends { id: string }>(traces: T[], persist: (t: T) => Promise<void>): (except?: T) => Promise<void> {
+  const persisted = new Set<string>();
+  return async (except?: T) => {
+    for (const t of traces) {
+      if (t === except || persisted.has(t.id)) continue;
+      persisted.add(t.id); // before the await: a concurrent flush must not post it twice
+      await persist(t);
+    }
+  };
+}
 async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
   // SPEND ACCOUNTING: every trace persisted here used to carry costUsd 0 and, off the floor,
   // tokens 0. Attribute the LLM usage this dispatch made since its previous persisted trace,
@@ -10063,6 +10083,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   };
   let lastExecId: string | undefined = opts.parentExecutionId;
   const satisfierTraces: ExecutionTrace[] = [];
+  const flushSatisfierTraces = makeSatisfierFlusher(satisfierTraces, persistSatisfierTrace);
   let lastPick = "";
   let totalDurationMs = 0;
   let totalCostUsd = 0;
@@ -10854,6 +10875,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const K = Math.min(orEdge.length, (await resolveSelectionTuning()).horizontalK);
         const bundle = orEdge.slice(0, K);
         const bundleParentExecId = lastExecId;
+        await flushSatisfierTraces(); // the siblings' engine traces name the steps in chainExecIds
         // Fan out: run each producer of T as a sibling (SAME parent/chain). Per-branch
         // try/catch so one failure (incl. unfetchable template) doesn't abort the bundle.
         const branchResults = await Promise.all(
@@ -11256,6 +11278,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
 
     let trace: ExecutionTrace;
+    await flushSatisfierTraces(); // the pick's engine trace names the steps in chainExecIds
     try {
       const bvars = poolVars();
       trace = await host.runTemplate(template, bvars, {
@@ -11740,6 +11763,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _failedComposite = buildFailedCompositeTrace(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? [])], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)), _walkFailure);
           void (async () => {
             try {
+              await flushSatisfierTraces(lastTrace); // the composite names every step in chainExecIds
               await satisfierTraceSink.record(_failedComposite as unknown as ExecutionTrace);
               console.log(`[goal-host-vessel] failed composite recorded id=${_failedComposite.id} failure=${_walkFailure.type}`);
             } catch (e) {
@@ -12231,6 +12255,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           console.log(`[goal-host-vessel] composite constructed id=${composite.id} tags=${JSON.stringify(composite.tags ?? [])}`);
           void (async () => {
             try {
+              await flushSatisfierTraces(lastTrace); // the composite names every step in chainExecIds
               await satisfierTraceSink.record(composite as unknown as ExecutionTrace);
               console.log(`[goal-host-vessel] composite recorded id=${composite.id} — sink accepted`);
             } catch (e) {
@@ -12250,10 +12275,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // Best-effort + only for satisfier-only traces (engine already persisted real
       // template executions — guard against double-persist). (2026-06-28)
       const satisfierOnlyTrace = (lastTrace.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
-      for (const st of satisfierTraces) {
-        if (st === lastTrace) continue;
-        void persistSatisfierTrace(st);
-      }
+      await flushSatisfierTraces(lastTrace); // whatever no pick or composite flushed yet; lastTrace takes the durable path
       if (satisfierOnlyTrace) {
         // GRADE AT INSERT, not by a later patch. Measured 2026-08-17: a CORRECT
         // two-source compositional reach (58+2=60, verified by hand against ground truth
