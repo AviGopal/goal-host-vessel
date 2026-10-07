@@ -81,3 +81,43 @@ describe("satisfier step traces are flushed, awaited, before anything that names
     expect(events).toEqual([]);
   });
 });
+
+// BOUNDED (qa 2026-10-07): awaiting the sink before every pick must not let a hung activity-api stall the walk. Each
+// flush waits at most a SHAPED deadline (selection-tuning satisfierFlushDeadlineMs: policy file -> default), then
+// logs and continues, leaving the trace queued (re-awaited, never re-posted) for the next flush.
+describe("the satisfier flush is bounded by a shaped deadline", () => {
+  test("MUST-FAIL: a persist that never resolves => flush returns within the deadline, and the trace is not re-posted", async () => {
+    let calls = 0;
+    const hung = () => { calls++; return new Promise<void>(() => {}); };
+    const flush = mod.makeSatisfierFlusher([{ id: "walk-satisfier-1-hung" }], hung, () => 50);
+    const t0 = Date.now();
+    await flush();
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    await flush(); // a second flush re-awaits the same in-flight post rather than posting again
+    expect(calls).toBe(1);
+  });
+
+  test("MUST-FAIL: the deadline is a shaped tuning value (satisfierFlushDeadlineMs), defaulting to 20 s", async () => {
+    const st = await import("../src/selection-tuning");
+    expect(st.SELECTION_TUNING_DEFAULTS.satisfierFlushDeadlineMs).toBe(20_000);
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const root = mkdtempSync(join(tmpdir(), "flush-deadline-"));
+    try {
+      mkdirSync(join(root, "policies"), { recursive: true });
+      writeFileSync(join(root, "policies", "selection-tuning.json"), JSON.stringify({ satisfierFlushDeadlineMs: 7_000 }));
+      st._resetSelectionTuningCache();
+      expect((await st.resolveSelectionTuning(root)).satisfierFlushDeadlineMs).toBe(7_000);
+    } finally { st._resetSelectionTuningCache(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("MUST-FAIL (wiring): the walk's flusher reads the shaped deadline", () => {
+    expect(SRC).toMatch(/makeSatisfierFlusher\(satisfierTraces, persistSatisfierTrace, [\s\S]{0,160}satisfierFlushDeadlineMs/);
+  });
+
+  test("CONTROL: a fast persist is fully awaited within the deadline", async () => {
+    const { events, persist } = recorder();
+    await mod.makeSatisfierFlusher([{ id: "walk-satisfier-1-fast" }], persist, () => 5_000)();
+    expect(events).toEqual(["start:walk-satisfier-1-fast", "done:walk-satisfier-1-fast"]);
+  });
+});
