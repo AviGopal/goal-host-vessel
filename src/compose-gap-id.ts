@@ -41,3 +41,19 @@ export function checkSupplyRouteOf(variables: Record<string, unknown> | undefine
 export function composeGapIdOf(goal: string, variables: Record<string, unknown> | undefined): string {
   return checkSupplyRouteOf(variables)?.gap_id ?? gapIdOfGoalText(goal);
 }
+
+/**
+ * THE DISPATCH ID A CHECK-SUPPLY DISPATCH CARRIES IS THE ONE GOAL-HOST MINTED (slice G revision R2). /run-goal keeps a
+ * caller-supplied variables.dispatch_id (parent dispatches pass theirs), so a caller that pre-set the ledger's id with
+ * check_supply:true could replay admission for a dispatch the supply already made. With check_supply === true the
+ * minted id wins; where none is minted (/resolve: the supply never dispatches there) the marker is dropped. Without
+ * check_supply the rule is unchanged: an absent dispatch_id is set to the minted one, a present one is kept.
+ */
+export function bindCheckSupplyDispatchId(variables: Record<string, unknown>, minted: string | null): void {
+  if (variables["check_supply"] === true) {
+    if (minted) variables["dispatch_id"] = minted;
+    else delete variables["check_supply"];
+    return;
+  }
+  if (minted && !("dispatch_id" in variables)) variables["dispatch_id"] = minted;
+}

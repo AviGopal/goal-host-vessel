@@ -334,7 +334,8 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, type GoalTargetDecision } from "./goal-target-inference";
-import { composeGapIdOf, checkSupplyRouteOf } from "./compose-gap-id";
+import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId } from "./compose-gap-id";
+import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
@@ -13649,6 +13650,21 @@ async function runGoalWithRecoveryInner(
                 reached: false,
               };
             }
+            // AN ADMISSION REFUSAL IS FINAL (compose-admission-refusal.ts): falling through to the walk would compose the
+            // same refused goal again on the post-walk route. Structured stage only.
+            const _earlyAdmissionStage = composeAdmissionRefusal(earlyBody);
+            if (_earlyAdmissionStage) {
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT refused at ADMISSION (stage=${_earlyAdmissionStage}); NOT falling through to the walk or escalating`);
+              return {
+                result: null,
+                status: "failed" as const,
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["fileEditResult"],
+                attempts: 1,
+                goalReachReason: `early edit-intent routed to feature_compose; refused at admission (stage=${_earlyAdmissionStage}): ${String(earlyBody.error ?? "").slice(0, 200)} - an admission refusal is final, so it is neither walked nor escalated`,
+                reached: false,
+              };
+            }
             if (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) {
               deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable", "deterministic:early-edit-intent-not-landed", goalHashOf(String(goal ?? "")));
             }
@@ -14356,6 +14372,23 @@ async function runGoalWithRecoveryInner(
                 goalReachReason: `routed edit-intent to feature_compose; refused for CAPACITY (BUSY) after one retry — no draft was produced, so there is nothing to judge and nothing to escalate; retry when a compose slot frees`,
                 reached: false,
                 executionId: `feature_compose:busy:${goalHashOf(goal as string)}`,
+              };
+            }
+            // AN ADMISSION REFUSAL IS FINAL (compose-admission-refusal.ts): feature_compose refused this compose before
+            // drafting (not compose work, held, or an unverifiable check-supply ledger). The escalation below would hand
+            // the same edit to patch_with_tools, which has no admission and lands through a mitosis tick. Structured stage only.
+            const _admissionStage = composeAdmissionRefusal(body);
+            if (_admissionStage) {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT refused at ADMISSION for ${editFile} (stage=${_admissionStage}); NOT escalating to patch_with_tools`);
+              return {
+                result: null,
+                status: "failed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: null,
+                attempts: 1,
+                goalReachReason: `routed edit-intent to feature_compose; refused at admission (stage=${_admissionStage}): ${String(body.error ?? "").slice(0, 200)} - an admission refusal is final, so it is not escalated to the byte-anchored route`,
+                reached: false,
+                executionId: `feature_compose:refused:${goalHashOf(goal as string)}`,
               };
             }
             const cutovers = Array.isArray(body.cutovers) ? body.cutovers : [];
@@ -16941,7 +16974,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
   executionStore.set(dispatchId, record);
   persistDispatchStore();
-      if (!("dispatch_id" in variables)) variables.dispatch_id = dispatchId;
+      // A check-supply dispatch carries the id minted here, never a caller-supplied one (compose-gap-id.ts).
+      bindCheckSupplyDispatchId(variables, dispatchId);
 
   // Auto-draft fallback: when caller provides a free-form goal but no
   // targetTemplateId, pre-check activity-api /recommend. If top candidate
@@ -17886,6 +17920,8 @@ async function handleResolve(req: Request): Promise<Response> {
     : (typeof pointer.variables === "object" && pointer.variables !== null) ? pointer.variables
     : {};
   const variables = variablesSrc as Record<string, unknown>;
+  // /resolve mints no dispatch id, so a check_supply marker cannot be bound to one here and is dropped (compose-gap-id.ts).
+  bindCheckSupplyDispatchId(variables, null);
   const parentExecutionId = typeof body.parent_execution_id === "string" ? body.parent_execution_id
     : typeof pointer.parent_execution_id === "string" ? pointer.parent_execution_id
     : undefined;
