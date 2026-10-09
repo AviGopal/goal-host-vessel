@@ -7431,6 +7431,9 @@ interface GoalSeekResult {
   completionShapes: string[] | null;
   attempts: number;
   goalReachReason?: string;
+  /** A named refusal stage (e.g. check_supply_goal_missed_edit_route), carried onto the dispatch record and served by
+   *  GET /executions/:id so refusals of one kind can be counted. Absent on ordinary results. */
+  stage?: string;
   reached: boolean;
   grounded?: boolean;
   /**
@@ -13747,6 +13750,24 @@ async function runGoalWithRecoveryInner(
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT LANDED-PROBE found no commit for ${_probeGapId} since dispatch start — falling through to walk`);
         }
       }
+      // A CHECK-SUPPLY GOAL THAT MISSED THE EDIT ROUTE IS NOT WALKED (L1b X). Every marked goal that entered the early
+      // edit-intent route returned inside it, so a marked goal here did not name a file with an edit verb. The walk's
+      // templates and shell satisfier are not provably write-free. Refuse with a named stage the dispatch record
+      // carries (GET /executions/:id), so the supply's misses are countable. Marker only, a malformed one included.
+      const _checkSupplyMissedEditRoute = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
+      if (_checkSupplyMissedEditRoute) {
+        tap(`[goal-host-vessel] ${opts.surface}: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking`);
+        return {
+          result: null,
+          status: "failed",
+          selectedTemplateId: undefined,
+          completionShapes: null,
+          attempts: 0,
+          stage: "check_supply_goal_missed_edit_route",
+          goalReachReason: `check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to feature_compose, and this goal's text did not enter it (no repos file named with an edit verb), so it is refused rather than walked`,
+          reached: false,
+        };
+      }
       // REUSE BEFORE DERIVE: consult the proven-composition store BEFORE the walk,
       // not only in the recovery loop it used to be confined to. `ablation.disableReuse`
       // suppresses it so a cold-derivation counterfactual arm stays cold.
@@ -17526,6 +17547,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { attempts?: number }).attempts = seek.attempts;
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
+      if (seek.stage) record.stage = seek.stage;
       // Thread the reach verdict onto the DURABLE trace. POST /reach sets `reached` +
       // `completion_shapes` and grades the verdict into the Thompson posteriors on
       // arrival, so delivery IS credit: a dropped patch is an arm that never learns from
@@ -18096,6 +18118,8 @@ async function handleResolve(req: Request): Promise<Response> {
 
 interface DispatchRecord {
   endedAt?: number;
+  /** The result's named refusal stage (GoalSeekResult.stage), when it has one. */
+  stage?: string;
   dispatchId: string;
   startedAt: number;
   status: "running" | "completed" | "failed";
@@ -18592,6 +18616,7 @@ server = Bun.serve({
         status: record.status,
         reached: record.reached ?? null,
         goalReachReason: record.goalReachReason ?? null,
+        stage: record.stage ?? null,
         operator: record.operator ?? null,
         trigger: record.trigger ?? null,
         goal: record.goal,
