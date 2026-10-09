@@ -67,7 +67,8 @@ async function buildFleetActivityFeedBody(): Promise<Record<string, unknown>> {
 async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
-  // Every gap below comes from a store read; nothing is written into the list here.
+  // Gaps come only from the gap-store read in section (3) below; nothing is written into
+  // the list here, and the feed resolves no shape outside its reads (it is served to any caller).
   const gaps: FeedGap[] = [];
   const boredom: Record<string, unknown>[] = [];
   const rhythms: Record<string, unknown>[] = [];
@@ -129,33 +130,6 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
       }
     }
   } catch { /* fail-open */ }
-
-  // (3) Gaps from feature_compose
-  try {
-    const fcRes = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-      method: "POST",
-      headers: feedAuthHeaders,
-      body: JSON.stringify({ pointer: { type: "feature_compose" } }),
-      signal: AbortSignal.timeout(5_000),
-    });
-
-    if (fcRes.ok) {
-      const fcBody = (await fcRes.json()) as { content?: { rows?: any[] } };
-      for (const row of fcBody?.content?.rows ?? []) {
-        if (row && row.id && row.summary) {
-          gaps.push({
-            substrate: row.substrate ?? FED_SUBSTRATE_ID,
-            id: row.id,
-            category: "feature_compose",
-            status: row.status ?? "open",
-            summary: row.summary,
-          });
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`[fleet-feed] Failed to resolve feature_compose gaps: ${e instanceof Error ? e.message : String(e)}`);
-  }
 
   // (2b) peer substrates from PEER_DISCOVERY_ENDPOINTS — the hub(s) this spoke
   // federates UP to for resolvers. A resolver/relay hub commonly masks its own
