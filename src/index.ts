@@ -13665,6 +13665,23 @@ async function runGoalWithRecoveryInner(
                 reached: false,
               };
             }
+            // A CHECK-SUPPLY COMPOSE IS NEVER ESCALATED, WHATEVER STAGE REFUSED IT (L1b): its test-writing floors live in
+            // feature_compose only, and the walk would compose it again and escalate it to patch_with_tools, which has no
+            // test-writing scope rule. Keyed on the request's marker, never on the stage or the error text.
+            const _earlyCheckSupplyStop = checkSupplyRouteOf(opts.variables) !== null;
+            if (_earlyCheckSupplyStop) {
+              const _stage = String(earlyBody.stage ?? "(none)");
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (verdict=${earlyVerdict || "(none)"}); NOT falling through to the walk`);
+              return {
+                result: null,
+                status: "failed" as const,
+                selectedTemplateId: "feature_compose",
+                completionShapes: ["fileEditResult"],
+                attempts: 1,
+                goalReachReason: `early edit-intent routed to feature_compose; check_supply compose refused at ${_stage} (verdict=${earlyVerdict || "(none)"}): ${String(earlyBody.error ?? "").slice(0, 200)} - a check-supply compose is final, so it is neither walked nor escalated`,
+                reached: false,
+              };
+            }
             if (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) {
               deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable", "deterministic:early-edit-intent-not-landed", goalHashOf(String(goal ?? "")));
             }
@@ -14494,6 +14511,25 @@ async function runGoalWithRecoveryInner(
             ].filter(Boolean).join(", ");
             const failWhy = `op_count=${body.op_count ?? "?"}${flags ? `, ${flags}` : ""}: ${failDetail}`;
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=${verdict || "(none)"} (${failWhy})`);
+            // A CHECK-SUPPLY COMPOSE IS NEVER ESCALATED, WHATEVER STAGE REFUSED IT (L1b). Its test-writing floors live in
+            // feature_compose only; patch_with_tools has no test-writing scope rule and wrote into the live
+            // development-vessel test/checks/ when a test_writing_diff_outside_tests refusal was escalated (d61d8b41).
+            // Keyed on the request's marker, never on the stage or the error text, so every future floor is covered.
+            const _checkSupplyStop = checkSupplyRouteOf(opts.variables) !== null;
+            if (_checkSupplyStop) {
+              const _stage = String(body.stage ?? "(none)");
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (${editFile}, verdict=${verdict || "(none)"})`);
+              return {
+                result: null,
+                status: "failed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: null,
+                attempts: 1,
+                goalReachReason: `routed edit-intent to feature_compose; check_supply compose refused at ${_stage} (verdict=${verdict || "unknown"}; ${failWhy}) - a check-supply compose is final, so it is not escalated to patch_with_tools`,
+                reached: false,
+                executionId: `feature_compose:check-supply-refused:${goalHashOf(goal as string)}`,
+              };
+            }
 
             // STRATEGY ESCALATION (2026-07-10): prose goal-text drafting through
             // feature_compose failed on this file. Measured posterior: byte-anchored
