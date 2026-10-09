@@ -6684,6 +6684,15 @@ export function makeSatisfierFlusher<T extends { id: string }>(
     }
   };
 }
+/**
+ * A WITHHELD β RIDES ON THE PERSISTED TRACE. The trace sink forwards only tags and metadata, so the walk's
+ * withhold decision travels as tags activity-api's insert path reads (beta_withheld:true, beta_withheld_reason:<r>):
+ * it then applies no α/β to the arm and marks the row reach_withheld:true, as POST /reach does for beta_withheld.
+ */
+export function withBetaWithheld(tags: readonly string[] | undefined, reason: string | null | undefined): string[] {
+  const kept = (tags ?? []).filter((t) => t !== "beta_withheld:true" && !t.startsWith("beta_withheld_reason:"));
+  return [...kept, "beta_withheld:true", ...(reason ? [`beta_withheld_reason:${reason}`] : [])];
+}
 async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
   // SPEND ACCOUNTING: every trace persisted here used to carry costUsd 0 and, off the floor,
   // tokens 0. Attribute the LLM usage this dispatch made since its previous persisted trace,
@@ -11634,6 +11643,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       // block-scoped inside the reached===false branch and invisible at the persist
       // site, which is how a WITHHELD verdict still got stamped reached:false there.
       let walkBetaWithheld = false;
+      // Why β was withheld, for the durable trace: the abstain below, or the not-reached branch's record entry.
+      let walkBetaWithheldReason: string | null = verdict?.abstain ? "verdict-abstain" : null;
       if (verdict) recordDeterministicLabel(goal, lastExecId, lastPick || undefined, verdict);
       if (verdict?.abstain) {
         status = "failed";
@@ -11684,6 +11695,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // walk-complete patch arrives after any fallback step) carries the withhold, whatever the
         // trace kind. Two reasons, two tokens: a missing verifier and a missing edge are different gaps.
         if (walkBetaWithheld) opts.betaWithheld?.set(lastTrace.id, _noOracle ? "no-oracle-for-goal-class" : "alpha-unreachable-non-deterministic-no-edge");
+        if (walkBetaWithheld) walkBetaWithheldReason = opts.betaWithheld?.get(lastTrace.id) ?? (_noOracle ? "no-oracle-for-goal-class" : "alpha-unreachable-non-deterministic-no-edge");
 
         if (!_noOracle && !_betaWithheldForSymmetry) {
           const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
@@ -12261,6 +12273,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           // exactly as before.
           tags: (!reached && walkBetaWithheld) ? _existingTags : [..._existingTags, reached ? "reached:true" : "reached:false"],
         };
+        // Untagged is not enough: activity-api's insert path blamed a failed ungraded trace β=1 anyway. Say so on the trace.
+        if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
         void persistSatisfierTrace(durableTrace);
       }
     } catch (e) {
