@@ -13668,7 +13668,7 @@ async function runGoalWithRecoveryInner(
             // A CHECK-SUPPLY COMPOSE IS NEVER ESCALATED, WHATEVER STAGE REFUSED IT (L1b): its test-writing floors live in
             // feature_compose only, and the walk would compose it again and escalate it to patch_with_tools, which has no
             // test-writing scope rule. Keyed on the request's marker, never on the stage or the error text.
-            const _earlyCheckSupplyStop = checkSupplyRouteOf(opts.variables) !== null;
+            const _earlyCheckSupplyStop = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
             if (_earlyCheckSupplyStop) {
               const _stage = String(earlyBody.stage ?? "(none)");
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (verdict=${earlyVerdict || "(none)"}); NOT falling through to the walk`);
@@ -13726,6 +13726,22 @@ async function runGoalWithRecoveryInner(
               goalReachReason: `deterministic:early-edit-intent-${_probeReached ? "landed" : "hollow"} — the compose reply was lost or non-favourable, but git shows ${_probeSha} for ${_probeGapId} on origin/dev since this dispatch started${_probeReached ? (_probePostOk === true ? " (post-state confirms the requested symbol is present)" : "") : ` and the requested symbol is NOT observably present in ${earlyEditFile} — a hollow edit landing, not a reach`}`,
               reached: _probeReached,
               executionId: `feature_compose:${_probeSha}`,
+            };
+          }
+          // A CHECK-SUPPLY GOAL IS NOT WALKED (L1b follow-up). The compose threw, answered non-OK or was refused, and
+          // nothing landed: the walk's templates and shell satisfier are not provably write-free, and after it come the
+          // post-walk escalation and the recovery loop. Marker only (a malformed one included), never the failure kind.
+          const _earlyCheckSupplyNoWalk = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
+          if (_earlyCheckSupplyNoWalk) {
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose failed at the call (no landing for ${_probeGapId}): no escalation; NOT falling through to the walk`);
+            return {
+              result: null,
+              status: "failed" as const,
+              selectedTemplateId: "feature_compose",
+              completionShapes: ["fileEditResult"],
+              attempts: 1,
+              goalReachReason: `early edit-intent routed to feature_compose; the check_supply compose call failed or was refused and nothing landed for ${_probeGapId} - a check-supply goal is never walked or escalated`,
+              reached: false,
             };
           }
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT LANDED-PROBE found no commit for ${_probeGapId} since dispatch start — falling through to walk`);
@@ -14515,7 +14531,7 @@ async function runGoalWithRecoveryInner(
             // feature_compose only; patch_with_tools has no test-writing scope rule and wrote into the live
             // development-vessel test/checks/ when a test_writing_diff_outside_tests refusal was escalated (d61d8b41).
             // Keyed on the request's marker, never on the stage or the error text, so every future floor is covered.
-            const _checkSupplyStop = checkSupplyRouteOf(opts.variables) !== null;
+            const _checkSupplyStop = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
             if (_checkSupplyStop) {
               const _stage = String(body.stage ?? "(none)");
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (${editFile}, verdict=${verdict || "(none)"})`);
@@ -14765,6 +14781,21 @@ async function runGoalWithRecoveryInner(
           } catch (e) {
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
             tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose failure detail name=${String((e as Error)?.name ?? "")} cause=${String(((e as { cause?: unknown })?.cause as Error | undefined)?.message ?? (e as { cause?: unknown })?.cause ?? "")} code=${String((e as { code?: unknown })?.code ?? "")}`);
+            // A CHECK-SUPPLY GOAL DOES NOT FALL THROUGH TO authorFallback/recommend (L1b follow-up): the recovery loop
+            // runs a recommended template for the goal's shapes, and fileEditResult producers write. Marker only.
+            const _checkSupplyComposeThrew = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
+            if (_checkSupplyComposeThrew) {
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT check_supply compose threw for ${editFile}: no escalation; NOT falling through to authorFallback/recommend`);
+              return {
+                result: null,
+                status: "failed",
+                selectedTemplateId: "feature_compose",
+                completionShapes: null,
+                attempts: 1,
+                goalReachReason: `routed edit-intent to feature_compose; the check_supply compose call threw (${String((e as Error)?.message ?? e).slice(0, 200)}) - a check-supply goal is never escalated or recovered through another template`,
+                reached: false,
+              };
+            }
             // fall through to the existing behaviour unchanged
           }
         }
@@ -14861,12 +14892,25 @@ async function runGoalWithRecoveryInner(
       // existing/connected capability. NOW author a from-scratch template — only
       // here, not before the walk, so outward read-capability goals route to their
       // vessel first and a draft is the genuine last resort.
+      // A CHECK-SUPPLY GOAL IS NEVER AUTHORED FOR OR RECOVERED (L1b follow-up). Marker only.
+      const _checkSupplyNoAuthorFallback = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
+      if (_checkSupplyNoAuthorFallback) {
+        tap(`[goal-host-vessel] ${opts.surface}: check_supply goal reached the recovery fallback: no escalation; NOT calling authorFallback or the recovery loop`);
+        return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: "a check_supply goal is served only by feature_compose; it is never authored for or recovered through another template", reached: false };
+      }
       if (opts.authorFallback) {
         try { authoredFallbackTarget = await opts.authorFallback(); } catch { /* author failed → recovery loop proceeds without a target */ }
       }
     } catch (e) {
       console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`); console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error stack: ${String((e as Error).stack ?? "").split("\n").slice(0, 4).join(" | ")}`);
     }
+  }
+  // A CHECK-SUPPLY GOAL NEVER ENTERS THE SINGLE-TEMPLATE RECOVERY LOOP (L1b follow-up): reached after a pool-walk
+  // error or with a pinned target, it would run host.runGoal on a template for the goal's shapes. Marker only.
+  const _checkSupplyNoRecoveryLoop = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
+  if (_checkSupplyNoRecoveryLoop) {
+    tap(`[goal-host-vessel] ${opts.surface}: check_supply goal reached the single-template recovery loop: no escalation; NOT running a recovery template`);
+    return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: "a check_supply goal is served only by feature_compose; it never enters the single-template recovery loop", reached: false };
   }
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
