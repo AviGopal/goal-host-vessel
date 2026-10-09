@@ -991,6 +991,13 @@ const SYNTHETIC_EXECUTION_ID_PREFIXES = [
  *  - The reason is capped at 600 chars; an absent / empty reason or hash is omitted, never
  *    sent as "" (the store reads a missing hash as no goal).
  * The spool replays this same line, so a redelivered verdict keeps its reason.
+ *
+ * A WITHHELD β RIDES ON THE BODY. When the walk decided to withhold β for this execution's
+ * arm (see `walkBetaWithheld`), `betaWithheldReason` is a string and the body carries
+ * `beta_withheld: true` plus the reason (capped and omitted-when-empty like `reason`), so
+ * /reach applies no posterior delta. Without it a not-reached patch sent after the walk's
+ * fallback added β=1 to the very arm the walk had logged WITHHELD for. Absent (undefined /
+ * null) the body is exactly what it was before.
  */
 export function reachVerdictBody(
   executionId: string,
@@ -998,15 +1005,19 @@ export function reachVerdictBody(
   completionShapes: string[] | null | undefined,
   reason?: string | null,
   goalHash?: string | null,
+  betaWithheldReason?: string | null,
 ): string {
   const r = typeof reason === "string" ? reason.trim() : "";
   const h = typeof goalHash === "string" ? goalHash.trim() : "";
+  const w = typeof betaWithheldReason === "string" ? betaWithheldReason.trim() : "";
   return JSON.stringify({
     execution_id: executionId,
     reached,
     completion_shapes: completionShapes ?? [],
     ...(r ? { reason: r.slice(0, 600) } : {}),
     ...(h ? { goal_hash: h } : {}),
+    ...(typeof betaWithheldReason === "string" ? { beta_withheld: true } : {}),
+    ...(w ? { beta_withheld_reason: w.slice(0, 600) } : {}),
   });
 }
 
@@ -1017,6 +1028,9 @@ export function deliverReachVerdict(
   origin: string,
   reason?: string | null,
   goalHash?: string | null,
+  // The dispatch's record of executions whose arm a walk decided to withhold β for
+  // (execution id -> reason). Only an execution named in it is sent beta_withheld.
+  betaWithheld?: ReadonlyMap<string, string> | null,
 ): void {
   const skipReason =
     typeof executionId !== "string" || executionId.length === 0
@@ -1030,7 +1044,7 @@ export function deliverReachVerdict(
     console.warn(`[goal-host-vessel] reach-patch NOT ATTEMPTED (${origin}): ${skipReason} — this execution stays ungraded and its arm learns nothing from it`);
     return;
   }
-  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash);
+  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string));
   const _reachId = executionId as string;
   const _reachVerdict = reached as boolean;
   void (async () => {
@@ -7560,6 +7574,9 @@ async function runGoalAsPoolWalkBody(
     stepSink?: string[];
     /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
     learningSink?: LearningConsequences;
+    /** Caller-owned, dispatch-wide record of executions whose arm a walk WITHHELD β for (execution id -> reason).
+     *  Walks only add to it; every POST /reach for an execution named in it carries beta_withheld. */
+    betaWithheld?: Map<string, string>;
     /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
     suppressSatisfierShapes?: string[];
     /** FEEDBACK EDGE (hill-climb retry): the prior attempt's reach verdict reason, injected into the
@@ -11663,6 +11680,10 @@ If one of those sibling shapes is the action that would create what the goal ask
           verdict.deterministic === true || consumedInChain.size > 0;
         const _betaWithheldForSymmetry = !_noOracle && !_alphaWasReachable;
         walkBetaWithheld = _noOracle || _betaWithheldForSymmetry;
+        // Recorded HERE, from the same decision, so every later /reach for this execution (the
+        // walk-complete patch arrives after any fallback step) carries the withhold, whatever the
+        // trace kind. Two reasons, two tokens: a missing verifier and a missing edge are different gaps.
+        if (walkBetaWithheld) opts.betaWithheld?.set(lastTrace.id, _noOracle ? "no-oracle-for-goal-class" : "alpha-unreachable-non-deterministic-no-edge");
 
         if (!_noOracle && !_betaWithheldForSymmetry) {
           const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
@@ -12644,6 +12665,8 @@ async function runGoalWithRecoveryInner(
     stepSink?: string[];
     /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
     learningSink?: LearningConsequences;
+    /** The walks' β-withhold record (see runGoalAsPoolWalkBody), handed to every walk this dispatch runs. */
+    betaWithheld?: Map<string, string>;
     /** EVALUABILITY (per-dispatch, shape-driven; L1/L12): ablate the learned pathway so a floor/counterfactual arm can be run and RECORDED. disableReuse/forceFloor suppress the reached-command cache + lexical rebind (cold derivation); pinnedPriors/seed reserved for seeded selection. */
     ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
     /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
@@ -13594,7 +13617,7 @@ async function runGoalWithRecoveryInner(
               };
             }
             if (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) {
-              deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable", "deterministic:early-edit-intent-not-landed", goalHashOf(String(goal ?? "")));
+              deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable", "deterministic:early-edit-intent-not-landed", goalHashOf(String(goal ?? "")), opts.betaWithheld);
             }
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
           } else {
@@ -13758,6 +13781,7 @@ async function runGoalWithRecoveryInner(
         surface: opts.surface,
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
+        betaWithheld: opts.betaWithheld,
         // Replay is held off only on an EXACT-hash failure history: a near-miss lesson from a similar
         // goal must not cost this goal its learned pathway (the gap-closing lane shares one class token).
         ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,
@@ -13814,6 +13838,7 @@ async function runGoalWithRecoveryInner(
           surface: opts.surface,
           stepSink: opts.stepSink,
           learningSink: opts.learningSink,
+          betaWithheld: opts.betaWithheld,
           ablation: { ...(opts.ablation ?? {}), disableReuse: true },
           learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
@@ -13888,6 +13913,7 @@ async function runGoalWithRecoveryInner(
           surface: opts.surface,
           stepSink: opts.stepSink,
           learningSink: opts.learningSink,
+          betaWithheld: opts.betaWithheld,
         ablation: opts.ablation,
         learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
@@ -13938,6 +13964,7 @@ async function runGoalWithRecoveryInner(
             surface: opts.surface,
             stepSink: opts.stepSink,
             learningSink: opts.learningSink,
+            betaWithheld: opts.betaWithheld,
         ablation: opts.ablation,
         learningMode: opts.learningMode,
             suppressSatisfierShapes: undefined,
@@ -17289,6 +17316,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
     // Reason plane: caller-owned walk decision-log sink, attached to the record
     // in both the success and failure paths so GET /executions/:id can surface it.
     const walkStepSink: string[] = [];
+    // Executions whose arm a walk of this dispatch withheld β for; outside the try so the throw path sees it too.
+    const betaWithheld = new Map<string, string>();
     try {
       // Compute state-space signature BEFORE dispatch so the trace records
       // the environment in which template selection happened. The hash is
@@ -17384,6 +17413,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         operatorOrigin: trigger === "operator",
         stepSink: walkStepSink,
         learningSink,
+        betaWithheld,
         ablation,
         learningMode,
       });
@@ -17461,7 +17491,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // arrival, so delivery IS credit: a dropped patch is an arm that never learns from
       // an execution it actually ran. Delivery, retry and every skip reason live in
       // deliverReachVerdict so the throw path can report its verdict too.
-      deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")));
+      deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")), betaWithheld);
       // A FALSE verdict must be able to un-bank what a TRUE verdict banked. Without this the
       // known-command library only ever grows: a command from a reach that later graded false
       // stayed on disk and was replayed by the next similar goal after every restart.
@@ -17544,7 +17574,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           record.executionId = await persistFailedWalkTrace(String(goal ?? ""), walkStepSink, (record as { completionShapes?: string[] | null }).completionShapes ?? null, record.error, [], "walk-threw");
         } catch { /* leave executionId as-is */ }
       }
-      if (!__isPinnedRefusal) deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw", record.error, goalHashOf(String(goal ?? "")));
+      if (!__isPinnedRefusal) deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw", record.error, goalHashOf(String(goal ?? "")), betaWithheld);
       // A dispatch that THREW never reached the classifier below, so it used to
       // terminalize with no executionPath at all — indistinguishable, to every
       // reader, from a run whose mechanism simply was not recorded. A throw is
