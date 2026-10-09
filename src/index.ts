@@ -49,10 +49,6 @@ interface FeedGap {
   category: string;
   status: string;
   summary: string;
-  webTool?: {
-    url: string;
-    label: string;
-  };
 }
 
 interface FleetActivityFeed {
@@ -71,30 +67,8 @@ async function buildFleetActivityFeedBody(): Promise<Record<string, unknown>> {
 async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
   const generated_at = new Date().toISOString();
   const members: FeedMember[] = [];
-  const gaps: FeedGap[] = [
-    {
-      substrate: FED_SUBSTRATE_ID,
-      id: 'route-edit-2951ebb0-narrowed',
-      category: 'substrate-gap',
-      status: 'open',
-      summary: 'Edit repos/goal-host-vessel/src/index.ts',
-      webTool: {
-        url: 'https://substrate-tools.fly.dev/route-gap-fallback',
-        label: 'Substrate Gap Tool'
-      }
-    },
-    {
-      substrate: FED_SUBSTRATE_ID,
-      id: 'route-edit-6cd986c6-narrowed',
-      category: 'substrate-gap',
-      status: 'open',
-      summary: 'Universal tool fallback needs web tool',
-      webTool: {
-        url: 'https://substrate-tools.fly.dev/route-gap-fallback',
-        label: 'Substrate Gap Tool'
-      }
-    }
-  ];
+  // Every gap below comes from a store read; nothing is written into the list here.
+  const gaps: FeedGap[] = [];
   const boredom: Record<string, unknown>[] = [];
   const rhythms: Record<string, unknown>[] = [];
   const feedAuthHeaders = { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) };
@@ -158,64 +132,24 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 
   // (3) Gaps from feature_compose
   try {
-    const [fcRes, regRes] = await Promise.all([
-      fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-        method: "POST",
-        headers: feedAuthHeaders,
-        body: JSON.stringify({ pointer: { type: "feature_compose" } }),
-        signal: AbortSignal.timeout(5_000),
-      }),
-      fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-        method: "POST",
-        headers: feedAuthHeaders,
-        body: JSON.stringify({ pointer: { type: "vesselRegistry" } }),
-        signal: AbortSignal.timeout(5_000),
-      }),
-    ]);
+    const fcRes = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: feedAuthHeaders,
+      body: JSON.stringify({ pointer: { type: "feature_compose" } }),
+      signal: AbortSignal.timeout(5_000),
+    });
 
-    if (fcRes.ok && regRes.ok) {
+    if (fcRes.ok) {
       const fcBody = (await fcRes.json()) as { content?: { rows?: any[] } };
-      const regBody = (await regRes.json()) as { content?: { vessels?: any[] } };
-      const featureComposeRows = fcBody?.content?.rows ?? [];
-      const vesselRegistry = regBody?.content?.vessels ?? [];
-
-      if (featureComposeRows.length > 0 && vesselRegistry.length > 0) {
-        const repoOwnerMap = new Map<string, string[]>();
-        for (const vessel of vesselRegistry) {
-          const vesselId = (vessel?.vesselId ?? vessel?.id) as string | undefined;
-          const repositories = vessel?.repositories as string[] | undefined;
-          if (vesselId && Array.isArray(repositories) && repositories.length > 0) {
-            const vesselName = vesselId.split("@")[0];
-            if (vesselName) {
-              repoOwnerMap.set(vesselName, repositories);
-            }
-          }
-        }
-
-        for (const row of featureComposeRows) {
-          const producerId = row?.producer_id as string | undefined;
-          if (producerId && repoOwnerMap.has(producerId)) {
-            row.owned_repos = repoOwnerMap.get(producerId); // Fill in the data
-          }
-
-          if (row && row.id && row.summary) {
-            gaps.push({
-              substrate: row.substrate ?? FED_SUBSTRATE_ID,
-              id: row.id,
-              category: "feature_compose",
-              status: row.status ?? "open",
-              summary: row.summary,
-              ...(row.owned_repos &&
-                (row.owned_repos as string[]).length > 0 && {
-                  webTool: {
-                    url: `https://substrate-tools.fly.dev/feature-compose-repos?repos=${(row.owned_repos as string[]).join(
-                      "," 
-                    )}`,
-                    label: `Owned Repos: ${(row.owned_repos as string[]).join(", ")}`,
-                  },
-                }),
-            });
-          }
+      for (const row of fcBody?.content?.rows ?? []) {
+        if (row && row.id && row.summary) {
+          gaps.push({
+            substrate: row.substrate ?? FED_SUBSTRATE_ID,
+            id: row.id,
+            category: "feature_compose",
+            status: row.status ?? "open",
+            summary: row.summary,
+          });
         }
       }
     }
