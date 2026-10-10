@@ -310,6 +310,7 @@ import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, type OracleLabelRecord } from "./oracle-label-consumer";
+import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { orderProducers, buildShapeProducerCache, pickProducerRoute, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
@@ -12847,6 +12848,13 @@ async function runGoalWithRecoveryInner(
      * autonomous, so a caller that forgets cannot silently claim priority.
      */
     operatorOrigin?: boolean;
+    /**
+     * The operator-origin request's own `Authorization: ApiKey …` header, carried only to a loopback
+     * feature_compose call as X-Operator-Authorization so development-vessel can ask identity whether the
+     * key carries "operator:direct" (src/operator-credential.ts). goal-host never decides directedness
+     * from it. In memory only: never persisted with the record, never logged.
+     */
+    operatorCredential?: string;
     // AUTHOR FALLBACK (2026-06-29): when the walk takes 0 shape-feasible steps,
     // invoke this to LLM-author a from-scratch template and run THAT instead.
     // Deferred (not eager) so the shape-graph walk — including the vessel-resolve
@@ -13616,7 +13624,7 @@ async function runGoalWithRecoveryInner(
           } catch { /* discovery unreachable/empty → env fallback carries */ }
           const earlyComposeInit: RequestInit = {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}), ...operatorCredentialHeaders(opts, earlyComposeUrl) },
             body: JSON.stringify({
               impulse: {
                 pointer: {
@@ -14461,7 +14469,7 @@ async function runGoalWithRecoveryInner(
             } catch { /* discovery unreachable/empty → env fallback carries */ }
             const composeInit = () => ({
               method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}), ...operatorCredentialHeaders(opts, composeUrl) },
               body: JSON.stringify({
                 impulse: {
                   pointer: {
@@ -17616,6 +17624,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // a new self-generated lane cannot silently claim priority by forgetting
         // to declare itself.
         operatorOrigin: trigger === "operator",
+        // The operator's own credential, for development-vessel to validate (src/operator-credential.ts).
+        operatorCredential: trigger === "operator" ? operatorCredentialFromRequest(req.headers.get("authorization")) : undefined,
         stepSink: walkStepSink,
         learningSink,
         betaWithheld,
