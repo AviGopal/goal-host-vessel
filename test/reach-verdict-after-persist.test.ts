@@ -58,7 +58,7 @@ describe("MUST-FAIL — delivery follows persistence", () => {
   test("the walk awaits the durable satisfier persist (no fire-and-forget)", () => {
     const walk = fnBody("runGoalAsPoolWalkBody");
     const persist = walk.slice(walk.indexOf("if (satisfierOnlyTrace) {"));
-    expect(persist).toContain("await persistSatisfierTrace(durableTrace);");
+    expect(persist).toContain("await persistWithinDeadline(persistSatisfierTrace(durableTrace), (await resolveSelectionTuning()).satisfierFlushDeadlineMs, durableTrace.id);");
     expect(SRC).not.toContain("void persistSatisfierTrace(durableTrace)");
   });
 

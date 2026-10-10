@@ -139,14 +139,14 @@ describe("the persist site sends the flag from the walk's own decision (pinned o
   const block = (() => {
     const i = SRC.indexOf("if (satisfierOnlyTrace) {");
     expect(i).toBeGreaterThan(-1);
-    const end = SRC.indexOf("await persistSatisfierTrace(durableTrace);", i);
+    const end = SRC.indexOf("persistWithinDeadline(persistSatisfierTrace(durableTrace)", i);
     expect(end).toBeGreaterThan(i);
-    return SRC.slice(i, end + "await persistSatisfierTrace(durableTrace);".length);
+    return SRC.slice(i, end + "persistWithinDeadline(persistSatisfierTrace(durableTrace)".length);
   })();
 
   test("MUST-FAIL: the durable trace gets the withheld tags, gated on walkBetaWithheld, before it is persisted", () => {
     expect(block).toContain("if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);");
-    expect(block.indexOf("withBetaWithheld(")).toBeLessThan(block.indexOf("await persistSatisfierTrace(durableTrace);"));
+    expect(block.indexOf("withBetaWithheld(")).toBeLessThan(block.indexOf("persistWithinDeadline(persistSatisfierTrace(durableTrace)"));
   });
 
   test("MUST-FAIL: the reason is the decision's — betasend's record entry for lastTrace.id, set where β is withheld", () => {

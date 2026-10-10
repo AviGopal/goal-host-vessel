@@ -6823,6 +6823,21 @@ export function makeSatisfierFlusher<T extends { id: string }>(
   };
 }
 /**
+ * Wait for a trace persist at most `deadlineMs`. Resolves true when it settled in time; false when the deadline
+ * passed first, after logging the miss. The persist itself is not cancelled — it keeps running and lands late.
+ */
+export async function persistWithinDeadline(persist: Promise<void>, deadlineMs: number, traceId: string): Promise<boolean> {
+  const ms = Math.max(0, Number(deadlineMs) || 0);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settled = await Promise.race([
+    persist.then(() => true, () => true),
+    new Promise<boolean>((r) => { timer = setTimeout(() => r(false), ms); (timer as { unref?: () => void }).unref?.(); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (!settled) console.warn(`[goal-host-vessel] durable satisfier trace ${traceId} NOT persisted within ${ms}ms — the walk continues; the insert keeps running and is graded at insert by its tags when it lands (a /reach before it may match no row)`);
+  return settled;
+}
+/**
  * A WITHHELD β RIDES ON THE PERSISTED TRACE. The trace sink forwards only tags and metadata, so the walk's
  * withhold decision travels as tags activity-api's insert path reads (beta_withheld:true, beta_withheld_reason:<r>):
  * it then applies no α/β to the arm and marks the row reach_withheld:true, as POST /reach does for beta_withheld.
@@ -12441,8 +12456,11 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
         // AWAITED (OP-1): the walk-complete /reach for this execution is delivered after the walk returns, so a
         // fire-and-forget insert raced it and /reach matched no row in ~24% of satisfier-last walks (diag-1c).
-        // persistSatisfierTrace never throws, and the sink's POST is time-bounded.
-        await persistSatisfierTrace(durableTrace);
+        // BOUNDED BY THE SHAPED FLUSH DEADLINE (qa): the sink alone bounds it only by postWithRetry — 3 attempts of
+        // up to 120 s each plus backoff, ≈ 367 s worst case — so a slow hub trace store would stall every
+        // satisfier-last walk for minutes. Past satisfierFlushDeadlineMs (20 s default) the walk continues and logs
+        // the miss; the insert keeps running, and the verdict it carries is still graded at insert by its tags.
+        await persistWithinDeadline(persistSatisfierTrace(durableTrace), (await resolveSelectionTuning()).satisfierFlushDeadlineMs, durableTrace.id);
       }
     } catch (e) {
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
