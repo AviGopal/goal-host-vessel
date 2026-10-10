@@ -280,6 +280,57 @@ export function involvedSteps(edges: ReadonlyArray<StepEdge | undefined>, delive
   return [...seen].filter((i) => !uncreditable(i) && !isStub(i)).sort((a, b) => a - b);
 }
 
+// ── Culpability: β goes to the step that produced the judged artifact (2026-10-10) ─────────────
+
+/**
+ * The chain steps that PRODUCED the artifact a not-reached verdict judged — the mirror, on the failure side,
+ * of involvedSteps' seeds. A step produced it when one of its outputs is a deliverable shape (the shapes the
+ * judge view rendered as the deliverable, plus the verdict's completion shapes). A WRITE step (isWriteShape)
+ * that consumed an earlier step's output along a recorded edge did not author what it wrote — it recorded
+ * it — so the upstream producer(s) stand in for it (followed through further carrying writes). A stub
+ * (bookkeeping-only output) produced nothing. No deliverable named ⇒ every shape a step produced counts.
+ *
+ * Measured 10-10 (24h): 180 of 208 β charged to a walk's last pick landed on a memoryNote_write /
+ * substrateGap_write / activity_metrics satellite that recorded or followed the answer, never produced it.
+ */
+export function judgedArtifactProducers(edges: ReadonlyArray<StepEdge | undefined>, deliverables: ReadonlySet<string>, isStub: (i: number) => boolean = () => false): number[] {
+  const n = edges.length;
+  const judged = deliverables.size > 0 ? deliverables : new Set(edges.flatMap((e) => e?.outputShapes ?? []));
+  const out = new Set<number>();
+  const visit = (i: number, seen: Set<number>): void => {
+    if (seen.has(i)) return;
+    seen.add(i);
+    const e = edges[i];
+    const outs = e?.outputShapes ?? [];
+    const carrying = outs.length > 0 && outs.every((s) => isWriteShape(s));
+    if (carrying) {
+      const upstream: number[] = [];
+      for (const id of e?.inputImpulseIds ?? []) {
+        for (let j = i - 1; j >= 0; j--) {
+          if ((edges[j]?.outputImpulseIds ?? []).includes(id)) { upstream.push(j); break; }
+        }
+      }
+      if (upstream.length > 0) { for (const j of upstream) visit(j, seen); return; }
+    }
+    if (!isStub(i)) out.add(i);
+  };
+  for (let i = 0; i < n; i++) {
+    if (isStub(i)) continue;
+    if ((edges[i]?.outputShapes ?? []).some((s) => judged.has(s))) visit(i, new Set());
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * Is the walk's LAST step culpable for a not-reached verdict? Yes when it failed itself (its own failure is
+ * its own), or when it is among judgedArtifactProducers. No producer identifiable ⇒ not culpable: an
+ * unavailable observation never becomes a negative outcome, so β is withheld rather than guessed.
+ */
+export function lastStepCulpability(edges: ReadonlyArray<StepEdge | undefined>, deliverables: ReadonlySet<string>, lastStepFailed: boolean, isStub: (i: number) => boolean = () => false): { culpable: boolean; producers: number[] } {
+  const producers = judgedArtifactProducers(edges, deliverables, isStub);
+  return { culpable: lastStepFailed || producers.includes(edges.length - 1), producers };
+}
+
 // ── Acceptance fix 1: a re-frame that CARRIED its retrieval did retrieve ───────────────────────
 
 /**

@@ -425,13 +425,35 @@ export function isCodeInvestigationGoal(goal: string): boolean {
 // so none of the 2026-08-27 grounding fixes applied to it -- observed live reaching HOLLOW
 // (groundedOk=0, tools=0/0, finalTextLen=7812) through the un-discriminating LLM judge (measured
 // 29% correct on this class of shape). Deliberately narrow and ADDITIVE-ONLY: this predicate
-// gates the investigation seed + citation oracle in index.ts, and NOTHING else. It must NOT be
+// gates the investigation seed in index.ts, and NOTHING else (the citation oracle reaches it only to
+// count an abstain: citationOracleApplicability says such a goal asks for no citation). It must NOT be
 // wired into routing or satisfier-suppression -- these goals target problem_detection/
 // code_quality, which the gap-lifecycle loop consumes downstream, and that autonomous loop is
 // already confirmed working; rerouting its target shapes risks breaking it.
 const _GAP_INVESTIGATE = /\binvestigate\b[^.]{0,40}\bgap\b|\bdecompose\b[^.]{0,40}\bgap\b/i;
 export function isGapInvestigationGoal(goal: string): boolean {
   return !!goal && _GAP_INVESTIGATE.test(goal);
+}
+
+// WHICH GOALS THE CITATION ORACLE MAY GRADE (2026-10-10). The oracle in index.ts grades an answer by
+// the source locations it cites. That observation exists only when the goal asked for a code-cited
+// investigation — the class isCodeInvestigationGoal already names, and the SAME predicate routing and
+// satisfier-suppression key off, so the oracle's scope cannot drift from the routing's. A gap-
+// investigation goal ("investigate and decompose gap <slug>") asks for no citation: grading it on one
+// turned every uncited gap answer into a deterministic not-reached (122 of 208 last-pick β in 24h,
+// charged to the write that merely recorded the answer). Not applicable ⇒ the oracle abstains.
+//
+// "demanded": the goal text itself asks for citations. Only then is an UNCITED answer a deterministic
+// miss of what was asked; otherwise the missing citation is a soft not-reached the symmetric β gate
+// can withhold. This regex is the one new pattern here — cite/citation/file:line wording only.
+const _DEMANDS_CITATION = /\bcit(?:e|es|ed|ing|ation|ations)\b|\bfile:line\b|\bline numbers?\b/i;
+export function goalDemandsCitation(goal: string): boolean {
+  return !!goal && _DEMANDS_CITATION.test(goal);
+}
+export type CitationOracleApplicability = "not-applicable" | "applicable" | "demanded";
+export function citationOracleApplicability(goal: string): CitationOracleApplicability {
+  if (!isCodeInvestigationGoal(goal)) return "not-applicable";
+  return goalDemandsCitation(goal) ? "demanded" : "applicable";
 }
 
 // Shared symbol extraction for the investigation seed + citation oracle (index.ts). Beyond the

@@ -241,7 +241,8 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, type GoalTargetDecision } from "./goal-target-inference";
+import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
+import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId } from "./compose-gap-id";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
@@ -302,7 +303,7 @@ import { judgeReach } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, involvedSteps, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, lastStepCulpability, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
@@ -1392,7 +1393,11 @@ interface GoalReachVerdict {
   /** An ABSTAIN (REALIGNMENT §9.2): the gate declined to grade, with the cut that made it decline.
    *  Neither reached nor hollow — no α, no β, no gap filing, no retry; never the "verdict unknown"
    *  (null) channel, which means the verifier could not be reached. */
-  abstain?: { kind: "cut-view"; cuts: JudgeCut[] }; }
+  abstain?: GateAbstain; }
+/** An ABSTAIN (REALIGNMENT §9.2). `cut-view`: the judge's view could not hold the deliverable whole. `oracle-abstain`:
+ *  the oracle that owns the goal's class declined (not applicable, or its observation was unavailable) and no judge of
+ *  MEASURED adequacy exists for that class, so nothing grades it — the walk stays ungraded (no α, no β). */
+type GateAbstain = { kind: "cut-view" | "oracle-abstain"; cuts: JudgeCut[]; family?: string };
 
 // ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
 // The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
@@ -3454,32 +3459,120 @@ async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReach
 // a real source location — floor parity for "find where X originates"). Fails CLOSED on a confabulated
 // or missing citation, so it can only turn a wrongly-hollowed grounded answer into a reach — never
 // green an ungrounded one. Ask-the-consumer: it re-reads the file itself, never trusts the grep output.
-async function verifyCodeInvestigationCitation(goal: string, digest: string): Promise<GoalReachVerdict | null> {
-  // 2026-08-28: symbol extraction shared with the seed (extractInvestigationSymbols) so it also
-  // grounds on a gap-investigation goal's hyphenated gap-id slug, not just camelCase/snake_case
-  // source identifiers. See that function's comment for why. Abstain (return null) unchanged when
-  // nothing groundable is found — this can only ADD coverage, never force a hollow verdict.
+// OP-1 — BOTH DIRECTIONS WERE WRONG, AND THE COST LANDED ON THE WRONG STEP.
+//  - FALSE FAIL: an uncited answer returned `reached:false, deterministic:true` for every goal the gate let
+//    in, including gap-investigation goals that never asked for a citation. deterministic:true also defeated
+//    the walk's symmetric β withhold, so the β landed on the walk's last pick — a write that only recorded
+//    the answer (122 uncited + 58 unverified = 180 of 208 last-pick β in 24h).
+//  - FALSE PASS: any cited FILE containing a goal word anywhere passed (778/778 cited answers "achieved" on
+//    10-05), so a citation to the wrong line of the right file was a reach.
+// Now: the oracle grades only goals that ask for a code-cited investigation (citationOracleApplicability —
+// the same isCodeInvestigationGoal routing keys off); an uncited answer is a deterministic miss only when the
+// goal demanded citations, else a soft not-reached the symmetric gate can withhold; a pass needs a cited
+// file:LINE whose own line window holds the goal's symbol; an observation it cannot make (not applicable, no
+// readable file, a file-level citation only) is an UNGRADED ABSTAIN (never routed to the judge), counted per
+// family with a divergence counterweight.
+const CODE_INVESTIGATION_ORACLE = "code-investigation-citation";
+const oracleAbstainTally = createOracleAbstainTally();
+/** Running per-family oracle decision counters (verdicts / abstains / not-applicable). */
+export function oracleAbstainCounts(): Record<string, OracleFamilyCounts> { return oracleAbstainTally.counts(); }
+async function noteOracleDecision(family: string, outcome: OracleOutcome, goal: string, why: string): Promise<void> {
+  const t = await resolveSelectionTuning();
+  const r = oracleAbstainTally.record(family, outcome, { window: t.oracleAbstainWindow, share: t.oracleAbstainDivergenceShare });
+  if (outcome !== "verdict") console.log(`[${family}-oracle] ABSTAINED${outcome === "not-applicable" ? " (not applicable)" : ""} for goal_hash=${goalHashOf(goal)} — ${why.slice(0, 240)}; abstains=${r.counts.abstains} not_applicable=${r.counts.notApplicable} of ${r.counts.decisions} decisions (window abstain share ${r.windowShare.toFixed(2)} over ${r.windowSize})`);
+  if (r.divergenceLine) console.warn(r.divergenceLine);
+}
+/** `file.ext` or `file.ext:LINE` references in an answer, deduplicated by path:line. */
+export function citedLocations(digest: string): Array<{ path: string; line: number | null }> {
+  const seen = new Set<string>();
+  const out: Array<{ path: string; line: number | null }> = [];
+  for (const m of digest.matchAll(/([\w./-]*[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md))\b(?::(\d{1,7}))?/g)) {
+    const path = m[1] ?? "";
+    if (!path || /node_modules/.test(path)) continue;
+    const line = m[2] ? Number(m[2]) : null;
+    const key = `${path}:${line ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ path, line });
+    if (out.length >= 16) break;
+  }
+  return out;
+}
+// AN ORACLE ABSTAIN IS NOT HANDED TO THE LLM JUDGE (qa, OP-1). Falling through to the judge would grade the class
+// by a grader of UNMEASURED adequacy (measured 29% correct on investigation answers), turning "nothing could observe
+// this" into a posterior move after all. The fall-through is allowed only for a class whose judge accuracy is
+// MEASURED; goal-host holds no such per-class measurement (searched: no judge-accuracy / calibration / judge-trust
+// data — blind calibration labels are read only by the surface's report), so the route is OFF and the abstain is
+// an explicit ungraded outcome: no α, no β, no gap filing, counted by noteOracleDecision.
+function oracleAbstainVerdict(family: string, why: string): GoalReachVerdict {
+  return { reached: false, reason: `abstain:${family} — ${why}; no judge of measured adequacy for this class, so it is not graded`, completion_shapes: [], abstain: { kind: "oracle-abstain", cuts: [], family } };
+}
+export async function verifyCodeInvestigationCitation(goal: string, digest: string): Promise<GoalReachVerdict | null> {
+  const fam = CODE_INVESTIGATION_ORACLE;
+  const applicability = citationOracleApplicability(goal);
+  if (applicability === "not-applicable") {
+    const why = "the goal does not ask for a code-cited investigation (e.g. a gap investigation), so there is no citation to observe";
+    await noteOracleDecision(fam, "not-applicable", goal, `${why}; ungraded`);
+    return oracleAbstainVerdict(fam, why);
+  }
+  // Symbol extraction shared with the seed (extractInvestigationSymbols). Nothing groundable ⇒ abstain.
   const syms = extractInvestigationSymbols(goal);
-  if (syms.length === 0) return null; // no groundable symbol — leave to normal grading
-  const cited = [...new Set((digest.match(/[\w./-]*[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md)\b/g) ?? []))]
-    .filter((p) => !/node_modules/.test(p)).slice(0, 16);
-  if (cited.length === 0) {
-    return { reached: false, reason: "deterministic:code-investigation-uncited — the answer cites no source file, so its claim about where the symbol originates cannot be verified", deterministic: true, completion_shapes: [] };
-  }
-  const roots = ["", "/workspace/git/vessels/", "/workspace/git/super-repo/repos/", "/workspace/git/super-repo/"];
-  for (const rel of cited) {
-    const paths = rel.startsWith("/") ? [rel] : roots.filter(Boolean).map((r) => r + rel.replace(/^\.?\//, ""));
-    for (const p of paths) {
-      try {
-        const body = await readFile(p, "utf8");
-        const hit = syms.find((s) => body.includes(s));
-        if (hit) {
-          return { reached: true, reason: `deterministic:code-investigation-cited — the answer cites ${rel}, which independently re-reads (${p}) and CONTAINS "${hit}"; the investigation names a real source location holding the symbol`, deterministic: true, completion_shapes: [] };
-        }
-      } catch { /* not at this root */ }
+  if (syms.length === 0) { await noteOracleDecision(fam, "abstain", goal, "no groundable symbol in the goal; ungraded"); return oracleAbstainVerdict(fam, "no groundable symbol in the goal"); }
+  const cites = citedLocations(digest);
+  if (cites.length === 0) {
+    await noteOracleDecision(fam, "verdict", goal, "uncited");
+    if (applicability === "demanded") {
+      return { reached: false, reason: "deterministic:code-investigation-uncited — the goal demands citations and the answer cites no source file", deterministic: true, completion_shapes: [] };
     }
+    // Not reached (nothing locates the symbol), but NOT deterministic: the goal did not ask for a citation, so
+    // the missing one is a soft verdict the walk's symmetric β gate may withhold. No `deterministic:` prefix.
+    return { reached: false, reason: "code-investigation-uncited — the answer cites no source file, so where the symbol originates is unverified (the goal did not demand citations: not a deterministic miss)", deterministic: false, completion_shapes: [] };
   }
-  return { reached: false, reason: `deterministic:code-investigation-citation-unverified — the answer cites [${cited.slice(0, 3).join(", ")}] but none independently re-reads to a file containing [${syms.join(", ")}] (confabulated or wrong citation)`, deterministic: true, completion_shapes: [] };
+  const roots = ["/workspace/git/vessels/", "/workspace/git/super-repo/repos/", "/workspace/git/super-repo/"];
+  const read = async (rel: string): Promise<{ at: string; lines: string[] } | null> => {
+    const paths = rel.startsWith("/") ? [rel] : roots.map((r) => r + rel.replace(/^\.?\//, ""));
+    for (const p of paths) {
+      try { return { at: p, lines: (await readFile(p, "utf8")).split("\n") }; } catch { /* not at this root */ }
+    }
+    return null;
+  };
+  let lineCitedRead = 0;
+  const unsupported: string[] = [];
+  let fileOnlyHolds = false;
+  let fileOnlyRead = 0;
+  for (const c of cites) {
+    const f = await read(c.path);
+    if (!f) continue;
+    if (c.line === null) {
+      fileOnlyRead++;
+      if (syms.some((s) => f.lines.some((l) => l.includes(s)))) fileOnlyHolds = true;
+      continue;
+    }
+    lineCitedRead++;
+    // The cited line must exist and its own window (two lines either side, for a multi-line declaration)
+    // must hold the goal's symbol. A goal word elsewhere in the file supports nothing the answer claimed.
+    const hit = c.line >= 1 && c.line <= f.lines.length
+      ? syms.find((s) => f.lines.slice(Math.max(0, c.line! - 3), c.line! + 2).some((l) => l.includes(s)))
+      : undefined;
+    if (hit) {
+      await noteOracleDecision(fam, "verdict", goal, "cited-line-supports");
+      return { reached: true, reason: `deterministic:code-investigation-cited — the answer cites ${c.path}:${c.line}, which independently re-reads (${f.at}) and whose line ${c.line} holds "${hit}"; the investigation names a real source location of the symbol`, deterministic: true, completion_shapes: [] };
+    }
+    unsupported.push(`${c.path}:${c.line}${c.line < 1 || c.line > f.lines.length ? " (no such line)" : ""}`);
+  }
+  if (lineCitedRead > 0) {
+    await noteOracleDecision(fam, "verdict", goal, "cited-line-unsupported");
+    return { reached: false, reason: `deterministic:code-investigation-citation-unverified — the answer cites [${unsupported.slice(0, 3).join(", ")}] but no cited line independently re-reads to hold [${syms.join(", ")}] (confabulated or wrong citation)`, deterministic: true, completion_shapes: [] };
+  }
+  if (fileOnlyRead > 0 && !fileOnlyHolds) {
+    await noteOracleDecision(fam, "verdict", goal, "cited-file-lacks-symbol");
+    return { reached: false, reason: `deterministic:code-investigation-citation-unverified — the answer cites [${cites.slice(0, 3).map((c) => c.path).join(", ")}] but none independently re-reads to a file containing [${syms.join(", ")}] (confabulated or wrong citation)`, deterministic: true, completion_shapes: [] };
+  }
+  const why = fileOnlyRead > 0
+    ? "the answer cites only whole files (no file:line), so the location it claims cannot be checked"
+    : `no cited file re-reads at any root ([${cites.slice(0, 3).map((c) => c.path).join(", ")}])`;
+  await noteOracleDecision(fam, "abstain", goal, `${why}; ungraded`);
+  return oracleAbstainVerdict(fam, why);
 }
 
 /**
@@ -5517,7 +5610,8 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
       // is the pathway that gets REUSED (REUSE-BEFORE-DERIVE borrows it by shape
       // signature), so an ungradable reach propagates into later posteriors it never
       // earned. Tag the shapes the floor was actually asked for, and only when it reached.
-      tags: [
+      // An ORACLE ABSTAIN (OP-1) is ungraded here too: no reach tag, and beta_withheld so the insert path blames nothing.
+      tags: verdict?.abstain ? withBetaWithheld(["dispatcher_used:goal-host"], "verdict-abstain") : [
         "dispatcher_used:goal-host",
         floorReached ? "reached:true" : "reached:false",
         ...(floorReached && targetShapes.length > 0 ? [`completion_shapes:${targetShapes.join(",")}`] : []),
@@ -7382,7 +7476,7 @@ interface GoalSeekResult {
    */
   answerBody?: string;
   /** Set when the reach gate ABSTAINED (§9.2) — the walk is neither reached nor hollow. */
-  abstain?: { kind: "cut-view"; cuts: JudgeCut[] };
+  abstain?: GateAbstain;
   /** The route-around record a stalled walk emitted (route-around.ts); absent when it did not stall. */
   routeAround?: RouteAroundRecord;
   /** Output shapes of the steps that produced or fed the deliverable along recorded edges
@@ -11493,8 +11587,9 @@ If one of those sibling shapes is the action that would create what the goal ask
         walkAbstain = verdict.abstain;
         goalReachReason = verdict.reason;
         tap(`[goal-host-vessel] walk(${opts.surface}): ABSTAIN — ${verdict.reason}`);
-        // THE LABEL CARRIES THE CUT (§9.2): an automated, non-binary label — never ground truth.
-        recordDeterministicLabel(goal, lastExecId, lastPick || undefined, { ...verdict, deterministic: true }, {
+        // THE LABEL CARRIES THE CUT (§9.2): an automated, non-binary label — never ground truth. An oracle abstain
+        // observed nothing, so it writes no label.
+        if (verdict.abstain.kind === "cut-view") recordDeterministicLabel(goal, lastExecId, lastPick || undefined, { ...verdict, deterministic: true }, {
           verdict: "partial", labeler: "automated", confidence: 0.5, source: "judge-abstain-cut-view",
           notes: `abstain:cut-view cuts=${JSON.stringify(verdict.abstain.cuts)}`,
         });
@@ -11652,6 +11747,13 @@ If one of those sibling shapes is the action that would create what the goal ask
       } else if (verdict && verdict.reached === false) {
         status = "failed";
         goalReachReason = verdict.reason;
+        // CULPABILITY (OP-1): β goes only to the step that PRODUCED the judged artifact (the shapes the judge
+        // view rendered as the deliverable, plus the verdict's completion shapes), or to a last step that failed
+        // itself. A last pick that only recorded or followed the answer (a memoryNote_write / substrateGap_write /
+        // activity_metrics satellite) is not charged: 180 of 208 last-pick β in 24h were exactly that. The real
+        // producer is charged through the failed composite's consumed provenance below — not a second grader.
+        const _culpability = lastStepCulpability(chain.map((_, i) => stepEdges.get(i)), new Set([...(verdict.completion_shapes ?? []), ...judgeView.deliverableShapes]), lastTrace.status === "failed", stepIsStub);
+        const _producerIds = _culpability.producers.map((i) => chain[i]).filter(Boolean).join(",") || "none identifiable";
         // NO BETA FOR OUR OWN MISSING ORACLE. `no-oracle-for-goal-class` means the gate
         // withheld a verdict because nothing can verify this goal SHAPE — not that the
         // composition failed. Penalising the arm here would teach the learner to avoid a
@@ -11690,16 +11792,19 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _alphaWasReachable =
           verdict.deterministic === true || consumedInChain.size > 0;
         const _betaWithheldForSymmetry = !_noOracle && !_alphaWasReachable;
+        const _betaWithheldForCulpability = !_noOracle && !_betaWithheldForSymmetry && !_culpability.culpable;
+        const _withheldWhy = _noOracle ? "no-oracle-for-goal-class" : _betaWithheldForSymmetry ? "alpha-unreachable-non-deterministic-no-edge" : "not-producer-of-judged-artifact";
         walkBetaWithheld = _noOracle || _betaWithheldForSymmetry;
+        if (_betaWithheldForCulpability) walkBetaWithheld = true;
         // Recorded HERE, from the same decision, so every later /reach for this execution (the
         // walk-complete patch arrives after any fallback step) carries the withhold, whatever the
         // trace kind. Two reasons, two tokens: a missing verifier and a missing edge are different gaps.
-        if (walkBetaWithheld) opts.betaWithheld?.set(lastTrace.id, _noOracle ? "no-oracle-for-goal-class" : "alpha-unreachable-non-deterministic-no-edge");
-        if (walkBetaWithheld) walkBetaWithheldReason = opts.betaWithheld?.get(lastTrace.id) ?? (_noOracle ? "no-oracle-for-goal-class" : "alpha-unreachable-non-deterministic-no-edge");
+        if (walkBetaWithheld) opts.betaWithheld?.set(lastTrace.id, _noOracle ? "no-oracle-for-goal-class" : _withheldWhy);
+        if (walkBetaWithheld) walkBetaWithheldReason = opts.betaWithheld?.get(lastTrace.id) ?? _withheldWhy;
 
         if (!_noOracle && !_betaWithheldForSymmetry) {
-          const _abDelta = await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal);
-          opts.learningSink?.alphaBetaDelta.push(_abDelta);
+          if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
+          else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal));
         } else if (_noOracle) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
         } else {
@@ -11752,7 +11857,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_hc && _hc.trim().length > 0) tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW-CONTENT ${_hs} (${_hc.length} chars) = ${_hc.slice(0, 400)}`);
           }
         } catch { /* observability only — never break the verdict path */ }
-        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)} goal_hash=${goalHashOf(goal)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : _betaWithheldForCulpability ? `β WITHHELD (${lastPick} did not produce the judged artifact; producer: ${_producerIds})` : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)} goal_hash=${goalHashOf(goal)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
         // shape has NO live resolver (a true CAPABILITY gap — not a selection
@@ -14967,6 +15072,8 @@ async function runGoalWithRecoveryInner(
   let completionShapes: string[] | null = null;
   let goalReachReason: string | undefined;
   let reached = false;
+  // The last attempt's oracle abstain (OP-1): ungraded, so it is returned as an abstain, never as reached:false.
+  let engineAbstain: GateAbstain | undefined;
   let attempt = 0;
   let humanSolicited = false;
   while (attempt < maxAttempts) {
@@ -15030,6 +15137,7 @@ async function runGoalWithRecoveryInner(
         if (verdict) recordDeterministicLabel(String(goal), execId, selId, verdict);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;
+        engineAbstain = verdict?.abstain;
         // PROVENANCE GATE: a run that consumed another execution's impulse did not reach
         // THIS goal. Not reached, not credited, not extracted — and not β-penalised either:
         // the template did not fail, the shared store fed it another run's data.
@@ -15039,6 +15147,11 @@ async function runGoalWithRecoveryInner(
           status = "failed";
           goalReachReason = _gRun.reason;
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: NOT REACHED via ${selId} — ${goalReachReason}`);
+        } else if (verdict?.abstain) {
+          // ABSTAIN (OP-1): no grader of measured adequacy owns this class — no β, no α, and the result says so.
+          status = "failed";
+          goalReachReason = verdict.reason;
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: ABSTAIN via ${selId} — ${verdict.reason}; ungraded (no β)`);
         } else if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
@@ -15133,7 +15246,7 @@ async function runGoalWithRecoveryInner(
       tap(`[goal-host-vessel] ${opts.surface}: altering approach → ${alt} (attempt ${attempt + 1}, excluded ${excluded.length})`);
     }
   }
-  return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached };
+  return { result, status, selectedTemplateId: result?.selectedTemplateId, completionShapes, attempts: attempt, goalReachReason, reached, ...(engineAbstain && !reached ? { abstain: engineAbstain } : {}) };
 }
 
 // WS5: solicit a present human (a vault advertising human_input via discovery)

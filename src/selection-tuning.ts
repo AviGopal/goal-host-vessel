@@ -66,6 +66,11 @@ export interface SelectionTuning {
   /** How long the walk waits for its satisfier step traces to persist before a pick or composite (ms). Past it the
    *  walk continues and the traces stay queued: a hung trace store must not stall reach for a bookkeeping write. */
   satisfierFlushDeadlineMs: number;
+  /** How many of an oracle family's most recent APPLICABLE decisions its abstain share is measured over. */
+  oracleAbstainWindow: number;
+  /** The abstain share (0,1] over that window above which goal-host logs a DIVERGENCE line for the family: an
+   *  oracle that mostly abstains on the class it claims is not observing that class, and nobody would see it. */
+  oracleAbstainDivergenceShare: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
@@ -73,6 +78,8 @@ export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freez
   maxWalkSteps: 40,
   horizontalK: 4,
   satisfierFlushDeadlineMs: 20_000,
+  oracleAbstainWindow: 50,
+  oracleAbstainDivergenceShare: 0.5,
 });
 
 /** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
@@ -85,9 +92,13 @@ const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
   maxWalkSteps: process.env["GOAL_HOST_WALK_MAX_STEPS"],
   horizontalK: process.env["GOAL_HOST_HORIZONTAL_K"],
   satisfierFlushDeadlineMs: undefined,
+  oracleAbstainWindow: undefined,
+  oracleAbstainDivergenceShare: undefined,
 };
 
 function resolveField(key: keyof SelectionTuning, authored: unknown): number {
+  // A share is a fraction: above 1 it could never be exceeded and would silently disable the check.
+  if (key === "oracleAbstainDivergenceShare") return isUsablePositive(authored) && authored <= 1 ? authored : SELECTION_TUNING_DEFAULTS[key];
   if (isUsablePositive(authored)) return authored;
   const env = ENV_FALLBACK[key];
   if (env !== undefined && env !== "") {
@@ -154,6 +165,8 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       maxWalkSteps: resolveField("maxWalkSteps", parsed["maxWalkSteps"]),
       horizontalK: resolveField("horizontalK", parsed["horizontalK"]),
       satisfierFlushDeadlineMs: resolveField("satisfierFlushDeadlineMs", parsed["satisfierFlushDeadlineMs"]),
+      oracleAbstainWindow: resolveField("oracleAbstainWindow", parsed["oracleAbstainWindow"]),
+      oracleAbstainDivergenceShare: resolveField("oracleAbstainDivergenceShare", parsed["oracleAbstainDivergenceShare"]),
     };
   } catch {
     // No policy file is the shipped state, and it must still honour the env tier — otherwise
@@ -163,6 +176,8 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       maxWalkSteps: resolveField("maxWalkSteps", undefined),
       horizontalK: resolveField("horizontalK", undefined),
       satisfierFlushDeadlineMs: resolveField("satisfierFlushDeadlineMs", undefined),
+      oracleAbstainWindow: resolveField("oracleAbstainWindow", undefined),
+      oracleAbstainDivergenceShare: resolveField("oracleAbstainDivergenceShare", undefined),
     };
   }
 

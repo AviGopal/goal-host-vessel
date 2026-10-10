@@ -45,8 +45,9 @@ async function betaBlock(): Promise<string> {
   expect(i).toBeGreaterThan(-1);
   // 4500, not 3500: the first draft cut the window off three characters before the second
   // log line and reported a defect that was not there. An instrument that truncates its
-  // subject reports on the truncation.
-  return src.slice(i, i + 4500);
+  // subject reports on the truncation. 5500 since OP-1 (2026-10-10): the culpability withhold added three
+  // lines between the guard and the second log line, which ended at 4,712 characters.
+  return src.slice(i, i + 5500);
 }
 
 describe("credit gate — β is held to the same evidence standard as α", () => {

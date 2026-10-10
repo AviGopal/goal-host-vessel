@@ -35,7 +35,9 @@ export const EVIDENCE_LINES_CAP = 40;
  *  emit-time capture below). The view records that clip as a cut, so no bound is invisible. */
 export interface PoolEntry { shape: string; content: unknown; produced?: number }
 export interface JudgeCut { shape: string; shown: number; produced: number }
-export interface JudgeView { digest: string; cuts: JudgeCut[]; deliverableCut: boolean }
+/** `deliverableShapes`: the shapes the view rendered AS the deliverable — what the judge graded. The walk reads it
+ *  to find which step produced the judged artifact (walk-pool.ts judgedArtifactProducers). */
+export interface JudgeView { digest: string; cuts: JudgeCut[]; deliverableCut: boolean; deliverableShapes: string[] }
 
 /** `{producedBy, executionId}` placeholders a nested template step leaves for outputs the walk store
  *  could not recover: a shape name with no content, which the judge reads as a hollow artefact. */
@@ -120,6 +122,7 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
   const cuts: JudgeCut[] = [];
   const seenContent = new Set<string>();
   const deliverable: string[] = [];
+  const rendered: string[] = [];
   const evidence: string[] = [];
   const seenUrls = new Set<string>();
   const rest: string[] = [];
@@ -140,6 +143,7 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
       else if (preClipped) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: produced! }); }
       deliverableBudget -= shown.length;
       deliverable.push(`- ${shape}: ${shown}`);
+      if (!rendered.includes(shape)) rendered.push(shape);
     } else if (EVIDENCE_SHAPES.has(shape)) {
       const lines = evidenceLines(content).filter((l) => { const u = l.slice(l.lastIndexOf(" — ") + 3); if (seenUrls.has(u)) return false; seenUrls.add(u); return true; });
       if (lines.length > 0) {
@@ -166,7 +170,7 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
   const tail = [...evidence, ...rest].join("\n");
   if (tail.length > REST_CAP) cuts.push({ shape: "*", shown: REST_CAP, produced: tail.length });
   const digest = [deliverable.join("\n"), tail.slice(0, REST_CAP)].filter(Boolean).join("\n");
-  return { digest, cuts, deliverableCut };
+  return { digest, cuts, deliverableCut, deliverableShapes: rendered };
 }
 
 /** The judge's `completion_shapes`, restricted in code before /reach, recordGoalPath and gap filing
