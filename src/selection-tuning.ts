@@ -71,6 +71,9 @@ export interface SelectionTuning {
   /** The abstain share (0,1] over that window above which goal-host logs a DIVERGENCE line for the family: an
    *  oracle that mostly abstains on the class it claims is not observing that class, and nobody would see it. */
   oracleAbstainDivergenceShare: number;
+  /** How many times a spooled reach verdict that matched no row ({updated:0}) is redelivered before it is retired:
+   *  the execution row may land after the verdict, so one miss is not final, but an id that never lands must go. */
+  reachSpoolNoRowRetries: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
@@ -80,6 +83,7 @@ export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freez
   satisfierFlushDeadlineMs: 20_000,
   oracleAbstainWindow: 50,
   oracleAbstainDivergenceShare: 0.5,
+  reachSpoolNoRowRetries: 5,
 });
 
 /** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
@@ -94,6 +98,7 @@ const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
   satisfierFlushDeadlineMs: undefined,
   oracleAbstainWindow: undefined,
   oracleAbstainDivergenceShare: undefined,
+  reachSpoolNoRowRetries: undefined,
 };
 
 function resolveField(key: keyof SelectionTuning, authored: unknown): number {
@@ -167,6 +172,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       satisfierFlushDeadlineMs: resolveField("satisfierFlushDeadlineMs", parsed["satisfierFlushDeadlineMs"]),
       oracleAbstainWindow: resolveField("oracleAbstainWindow", parsed["oracleAbstainWindow"]),
       oracleAbstainDivergenceShare: resolveField("oracleAbstainDivergenceShare", parsed["oracleAbstainDivergenceShare"]),
+      reachSpoolNoRowRetries: resolveField("reachSpoolNoRowRetries", parsed["reachSpoolNoRowRetries"]),
     };
   } catch {
     // No policy file is the shipped state, and it must still honour the env tier — otherwise
@@ -178,6 +184,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       satisfierFlushDeadlineMs: resolveField("satisfierFlushDeadlineMs", undefined),
       oracleAbstainWindow: resolveField("oracleAbstainWindow", undefined),
       oracleAbstainDivergenceShare: resolveField("oracleAbstainDivergenceShare", undefined),
+      reachSpoolNoRowRetries: resolveField("reachSpoolNoRowRetries", undefined),
     };
   }
 

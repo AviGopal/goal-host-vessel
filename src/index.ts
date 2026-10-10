@@ -914,33 +914,61 @@ async function spoolReachVerdict(body: string): Promise<void> {
     console.warn(`[goal-host-vessel] reach-spool append failed: ${(e as Error)?.message}`);
   }
 }
-async function drainReachSpool(): Promise<void> {
+// A SPOOLED VERDICT THAT MATCHED NO ROW IS KEPT, BOUNDED (OP-1). The drain used to retire a 2xx {updated:0} as
+// "a matched-no-row will never land later either". It can: the walk's durable satisfier trace was persisted
+// fire-and-forget and raced the verdict (/reach matched no row in ~24% of satisfier-last walks, diag-1c), so a
+// row that did not exist at the first drain may exist at the next. The entry is kept with a private try count
+// (stripped before it is sent) and retired after the shaped selection-tuning reachSpoolNoRowRetries.
+const REACH_SPOOL_TRIES_FIELD = "__no_row_tries";
+export async function drainReachSpool(spoolPath: string = REACH_SPOOL_PATH): Promise<void> {
   if (_reachSpoolDraining) return;
   _reachSpoolDraining = true;
   try {
     const { readFile, writeFile } = await import("node:fs/promises");
     let raw = "";
-    try { raw = await readFile(REACH_SPOOL_PATH, "utf8"); } catch { return; }
+    try { raw = await readFile(spoolPath, "utf8"); } catch { return; }
     const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-    if (lines.length === 0) { await writeFile(REACH_SPOOL_PATH, ""); return; }
+    if (lines.length === 0) { await writeFile(spoolPath, ""); return; }
+    const maxNoRowTries = (await resolveSelectionTuning()).reachSpoolNoRowRetries;
     const stillFailing: string[] = [];
     for (const line of lines) {
       let retire = false;
+      let keep = line;
+      let body = line;
+      let tries = 0;
+      let parsed: Record<string, unknown> | null = null;
+      try { const j = JSON.parse(line); if (j && typeof j === "object" && !Array.isArray(j)) parsed = j as Record<string, unknown>; } catch { /* sent verbatim */ }
+      if (parsed) {
+        tries = typeof parsed[REACH_SPOOL_TRIES_FIELD] === "number" ? (parsed[REACH_SPOOL_TRIES_FIELD] as number) : 0;
+        const { [REACH_SPOOL_TRIES_FIELD]: _drop, ...sent } = parsed;
+        body = JSON.stringify(sent);
+      }
       try {
         const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/reach`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-          body: line,
+          body,
           signal: AbortSignal.timeout(30_000),
         });
-        // A 2xx (even updated:0 — a matched-no-row will never land later either) or a
-        // definitive rejection both retire the entry; only a transport throw keeps it.
+        // A definitive rejection retires the entry; a transport throw keeps it; a 2xx {updated:0} keeps it for a
+        // bounded number of retries (the row may not exist YET), then retires it, loudly.
         retire = true;
-        if (r.ok) { const j = await r.json().catch(() => null) as { updated?: number } | null; if (j && j.updated === 0) console.warn(`[goal-host-vessel] reach-spool: drained entry matched no row (retired)`); }
+        if (r.ok) {
+          const j = await r.json().catch(() => null) as { updated?: number } | null;
+          if (j && j.updated === 0) {
+            if (parsed && tries + 1 < maxNoRowTries) {
+              retire = false;
+              keep = JSON.stringify({ ...parsed, [REACH_SPOOL_TRIES_FIELD]: tries + 1 });
+              console.warn(`[goal-host-vessel] reach-spool: drained entry matched no row (try ${tries + 1}/${maxNoRowTries}) — kept for retry; its execution row may not exist yet`);
+            } else {
+              console.warn(`[goal-host-vessel] reach-spool: drained entry matched no row after ${tries + 1} tries — retired; this execution stays ungraded`);
+            }
+          }
+        }
       } catch { retire = false; }
-      if (!retire) stillFailing.push(line);
+      if (!retire) stillFailing.push(keep);
     }
-    await writeFile(REACH_SPOOL_PATH, stillFailing.length ? stillFailing.join("\n") + "\n" : "");
+    await writeFile(spoolPath, stillFailing.length ? stillFailing.join("\n") + "\n" : "");
     if (lines.length !== stillFailing.length) console.log(`[goal-host-vessel] reach-spool drained ${lines.length - stillFailing.length}/${lines.length}; ${stillFailing.length} still pending`);
   } catch (e) {
     console.warn(`[goal-host-vessel] reach-spool drain failed: ${(e as Error)?.message}`);
@@ -12404,7 +12432,10 @@ If one of those sibling shapes is the action that would create what the goal ask
         };
         // Untagged is not enough: activity-api's insert path blamed a failed ungraded trace β=1 anyway. Say so on the trace.
         if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
-        void persistSatisfierTrace(durableTrace);
+        // AWAITED (OP-1): the walk-complete /reach for this execution is delivered after the walk returns, so a
+        // fire-and-forget insert raced it and /reach matched no row in ~24% of satisfier-last walks (diag-1c).
+        // persistSatisfierTrace never throws, and the sink's POST is time-bounded.
+        await persistSatisfierTrace(durableTrace);
       }
     } catch (e) {
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
