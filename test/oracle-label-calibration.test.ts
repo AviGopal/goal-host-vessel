@@ -61,6 +61,9 @@ const calibrationLabel = {
   purpose: "calibration",
   window_id: "win-2026-10-03",
   sample_draw_id: "draw-7",
+  // activity-api stamps a human label with the validated credential (migration 219); the consumer acts
+  // only on a stamp carrying the human-verdict scope (oracle-label-consumer.ts hasHumanVerdictPrincipal).
+  labeled_by_principal: { key_id: "key-operator", auth_type: "apikey", scopes: ["read", "write", "verdict:human"] },
 };
 const { purpose: _p, window_id: _w, sample_draw_id: _s, ...ordinaryHumanLabel } = calibrationLabel;
 

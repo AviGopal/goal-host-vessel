@@ -23,6 +23,43 @@ export interface OracleLabelRow {
   purpose?: string;
   window_id?: string;
   sample_draw_id?: string;
+  /**
+   * Stamped by activity-api's label writer from the SERVER-VALIDATED credential of a human label
+   * (migration 219); never caller-settable there. Rows written before that carry none.
+   */
+  labeled_by_principal?: { key_id?: unknown; auth_type?: unknown; scopes?: unknown } | null;
+}
+
+/**
+ * WHO A HUMAN VERDICT MUST COME FROM. A labeler:"human" row overrides record.reached and files a
+ * human_reported disagreement gap, so it is acted on only when activity-api stamped it with a
+ * principal whose validated scopes carry the human-verdict scope ("verdict:human", or "admin" as
+ * the interim fallback until a verdict-scoped operator key is issued), attributable by key id.
+ * The scope names match activity-api's src/routes/goal-verification-label-write.ts. Anything
+ * else (no stamp, a malformed stamp, a stamp without the scope) is NOT a human verdict: it is
+ * ignored, counted, and logged. Fail closed: every row written before the stamp existed is ignored.
+ */
+export const HUMAN_VERDICT_SCOPE = "verdict:human";
+export const ADMIN_SCOPE = "admin";
+export function hasHumanVerdictPrincipal(label: OracleLabelRow | undefined): boolean {
+  const p = label?.labeled_by_principal;
+  if (!p || typeof p !== "object") return false;
+  if (typeof p.key_id !== "string" || p.key_id.trim().length === 0) return false;
+  const scopes = Array.isArray(p.scopes) ? p.scopes : [];
+  return scopes.includes(HUMAN_VERDICT_SCOPE) || scopes.includes(ADMIN_SCOPE);
+}
+
+/** Human-labeled rows ignored for want of a human-verdict principal (one per execution id, process lifetime). */
+const ignoredHumanLabelExecs = new Set<string>();
+let ignoredHumanLabelCount = 0;
+/** How many executions had a human label ignored for want of a human-verdict principal. */
+export function oracleLabelIgnoredHumanCount(): number {
+  return ignoredHumanLabelCount;
+}
+/** Tests only. */
+export function __resetOracleLabelCountersForTests(): void {
+  ignoredHumanLabelExecs.clear();
+  ignoredHumanLabelCount = 0;
 }
 
 /** The slice of DispatchRecord the consumer reads and writes. */
@@ -114,6 +151,18 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     // against 81 machine consumptions. Leaving the latch unburned for machine labels is
     // sufficient: the corpus read is ORDER BY created_at DESC (activity-api
     // src/routes/impulses.ts), so a later human row is already first on the next poll.
+    // A "human" row without a human-verdict principal is NOT a human verdict (hasHumanVerdictPrincipal).
+    // It is ignored before the latch, so it cannot block a later genuine override. Counted and logged once
+    // per execution (this runs on every poll). Note: the read is limit 1, newest first, so while such a
+    // row is the newest it also hides any older row beneath it; nothing is applied from it either way.
+    if (label?.labeler === "human" && !hasHumanVerdictPrincipal(label)) {
+      if (!ignoredHumanLabelExecs.has(String(labelExecId))) {
+        ignoredHumanLabelExecs.add(String(labelExecId));
+        ignoredHumanLabelCount += 1;
+        console.warn(`[oracle-label] human label IGNORED: no operator principal exec=${labelExecId} verdict=${labelVerdict} ignored_total=${ignoredHumanLabelCount}`);
+      }
+      return;
+    }
     if (label?.labeler === "human") learn.oracleLabelWritten = true;
     if (label?.labeler === "human") {
       const priorReached = record.reached;
