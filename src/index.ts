@@ -10451,7 +10451,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const _s0 = String(missingForSatisfier[0]);
         const _rel = await fetchSatisfierReliability(_s0);
         if (_rel && !SATISFIER_SUPPRESSION_ARMED && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
-          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" would be PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) but suppression is HELD pending satisfier re-baseline — the read now works and the verdict is observable; the action is not armed`);
+          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" would be PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) but suppression is HELD pending satisfier re-baseline — the read now works and the verdict is observable; the action is not armed goal_hash=${goalHashOf(goal)}`);
         }
         if (_rel && SATISFIER_SUPPRESSION_ARMED && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
           _provenBadShapes.add(_s0);
