@@ -331,6 +331,41 @@ export function lastStepCulpability(edges: ReadonlyArray<StepEdge | undefined>, 
   return { culpable: lastStepFailed || producers.includes(edges.length - 1), producers };
 }
 
+/**
+ * ONE CHAIN-CREDIT CARRIER PER FAILED SATISFIER-LAST WALK, AND EACH ANCESTOR CHARGED ONCE PER DISPATCH (OP-1).
+ *
+ * activity-api propagates a graded trace's outcome to every execution in its composition_chain at λ^depth. A
+ * not-reached satisfier-last walk handed it TWO such traces: the durable last-step trace (chain = the steps
+ * before it, graded at insert by its reached:false tag) and the failed composite (chain = every step). The
+ * same ancestor was charged by both — λ from the first, λ² from the second: db_admin β moved in steps of
+ * 0.96 = 0.6 + 0.36. And a retry in the same dispatch carries the prior attempt's steps into its own chain, so
+ * its carrier charged them again for the same execution.
+ *
+ * The carrier is the trace that stands for the judged deliverable (OP-1 a): the durable trace when it is
+ * graded (its last step produced the artifact, or failed itself); otherwise — β withheld from a last step that
+ * did not produce it — the failed composite, whose consumed provenance charges the real producer. The other
+ * trace carries no chain. Ancestors this dispatch already charged are dropped from the carrier's chain; a
+ * retry's carried steps sit at the root end of its chain, so dropping them leaves every other depth unchanged.
+ */
+export function chainCarrierChains(input: {
+  chainExecIds: readonly string[];
+  durableChain: readonly string[];
+  durableGraded: boolean;
+  compositeRecorded: boolean;
+  alreadyCharged: ReadonlySet<string>;
+}): { carrier: "durable" | "composite" | "none"; durable: string[]; composite: string[]; charged: string[] } {
+  const fresh = (ids: readonly string[]): string[] => ids.filter((id) => !input.alreadyCharged.has(id));
+  if (input.durableGraded) {
+    const durable = fresh(input.durableChain);
+    return { carrier: "durable", durable, composite: [], charged: durable };
+  }
+  if (input.compositeRecorded) {
+    const composite = fresh(input.chainExecIds);
+    return { carrier: "composite", durable: [...input.durableChain], composite, charged: composite };
+  }
+  return { carrier: "none", durable: [...input.durableChain], composite: [], charged: [] };
+}
+
 // ── Acceptance fix 1: a re-frame that CARRIED its retrieval did retrieve ───────────────────────
 
 /**

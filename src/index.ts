@@ -303,7 +303,7 @@ import { judgeReach } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
-import { findingsDigest, involvedSteps, lastStepCulpability, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
@@ -3472,6 +3472,22 @@ async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReach
 // file:LINE whose own line window holds the goal's symbol; an observation it cannot make (not applicable, no
 // readable file, a file-level citation only) is an UNGRADED ABSTAIN (never routed to the judge), counted per
 // family with a divergence counterweight.
+// Ancestors a dispatch's failed-walk chain carrier already charged (chainCarrierChains). Per dispatch, because a
+// retry re-carries the prior attempt's steps; bounded, because a dispatch's walks finish within minutes.
+const chainChargedByDispatch = new Map<string, Set<string>>();
+function chargeChainCarrier(dispatchId: unknown, chainExecIds: readonly string[], durableChain: readonly string[], durableGraded: boolean, compositeRecorded: boolean): { durable: string[]; composite: string[] } {
+  const key = typeof dispatchId === "string" && dispatchId ? dispatchId : null;
+  const charged = (key && chainChargedByDispatch.get(key)) || new Set<string>();
+  const c = chainCarrierChains({ chainExecIds, durableChain, durableGraded, compositeRecorded, alreadyCharged: charged });
+  if (key) {
+    for (const id of c.charged) charged.add(id);
+    chainChargedByDispatch.delete(key);
+    chainChargedByDispatch.set(key, charged);
+    while (chainChargedByDispatch.size > 256) { const k = chainChargedByDispatch.keys().next().value; if (k === undefined) break; chainChargedByDispatch.delete(k); }
+  }
+  if (c.carrier !== "none") console.log(`[goal-host-vessel] chain carrier=${c.carrier} charges ${c.charged.length} ancestor(s); ${new Set([...durableChain, ...chainExecIds]).size - c.charged.length} other chain id(s) not carried (non-carrier trace, or already charged in this dispatch)`);
+  return { durable: c.durable, composite: c.composite };
+}
 const CODE_INVESTIGATION_ORACLE = "code-investigation-citation";
 const oracleAbstainTally = createOracleAbstainTally();
 /** Running per-family oracle decision counters (verdicts / abstains / not-applicable). */
@@ -11737,6 +11753,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       // beta-withhold decision. The _noOracle / _betaWithheldForSymmetry consts are
       // block-scoped inside the reached===false branch and invisible at the persist
       // site, which is how a WITHHELD verdict still got stamped reached:false there.
+      // The chains the not-reached satisfier-last persist and the failed composite carry (chainCarrierChains):
+      // set in the not-reached branch, read at the durable persist. null ⇒ the durable trace keeps its own chain.
+      let walkChainCarrier: { durable: string[]; composite: string[] } | null = null;
       let walkBetaWithheld = false;
       // Why β was withheld, for the durable trace: the abstain below, or the not-reached branch's record entry.
       let walkBetaWithheldReason: string | null = verdict?.abstain ? "verdict-abstain" : null;
@@ -11822,9 +11841,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         // so the composite is recorded only for a satisfier-last walk, whose walk-satisfier- trace /reach
         // never grades. Gated by the SAME evidence standard as the β above, ≥ 2 steps, never minted.
         const _lastIsSatisfier = (lastTrace?.metadata as { satisfier?: boolean } | undefined)?.satisfier === true;
+        // ONE CHAIN CARRIER (OP-1): the graded durable trace, else the failed composite; each ancestor once per dispatch.
+        if (_lastIsSatisfier) walkChainCarrier = chargeChainCarrier(opts.variables.dispatch_id, chainExecIds, lastTrace.compositionChain ?? [], !walkBetaWithheld, !_noOracle && !_betaWithheldForSymmetry && chain.length >= 2);
         if (!_noOracle && !_betaWithheldForSymmetry && chain.length >= 2 && _lastIsSatisfier) {
           const _walkFailure = walkFailureMode({ verdictReason: verdict.reason ?? "goal not reached", missing: verdict.missing ?? [], produced: [...producedShapes], satisfierFailures, pickFailures, pickOutputs });
           const _failedComposite = buildFailedCompositeTrace(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? [])], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)), _walkFailure);
+          _failedComposite.compositionChain = walkChainCarrier?.composite ?? [];
           void (async () => {
             try {
               await flushSatisfierTraces(lastTrace); // the composite names every step in chainExecIds
@@ -12377,6 +12399,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           // already claims. Reached and genuinely-penalised verdicts are stamped
           // exactly as before.
           tags: (!reached && walkBetaWithheld) ? _existingTags : [..._existingTags, reached ? "reached:true" : "reached:false"],
+          // One chain carrier per walk (OP-1): a graded not-reached durable trace carries only ancestors this dispatch has not charged.
+          ...(walkChainCarrier ? { compositionChain: walkChainCarrier.durable } : {}),
         };
         // Untagged is not enough: activity-api's insert path blamed a failed ungraded trace β=1 anyway. Say so on the trace.
         if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
