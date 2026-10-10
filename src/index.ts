@@ -6991,13 +6991,11 @@ async function resolvePathwayReusePolicy(): Promise<PathwayReusePolicy> {
 async function recommendReachingPath(goalText: string, targetShapes?: string[] | null): Promise<ReachingPathway | null> {
   if (!goalText) return null;
   try {
-    // SITUATIONAL, NOT SHAPE-POOL (OP-1). getCachedStateSignature() is the 8-hex SITUATIONAL hash (host load,
-    // trace statistics, catalogue size, rhythm). `state_signature` on the recommend routes is the 16-hex
-    // SHAPE-POOL signature, and /v2/activities/recommend rejected every one of these (2,515 "REJECTED (wrong
-    // form)" in 24h, all length 8). Every query site sends it as `situational_signature` instead — a different
-    // quantity under its own name; the value itself is unchanged. The /v2/goal-paths RECORD keeps
-    // state_signature: its receiver stores any string there (migration 211), and nothing on it validates.
-    const _sig = (await getCachedStateSignature())?.signature_hash;
+    // NO SITUATIONAL HASH ON A RECOMMEND QUERY (OP-1). getCachedStateSignature() is the 8-hex SITUATIONAL hash (host
+    // load, trace statistics, catalogue size, rhythm). `state_signature` on the recommend routes is the 16-hex
+    // SHAPE-POOL signature, and /v2/activities/recommend rejected every one of these (2,515 "REJECTED (wrong form)" in
+    // 24h, all length 8). No receiver reads the situational hash under any other name, so the query sites send none.
+    // The /v2/goal-paths RECORD keeps state_signature: its receiver stores any string there (migration 211).
     // Send the walk's inferred target shapes so the store can offer a NEARBY
     // match when exact goal-text retrieval finds nothing. Retrieval there is
     // keyed on md5 of the goal string, so a reworded goal misses a composition
@@ -7009,7 +7007,7 @@ async function recommendReachingPath(goalText: string, targetShapes?: string[] |
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_sig ? { situational_signature: _sig } : {}), ...(_shapes.length ? { target_shapes: _shapes } : {}), exploit_threshold: 0.9 }),
+      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_shapes.length ? { target_shapes: _shapes } : {}), exploit_threshold: 0.9 }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!r.ok) return null;
@@ -7091,7 +7089,7 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...((await getCachedStateSignature())?.signature_hash ? { situational_signature: (await getCachedStateSignature())?.signature_hash } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, targetShapes) }),
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, targetShapes) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) {
@@ -10481,7 +10479,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const _pr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...missingForSatisfier], exclude_activities: chain, limit: 12, min_success_rate: 0, ...(_psig ? { situational_signature: _psig } : {}), ...psiInputs(_psig, missingForSatisfier) }),
+            body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...missingForSatisfier], exclude_activities: chain, limit: 12, min_success_rate: 0, ...psiInputs(_psig, missingForSatisfier) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (_pr.ok) {
@@ -10768,10 +10766,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        // The situational hash rides as `situational_signature` (OP-1: never under `state_signature`, the 16-hex
-        // shape-pool key /recommend validates); `signature` + `completion_shapes` are what
+        // No `state_signature` (OP-1): the situational hash is not the 16-hex shape-pool key and nothing reads it
+        // here; `signature` + `completion_shapes` are what
         // the ψ readout guard destructures. Both are needed — see psi-inputs.ts.
-        body: JSON.stringify({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...(_sig1 ? { situational_signature: _sig1 } : {}), ...psiInputs(_sig1, target) }),
+        body: JSON.stringify({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...psiInputs(_sig1, target) }),
         signal: AbortSignal.timeout(20_000),
       });
       if (r.ok) {
@@ -10791,7 +10789,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // /recommend destructures `completion_shapes` for the ψ look-ahead and
           // `expected_output_shapes` for goal enrichment — two separate fields, no aliasing.
           // Sending only the latter left R empty and ⟨ψ,R⟩ zero on every recommendation.
-          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0, ...((await getCachedStateSignature())?.signature_hash ? { situational_signature: (await getCachedStateSignature())!.signature_hash } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
+          body: JSON.stringify({ task_description: goal, goal, impulse_shapes: [...producedShapes], expected_output_shapes: [...target], exclude_activities: chain, limit: 12, min_success_rate: 0, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
           signal: AbortSignal.timeout(20_000),
         });
         if (r.ok) {
@@ -11162,7 +11160,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...(_sig2 ? { situational_signature: _sig2 } : {}), ...psiInputs(_sig2, target) }),
+            body: JSON.stringify({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...psiInputs(_sig2, target) }),
             signal: AbortSignal.timeout(20_000),
           });
           if (r.ok) {
