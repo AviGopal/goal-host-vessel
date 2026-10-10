@@ -3503,7 +3503,7 @@ async function verifyListDepsReach(goal: string, dig: string): Promise<GoalReach
 // Ancestors a dispatch's failed-walk chain carrier already charged (chainCarrierChains). Per dispatch, because a
 // retry re-carries the prior attempt's steps; bounded, because a dispatch's walks finish within minutes.
 const chainChargedByDispatch = new Map<string, Set<string>>();
-function chargeChainCarrier(dispatchId: unknown, chainExecIds: readonly string[], durableChain: readonly string[], durableGraded: boolean, compositeRecorded: boolean): { durable: string[]; composite: string[] } {
+export function chargeChainCarrier(dispatchId: unknown, chainExecIds: readonly string[], durableChain: readonly string[], durableGraded: boolean, compositeRecorded: boolean): { durable: string[]; composite: string[] } {
   const key = typeof dispatchId === "string" && dispatchId ? dispatchId : null;
   const charged = (key && chainChargedByDispatch.get(key)) || new Set<string>();
   const c = chainCarrierChains({ chainExecIds, durableChain, durableGraded, compositeRecorded, alreadyCharged: charged });
