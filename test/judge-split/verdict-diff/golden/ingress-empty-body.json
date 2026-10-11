@@ -1,0 +1,72 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.4 handleRunGoal validation"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 1,
+    "timerFires": 0,
+    "virtualMsElapsed": 10
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    }
+  ],
+  "scenario": "ingress-empty-body",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "error": "goal or targetTemplateId is required"
+        },
+        "error": null,
+        "status": 400
+      },
+      "label": null,
+      "markers": [],
+      "op": "runGoal",
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": null,
+        "reasonClass": null,
+        "sinks": [],
+        "status": null
+      }
+    }
+  ]
+}

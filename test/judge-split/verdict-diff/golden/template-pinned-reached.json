@@ -1,0 +1,3731 @@
+{
+  "busEvents": {
+    "count": 132,
+    "types": [
+      "activity.completed",
+      "activity.started",
+      "lifecycle.execution.succeeded",
+      "lifecycle.task.completed",
+      "lifecycle.task.pre_binding",
+      "task.completed",
+      "task.skipped",
+      "task.started"
+    ]
+  },
+  "covers": [
+    "§1.3 15157-15168 host.runGoal attempt",
+    "§1.3 15176-15259 recovery reach gate (reached)"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 133,
+    "virtualMsElapsed": 15000
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "type": "compute_state_signature"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "aapi:template",
+      "seq": 4,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/templates/tmpl-explain"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "aapi:template",
+      "seq": 5,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/templates/tmpl-explain"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 227,
+        "sha256": "35fee497f478551a4bceb442bedd27b4e75ae28d7a41c22e3389514423ec2fad",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "producer:template-task",
+      "seq": 6,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 70,
+        "execution_id": "exec_y9nyvr27",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "disc:llm_completion_dispatch_njpw2tu7"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "goal_ab3bm6ml",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "explain the goal",
+              "duration_ms": 10,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "goal_ab3bm6ml"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "goal_ab3bm6ml"
+              ],
+              "input_shapes": [
+                "goal"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "disc:llm_completion_dispatch_njpw2tu7"
+              ],
+              "output_shapes": [
+                "llm_completion_dispatch"
+              ],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "disc:llm_completion_dispatch_njpw2tu7"
+                  ],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "t1",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "goal"
+        ],
+        "metadata": {
+          "dispatch_target_template_id": "tmpl-explain"
+        },
+        "output_impulse_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "tmpl-explain",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_y9nyvr27"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 7,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 10,
+          "mode": "backward",
+          "output_shapes": [
+            "validation_result"
+          ],
+          "required_shapes": [
+            "llm_completion_dispatch"
+          ],
+          "type": "discoverByShapesQuery"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 8,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_y9nyvr27",
+          "exec_dmfa38n7"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 180,
+        "execution_id": "exec_b306p6sj",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse-resolve",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [],
+        "parent_execution_id": "exec_dmfa38n7",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_b306p6sj"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 9,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_y9nyvr27",
+          "exec_dmfa38n7"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 210,
+        "execution_id": "exec_fy1eiiqt",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse-resolve",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [],
+        "parent_execution_id": "exec_dmfa38n7",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_fy1eiiqt"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 10,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 10,
+          "mode": "backward",
+          "output_shapes": [
+            "validation_result"
+          ],
+          "required_shapes": [
+            "pool_precheck_result"
+          ],
+          "type": "discoverByShapesQuery"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 11,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 3056,
+        "sha256": "ea7b5911e8c3b946cee58fb2247cb4f1fb677760501d417a8f70e2bcd6ad2b8a",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "judge",
+      "seq": 12,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_d8f22w97",
+          "exec_eulzkdx9"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 255,
+        "execution_id": "exec_6q20xd3k",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse-resolve",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [],
+        "parent_execution_id": "exec_eulzkdx9",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_6q20xd3k"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 13,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_y9nyvr27"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 385,
+        "execution_id": "exec_d8f22w97",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "resolve:discoverByShapesQuery_8iinq454"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:completed_k6p90aer",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 60,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:completed_k6p90aer"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:completed_k6p90aer"
+              ],
+              "input_shapes": [
+                "lifecycle:task:completed"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "resolve:discoverByShapesQuery_8iinq454"
+              ],
+              "output_shapes": [
+                "validator_candidates"
+              ],
+              "resolved_config": {
+                "pointer": {
+                  "limit": 10,
+                  "mode": "backward",
+                  "output_shapes": [
+                    "validation_result"
+                  ],
+                  "required_shapes": [
+                    "llm_completion_dispatch"
+                  ],
+                  "type": "discoverByShapesQuery"
+                }
+              },
+              "resolver_id": "impulse-resolve",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "resolve:discoverByShapesQuery_8iinq454"
+                  ],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [
+          "validator_candidates"
+        ],
+        "parent_execution_id": "exec_y9nyvr27",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_d8f22w97"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 14,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 10,
+          "mode": "backward",
+          "output_shapes": [
+            "validation_result"
+          ],
+          "required_shapes": [
+            "select_or_produce_result"
+          ],
+          "type": "discoverByShapesQuery"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 15,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 16,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_d8f22w97",
+          "exec_eulzkdx9"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 260,
+        "execution_id": "exec_d6jurtme",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse-resolve",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [],
+        "parent_execution_id": "exec_eulzkdx9",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_d6jurtme"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 17,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "execution_id": "exec_y9nyvr27",
+        "goal_hash": "d6f170dc",
+        "reached": true
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:reach",
+      "seq": 18,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 10,
+          "mode": "backward",
+          "output_shapes": [
+            "validation_result"
+          ],
+          "required_shapes": [
+            "pool_precheck_result"
+          ],
+          "type": "discoverByShapesQuery"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 19,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_y9nyvr27"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 500,
+        "execution_id": "exec_dmfa38n7",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "iter_u7npb9c4",
+            "iter_xwx51m5o"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:preBinding_3nvpbp0x",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Cheap deterministic synthesise: wrap same-named template variables in memo-pointer impulses for any inputShape that's currently missing from the pool.",
+              "duration_ms": 15,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:preBinding_3nvpbp0x"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:preBinding_3nvpbp0x"
+              ],
+              "input_shapes": [
+                "lifecycle:task:preBinding"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolved_config": {
+                "executionId": "exec_y9nyvr27",
+                "missingShapes": [],
+                "operation": "synthesise_from_variables",
+                "variables": {
+                  "dispatch_id": "00000000-0000-4000-8000-000000000001",
+                  "goal": "Explain why the sky looks blue during the day"
+                }
+              },
+              "resolver_id": "impulse_preparation",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse_preparation"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "prepare_pool",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:preBinding_3nvpbp0x",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Phase 20.3 pool-selection pre-check: for each missing shape, query currentImpulseShapes (from lifecycle payload) to find existing pool candidates matching shape + predicate. When candidates exist, dispatches impulse_pool_selection to rank them by impulse_relevance Thompson posteriors. When no candidates exist, returns {no_pool_candidates:true} gracefully. Runs in parallel with select_or_produce (both depend on prepare_pool); their outputs together feed agent_fill_fallback and escalate_unbindable.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:preBinding_3nvpbp0x"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:preBinding_3nvpbp0x"
+              ],
+              "input_shapes": [
+                "lifecycle:task:preBinding"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "iter_u7npb9c4"
+              ],
+              "output_shapes": [
+                "pool_precheck_result"
+              ],
+              "resolved_config": {
+                "aggregateAs": "list",
+                "body": {
+                  "config": {
+                    "poolCandidates": [
+                      "goal"
+                    ],
+                    "selectionMethod": "{{selectionMethod}}",
+                    "shape": "{{shape}}",
+                    "taskId": "t1"
+                  },
+                  "outputShapes": [
+                    "impulse_pool_selection_result"
+                  ],
+                  "resolver": "impulse_pool_selection"
+                },
+                "elementVar": "shape",
+                "indexVar": "i",
+                "maxIterations": 16,
+                "outputShape": "pool_precheck_result",
+                "over": [],
+                "stopOnError": false
+              },
+              "resolver_id": "iteration",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "iter_u7npb9c4"
+                  ],
+                  "resolver_id": "iteration"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "pool_precheck",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:preBinding_3nvpbp0x",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Per-shape producer discovery iterating over lifecycle.missingShapes. Runs after pool_precheck; dispatches producer_selection for shapes that have no existing pool candidates (complementary to pool_precheck which covers shapes that already have candidates).",
+              "duration_ms": 20,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:preBinding_3nvpbp0x"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:preBinding_3nvpbp0x"
+              ],
+              "input_shapes": [
+                "lifecycle:task:preBinding"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "iter_xwx51m5o"
+              ],
+              "output_shapes": [
+                "select_or_produce_result"
+              ],
+              "resolved_config": {
+                "aggregateAs": "list",
+                "body": {
+                  "config": {
+                    "missingShape": "{{shape}}",
+                    "selectionMethod": "{{selectionMethod}}",
+                    "taskId": "t1"
+                  },
+                  "outputShapes": [
+                    "producer_selection_result"
+                  ],
+                  "resolver": "producer_selection"
+                },
+                "elementVar": "shape",
+                "indexVar": "i",
+                "maxIterations": 16,
+                "outputShape": "select_or_produce_result",
+                "over": [],
+                "stopOnError": false
+              },
+              "resolver_id": "iteration",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "iter_xwx51m5o"
+                  ],
+                  "resolver_id": "iteration"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "select_or_produce",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "LLM-of-last-resort: invokes SessionMemoryAgent.fillMissingShapes via impulse_preparation.agent_fill.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse_preparation",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse_preparation"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "agent_fill_fallback",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Phase 10 P4.5 / 10.24: before triggering recursive create-shape-provider-goal escalation, consult activity-api's shape_gap_resolution cache (migration 105 + impulses.ts:1148 sibling case). Cache hits surface (resolved_by, resolution_type) tuples that downstream consumers can short-circuit recursion with. Best-effort: a backend miss or empty result-set yields a degraded-but-non-fatal impulse so the rest of the chain runs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse-resolve",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "consult_gap_cache",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Recursive escalation per OpenSpec change 2026-04-26-impulse-activity-loop §7.2: when select_or_produce reported no in-scope producer (unbindable=true), dispatch the create-shape-pr…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "escalate_unbindable",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:preBinding"
+        ],
+        "output_impulse_shapes": [
+          "pool_precheck_result",
+          "select_or_produce_result"
+        ],
+        "parent_execution_id": "exec_y9nyvr27",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "slot-binding",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_dmfa38n7"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 20,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 21,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 22,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_y9nyvr27",
+          "exec_dmfa38n7"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 425,
+        "execution_id": "exec_bspponl5",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "resolve:discoverByShapesQuery_pw41ocn0"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:completed_ce6k73nm",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 75,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:completed_ce6k73nm"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:completed_ce6k73nm"
+              ],
+              "input_shapes": [
+                "lifecycle:task:completed"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "resolve:discoverByShapesQuery_pw41ocn0"
+              ],
+              "output_shapes": [
+                "validator_candidates"
+              ],
+              "resolved_config": {
+                "pointer": {
+                  "limit": 10,
+                  "mode": "backward",
+                  "output_shapes": [
+                    "validation_result"
+                  ],
+                  "required_shapes": [
+                    "pool_precheck_result"
+                  ],
+                  "type": "discoverByShapesQuery"
+                }
+              },
+              "resolver_id": "impulse-resolve",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "resolve:discoverByShapesQuery_pw41ocn0"
+                  ],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [
+          "validator_candidates"
+        ],
+        "parent_execution_id": "exec_dmfa38n7",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_bspponl5"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 23,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 10,
+          "mode": "backward",
+          "output_shapes": [
+            "validation_result"
+          ],
+          "required_shapes": [
+            "select_or_produce_result"
+          ],
+          "type": "discoverByShapesQuery"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 24,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_d8f22w97"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 595,
+        "execution_id": "exec_eulzkdx9",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "iter_0h79xe6w",
+            "iter_8f8c8wnt"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:preBinding_o7frfa85",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Cheap deterministic synthesise: wrap same-named template variables in memo-pointer impulses for any inputShape that's currently missing from the pool.",
+              "duration_ms": 30,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:preBinding_o7frfa85"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:preBinding_o7frfa85"
+              ],
+              "input_shapes": [
+                "lifecycle:task:preBinding"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolved_config": {
+                "executionId": "exec_d8f22w97",
+                "missingShapes": [],
+                "operation": "synthesise_from_variables",
+                "variables": {}
+              },
+              "resolver_id": "impulse_preparation",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse_preparation"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "prepare_pool",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:preBinding_o7frfa85",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Phase 20.3 pool-selection pre-check: for each missing shape, query currentImpulseShapes (from lifecycle payload) to find existing pool candidates matching shape + predicate. When candidates exist, dispatches impulse_pool_selection to rank them by impulse_relevance Thompson posteriors. When no candidates exist, returns {no_pool_candidates:true} gracefully. Runs in parallel with select_or_produce (both depend on prepare_pool); their outputs together feed agent_fill_fallback and escalate_unbindable.",
+              "duration_ms": 5,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:preBinding_o7frfa85"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:preBinding_o7frfa85"
+              ],
+              "input_shapes": [
+                "lifecycle:task:preBinding"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "iter_0h79xe6w"
+              ],
+              "output_shapes": [
+                "pool_precheck_result"
+              ],
+              "resolved_config": {
+                "aggregateAs": "list",
+                "body": {
+                  "config": {
+                    "poolCandidates": [
+                      "lifecycle:task:completed",
+                      "goal",
+                      "llm_completion_dispatch"
+                    ],
+                    "selectionMethod": "{{selectionMethod}}",
+                    "shape": "{{shape}}",
+                    "taskId": "discover_validators"
+                  },
+                  "outputShapes": [
+                    "impulse_pool_selection_result"
+                  ],
+                  "resolver": "impulse_pool_selection"
+                },
+                "elementVar": "shape",
+                "indexVar": "i",
+                "maxIterations": 16,
+                "outputShape": "pool_precheck_result",
+                "over": [],
+                "stopOnError": false
+              },
+              "resolver_id": "iteration",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "iter_0h79xe6w"
+                  ],
+                  "resolver_id": "iteration"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "pool_precheck",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:preBinding_o7frfa85",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Per-shape producer discovery iterating over lifecycle.missingShapes. Runs after pool_precheck; dispatches producer_selection for shapes that have no existing pool candidates (complementary to pool_precheck which covers shapes that already have candidates).",
+              "duration_ms": 20,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:preBinding_o7frfa85"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:preBinding_o7frfa85"
+              ],
+              "input_shapes": [
+                "lifecycle:task:preBinding"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "iter_8f8c8wnt"
+              ],
+              "output_shapes": [
+                "select_or_produce_result"
+              ],
+              "resolved_config": {
+                "aggregateAs": "list",
+                "body": {
+                  "config": {
+                    "missingShape": "{{shape}}",
+                    "selectionMethod": "{{selectionMethod}}",
+                    "taskId": "discover_validators"
+                  },
+                  "outputShapes": [
+                    "producer_selection_result"
+                  ],
+                  "resolver": "producer_selection"
+                },
+                "elementVar": "shape",
+                "indexVar": "i",
+                "maxIterations": 16,
+                "outputShape": "select_or_produce_result",
+                "over": [],
+                "stopOnError": false
+              },
+              "resolver_id": "iteration",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "iter_8f8c8wnt"
+                  ],
+                  "resolver_id": "iteration"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "select_or_produce",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "LLM-of-last-resort: invokes SessionMemoryAgent.fillMissingShapes via impulse_preparation.agent_fill.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse_preparation",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse_preparation"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "agent_fill_fallback",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Phase 10 P4.5 / 10.24: before triggering recursive create-shape-provider-goal escalation, consult activity-api's shape_gap_resolution cache (migration 105 + impulses.ts:1148 sibling case). Cache hits surface (resolved_by, resolution_type) tuples that downstream consumers can short-circuit recursion with. Best-effort: a backend miss or empty result-set yields a degraded-but-non-fatal impulse so the rest of the chain runs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "impulse-resolve",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "consult_gap_cache",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Recursive escalation per OpenSpec change 2026-04-26-impulse-activity-loop §7.2: when select_or_produce reported no in-scope producer (unbindable=true), dispatch the create-shape-pr…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "escalate_unbindable",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:preBinding"
+        ],
+        "output_impulse_shapes": [
+          "pool_precheck_result",
+          "select_or_produce_result"
+        ],
+        "parent_execution_id": "exec_d8f22w97",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "slot-binding",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_eulzkdx9"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 25,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_y9nyvr27",
+          "exec_dmfa38n7"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 365,
+        "execution_id": "exec_3esh56sm",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "resolve:discoverByShapesQuery_mzy7ddd0"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:completed_q0qxky4t",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 70,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:completed_q0qxky4t"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:completed_q0qxky4t"
+              ],
+              "input_shapes": [
+                "lifecycle:task:completed"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "resolve:discoverByShapesQuery_mzy7ddd0"
+              ],
+              "output_shapes": [
+                "validator_candidates"
+              ],
+              "resolved_config": {
+                "pointer": {
+                  "limit": 10,
+                  "mode": "backward",
+                  "output_shapes": [
+                    "validation_result"
+                  ],
+                  "required_shapes": [
+                    "select_or_produce_result"
+                  ],
+                  "type": "discoverByShapesQuery"
+                }
+              },
+              "resolver_id": "impulse-resolve",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "resolve:discoverByShapesQuery_mzy7ddd0"
+                  ],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [
+          "validator_candidates"
+        ],
+        "parent_execution_id": "exec_dmfa38n7",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_3esh56sm"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 26,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_d8f22w97",
+          "exec_eulzkdx9"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 340,
+        "execution_id": "exec_poojmn5f",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "resolve:discoverByShapesQuery_z5qjgz23"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:completed_w2teqtnr",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                },
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:completed_k6p90aer",
+                  "origin": "ancestor",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 80,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:completed_w2teqtnr",
+                  "lifecycle:lifecycle:task:completed_k6p90aer"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:completed_w2teqtnr",
+                "lifecycle:lifecycle:task:completed_k6p90aer"
+              ],
+              "input_shapes": [
+                "lifecycle:task:completed"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "resolve:discoverByShapesQuery_z5qjgz23"
+              ],
+              "output_shapes": [
+                "validator_candidates"
+              ],
+              "resolved_config": {
+                "pointer": {
+                  "limit": 10,
+                  "mode": "backward",
+                  "output_shapes": [
+                    "validation_result"
+                  ],
+                  "required_shapes": [
+                    "pool_precheck_result"
+                  ],
+                  "type": "discoverByShapesQuery"
+                }
+              },
+              "resolver_id": "impulse-resolve",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "resolve:discoverByShapesQuery_z5qjgz23"
+                  ],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [
+          "validator_candidates"
+        ],
+        "parent_execution_id": "exec_eulzkdx9",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_poojmn5f"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 27,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [
+          "exec_d8f22w97",
+          "exec_eulzkdx9"
+        ],
+        "cost_usd": 0,
+        "duration_ms": 220,
+        "execution_id": "exec_p7nxxpji",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "resolve:discoverByShapesQuery_nuyerrbl"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "consumed_provenance": [
+                {
+                  "impulse_id": "lifecycle:lifecycle:task:completed_ka8gejxz",
+                  "origin": "declared",
+                  "producer_execution_id": null
+                }
+              ],
+              "description": "Find activities that can validate the just-completed task's outputs.",
+              "duration_ms": 35,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [
+                  "lifecycle:lifecycle:task:completed_ka8gejxz"
+                ],
+                "variables": {}
+              },
+              "input_impulse_ids": [
+                "lifecycle:lifecycle:task:completed_ka8gejxz"
+              ],
+              "input_shapes": [
+                "lifecycle:task:completed"
+              ],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "resolve:discoverByShapesQuery_nuyerrbl"
+              ],
+              "output_shapes": [
+                "validator_candidates"
+              ],
+              "resolved_config": {
+                "pointer": {
+                  "limit": 10,
+                  "mode": "backward",
+                  "output_shapes": [
+                    "validation_result"
+                  ],
+                  "required_shapes": [
+                    "select_or_produce_result"
+                  ],
+                  "type": "discoverByShapesQuery"
+                }
+              },
+              "resolver_id": "impulse-resolve",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "resolve:discoverByShapesQuery_nuyerrbl"
+                  ],
+                  "resolver_id": "impulse-resolve"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "discover_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Reshape the discoverByShapesQuery result (a plain {activities, total} envelope) into a variant_selection_result-formatted memo so the downstream `activity` resolver (task 3) can pi…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "select_validator_per_shape",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Execute the chosen validator activity with the parent task's outputs as the validator's inputs.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "activity",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "activity"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "dispatch_validators",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "When the dispatched validator emitted at least one validation_result with passed=false, build a failure_mode of type 'verifier_negative' and emit a failure_mode_propagation impulse…",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm-prompt",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm-prompt"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "propagate_failure_mode",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "Record per-task learning signals (impulse_relevance + tool_argument_pattern) for the parent task that just completed.",
+              "duration_ms": 0,
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "learning_signal_writer",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "learning_signal_writer"
+                },
+                "status": "success"
+              },
+              "skipped": true,
+              "status": "skipped",
+              "success": true,
+              "task_id": "learning_signal_write",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [
+          "lifecycle:task:completed"
+        ],
+        "output_impulse_shapes": [
+          "validator_candidates"
+        ],
+        "parent_execution_id": "exec_eulzkdx9",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001"
+        ],
+        "template_id": "validator-dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "exec_p7nxxpji"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 28,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    }
+  ],
+  "scenario": "template-pinned-reached",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "dispatchId": "00000000-0000-4000-8000-000000000001",
+          "status": "running"
+        },
+        "error": null,
+        "status": 202
+      },
+      "label": null,
+      "markers": [
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=d6f170dc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "reached :: [log] [goal-host-vessel] goal-reach(/run-goal) attempt 1/1: REACHED via tmpl-explain — explains Rayleigh scattering. completion_shapes=[\"llm_completion_dispatch\"]",
+        "mint :: [log] [goal-host-vessel] reach->mint: SKIP ungrounded reach exec_y9nyvr27 — bare-LLM-yes / no executed-tool anchor; not an extractable recipe",
+        "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)"
+      ],
+      "op": "runGoal",
+      "record": {
+        "attemptCount": 1,
+        "attempts": 1,
+        "completionShapes": [
+          "llm_completion_dispatch"
+        ],
+        "executionId": "exec_y9nyvr27",
+        "executionPath": "learned_pathway",
+        "inferenceConfidence": null,
+        "learning": {
+          "alphaBetaDelta": [],
+          "gapsFiled": [],
+          "goalPathRecorded": false,
+          "oracleLabelWritten": false
+        },
+        "reached": true,
+        "selectedTemplateId": "tmpl-explain",
+        "status": "completed",
+        "trigger": "run-goal"
+      },
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [
+          {
+            "completion_shapes": [
+              "llm_completion_dispatch"
+            ],
+            "execution_id": "exec_y9nyvr27",
+            "goal_hash": "d6f170dc",
+            "reached": true
+          }
+        ],
+        "reached": true,
+        "reasonClass": null,
+        "sinks": [
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces"
+        ],
+        "status": "completed"
+      },
+      "walkLog": [
+        "[goal-host-vessel] goal-reach(/run-goal) attempt 1/1: REACHED via tmpl-explain — explains Rayleigh scattering. completion_shapes=[\"llm_completion_dispatch\"]",
+        "[dispatch] execution_path=learned_pathway attempt_count=1"
+      ]
+    }
+  ]
+}

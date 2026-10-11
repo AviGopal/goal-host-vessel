@@ -1,0 +1,3055 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "failure recall",
+    "markGoalReached"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 7,
+    "virtualMsElapsed": 18025
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "type": "compute_state_signature"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:registry-shapes",
+      "seq": 4,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 5,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 6,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 7,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "concept",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 8,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "explain during looks",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 9,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "explain",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 10,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exploit_threshold": 0.9,
+        "goal_category": "meta",
+        "goal_text": "Explain why the sky looks blue during the day",
+        "target_shapes": [
+          "llm_completion_dispatch"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:goal-path-recommend",
+      "seq": 11,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "pathwayReusePolicy"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 12,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 13,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 14,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 15,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:registry-shapes",
+      "seq": 16,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:llm_completion_dispatch",
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 17,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 84,
+        "sha256": "82c532f561aad82f66af6a1bda0b2f7c996db78b873fd03d85b5caca07e8355c",
+        "type": "resolver_schema"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "schema:llm_completion_dispatch",
+      "seq": 18,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 84,
+        "sha256": "82c532f561aad82f66af6a1bda0b2f7c996db78b873fd03d85b5caca07e8355c",
+        "type": "resolver_schema"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "schema:llm_completion_dispatch",
+      "seq": 19,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "llm_completion_dispatch pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 20,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2907,
+        "sha256": "f43305d8026414a5aaab8af205d911044303c20224d144acb6de071aa8d79547",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 21,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 168,
+        "sha256": "203c4e2a36d21b6ceac622415fe20a4ba74b682f1aa846e8fcc7105518a51a42",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "producer:llm_completion_dispatch",
+      "seq": 22,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "bodyHonestyPolicy",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 23,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 4202,
+        "sha256": "98aa94c5c8d9bfd2d8b22d21a3600c80dc42ceb5c6392641963ccb38fb141c00",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "judge",
+      "seq": 24,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-1-1791633600115",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "walk-pk7964-1lk1m02-llm_completion_dispatch-3"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "resolve llm_completion_dispatch via connected vessel",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-llm_completion_dispatch-3"
+              ],
+              "output_shapes": [
+                "llm_completion_dispatch"
+              ],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "walk-pk7964-1lk1m02-llm_completion_dispatch-3"
+                  ],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "satisfier": true,
+          "shape": "llm_completion_dispatch"
+        },
+        "output_impulse_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001",
+          "satellite:non_terminal",
+          "satisfier_shape:llm_completion_dispatch",
+          "beta_withheld:true",
+          "beta_withheld_reason:alpha-unreachable-non-deterministic-no-edge"
+        ],
+        "template_id": "satisfier:llm_completion_dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-1-1791633600115"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:trace-write",
+      "seq": 25,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 26,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 27,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "expected_output_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "goal_category": "meta",
+        "goal_text": "Explain why the sky looks blue during the day",
+        "inference_confidence": 0.7,
+        "path_activities": [
+          "satisfier:llm_completion_dispatch"
+        ],
+        "success": false,
+        "tools_used": [
+          "llm.test.invalid|llm_completion_dispatch|read|"
+        ],
+        "walk_tier": "satisfier"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:goal-path-record",
+      "seq": 28,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 29,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 30,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:registry-shapes",
+      "seq": 31,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:llm_completion_dispatch",
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 32,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 84,
+        "sha256": "82c532f561aad82f66af6a1bda0b2f7c996db78b873fd03d85b5caca07e8355c",
+        "type": "resolver_schema"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "schema:llm_completion_dispatch",
+      "seq": 33,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 84,
+        "sha256": "82c532f561aad82f66af6a1bda0b2f7c996db78b873fd03d85b5caca07e8355c",
+        "type": "resolver_schema"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "schema:llm_completion_dispatch",
+      "seq": 34,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "llm_completion_dispatch pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 35,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2907,
+        "sha256": "5d99fcba15b69f2839aa75b50bb416d567f78a8f6968f57fd9afbda863d5b331",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 36,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 168,
+        "sha256": "203c4e2a36d21b6ceac622415fe20a4ba74b682f1aa846e8fcc7105518a51a42",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "producer:llm_completion_dispatch",
+      "seq": 37,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "bodyHonestyPolicy",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 38,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 4202,
+        "sha256": "d4fb6797bc5a1f5f9bf9e48508a200a44f567dbf78ed908392cf27c84f9a50a1",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "judge",
+      "seq": 39,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-1-1791633600190",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "walk-pk7964-1lk1m02-llm_completion_dispatch-6"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "resolve llm_completion_dispatch via connected vessel",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-llm_completion_dispatch-6"
+              ],
+              "output_shapes": [
+                "llm_completion_dispatch"
+              ],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "walk-pk7964-1lk1m02-llm_completion_dispatch-6"
+                  ],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "satisfier": true,
+          "shape": "llm_completion_dispatch"
+        },
+        "output_impulse_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001",
+          "satellite:non_terminal",
+          "satisfier_shape:llm_completion_dispatch",
+          "beta_withheld:true",
+          "beta_withheld_reason:alpha-unreachable-non-deterministic-no-edge"
+        ],
+        "template_id": "satisfier:llm_completion_dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-1-1791633600190"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:trace-write",
+      "seq": 40,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 41,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 42,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "expected_output_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "goal_category": "meta",
+        "goal_text": "Explain why the sky looks blue during the day",
+        "inference_confidence": 0.7,
+        "path_activities": [
+          "satisfier:llm_completion_dispatch"
+        ],
+        "success": false,
+        "tools_used": [
+          "llm.test.invalid|llm_completion_dispatch|read|"
+        ],
+        "walk_tier": "satisfier"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:goal-path-record",
+      "seq": 43,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 44,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 45,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:registry-shapes",
+      "seq": 46,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "goal": "Explain why the sky looks blue during the day",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "Explain why the sky looks blue during the day"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:recommend",
+      "seq": 47,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:discover-by-shapes",
+      "seq": 48,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "goal": "Explain why the sky looks blue during the day",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "Explain why the sky looks blue during the day"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:recommend",
+      "seq": 49,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:discover-by-shapes",
+      "seq": 50,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:discover-by-shapes",
+      "seq": 51,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:discover-by-shapes",
+      "seq": 52,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "type": "learning_transfer_report"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 53,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "available_shapes": [
+              "goal",
+              "dispatch_id"
+            ],
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "goal": "Explain why the sky looks blue during the day",
+            "max_attempts": 3,
+            "shape": "shellResult",
+            "type": "author_producer"
+          },
+          "type": "author_producer"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 54,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "id": "gap-httpresponse",
+            "type": "substrateGap"
+          },
+          "type": "substrateGap"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 55,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "gap": {
+              "category": "missing_capability",
+              "classification_metadata": {
+                "allowed_output_shapes": [
+                  "httpResponse"
+                ],
+                "closed_reason": "walk_artifact",
+                "demand_count": 1,
+                "demand_goals": [
+                  "Explain why the sky looks blue during the day"
+                ],
+                "goal": "Explain why the sky looks blue during the day",
+                "goal_target_shapes": [
+                  "shellResult",
+                  "httpResponse",
+                  "webSearchResult"
+                ],
+                "kind": "capability_gap",
+                "missing_shape": "httpResponse",
+                "resolution": "single-goal demand: recorded, filed open only when a second distinct goal needs this shape",
+                "scope_narrowed": true
+              },
+              "detected_at": "2026-10-10T12:00:00.275Z",
+              "id": "gap-httpresponse",
+              "source": "substrate_detected",
+              "status": "closed",
+              "summary": "Capability gap: the goal-walk needs a producer for shape \"httpResponse\" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape \"httpResponse\" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck."
+            },
+            "type": "substrateGap_write"
+          },
+          "type": "substrateGap_write"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:gap-write",
+      "seq": 56,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "shellResult",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 57,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 58,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 59,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 60,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "lessonExecutionPolicy",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 61,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 6129,
+        "sha256": "becd9d876b7c70b8c5e6c7eba03d7f9bdf2854bcd87872ac1e5e56d455bbdc31",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 62,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 63,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 64,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 65,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7558,
+        "sha256": "1c5bd4545fc01f3551c2699e9deb20a162f8b65e2376f896e0e6eb5937ff4470",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 66,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 67,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 68,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 69,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7558,
+        "sha256": "4fee3dcdda1f270bd0057f5b995b2eb87cb008a000acf53752fef7d2b23eb363",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 70,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 71,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 72,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 73,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7558,
+        "sha256": "52ee42632978708c754efea098c55e617aa8f81cdaa67a169a47c186f67308f7",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 74,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 75,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 76,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 77,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7558,
+        "sha256": "d7a24e37c936b11ae0515bd173b9c320c0e7195c825ab63afd95d7270807cb8c",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 78,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 79,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 80,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 81,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7558,
+        "sha256": "d50c9bd6c665d78390ef89707c47bcda47e0707cf1b675d85cdfbbc056db4a33",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 82,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 83,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 84,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 85,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7558,
+        "sha256": "a3633202ee436f5520f7362ba731d699e8ba4350f31e3347c969fe72b86b66be",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 86,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 87,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 88,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "shellResult pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:concept-recall",
+      "seq": 89,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 6352,
+        "sha256": "0b008e963065b68d2284ed963f84f5552cfb75bce1a970e47ebca0bf4b7f2686",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "llm:arg-extraction",
+      "seq": 90,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "prompt": "Explain why the sky looks blue during the day",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 91,
+      "status": 404,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1194,
+        "sha256": "3a0731f0bbf639c907dc40ca7e3e0b465f874523430c7d3d79d3c91e707a6569",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 92,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1194,
+        "sha256": "3a0731f0bbf639c907dc40ca7e3e0b465f874523430c7d3d79d3c91e707a6569",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 93,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1194,
+        "sha256": "3a0731f0bbf639c907dc40ca7e3e0b465f874523430c7d3d79d3c91e707a6569",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 94,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 95,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "fleet:vesselCapability",
+      "seq": 96,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 97,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": "goal-host:floor_tool_loop",
+        "chars": 3712,
+        "sha256": "63b17ad837dbc0e8086c0200f6419dc8d90e94f0018a2fb7085654e75e0b9e1d",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "floor:answer",
+      "seq": 98,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 3426,
+        "sha256": "59a68af6e23aea1afa369a32b926d0db25c5613de74c364e5c169062f417a29a",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "judge",
+      "seq": 99,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "universal-tool-fallback-d6f170dc-1791633601695",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": []
+        },
+        "failure_mode": {
+          "reason": "restates the question",
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "authored_answer": true,
+          "final_text": "Rayleigh scattering.",
+          "final_text_len": 20,
+          "floor": true,
+          "goal_hash": "d6f170dc",
+          "grounded_reads": 0,
+          "reach_reason": "restates the question",
+          "target_shapes": [
+            "llm_completion_dispatch"
+          ],
+          "tools_ok": 0,
+          "tools_total": 0
+        },
+        "output_impulse_shapes": [],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "reached:false"
+        ],
+        "template_id": "universal-tool-fallback",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "universal-tool-fallback-d6f170dc-1791633601695"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:trace-write",
+      "seq": 100,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "unmatched",
+      "seq": 101,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "beta_withheld": true,
+        "beta_withheld_reason": "alpha-unreachable-non-deterministic-no-edge",
+        "completion_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "execution_id": "walk-satisfier-1-1791633600190",
+        "goal_hash": "d6f170dc",
+        "reached": false,
+        "reason": "restates the question"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:reach",
+      "seq": 102,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [],
+        "expected_output_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "goal_category": "meta",
+        "goal_text": "Explain why the sky looks blue during the day",
+        "inference_confidence": 0.7,
+        "path_activities": [
+          "universal-tool-fallback"
+        ],
+        "success": false,
+        "walk_tier": "universal_tool_fallback"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal:first",
+      "route": "default:goal-path-record",
+      "seq": 103,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "explain during looks",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:concept-recall",
+      "seq": 104,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "explain",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:concept-recall",
+      "seq": 105,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exploit_threshold": 0.9,
+        "goal_category": "meta",
+        "goal_text": "Explain why the sky looks blue during the day",
+        "target_shapes": [
+          "llm_completion_dispatch"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:goal-path-recommend",
+      "seq": 106,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "pathwayReusePolicy"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 107,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:vesselCapability",
+      "seq": 108,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 109,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 110,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:registry-shapes",
+      "seq": 111,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:llm_completion_dispatch",
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 112,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 84,
+        "sha256": "82c532f561aad82f66af6a1bda0b2f7c996db78b873fd03d85b5caca07e8355c",
+        "type": "resolver_schema"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "schema:llm_completion_dispatch",
+      "seq": 113,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 84,
+        "sha256": "82c532f561aad82f66af6a1bda0b2f7c996db78b873fd03d85b5caca07e8355c",
+        "type": "resolver_schema"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "schema:llm_completion_dispatch",
+      "seq": 114,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 3,
+            "query": "llm_completion_dispatch pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:concept-recall",
+      "seq": 115,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2907,
+        "sha256": "427706b1cc0c7b415302bc4612b915372e02d57a7e7caac9e214849609b71644",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "llm:arg-extraction",
+      "seq": 116,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": null,
+        "chars": 168,
+        "sha256": "6ac652f246e66c732c789a6b764cedea56ffaf9bc44968011b06652ffe8eb73c",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "producer:llm_completion_dispatch",
+      "seq": 117,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "bodyHonestyPolicy",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:vesselCapability",
+      "seq": 118,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 4202,
+        "sha256": "8f19603b0635c2fb1d559531916065f0d859c8fee4dd4a256e8ce44ebce2f943",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "judge",
+      "seq": 119,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-1-1791633615075",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "walk-pk7964-1la20b3-llm_completion_dispatch-11"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "resolve llm_completion_dispatch via connected vessel",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "walk-pk7964-1la20b3-llm_completion_dispatch-11"
+              ],
+              "output_shapes": [
+                "llm_completion_dispatch"
+              ],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "walk-pk7964-1la20b3-llm_completion_dispatch-11"
+                  ],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "satisfier": true,
+          "shape": "llm_completion_dispatch"
+        },
+        "output_impulse_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000002",
+          "satellite:non_terminal",
+          "satisfier_shape:llm_completion_dispatch",
+          "reached:true"
+        ],
+        "template_id": "satisfier:llm_completion_dispatch",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-1-1791633615075"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:trace-write",
+      "seq": 120,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 121,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:vesselCapability",
+      "seq": 122,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:vesselCapability",
+      "seq": 123,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:vesselCapability",
+      "seq": 124,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 125,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 126,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": "goal-host:floor_tool_loop",
+        "chars": 3712,
+        "sha256": "76ef263d3199baac353913904e1db35f075bc56a4eabc71b221a0458d9e91753",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "floor:answer",
+      "seq": 127,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 3426,
+        "sha256": "cdb6e808675ac43c79672be9e4c6204e53fcd55b5e2787765b8f905f7359e6d6",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "judge",
+      "seq": 128,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "universal-tool-fallback-d6f170dc-1791633615125",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": []
+        },
+        "failure_mode": {
+          "reason": "explains Rayleigh scattering",
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "authored_answer": true,
+          "final_text": "Rayleigh scattering.",
+          "final_text_len": 20,
+          "floor": true,
+          "goal_hash": "d6f170dc",
+          "grounded_reads": 0,
+          "reach_reason": "explains Rayleigh scattering",
+          "target_shapes": [
+            "llm_completion_dispatch"
+          ],
+          "tools_ok": 0,
+          "tools_total": 0
+        },
+        "output_impulse_shapes": [],
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "reached:true",
+          "completion_shapes:llm_completion_dispatch"
+        ],
+        "template_id": "universal-tool-fallback",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "universal-tool-fallback-d6f170dc-1791633615125"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:trace-write",
+      "seq": 129,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 130,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "execution_id": "universal-tool-fallback-d6f170dc-1791633615125",
+        "goal_hash": "d6f170dc",
+        "reached": true,
+        "reason": "explains Rayleigh scattering"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "default:reach",
+      "seq": 131,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "fleet:vesselCapability",
+      "seq": 132,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step2:runGoal:second",
+      "route": "unmatched",
+      "seq": 133,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    }
+  ],
+  "scenario": "failure-recall-then-reach",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "dispatchId": "00000000-0000-4000-8000-000000000001",
+          "status": "running"
+        },
+        "error": null,
+        "status": 202
+      },
+      "label": "first",
+      "markers": [
+        "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
+        "no-pick :: [log] [rebind] outcome selected=no candidates=0",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=d6f170dc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "beta-withheld,reached :: [log] [goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:llm_completion_dispatch — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penal",
+        "hollow :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW-CONTENT llm_completion_dispatch (104 chars) = {\"success\":true,\"shape\":\"llmTextCompletion\",\"body\":{\"text\":\"Rayleigh scattering of short wavelengths.\"}}",
+        "hollow,beta-withheld :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — restates the question; β WITHHELD (α was structurally unreachable for satisfier:llm_completion_dispatch — symmetric abstention, not a penalty). completion_shapes=[\"llm_completion_dispatch\"]",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=d6f170dc",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=d6f170dc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "beta-withheld,reached :: [log] [goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:llm_completion_dispatch — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penal",
+        "hollow :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW-CONTENT llm_completion_dispatch (104 chars) = {\"success\":true,\"shape\":\"llmTextCompletion\",\"body\":{\"text\":\"Rayleigh scattering of short wavelengths.\"}}",
+        "hollow,beta-withheld :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — restates the question; β WITHHELD (α was structurally unreachable for satisfier:llm_completion_dispatch — symmetric abstention, not a penalty). completion_shapes=[\"llm_completion_dispatch\"]",
+        "mint :: [log] [goal-host-vessel] /run-goal: hollow satisfier verdict for \"llm_completion_dispatch\" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)",
+        "no-pick :: [log] [rebind] outcome selected=no candidates=0",
+        "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [shellResult,httpResponse,webSearchResult] have no producer or constructible payload; terminating walk",
+        "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[shellResult,httpResponse,webSearchResult] failed_producers=1 (satisfier:shellResult: {\"error\":\"verdict-diff: not served\"})",
+        "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [shellResult,httpResponse,webSearchResult]",
+        "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=d6f170dc targetShapes=[\"llm_completion_dispatch\"]",
+        "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=d6f170dc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "floor :: [log] [goal-host-vessel] floor: verdict goalHash=d6f170dc verdictNull=false reached=false groundedOk=0 finalTextLen=20",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-d6f170dc-1791633601695 reached=false tools=0/0 — this run is now gradable"
+      ],
+      "op": "runGoal",
+      "record": {
+        "attemptCount": 1,
+        "attempts": 1,
+        "completionShapes": [
+          "llm_completion_dispatch"
+        ],
+        "executionId": "walk-satisfier-1-1791633600190",
+        "executionPath": "satisfier",
+        "goalReachReason": "restates the question",
+        "inferenceConfidence": 0.7,
+        "learning": {
+          "alphaBetaDelta": [],
+          "gapsFiled": [],
+          "goalPathRecorded": true,
+          "oracleLabelWritten": false
+        },
+        "reached": false,
+        "routeArounds": [
+          {
+            "at": 1791633601670,
+            "failed_producers": [
+              {
+                "producer": "satisfier:shellResult",
+                "reason": "{\"error\":\"verdict-diff: not served\"}",
+                "shape": "shellResult"
+              }
+            ],
+            "goal_hash": "d6f170dc",
+            "kind": "stall",
+            "missing_producer": [
+              "shellResult",
+              "httpResponse",
+              "webSearchResult"
+            ],
+            "produced": [
+              "dispatch_id"
+            ],
+            "route_taken": "stop",
+            "routes_taken": [],
+            "target": [
+              "shellResult",
+              "httpResponse",
+              "webSearchResult"
+            ],
+            "termination": "no producer or constructible payload for missing shapes [shellResult,httpResponse,webSearchResult]"
+          }
+        ],
+        "selectedTemplateId": "satisfier:llm_completion_dispatch",
+        "status": "failed",
+        "trigger": "run-goal"
+      },
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [
+          "walk-satisfier-1-1791633600190"
+        ],
+        "reachDeliveries": [
+          {
+            "beta_withheld": true,
+            "beta_withheld_reason": "alpha-unreachable-non-deterministic-no-edge",
+            "completion_shapes": [
+              "llm_completion_dispatch"
+            ],
+            "execution_id": "walk-satisfier-1-1791633600190",
+            "goal_hash": "d6f170dc",
+            "reached": false,
+            "reason": "restates the question"
+          }
+        ],
+        "reached": false,
+        "reasonClass": null,
+        "sinks": [
+          "POST /v2/activities/execution-traces",
+          "POST /v2/goal-paths",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/goal-paths",
+          "POST /v2/impulses/resolve substrateGap_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach",
+          "POST /v2/goal-paths"
+        ],
+        "status": "failed"
+      },
+      "walkLog": [
+        "[walk-concepts] no concepts recalled for goal_hash=d6f170dc (terms tried: explain,during,looks)",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"d6f170dc\",\"inferred_target_shapes\":[\"llm_completion_dispatch\"],\"confidence\":0.7,\"alternatives\":[]}",
+        "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
+        "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"llm_completion_dispatch\" directly (connected vessel resolve) — no bridge needed",
+        "[goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:llm_completion_dispatch — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising would let this arm only ever lose; the gap is the missing producer→consumer edge, not the pathway",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW-CONTENT llm_completion_dispatch (104 chars) = {\"success\":true,\"shape\":\"llmTextCompletion\",\"body\":{\"text\":\"Rayleigh scattering of short wavelengths.\"}}",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW — restates the question; β WITHHELD (α was structurally unreachable for satisfier:llm_completion_dispatch — symmetric abstention, not a penalty). completion_shapes=[\"llm_completion_dispatch\"] goal_hash=d6f170dc",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=d6f170dc",
+        "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
+        "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"llm_completion_dispatch\" directly (connected vessel resolve) — no bridge needed",
+        "[goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:llm_completion_dispatch — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising would let this arm only ever lose; the gap is the missing producer→consumer edge, not the pathway",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW-CONTENT llm_completion_dispatch (104 chars) = {\"success\":true,\"shape\":\"llmTextCompletion\",\"body\":{\"text\":\"Rayleigh scattering of short wavelengths.\"}}",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW — restates the question; β WITHHELD (α was structurally unreachable for satisfier:llm_completion_dispatch — symmetric abstention, not a penalty). completion_shapes=[\"llm_completion_dispatch\"] goal_hash=d6f170dc",
+        "[goal-host-vessel] /run-goal: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes",
+        "[goal-host-vessel] /run-goal: walk: retry WIDENED target shapes to [shellResult,httpResponse,webSearchResult] —\"llm_completion_dispatch\" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything",
+        "[goal-host-vessel] walk: vessel-resolver candidate found for shape shellResult via http://local-tools.test.invalid — injecting vesselResolve step",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" cold-command self-correction attempt 1 — still degenerate (the command produced no result)",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" attempt 1 WAS: null -> NOW: null",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" cold-command self-correction attempt 2 — still degenerate (the command produced no result)",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" attempt 2 WAS: null -> NOW: null",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" cold-command self-correction attempt 3 — still degenerate (the command produced no result)",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" attempt 3 WAS: null -> NOW: null",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" cold-command self-correction attempt 4 — still degenerate (the command produced no result)",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" attempt 4 WAS: null -> NOW: null",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" cold-command self-correction attempt 5 — still degenerate (the command produced no result)",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" attempt 5 WAS: null -> NOW: null",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" cold-command self-correction attempt 6 — still degenerate (the command produced no result)",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" attempt 6 WAS: null -> NOW: null",
+        "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" STILL a command FAILURE after 6 self-correction attempt(s) (the command produced no result) — refusing to satisfy with a failed/empty command; grading reach honestly (no hollow green)",
+        "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [shellResult,httpResponse,webSearchResult] have no producer or constructible payload; terminating walk",
+        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[shellResult,httpResponse,webSearchResult] failed_producers=1 (satisfier:shellResult: {\"error\":\"verdict-diff: not served\"})",
+        "[dispatch] execution_path=satisfier attempt_count=1"
+      ]
+    },
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "dispatchId": "00000000-0000-4000-8000-000000000002",
+          "status": "running"
+        },
+        "error": null,
+        "status": 202
+      },
+      "label": "second",
+      "markers": [
+        "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=d6f170dc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "reached :: [log] REACHED via 1-step chain",
+        "landed,credit :: [log] [goal-host-vessel] walk: WITHHELD alpha-credit for satisfier:llm_completion_dispatch — no in-chain producer-to-consumer edge and no landed sha",
+        "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=d6f170dc targetShapes=[\"llm_completion_dispatch\"]",
+        "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000002 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)",
+        "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=d6f170dc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "floor :: [log] [goal-host-vessel] floor: verdict goalHash=d6f170dc verdictNull=false reached=true groundedOk=0 finalTextLen=20",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-d6f170dc-1791633615125 reached=true tools=0/0 — this run is now gradable",
+        "reached :: [log] [goal-host-vessel] universal ReAct fallback REACHED goal (0 grounded read(s), 0/0 tool(s) OK)",
+        "floor :: [log] [goal-host-vessel] recordGoalPath (floor reach) shapes=[\"llm_completion_dispatch\"] goal=\"Explain why the sky looks blue during the day\"",
+        "floor :: [log] [goal-host-vessel] reach-patch ok (walk-complete): universal-tool-fallback-d6f170dc-1791633615125 reached=true rows=1 attempts=1",
+        "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000002 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)"
+      ],
+      "op": "runGoal",
+      "record": {
+        "answerBody": "Rayleigh scattering.",
+        "attemptCount": 1,
+        "attempts": 1,
+        "completionShapes": [
+          "llm_completion_dispatch"
+        ],
+        "executionId": "universal-tool-fallback-d6f170dc-1791633615125",
+        "executionPath": "universal_tool_fallback",
+        "goalReachReason": "explains Rayleigh scattering",
+        "grounded": false,
+        "inferenceConfidence": 0.7,
+        "learning": {
+          "alphaBetaDelta": [],
+          "gapsFiled": [],
+          "goalPathRecorded": true,
+          "oracleLabelWritten": false
+        },
+        "reached": true,
+        "selectedTemplateId": "universal-tool-fallback",
+        "status": "completed",
+        "trigger": "run-goal"
+      },
+      "step": 2,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [
+          {
+            "completion_shapes": [
+              "llm_completion_dispatch"
+            ],
+            "execution_id": "universal-tool-fallback-d6f170dc-1791633615125",
+            "goal_hash": "d6f170dc",
+            "reached": true,
+            "reason": "explains Rayleigh scattering"
+          }
+        ],
+        "reached": true,
+        "reasonClass": null,
+        "sinks": [
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach"
+        ],
+        "status": "completed"
+      },
+      "walkLog": [
+        "[goal-host-vessel] /run-goal: FAILURE-RECALL — 1 prior hollow verdict(s) for goal_hash=d6f170dc + 0 near-miss; fed into attempt 1, reached-command replay disabled: - (this exact goal, 2026-10-10T12:00, producer satisfier:llm_completion_dispatch) restates the question",
+        "[walk-concepts] no concepts recalled for goal_hash=d6f170dc (terms tried: explain,during,looks)",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"d6f170dc\",\"inferred_target_shapes\":[\"llm_completion_dispatch\"],\"confidence\":0.7,\"alternatives\":[]}",
+        "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
+        "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"llm_completion_dispatch\" directly (connected vessel resolve) — no bridge needed",
+        "REACHED via 1-step chain",
+        "[goal-host-vessel] walk(/run-goal): REACH-CONTENT llm_completion_dispatch (104 chars) = {\"success\":true,\"shape\":\"llmTextCompletion\",\"body\":{\"text\":\"Rayleigh scattering of short wavelengths.\"}}",
+        "[goal-host-vessel] walk: WITHHELD alpha-credit for satisfier:llm_completion_dispatch — no in-chain producer-to-consumer edge and no landed sha",
+        "[dispatch] execution_path=universal_tool_fallback attempt_count=1"
+      ]
+    }
+  ]
+}

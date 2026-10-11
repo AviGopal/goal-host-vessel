@@ -1,0 +1,93 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.4 18610-18657 boot reconciliation: staged-not-landed",
+    "no-resume guard"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 1,
+    "virtualMsElapsed": 15000
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    }
+  ],
+  "scenario": "boot-reconcile-staged",
+  "spawns": [],
+  "steps": [
+    {
+      "label": "past-requeue-timer",
+      "markers": [],
+      "op": "settle",
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": null,
+        "reasonClass": null,
+        "sinks": [],
+        "status": null
+      }
+    },
+    {
+      "drive": "done",
+      "http": {
+        "error": null,
+        "goalReachReason": "deterministic:interrupted-staged-not-landed — the compose report was FAVORABLE but no cutover reported a new_git_sha, so the edit is not on origin/dev; a staged clone is not a reach",
+        "humanGraded": false,
+        "reached": false,
+        "status": 200
+      },
+      "label": "edit-record",
+      "markers": [],
+      "op": "resolve",
+      "record": {
+        "goalReachReason": "deterministic:interrupted-staged-not-landed — the compose report was FAVORABLE but no cutover reported a new_git_sha, so the edit is not on origin/dev; a staged clone is not a reach",
+        "reached": false,
+        "selectedTemplateId": "feature_compose",
+        "status": "failed"
+      },
+      "step": 2,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": false,
+        "reasonClass": "deterministic:interrupted-staged-not-landed",
+        "sinks": [],
+        "status": "failed"
+      }
+    }
+  ]
+}

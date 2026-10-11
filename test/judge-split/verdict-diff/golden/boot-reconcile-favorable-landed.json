@@ -1,0 +1,178 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.4 18610-18657 boot reconciliation verdict",
+    "§1.4 18574-18599 drainInterruptedRequeue"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 3,
+    "virtualMsElapsed": 20010
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "activity_id": "feature_compose",
+          "confidence": 0.98,
+          "execution_id": "feature_compose:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "goal": "Edit repos/goal-host-vessel/src/quiesce.ts to add a constant VERDICT_DIFF_MARKER that names the harness",
+          "labeler": "deterministic",
+          "notes": "deterministic:interrupted-landed — cutover reported new_git_sha a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "type": "goal_verification_label_write",
+          "verdict": "achieved"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "import",
+      "route": "default:label-write",
+      "seq": 1,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 2,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 3,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "dispatchId": "boot-plain-running",
+        "goal": "Explain why the sky looks blue during the day",
+        "variables": {
+          "requeue_dispatch_id": "boot-plain-running"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:settle:past-requeue-timer",
+      "route": "unmatched",
+      "seq": 4,
+      "status": 404,
+      "url": "http://127.0.0.1:18999/run-goal"
+    },
+    {
+      "auth": false,
+      "body": {
+        "goal": "Explain why the sky looks blue during the day",
+        "tags": [
+          "resumed_from:boot-plain-running"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:settle:past-requeue-timer",
+      "route": "unmatched",
+      "seq": 5,
+      "status": 404,
+      "url": "http://127.0.0.1:18999/run-goal"
+    }
+  ],
+  "scenario": "boot-reconcile-favorable-landed",
+  "spawns": [],
+  "steps": [
+    {
+      "label": "past-requeue-timer",
+      "markers": [],
+      "op": "settle",
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": null,
+        "reasonClass": null,
+        "sinks": [],
+        "status": null
+      }
+    },
+    {
+      "drive": "done",
+      "http": {
+        "error": null,
+        "goalReachReason": null,
+        "humanGraded": false,
+        "reached": true,
+        "status": 200
+      },
+      "label": "edit-record",
+      "markers": [],
+      "op": "resolve",
+      "record": {
+        "executionId": "feature_compose:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "reached": true,
+        "selectedTemplateId": "feature_compose",
+        "status": "completed"
+      },
+      "step": 2,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": true,
+        "reasonClass": null,
+        "sinks": [],
+        "status": "completed"
+      }
+    },
+    {
+      "drive": "done",
+      "http": {
+        "error": null,
+        "goalReachReason": null,
+        "humanGraded": false,
+        "reached": true,
+        "status": 200
+      },
+      "label": "finished-record",
+      "markers": [],
+      "op": "resolve",
+      "record": {
+        "executionId": "walk-satisfier-old",
+        "reached": true,
+        "status": "completed"
+      },
+      "step": 3,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": true,
+        "reasonClass": null,
+        "sinks": [],
+        "status": "completed"
+      }
+    }
+  ]
+}

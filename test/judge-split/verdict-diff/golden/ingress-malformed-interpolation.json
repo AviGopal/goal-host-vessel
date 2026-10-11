@@ -1,0 +1,77 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.4 17020-17039 malformed-interpolation refusal"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 1,
+    "timerFires": 0,
+    "virtualMsElapsed": 10
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    }
+  ],
+  "scenario": "ingress-malformed-interpolation",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "detail": "goal text still contains an unrendered {{placeholder}}",
+          "error": "malformed goal: interpolation did not render",
+          "refused": true,
+          "why_this_is_refused_rather_than_attempted": "an unanswerable goal that is dispatched anyway collapses every attempt onto one goal_hash and feeds the learner beta updates that cannot be distinguished from a bad pathway"
+        },
+        "error": null,
+        "status": 400
+      },
+      "label": null,
+      "markers": [
+        "refused :: [log] [goal-host-vessel] /run-goal REFUSED malformed dispatch — goal text still contains an unrendered {{placeholder}}. goal=\"scaffold + publish vessel {{extract_vessel_name_text}} supplying capability shape from a routed gap\""
+      ],
+      "op": "runGoal",
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [],
+        "reached": null,
+        "reasonClass": null,
+        "sinks": [],
+        "status": null
+      }
+    }
+  ]
+}

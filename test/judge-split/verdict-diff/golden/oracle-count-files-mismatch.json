@@ -1,0 +1,1589 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.1 verifyCountFilesReach mismatch",
+    "§1.2 11811-11885 β symmetry"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 4,
+    "virtualMsElapsed": 15000
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "type": "compute_state_signature"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 4,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 5,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 6,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 7,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "concept",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 8,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "typescript vessel repos",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 9,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "typescript",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 10,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exploit_threshold": 0.9,
+        "goal_category": "meta",
+        "goal_text": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "target_shapes": [
+          "shellResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-recommend",
+      "seq": 11,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "pathwayReusePolicy"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 12,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 13,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 14,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 15,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 16,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:shellResult",
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 17,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "schema:shellResult",
+      "seq": 18,
+      "status": 200,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "command": "find \"$([ -d /workspace/git/vessels/goal-host-vessel/src ] && echo /workspace/git/vessels/goal-host-vessel/src || echo /workspace/git/super-repo/repos/goal-host-vessel/src)\" \\( -name node_modules -o -name .git \\) -prune -o -type f -name '*.ts' -print | wc -l",
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "tools:shellResult",
+      "seq": 19,
+      "status": 200,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "activity_id": "satisfier:shellResult",
+          "confidence": 0.98,
+          "execution_id": "walk-satisfier-1-1791633600095",
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "labeler": "deterministic",
+          "notes": "deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach",
+          "type": "goal_verification_label_write",
+          "verdict": "not_achieved"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:label-write",
+      "seq": 20,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-1-1791633600095",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "walk-pk7964-1lk1m02-shellResult-3"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "resolve shellResult via connected vessel",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-shellResult-3"
+              ],
+              "output_shapes": [
+                "shellResult"
+              ],
+              "resolver_id": "shellResult",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "walk-pk7964-1lk1m02-shellResult-3"
+                  ],
+                  "resolver_id": "shellResult"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "satisfier": true,
+          "shape": "shellResult"
+        },
+        "output_impulse_shapes": [
+          "shellResult"
+        ],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001",
+          "satellite:non_terminal",
+          "satisfier_shape:shellResult",
+          "beta_withheld:true",
+          "beta_withheld_reason:not-producer-of-judged-artifact"
+        ],
+        "template_id": "satisfier:shellResult",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-1-1791633600095"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 21,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 22,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 23,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [
+          "shellResult"
+        ],
+        "expected_output_shapes": [
+          "shellResult"
+        ],
+        "goal_category": "meta",
+        "goal_text": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "inference_confidence": 0.6,
+        "path_activities": [
+          "satisfier:shellResult"
+        ],
+        "success": false,
+        "tools_used": [
+          "local-tools.test.invalid|shellResult|read|"
+        ],
+        "walk_tier": "satisfier"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-record",
+      "seq": 24,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 25,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 26,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 27,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:shellResult",
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 28,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "schema:shellResult",
+      "seq": 29,
+      "status": 200,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "command": "find \"$([ -d /workspace/git/vessels/goal-host-vessel/src ] && echo /workspace/git/vessels/goal-host-vessel/src || echo /workspace/git/super-repo/repos/goal-host-vessel/src)\" \\( -name node_modules -o -name .git \\) -prune -o -type f -name '*.ts' -print | wc -l",
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "tools:shellResult",
+      "seq": 30,
+      "status": 200,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "activity_id": "satisfier:shellResult",
+          "confidence": 0.98,
+          "execution_id": "walk-satisfier-1-1791633600150",
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "labeler": "deterministic",
+          "notes": "deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach",
+          "type": "goal_verification_label_write",
+          "verdict": "not_achieved"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:label-write",
+      "seq": 31,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-1-1791633600150",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "walk-pk7964-1lk1m02-shellResult-6"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "resolve shellResult via connected vessel",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-shellResult-6"
+              ],
+              "output_shapes": [
+                "shellResult"
+              ],
+              "resolver_id": "shellResult",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "walk-pk7964-1lk1m02-shellResult-6"
+                  ],
+                  "resolver_id": "shellResult"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "satisfier": true,
+          "shape": "shellResult"
+        },
+        "output_impulse_shapes": [
+          "shellResult"
+        ],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001",
+          "satellite:non_terminal",
+          "satisfier_shape:shellResult",
+          "beta_withheld:true",
+          "beta_withheld_reason:not-producer-of-judged-artifact"
+        ],
+        "template_id": "satisfier:shellResult",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-1-1791633600150"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 32,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 33,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 34,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [
+          "shellResult"
+        ],
+        "expected_output_shapes": [
+          "shellResult"
+        ],
+        "goal_category": "meta",
+        "goal_text": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "inference_confidence": 0.6,
+        "path_activities": [
+          "satisfier:shellResult"
+        ],
+        "success": false,
+        "tools_used": [
+          "local-tools.test.invalid|shellResult|read|"
+        ],
+        "walk_tier": "satisfier"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-record",
+      "seq": 35,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 36,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 37,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 38,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "How many TypeScript files are in repos/goal-host-vessel/src?"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 39,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 40,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "How many TypeScript files are in repos/goal-host-vessel/src?"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 41,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 42,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 43,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult",
+          "httpResponse",
+          "webSearchResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 44,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "type": "learning_transfer_report"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 45,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "available_shapes": [
+              "goal",
+              "dispatch_id"
+            ],
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+            "max_attempts": 3,
+            "shape": "shellResult",
+            "type": "author_producer"
+          },
+          "type": "author_producer"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 46,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "id": "gap-httpresponse",
+            "type": "substrateGap"
+          },
+          "type": "substrateGap"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 47,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "gap": {
+              "category": "missing_capability",
+              "classification_metadata": {
+                "allowed_output_shapes": [
+                  "httpResponse"
+                ],
+                "closed_reason": "walk_artifact",
+                "demand_count": 1,
+                "demand_goals": [
+                  "How many TypeScript files are in repos/goal-host-vessel/src?"
+                ],
+                "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+                "goal_target_shapes": [
+                  "shellResult",
+                  "httpResponse",
+                  "webSearchResult"
+                ],
+                "kind": "capability_gap",
+                "missing_shape": "httpResponse",
+                "resolution": "single-goal demand: recorded, filed open only when a second distinct goal needs this shape",
+                "scope_narrowed": true
+              },
+              "detected_at": "2026-10-10T12:00:00.235Z",
+              "id": "gap-httpresponse",
+              "source": "substrate_detected",
+              "status": "closed",
+              "summary": "Capability gap: the goal-walk needs a producer for shape \"httpResponse\" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape \"httpResponse\" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck."
+            },
+            "type": "substrateGap_write"
+          },
+          "type": "substrateGap_write"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:gap-write",
+      "seq": 48,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "shellResult",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 49,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 50,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 51,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 52,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": "goal-host:floor_tool_loop",
+        "chars": 3727,
+        "sha256": "623ba599603bd058047bf095e83290cbd1879c3abdeeb59a304b2043d464cbc6",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "floor:answer",
+      "seq": 53,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 1328,
+        "sha256": "94cc1a387850b4a5cedc1a2ef236a0b5cc94110e912cec7247823f3cf75b5424",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "judge",
+      "seq": 54,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 1594,
+        "sha256": "7119a3d96de7256268a1a0d9fa04d96c8a0fa577e354e8e3cc8fb85174f0de2c",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "judge",
+      "seq": 55,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 1328,
+        "sha256": "94cc1a387850b4a5cedc1a2ef236a0b5cc94110e912cec7247823f3cf75b5424",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "judge",
+      "seq": 56,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:reach_verification",
+        "chars": 1594,
+        "sha256": "7119a3d96de7256268a1a0d9fa04d96c8a0fa577e354e8e3cc8fb85174f0de2c",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "judge",
+      "seq": 57,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "gap": {
+              "category": "missing_capability",
+              "detected_at": "2026-10-10T12:00:00.285Z",
+              "id": "missing-verifier-unclassified-how-many-file",
+              "source": "substrate_detected",
+              "status": "open",
+              "summary": "Missing deterministic reach verifier for the goal family \"unclassified-how-many-file\". The reach gate reaches the end of its verifier chain on these goals, finds nothing that claims them, and returns not-reached with beta WITHHELD — an honest verdict that can never change, so reach on this family is pinned regardless of how many times it is attempted. Example goal: \"How many TypeScript files are in repos/goal-host-vessel/src?\". In repos/goal-host-vessel/src/index.ts, add one verifier function that computes the answer for THIS family from the authoritative git clone (the readdir/in-process route the sibling verifiers use — NOT by re-running the walk's own command, which would agree with it by construction), and returns a three-verdict result: reached when the produced output states the computed value, not-reached when it states a different one, null when it states none. Follow the existing verifyCountFilesReach / verifyAggregateReach shape. Do NOT expand scope: one family, one verifier, and it must DECLINE any goal whose scope its parse does not represent — that exact defect has been found three times (extension goals claimed by the file-count oracle, by the command builder, and two-tree chain goals claimed by the aggregate oracle)."
+            },
+            "type": "substrateGap_write"
+          },
+          "type": "substrateGap_write"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:gap-write",
+      "seq": 58,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "activity_id": "universal-tool-fallback",
+          "confidence": 0.98,
+          "execution_id": "universal-tool-fallback-c1af0b9c-1791633600290",
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "labeler": "deterministic",
+          "notes": "deterministic:no-oracle-for-goal-class — this is a countable question about a repository tree and no deterministic verifier claims it; the LLM judge measured 29% correct at 90% reach on exactly this shape, so its verdict is withheld rather than recorded as a reach",
+          "type": "goal_verification_label_write",
+          "verdict": "not_achieved"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:label-write",
+      "seq": 59,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "universal-tool-fallback-c1af0b9c-1791633600290",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": []
+        },
+        "failure_mode": {
+          "reason": "deterministic:no-oracle-for-goal-class — this is a countable question about a repository tree and no deterministic verifier claims it; the LLM judge measured 29% correct at 90% reach on exactly this shape, so its verdict is withheld rather than recorded as a reach",
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "authored_answer": true,
+          "final_text": "7",
+          "final_text_len": 1,
+          "floor": true,
+          "goal_hash": "c1af0b9c",
+          "grounded_reads": 0,
+          "reach_reason": "deterministic:no-oracle-for-goal-class — this is a countable question about a repository tree and no deterministic verifier claims it; the LLM judge measured 29% correct at 90% reach on exactly this shape, so its verdict is withheld rather than recorded as a reach",
+          "target_shapes": [
+            "shellResult"
+          ],
+          "tools_ok": 0,
+          "tools_total": 0
+        },
+        "output_impulse_shapes": [],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "reached:false"
+        ],
+        "template_id": "universal-tool-fallback",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "universal-tool-fallback-c1af0b9c-1791633600290"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 60,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 61,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "beta_withheld": true,
+        "beta_withheld_reason": "not-producer-of-judged-artifact",
+        "completion_shapes": [
+          "bind:memoryNote.body<-llmCompletion"
+        ],
+        "execution_id": "walk-satisfier-1-1791633600150",
+        "goal_hash": "c1af0b9c",
+        "reached": false,
+        "reason": "deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:reach",
+      "seq": 62,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [],
+        "expected_output_shapes": [
+          "shellResult"
+        ],
+        "goal_category": "meta",
+        "goal_text": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "inference_confidence": 0.6,
+        "path_activities": [
+          "universal-tool-fallback"
+        ],
+        "success": false,
+        "walk_tier": "universal_tool_fallback"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-record",
+      "seq": 63,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    }
+  ],
+  "scenario": "oracle-count-files-mismatch",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "dispatchId": "00000000-0000-4000-8000-000000000001",
+          "status": "running"
+        },
+        "error": null,
+        "status": 202
+      },
+      "label": null,
+      "markers": [
+        "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=c1af0b9c — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "beta-withheld,reached :: [log] [goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:shellResult — it did not produce the judged artifact (producer: none identifiable); the producer is charged through the composite's consumed provenance",
+        "hollow,beta-withheld :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale cou",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=c1af0b9c",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=c1af0b9c — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "beta-withheld,reached :: [log] [goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:shellResult — it did not produce the judged artifact (producer: none identifiable); the producer is charged through the composite's consumed provenance",
+        "hollow,beta-withheld :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale cou",
+        "mint :: [log] [goal-host-vessel] /run-goal: hollow satisfier verdict for \"shellResult\" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)",
+        "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [shellResult,httpResponse,webSearchResult] have no producer or constructible payload; terminating walk",
+        "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[shellResult,httpResponse,webSearchResult] failed_producers=0 ()",
+        "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [shellResult,httpResponse,webSearchResult]",
+        "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=c1af0b9c targetShapes=[\"shellResult\"]",
+        "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=c1af0b9c — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "floor :: [log] [goal-host-vessel] floor: verdict goalHash=c1af0b9c verdictNull=false reached=false groundedOk=0 finalTextLen=1",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-c1af0b9c-1791633600290 reached=false tools=0/0 — this run is now gradable"
+      ],
+      "op": "runGoal",
+      "record": {
+        "attemptCount": 1,
+        "attempts": 1,
+        "completionShapes": [
+          "bind:memoryNote.body<-llmCompletion"
+        ],
+        "executionId": "walk-satisfier-1-1791633600150",
+        "executionPath": "satisfier",
+        "goalReachReason": "deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach",
+        "inferenceConfidence": 0.6,
+        "learning": {
+          "alphaBetaDelta": [],
+          "gapsFiled": [],
+          "goalPathRecorded": true,
+          "oracleLabelWritten": false
+        },
+        "reached": false,
+        "routeArounds": [
+          {
+            "at": 1791633600245,
+            "failed_producers": [],
+            "goal_hash": "c1af0b9c",
+            "kind": "stall",
+            "missing_producer": [
+              "shellResult",
+              "httpResponse",
+              "webSearchResult"
+            ],
+            "produced": [
+              "dispatch_id"
+            ],
+            "route_taken": "stop",
+            "routes_taken": [],
+            "target": [
+              "shellResult",
+              "httpResponse",
+              "webSearchResult"
+            ],
+            "termination": "no producer or constructible payload for missing shapes [shellResult,httpResponse,webSearchResult]"
+          }
+        ],
+        "selectedTemplateId": "satisfier:shellResult",
+        "status": "failed",
+        "trigger": "run-goal"
+      },
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [
+          "walk-satisfier-1-1791633600150"
+        ],
+        "reachDeliveries": [
+          {
+            "beta_withheld": true,
+            "beta_withheld_reason": "not-producer-of-judged-artifact",
+            "completion_shapes": [
+              "bind:memoryNote.body<-llmCompletion"
+            ],
+            "execution_id": "walk-satisfier-1-1791633600150",
+            "goal_hash": "c1af0b9c",
+            "reached": false,
+            "reason": "deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach"
+          }
+        ],
+        "reached": false,
+        "reasonClass": "deterministic:file-count-mismatch",
+        "sinks": [
+          "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/goal-paths",
+          "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/goal-paths",
+          "POST /v2/impulses/resolve substrateGap_write",
+          "POST /v2/impulses/resolve substrateGap_write",
+          "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach",
+          "POST /v2/goal-paths"
+        ],
+        "status": "failed"
+      },
+      "walkLog": [
+        "[walk-concepts] no concepts recalled for goal_hash=c1af0b9c (terms tried: typescript,vessel,repos)",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"c1af0b9c\",\"inferred_target_shapes\":[\"shellResult\"],\"confidence\":0.6,\"alternatives\":[]}",
+        "[goal-host-vessel] walk: DETERMINISTIC file-count command for \"shellResult\" (super-repo rooted, scope=recursive, filter=*.ts) — shares verifyCountFilesReach's parse; SKIPPED reuse-cache + pointer_arg synthesis",
+        "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"shellResult\" directly (connected vessel resolve) — no bridge needed",
+        "[goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:shellResult — it did not produce the judged artifact (producer: none identifiable); the producer is charged through the composite's consumed provenance",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach; β WITHHELD (satisfier:shellResult did not produce the judged artifact; producer: none identifiable). completion_shapes=[\"bind:memoryNote.body<-llmCompletion\"] goal_hash=c1af0b9c",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=c1af0b9c",
+        "[goal-host-vessel] walk: DETERMINISTIC file-count command for \"shellResult\" (super-repo rooted, scope=recursive, filter=*.ts) — shares verifyCountFilesReach's parse; SKIPPED reuse-cache + pointer_arg synthesis",
+        "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"shellResult\" directly (connected vessel resolve) — no bridge needed",
+        "[goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:shellResult — it did not produce the judged artifact (producer: none identifiable); the producer is charged through the composite's consumed provenance",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:file-count-mismatch — the authoritative count (git clone) is 3 .ts file(s) in repos/goal-host-vessel/src, but the produced counting-command output reports 7; a wrong/stale count is not a reach; β WITHHELD (satisfier:shellResult did not produce the judged artifact; producer: none identifiable). completion_shapes=[\"bind:memoryNote.body<-llmCompletion\"] goal_hash=c1af0b9c",
+        "[goal-host-vessel] /run-goal: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes",
+        "[goal-host-vessel] /run-goal: walk: retry WIDENED target shapes to [shellResult,httpResponse,webSearchResult] —\"shellResult\" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything",
+        "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [shellResult,httpResponse,webSearchResult] have no producer or constructible payload; terminating walk",
+        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[shellResult,httpResponse,webSearchResult] failed_producers=0 ()",
+        "[dispatch] execution_path=satisfier attempt_count=1"
+      ]
+    }
+  ]
+}

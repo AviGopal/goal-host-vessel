@@ -1,0 +1,793 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.1 2269-2513 verifyCountFilesReach",
+    "§1.2 11950-12059 α gate",
+    "§1.2 12319-12401 mint gate"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 2,
+    "virtualMsElapsed": 15000
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "type": "compute_state_signature"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 4,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 5,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 6,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 7,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "concept",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 8,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "typescript vessel repos",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 9,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "typescript",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 10,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exploit_threshold": 0.9,
+        "goal_category": "meta",
+        "goal_text": "How many TypeScript files are in repos/goal-host-vessel/src?",
+        "target_shapes": [
+          "shellResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-recommend",
+      "seq": 11,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "pathwayReusePolicy"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 12,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 13,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 14,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 15,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 16,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:shellResult",
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 17,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "shellResult",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "schema:shellResult",
+      "seq": 18,
+      "status": 200,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "command": "find \"$([ -d /workspace/git/vessels/goal-host-vessel/src ] && echo /workspace/git/vessels/goal-host-vessel/src || echo /workspace/git/super-repo/repos/goal-host-vessel/src)\" \\( -name node_modules -o -name .git \\) -prune -o -type f -name '*.ts' -print | wc -l",
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "type": "shellResult"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "tools:shellResult",
+      "seq": 19,
+      "status": 200,
+      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "activity_id": "satisfier:shellResult",
+          "confidence": 0.98,
+          "execution_id": "walk-satisfier-1-1791633600095",
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "labeler": "deterministic",
+          "notes": "deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)",
+          "type": "goal_verification_label_write",
+          "verdict": "achieved"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:label-write",
+      "seq": 20,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "activity_id": "satisfier:shellResult",
+        "direction": "positive",
+        "intensity": 2,
+        "reason": "substance-honest reach (landed/consumable): deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a count"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:feedback",
+      "seq": 21,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/feedback"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "conceptData": {
+              "content": "# How many TypeScript files are in repos/goal-host-vessel/src?\n## Basis\n\n00000000-0000-4000-8000-000000000001\n\n{\"stdout\":\"3\\n\",\"stderr\":\"\",\"exitCode\":0}",
+              "metadata": {
+                "dispatchId": "00000000-0000-4000-8000-000000000001",
+                "executionId": "walk-satisfier-1-1791633600095",
+                "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+                "provenance": "goal-host-bridge",
+                "reached": true,
+                "surface": "/run-goal"
+              },
+              "pointer": {
+                "dispatchId": "00000000-0000-4000-8000-000000000001",
+                "executionId": "walk-satisfier-1-1791633600095",
+                "provenance": "goal-host-bridge",
+                "type": "memo"
+              },
+              "source_type": "goal_finding",
+              "summary": "How many TypeScript files are in repos/goal-host-vessel/src?"
+            },
+            "dispatch_id": "00000000-0000-4000-8000-000000000001",
+            "goal_answer": "# How many TypeScript files are in repos/goal-host-vessel/src?\n## Basis\n\n00000000-0000-4000-8000-000000000001\n\n{\"stdout\":\"3\\n\",\"stderr\":\"\",\"exitCode\":0}",
+            "human_presentation": {
+              "blocks": [
+                {
+                  "kind": "answer",
+                  "text": "deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)"
+                },
+                {
+                  "kind": "basis",
+                  "text": "00000000-0000-4000-8000-000000000001\n\n{\"stdout\":\"3\\n\",\"stderr\":\"\",\"exitCode\":0}"
+                }
+              ],
+              "grounding_state": "grounded",
+              "headline": "How many TypeScript files are in repos/goal-host-vessel/src?",
+              "reach_state": "reached",
+              "relevance": 1,
+              "source_shape": "bind:memoryNote.body<-llmCompletion"
+            },
+            "shellResult": {
+              "exitCode": 0,
+              "stderr": "",
+              "stdout": "3\n"
+            },
+            "type": "concept_create_write"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-write",
+      "seq": 22,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-write-1-1791633600110",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "apply concept_create_write via http://concept-db.test.invalid (walk site bridge-concept, attempt 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [
+                "concept_create_write"
+              ],
+              "resolver_id": "concept_create_write",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "concept_create_write"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "write-apply",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "attempt": 1,
+          "endpoint": "http://concept-db.test.invalid",
+          "satisfier": true,
+          "shape": "concept_create_write",
+          "site": "bridge-concept",
+          "terminal": false,
+          "write_applied": true
+        },
+        "output_impulse_shapes": [
+          "concept_create_write"
+        ],
+        "parent_execution_id": "walk-satisfier-1-1791633600095",
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001",
+          "satellite:non_terminal",
+          "satisfier_shape:concept_create_write",
+          "write_applied",
+          "write_site:bridge-concept"
+        ],
+        "template_id": "satisfier:concept_create_write",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-write-1-1791633600110"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 23,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-1-1791633600095",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [
+            "walk-pk7964-1lk1m02-shellResult-3"
+          ],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "resolve shellResult via connected vessel",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-shellResult-3"
+              ],
+              "output_shapes": [
+                "shellResult"
+              ],
+              "resolver_id": "shellResult",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [
+                    "walk-pk7964-1lk1m02-shellResult-3"
+                  ],
+                  "resolver_id": "shellResult"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "satisfier": true,
+          "shape": "shellResult"
+        },
+        "output_impulse_shapes": [
+          "shellResult"
+        ],
+        "status": "success",
+        "success": true,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000001",
+          "satellite:non_terminal",
+          "satisfier_shape:shellResult",
+          "reached:true"
+        ],
+        "template_id": "satisfier:shellResult",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "walk-satisfier-1-1791633600095"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 24,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "How many TypeScript files are in repos/goal-host-vessel/src?",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 25,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "bind:memoryNote.body<-llmCompletion"
+        ],
+        "execution_id": "walk-satisfier-1-1791633600095",
+        "goal_hash": "c1af0b9c",
+        "reached": true,
+        "reason": "deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:reach",
+      "seq": 26,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 27,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 28,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    }
+  ],
+  "scenario": "oracle-count-files-match",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "dispatchId": "00000000-0000-4000-8000-000000000001",
+          "status": "running"
+        },
+        "error": null,
+        "status": 202
+      },
+      "label": null,
+      "markers": [
+        "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=c1af0b9c — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "reached :: [log] REACHED via 1-step chain",
+        "credit :: [log] [goal-host-vessel] walk(/run-goal): alpha-credited involved step satisfier:shellResult (+2) (substance-honest reach: deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clon",
+        "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)"
+      ],
+      "op": "runGoal",
+      "record": {
+        "answerBody": "# How many TypeScript files are in repos/goal-host-vessel/src?\n## Basis\n\n00000000-0000-4000-8000-000000000001\n\n{\"stdout\":\"3\\n\",\"stderr\":\"\",\"exitCode\":0}",
+        "attemptCount": 1,
+        "attempts": 1,
+        "completionShapes": [
+          "bind:memoryNote.body<-llmCompletion"
+        ],
+        "executionId": "walk-satisfier-1-1791633600095",
+        "executionPath": "satisfier",
+        "goalReachReason": "deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)",
+        "grounded": true,
+        "inferenceConfidence": 0.6,
+        "learning": {
+          "alphaBetaDelta": [
+            {
+              "dAlpha": 2,
+              "dBeta": 0,
+              "templateId": "satisfier:shellResult"
+            }
+          ],
+          "gapsFiled": [],
+          "goalPathRecorded": true,
+          "oracleLabelWritten": false
+        },
+        "reached": true,
+        "selectedTemplateId": "satisfier:shellResult",
+        "status": "completed",
+        "trigger": "run-goal"
+      },
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [
+          {
+            "completion_shapes": [
+              "bind:memoryNote.body<-llmCompletion"
+            ],
+            "execution_id": "walk-satisfier-1-1791633600095",
+            "goal_hash": "c1af0b9c",
+            "reached": true,
+            "reason": "deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)"
+          }
+        ],
+        "reached": true,
+        "reasonClass": "deterministic:verified-file-count",
+        "sinks": [
+          "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/feedback",
+          "POST /v2/impulses/resolve concept_create_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach"
+        ],
+        "status": "completed"
+      },
+      "walkLog": [
+        "[walk-concepts] no concepts recalled for goal_hash=c1af0b9c (terms tried: typescript,vessel,repos)",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"c1af0b9c\",\"inferred_target_shapes\":[\"shellResult\"],\"confidence\":0.6,\"alternatives\":[]}",
+        "[goal-host-vessel] walk: DETERMINISTIC file-count command for \"shellResult\" (super-repo rooted, scope=recursive, filter=*.ts) — shares verifyCountFilesReach's parse; SKIPPED reuse-cache + pointer_arg synthesis",
+        "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"shellResult\" directly (connected vessel resolve) — no bridge needed",
+        "REACHED via 1-step chain",
+        "[goal-host-vessel] walk(/run-goal): REACH-EVIDENCE shellResult (41 chars) = {\"stdout\":\"3\\n\",\"stderr\":\"\",\"exitCode\":0}",
+        "[goal-host-vessel] walk(/run-goal): alpha-credited involved step satisfier:shellResult (+2) (substance-honest reach: deterministic:verified-file-count — counted 3 .ts file(s) recursively in repos/goal-host-vessel/src from the git clone (authoritative), filter=*.ts; a counting-command (shellResult) output reports the same count under the SAME shared parse (not an independent recount)) goal_hash=c1af0b9c",
+        "[dispatch] execution_path=satisfier attempt_count=1"
+      ]
+    }
+  ]
+}

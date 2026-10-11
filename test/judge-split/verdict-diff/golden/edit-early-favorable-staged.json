@@ -1,0 +1,445 @@
+{
+  "busEvents": {
+    "count": 0,
+    "types": []
+  },
+  "covers": [
+    "§1.3 13703-13763 early FAVORABLE staged-not-landed",
+    "penaliseHollowTemplate",
+    "recordDeterministicLabel"
+  ],
+  "harness": {
+    "aborted": null,
+    "pendingTimers": 0,
+    "timerFires": 3,
+    "virtualMsElapsed": 15000
+  },
+  "intervalsRegistered": 8,
+  "requests": [
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "boot",
+      "route": "fleet:dev-shapes",
+      "seq": 1,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "vesselRegistry"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "fleet:vesselRegistry",
+      "seq": 2,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "type": "compute_state_signature"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 4,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 5,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 6,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 7,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "concept",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 8,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "verdict_diff_marker constant quiesce",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 9,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "limit": 5,
+            "query": "verdict_diff_marker",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 10,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:goal_target_inference",
+        "chars": 3614,
+        "sha256": "aa1c86d5c2c1aef628f73057facbcdbd5853844c2b5f1cc46a055b685ed15f99",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 11,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:goal_target_inference",
+        "chars": 3614,
+        "sha256": "aa1c86d5c2c1aef628f73057facbcdbd5853844c2b5f1cc46a055b685ed15f99",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 12,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:goal_target_inference",
+        "chars": 3614,
+        "sha256": "aa1c86d5c2c1aef628f73057facbcdbd5853844c2b5f1cc46a055b685ed15f99",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "feature_compose",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 14,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "authoring_execution_id": "00000000-0000-4000-8000-000000000001",
+            "directed": true,
+            "gap": {
+              "category": "edit_intent_route",
+              "classification_metadata": {
+                "edit_site": "repos/goal-host-vessel/src/quiesce.ts"
+              },
+              "id": "route-edit-095e1639",
+              "summary": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness"
+            },
+            "land": true,
+            "spec": "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.\nTarget file — EDIT IT IN PLACE: emit `edit` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: repos/goal-host-vessel/src/quiesce.ts\nThe change MUST typecheck.\n\nGOAL: Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness",
+            "type": "feature_compose",
+            "verify_vessels": [
+              "repos/goal-host-vessel"
+            ]
+          }
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "dev:feature_compose",
+      "seq": 15,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "activity_id": "feature_compose",
+        "direction": "negative",
+        "intensity": 2,
+        "reason": "hollow completion (goal not reached): staged-favorable-not-landed"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:feedback",
+      "seq": 16,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/feedback"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "conceptData": {
+            "content": "reach-gate hollow class llm_judged_hollow: the reach judge found the produced output does not substantively fulfill the goal intent; hollow wrappers that only emit shape names get beta-penalised",
+            "shape": "reach_gate_lesson",
+            "source_type": "reach_gate_lesson",
+            "summary": "reach-gate lesson: llm_judged_hollow"
+          },
+          "type": "concept_create_write"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-write",
+      "seq": 17,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "fileEditResult"
+        ],
+        "execution_id": "feature-compose-exec-1",
+        "goal_hash": "095e1639",
+        "reached": false,
+        "reason": "deterministic:early-edit-intent-not-landed — early edit-intent routed to feature_compose; staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach — added the constant"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:reach",
+      "seq": 18,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "obsidian:write_note",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 19,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    }
+  ],
+  "scenario": "edit-early-favorable-staged",
+  "spawns": [],
+  "steps": [
+    {
+      "drive": "done",
+      "http": {
+        "body": {
+          "dispatchId": "00000000-0000-4000-8000-000000000001",
+          "status": "running"
+        },
+        "error": null,
+        "status": 202
+      },
+      "label": null,
+      "markers": [
+        "edit-intent :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT DETECTED (pre-walk, names repos/goal-host-vessel/src/quiesce.ts) — routing to feature_compose",
+        "edit-intent :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT routed by pick",
+        "edit-intent :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT feature_compose producer resolved via discovery → http://dev-vessel.test.invalid/v2/impulses/resolve",
+        "edit-intent,landed :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT ROUTED to feature_compose for repos/goal-host-vessel/src/quiesce.ts → verdict=UNFAVORABLE staged-not-landed",
+        "landed :: [log] [goal-host-vessel] /run-goal: landed SHA (staged) — added the constant",
+        "edit-intent,landed :: [log] [goal-host-vessel] reached-command cache: EVICTED 095e1639 (reach graded false: deterministic:early-edit-intent-not-landed — early edit-intent routed to feature_compose; staged FAVORABLE but NOT lande) — not in memory; tombstone persi",
+        "edit-intent,landed :: [log] [goal-host-vessel] failure-memory: REMEMBERED hash=095e1639 class=add pick=feature_compose (1 on record) reason=\"deterministic:early-edit-intent-not-landed — early edit-intent routed to feature_compose; staged FAV\""
+      ],
+      "op": "runGoal",
+      "record": {
+        "attemptCount": 1,
+        "attempts": 1,
+        "completionShapes": [
+          "fileEditResult"
+        ],
+        "executionId": "feature-compose-exec-1",
+        "executionPath": "feature_compose",
+        "goalReachReason": "deterministic:early-edit-intent-not-landed — early edit-intent routed to feature_compose; staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach — added the constant",
+        "inferenceConfidence": null,
+        "learning": {
+          "alphaBetaDelta": [
+            {
+              "dAlpha": 0,
+              "dBeta": 2,
+              "templateId": "feature_compose"
+            }
+          ],
+          "gapsFiled": [],
+          "goalPathRecorded": false,
+          "oracleLabelWritten": false
+        },
+        "reached": false,
+        "selectedTemplateId": "feature_compose",
+        "status": "failed",
+        "trigger": "operator"
+      },
+      "step": 1,
+      "verdict": {
+        "betaWithheld": [],
+        "reachDeliveries": [
+          {
+            "completion_shapes": [
+              "fileEditResult"
+            ],
+            "execution_id": "feature-compose-exec-1",
+            "goal_hash": "095e1639",
+            "reached": false,
+            "reason": "deterministic:early-edit-intent-not-landed — early edit-intent routed to feature_compose; staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach — added the constant"
+          }
+        ],
+        "reached": false,
+        "reasonClass": "deterministic:early-edit-intent-not-landed",
+        "sinks": [
+          "POST /v2/impulses/resolve feature_compose",
+          "POST /v2/activities/feedback",
+          "POST /resolve concept_create_write",
+          "POST /v2/activities/execution-traces/reach"
+        ],
+        "status": "failed"
+      },
+      "walkLog": [
+        "[walk-concepts] no concepts recalled for goal_hash=095e1639 (terms tried: verdict_diff_marker,constant,quiesce)",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"095e1639\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT DETECTED (pre-walk, names repos/goal-host-vessel/src/quiesce.ts) — routing to feature_compose",
+        "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT routed by pick",
+        "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT feature_compose producer resolved via discovery → http://dev-vessel.test.invalid/v2/impulses/resolve",
+        "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT ROUTED to feature_compose for repos/goal-host-vessel/src/quiesce.ts → verdict=UNFAVORABLE staged-not-landed",
+        "[goal-host-vessel] /run-goal: landed SHA (staged) — added the constant",
+        "[dispatch] execution_path=feature_compose attempt_count=1"
+      ]
+    }
+  ]
+}
