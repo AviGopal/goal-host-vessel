@@ -308,6 +308,7 @@ import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
+import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
@@ -8968,6 +8969,15 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] walk: REBOUND verified command for "${shape}" from a similar goal (src ${_rebind.srcHash}) — content swapped, SKIPPED pointer_arg_extraction synthesis`);
       } else {
         directArgsRaw = (await llmExtractPointerArgs(shape)) ?? {};
+        // A SYNTHESISED COMMAND NEVER NAMES AN ORIGIN ITS INPUTS DID NOT (command-egress.ts).
+        // Loopback is the substrate's own; any other host must be named by the goal. Refused
+        // without being run: the executor call yields no command at all.
+        const _synEgress = synthesisWithinInputsOrRefuse(commandOf(directArgsRaw), [goal]);
+        if (!_synEgress.ok) {
+          noteRawResolveFailure(shape, `egress: synthesised command introduced origin(s) ${_synEgress.introduced.join(", ")} the goal does not name`);
+          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" REFUSED the synthesised command — it introduced origin(s) ${_synEgress.introduced.join(", ")} not named by the goal (allowed: loopback${_synEgress.allowed.length ? ", " + _synEgress.allowed.join(", ") : ""}); not executing`);
+          return null;
+        }
       }
     }
     // COMMAND<->INTENT EVIDENCE (law 8): record the synthesized executable for this shape
@@ -9454,6 +9464,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       // that funds schema discovery is unchanged. A goal that is going to fail still fails — it just
       // fails after the corrector has had enough turns to be wrong about more than one thing.
       const _correctionBudget = await shapedBudget("executor_correction_budget", 6, 1, 20);
+      // THE ORIGINAL COMMAND of this executor call, captured once: every rewrite below is checked
+      // against IT (and the goal), never against the previous attempt, so origins cannot drift hop
+      // by hop (command-egress.ts).
+      const _origCmd = commandOf(directArgsRaw);
       while (_deg && _tries < _correctionBudget + Math.min(_inspections, 3)) {
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
@@ -9724,15 +9738,29 @@ If one of those sibling shapes is the action that would create what the goal ask
         // Rejections do NOT consume `_tries`, because no command was run and nothing was learned;
         // they are separately bounded so a model that will only ever emit the banned host cannot
         // spin. The escalation states the ban as an accomplished fact rather than a request.
+        //
+        // THE SAME STRUCTURE ENFORCES THE ORIGIN (command-egress.ts). A rewrite may never change the
+        // scheme, host or port of the ORIGINAL command, and never add an origin the original and the
+        // goal did not name. Measured (node1, dispatch 28a669b3): with only the ban checked here, a
+        // failing `curl -s http://127.0.0.1:8100/landing-paths/audit…` was rewritten to the invented
+        // api.merlonix.com and then internetvitals.com, and both were RUN. An origin rejection takes
+        // the same bounded path as a ban rejection and ends in no command.
         let _reSyn: Record<string, unknown> | null = null;
         let _rejects = 0;
+        let _originRejected = "";
+        let _originAllowed = "";
         for (;;) {
-          const _escalation = _rejects === 0 ? "" : `\n\nYOUR LAST ANSWER WAS REJECTED WITHOUT BEING RUN. It targeted ${[..._bannedHosts].join(", ")}, which is already proven to refuse this container. That host is not a candidate and cannot become one by changing the path, the query string, or the parser. Name a DIFFERENT provider entirely — a public one that serves this data with no key and no account — or, if you genuinely know of none, emit a command that fetches nothing and prints the single word UNKNOWN so the failure is honest. Do not invent a plausible-looking domain: a hostname you are not sure exists is worse than UNKNOWN.`;
+          const _escalation = _rejects === 0 ? "" : _originRejected ? `\n\nYOUR LAST ANSWER WAS REJECTED WITHOUT BEING RUN. It sent the request to ${_originRejected}, which is not where the original command sent it. A correction may change the path, the query string, the flags, the quoting and the parser — never the scheme, the host or the port. ${_originAllowed ? `Keep to the endpoints the original command and the goal name (${_originAllowed})` : "Neither the original command nor the goal names a network endpoint, so the correction must not make a network request"}; or, if it cannot answer, emit a command that fetches nothing and prints the single word UNKNOWN so the failure is honest.` : `\n\nYOUR LAST ANSWER WAS REJECTED WITHOUT BEING RUN. It targeted ${[..._bannedHosts].join(", ")}, which is already proven to refuse this container. That host is not a candidate and cannot become one by changing the path, the query string, or the parser. Name a DIFFERENT provider entirely — a public one that serves this data with no key and no account — or, if you genuinely know of none, emit a command that fetches nothing and prints the single word UNKNOWN so the failure is honest. Do not invent a plausible-looking domain: a hostname you are not sure exists is worse than UNKNOWN.`;
           _reSyn = await llmExtractPointerArgs(shape, `${_corr}${_escalation}`);
           if (!_reSyn) break;
           const _cand = ["command", "cmd", "script", "sql"].map((k) => _reSyn![k]).find((v) => typeof v === "string") as string | undefined;
           const _candHost = _cand ? _hostOf(_cand) : null;
-          if (!_candHost || !_bannedHosts.has(_candHost)) break;
+          const _banned = !!_candHost && _bannedHosts.has(_candHost);
+          const _egress = sameOriginOrRefuse(_origCmd, _cand, [goal]);
+          if (!_banned && _egress.ok) break;
+          _originRejected = _banned ? "" : _egress.introduced.join(", ");
+          _originAllowed = _egress.allowed.join(", ");
+          if (!_banned) console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" REJECTED re-synthesis #${_rejects + 1} — it introduced origin(s) ${_egress.introduced.join(", ")}; admitted (the original command's and the goal's): ${_egress.allowed.length ? _egress.allowed.join(", ") : "none"}; not executing`);
           if (_rejects >= 2) {
             // ABANDON, DO NOT FALL THROUGH AND RUN IT. This hatch existed to stop a model that
             // will only ever emit the banned host from spinning, and it did that by breaking out
@@ -9742,11 +9770,11 @@ If one of those sibling shapes is the action that would create what the goal ask
             // still refusing us on attempt three; the honest outcome is no command, not a request
             // whose answer is already known.
             _reSyn = null;
-            console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" ABANDONED correction — ${_rejects + 1} syntheses in a row targeted banned host(s) ${[..._bannedHosts].join(", ")}; refusing to execute any of them`);
+            console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" ABANDONED correction — ${_rejects + 1} syntheses in a row ${_banned ? `targeted banned host(s) ${[..._bannedHosts].join(", ")}` : "were rejected (banned host or a changed origin)"}; refusing to execute any of them`);
             break;
           }
           _rejects++;
-          console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" REJECTED re-synthesis #${_rejects} — it targeted BANNED host ${_candHost}; not executing, re-synthesising`);
+          if (_banned) console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" REJECTED re-synthesis #${_rejects} — it targeted BANNED host ${_candHost}; not executing, re-synthesising`);
         }
         if (!_reSyn) break;
         directArgsRaw = { ...directArgsRaw, ..._reSyn };
@@ -9958,7 +9986,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
       if (correctedRaw && !refuseReapply(shape, "arg-correction")) {
         const mergedArgs = { ...directArgsRaw, ...correctedRaw };
-        const corrected = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody(mergedArgs), "satisfier-arg-correction");
+        // An arg-correction is a rewrite too: the origin rule of the correction loop applies (command-egress.ts).
+        const _acEgress = sameOriginOrRefuse(commandOf(directArgsRaw), commandOf(mergedArgs), [goal]);
+        if (!_acEgress.ok) console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" arg-correction REFUSED — it introduced origin(s) ${_acEgress.introduced.join(", ")}; admitted (the original command's and the goal's): ${_acEgress.allowed.length ? _acEgress.allowed.join(", ") : "none"}; not executing`);
+        const corrected = !_acEgress.ok ? null : await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody(mergedArgs), "satisfier-arg-correction");
         if (corrected != null) { recordExecutorCommand(mergedArgs); console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
       }
     }
@@ -10039,6 +10070,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     };
     let action = await llmPickProducingAction(shape, siblings);
     if (!action) return null;
+    // A picked sibling (shellResult among local-tools' shapes) carries an LLM-written command: the
+    // initial-synthesis origin rule applies (command-egress.ts). Refused without being run.
+    const _actEgress = synthesisWithinInputsOrRefuse(commandOf(action.args), [goal]);
+    if (!_actEgress.ok) { console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier action "${action.shape}" REFUSED — its command introduced origin(s) ${_actEgress.introduced.join(", ")} not named by the goal; not executing`); return null; }
     // CONTENT-BINDING (action path): force the write body to the produced intermediate
     // findings (bindBody is defined at the top of this function and used on both paths).
     action = { shape: action.shape, args: bindBody(action.args) };
@@ -10058,6 +10093,9 @@ If one of those sibling shapes is the action that would create what the goal ask
         // (e.g. content), which would write an empty artifact. Keep the original
         // content/body and let the corrected field win.
         const mergedArgs = bindBody(retryAction.shape === action.shape ? { ...action.args, ...retryAction.args } : retryAction.args);
+        // The retry is a rewrite: the correction origin rule applies (command-egress.ts).
+        const _retEgress = sameOriginOrRefuse(commandOf(action.args), commandOf(mergedArgs), [goal]);
+        if (!_retEgress.ok) { console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier action retry "${retryAction.shape}" REFUSED — it introduced origin(s) ${_retEgress.introduced.join(", ")}; not executing`); return null; }
         const retryResult = retryEp ? await rawResolve(retryAction.shape, retryEp.endpoint, retryEp.resolvePath, mergedArgs, "satisfier-action-retry") : null;
         if (retryResult != null && !refusalReason(retryResult)) {
           action = { shape: retryAction.shape, args: mergedArgs }; actionEp = retryEp!; actionResult = retryResult;
