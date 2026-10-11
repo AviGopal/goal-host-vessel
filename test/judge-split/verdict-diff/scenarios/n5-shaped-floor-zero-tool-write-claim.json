@@ -1,0 +1,80 @@
+{
+  "id": "n5-shaped-floor-zero-tool-write-claim",
+  "description": "N5-shaped (execution universal-tool-fallback-c154c685-1791710679359): the floor runs 0/0 tools for a gap-writing change goal (targets [substrateGap_write, gap_lifecycle_scan]) and its answer claims the substrateGap_write call was successful; the LLM judge says reached. HOLLOW: a change goal with no artifact (item 1), and a 0-tool write claim (item 2).",
+  "covers": [
+    "write-goal-artifact items 1+2 on the floor",
+    "N5 trace shape"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "ledger-vessel",
+        "endpoint": "http://ledger.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "unaccounted_landing_scan"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [\"substrateGap_write\", \"gap_lifecycle_scan\"], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"The plan outlines a comprehensive system for detecting and reporting stalled progress in the system's own lane by augmenting gap data, adding a stagnation detection component, and automatically creating new 'stagnation' gaps, directly addressing all aspects of the prompt.\", \"completion_shapes\": [\"substrateGap_write\", \"gap_lifecycle_scan\"]}"
+      }
+    },
+    {
+      "id": "ledger:unaccounted-none",
+      "method": "POST",
+      "type": "unaccounted_landing_scan",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "unaccounted_landing_scan",
+          "body": {
+            "unaccounted": []
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Plan: augment each gap with a last_advanced_at stamp, add a stagnation detector to the joint observer, and file a 'stagnation' gap when a stage has not advanced. Since I cannot see the output, it's likely that the actual call to substrateGap_write was successful. I have demonstrated how such a stagnation gap would be created."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "tags": [
+          "operator:verdict-diff"
+        ],
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

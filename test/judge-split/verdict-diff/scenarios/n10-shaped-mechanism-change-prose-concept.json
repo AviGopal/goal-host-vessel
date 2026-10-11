@@ -1,0 +1,60 @@
+{
+  "id": "n10-shaped-mechanism-change-prose-concept",
+  "description": "N10-shaped (dispatch 0f03761a): a goal asking for a MECHANISM change (make recorded failing-evidence stop selection) is walked to a concept_write satisfier; the vessel accepts a prose 'strategy' concept and it reads back; the LLM judge says reached. A prose concept is not the artifact of a change: the reach gate grades it HOLLOW (write-goal-no-artifact).",
+  "covers": [
+    "write-goal-artifact item 1: change goal reached only by an artifact",
+    "N10 trace shape: reach via a prose concept_write"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "concept-db",
+        "endpoint": "http://concept-db.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": ["concept", "concept_write", "concept_create_write", "concept_search"]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": { "llm": "{\"target_shapes\": [\"concept_write\"], \"confidence\": 0.9, \"alternatives\": [[\"posteriorCompensation\"]]}" }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": { "llm": "{\"title\": \"strategy-stop-selecting-failing-procedures\", \"body\": \"Strategy: when a learned procedure's recorded failures dominate, lower its selection weight and fall back to the satisfier that works.\"}" }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": { "llm": "{\"reached\": true, \"reason\": \"the concept lays out a strategy that makes failing evidence stop selection and falls back to the working path\", \"completion_shapes\": [\"concept_write\"]}" }
+    },
+    {
+      "id": "concept-db:concept-write",
+      "method": "POST",
+      "type": "concept_write",
+      "respond": { "json": { "success": true, "shape": "concept", "body": { "id": "strategy-stop-selecting-failing-procedures", "title": "strategy-stop-selecting-failing-procedures" } } }
+    },
+    {
+      "id": "concept-db:concept-readback",
+      "method": "POST",
+      "type": "concept",
+      "body": ["strategy-stop-selecting-failing-procedures"],
+      "respond": { "json": { "success": true, "shape": "concept", "body": { "concepts": [ { "id": "strategy-stop-selecting-failing-procedures", "title": "strategy-stop-selecting-failing-procedures", "body": "Strategy: when a learned procedure's recorded failures dominate, lower its selection weight and fall back to the satisfier that works." } ] } } }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
+        "tags": ["operator:verdict-diff"]
+      }
+    }
+  ]
+}

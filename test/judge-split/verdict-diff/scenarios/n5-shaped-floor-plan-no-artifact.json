@@ -1,0 +1,79 @@
+{
+  "id": "n5-shaped-floor-plan-no-artifact",
+  "description": "N5 goal on the floor, 0/0 tools, an answer that is only a PLAN (no claim that anything was written); the LLM judge says reached. HOLLOW by item 1 alone: a change goal is reached only by an artifact.",
+  "covers": [
+    "write-goal-artifact item 1 on the floor (no write claim)"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "ledger-vessel",
+        "endpoint": "http://ledger.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "unaccounted_landing_scan"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [\"substrateGap_write\", \"gap_lifecycle_scan\"], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"the plan covers every stage of the lane and files stagnation as a gap\", \"completion_shapes\": [\"substrateGap_write\"]}"
+      }
+    },
+    {
+      "id": "ledger:unaccounted-none",
+      "method": "POST",
+      "type": "unaccounted_landing_scan",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "unaccounted_landing_scan",
+          "body": {
+            "unaccounted": []
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Plan: stamp each gap with last_advanced_at per stage, let the joint observer compare it with a per-stage window each tick, and file a stagnation gap naming the stage when the window passes."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "tags": [
+          "operator:verdict-diff"
+        ],
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

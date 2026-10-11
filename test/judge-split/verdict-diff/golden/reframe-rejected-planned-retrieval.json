@@ -889,9 +889,7 @@
     {
       "auth": true,
       "body": {
-        "completion_shapes": [
-          "universal_fallback_result"
-        ],
+        "completion_shapes": [],
         "execution_id": "universal-tool-fallback-807f52f0-1791633600210",
         "goal_hash": "807f52f0",
         "reached": true,
@@ -974,7 +972,7 @@
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=807f52f0 verdictNull=false reached=true groundedOk=0 finalTextLen=31",
         "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-807f52f0-1791633600210 reached=true tools=0/0 — this run is now gradable",
         "reached :: [log] [goal-host-vessel] universal ReAct fallback REACHED goal (0 grounded read(s), 0/0 tool(s) OK)",
-        "floor :: [log] [goal-host-vessel] recordGoalPath (floor reach) shapes=[\"universal_fallback_result\"] goal=\"Assemble a short briefing on why vessels restart after a sch\"",
+        "floor :: [log] [goal-host-vessel] recordGoalPath (floor reach) shapes=[] goal=\"Assemble a short briefing on why vessels restart after a sch\"",
         "floor :: [log] [goal-host-vessel] reach-patch ok (walk-complete): universal-tool-fallback-807f52f0-1791633600210 reached=true rows=1 attempts=1",
         "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)"
       ],
@@ -983,9 +981,7 @@
         "answerBody": "They reload their schema cache.",
         "attemptCount": 1,
         "attempts": 1,
-        "completionShapes": [
-          "universal_fallback_result"
-        ],
+        "completionShapes": [],
         "executionId": "universal-tool-fallback-807f52f0-1791633600210",
         "executionPath": "universal_tool_fallback",
         "goalReachReason": "a coherent briefing",
@@ -1040,9 +1036,7 @@
         "betaWithheld": [],
         "reachDeliveries": [
           {
-            "completion_shapes": [
-              "universal_fallback_result"
-            ],
+            "completion_shapes": [],
             "execution_id": "universal-tool-fallback-807f52f0-1791633600210",
             "goal_hash": "807f52f0",
             "reached": true,

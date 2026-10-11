@@ -1651,21 +1651,27 @@
       "url": "http://llm.test.invalid/resolve"
     },
     {
-      "auth": false,
+      "auth": true,
       "body": {
-        "caller": "goal-host:reach_verification",
-        "chars": 3620,
-        "sha256": "481123ef4c96642202d868bcbe687793b417d50ea3c0f6963637ba5780ff4e3b",
-        "type": "llm_completion"
+        "pointer": {
+          "activity_id": "universal-tool-fallback",
+          "confidence": 0.98,
+          "execution_id": "universal-tool-fallback-82500631-1791633611250",
+          "goal": "Find where a human reach verdict stops: a human label that contradicts the system verdict changes nothing downstream; diagnose the stop and file it",
+          "labeler": "deterministic",
+          "notes": "deterministic:write-goal-no-artifact — the goal asks for a write (targets [goal_verification_label_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+          "type": "goal_verification_label_write",
+          "verdict": "not_achieved"
+        }
       },
       "headers": {},
-      "kind": "llm",
+      "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
-      "route": "judge",
+      "route": "aapi:label-write-refused",
       "seq": 91,
-      "status": 200,
-      "url": "http://llm.test.invalid/resolve"
+      "status": 400,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -1673,14 +1679,14 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-82500631-1791633611255",
+        "execution_id": "universal-tool-fallback-82500631-1791633611250",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
           "tasks": []
         },
         "failure_mode": {
-          "reason": "the answer names a stop",
+          "reason": "deterministic:write-goal-no-artifact — the goal asks for a write (targets [goal_verification_label_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
           "type": "execution_error"
         },
         "input_impulse_shapes": [],
@@ -1691,7 +1697,7 @@
           "floor": true,
           "goal_hash": "82500631",
           "grounded_reads": 0,
-          "reach_reason": "the answer names a stop",
+          "reach_reason": "deterministic:write-goal-no-artifact — the goal asks for a write (targets [goal_verification_label_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
           "target_shapes": [
             "goal_verification_label_write"
           ],
@@ -1713,7 +1719,7 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-82500631-1791633611255"
+        "idempotency-key": "universal-tool-fallback-82500631-1791633611250"
       },
       "kind": "sink",
       "method": "POST",
@@ -2398,9 +2404,9 @@
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=82500631 targetShapes=[\"goal_verification_label_write\"]",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=82500631 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
-        "floor :: [log] [goal-host-vessel] floor: verdict goalHash=82500631 verdictNull=false reached=true groundedOk=0 finalTextLen=106",
+        "floor :: [log] [goal-host-vessel] floor: verdict goalHash=82500631 verdictNull=false reached=false groundedOk=0 finalTextLen=106",
         "floor :: [log] [goal-host-vessel] floor: FABRICATED TOOL TRANSCRIPT goalHash=82500631 — the answer narrates a tool call/response but ZERO tools executed; refusing the reach",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-82500631-1791633611255 reached=false tools=0/0 — this run is now gradable",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-82500631-1791633611250 reached=false tools=0/0 — this run is now gradable",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: no candidate produces target shapes [goal_verification_label_write] — honest no-producer failure"
       ],
@@ -2494,6 +2500,7 @@
           "POST /v2/impulses/resolve goal_verification_label_write",
           "POST /v2/impulses/resolve interventionRefused_write",
           "POST /v2/impulses/resolve interventionRefused_write",
+          "POST /v2/impulses/resolve goal_verification_label_write",
           "POST /v2/activities/execution-traces",
           "POST /v2/goal-paths",
           "POST /v2/activities/execution-traces",

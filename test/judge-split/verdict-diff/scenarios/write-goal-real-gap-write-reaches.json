@@ -1,0 +1,59 @@
+{
+  "id": "write-goal-real-gap-write-reaches",
+  "description": "NEGATIVE CONTROL for the write-goal artifact gate: a write goal (file a gap) whose walk applies substrateGap_write, the vessel accepts it and the gap reads back; the judge says reached and the gate lets the reach stand (a persisted write of the goal's own target is its artifact).",
+  "covers": [
+    "write-goal-artifact item 1 negative control: a real persisted write still reaches"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "development-vessel",
+        "endpoint": "http://dev-vessel.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": ["feature_compose", "patch_with_tools", "substrateGap", "substrateGap_write", "memoryNote", "memoryNote_write", "resolver_schema", "code_modification_proposal", "orphaned_capability_scan", "interventionRefused_write"]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": { "llm": "{\"target_shapes\": [\"substrateGap_write\"], \"confidence\": 0.9, \"alternatives\": []}" }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": { "llm": "{\"gap\": {\"id\": \"gap-lane-stage-stalled\", \"summary\": \"the improvement lane's compose stage has not advanced in 6h\", \"category\": \"lane\"}}" }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": { "llm": "{\"reached\": true, \"reason\": \"the gap was filed and reads back\", \"completion_shapes\": [\"substrateGap_write\"]}" }
+    },
+    {
+      "id": "dev:gap-write",
+      "method": "POST",
+      "type": "substrateGap_write",
+      "respond": { "json": { "success": true, "shape": "substrateGap", "body": { "id": "gap-lane-stage-stalled", "status": "open" } } }
+    },
+    {
+      "id": "dev:gap-readback",
+      "method": "POST",
+      "type": "substrateGap",
+      "body": ["gap-lane-stage-stalled"],
+      "respond": { "json": { "success": true, "shape": "substrateGap", "body": { "gaps": [ { "id": "gap-lane-stage-stalled", "summary": "the improvement lane's compose stage has not advanced in 6h", "status": "open" } ] } } }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "File a gap recording that the improvement lane's compose stage has not advanced in six hours.",
+        "tags": ["operator:verdict-diff"]
+      }
+    }
+  ]
+}

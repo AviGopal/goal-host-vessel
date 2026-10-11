@@ -1,0 +1,79 @@
+{
+  "id": "floor-read-reach-records-produced-shapes-only",
+  "description": "A read goal whose inferred target is llm_completion_dispatch is answered by the floor with 0/0 tools and judged reached; the ledger is served so the reached path is RECORDED. The trace tag, the result and recordGoalPath's endpoint_output_shapes carry only PRODUCED shapes: none (item 3), never the requested target.",
+  "covers": [
+    "write-goal-artifact item 3: floor completion shapes and recordGoalPath endpoint shapes"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "ledger-vessel",
+        "endpoint": "http://ledger.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "unaccounted_landing_scan"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [\"llm_completion_dispatch\"], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"the answer explains Rayleigh scattering of short wavelengths\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "ledger:unaccounted-none",
+      "method": "POST",
+      "type": "unaccounted_landing_scan",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "unaccounted_landing_scan",
+          "body": {
+            "unaccounted": []
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Sunlight scatters off air molecules; shorter blue wavelengths scatter most (Rayleigh scattering), so the sky looks blue."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day",
+        "tags": [
+          "operator:verdict-diff"
+        ],
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

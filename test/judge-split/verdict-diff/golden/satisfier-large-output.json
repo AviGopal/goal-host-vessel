@@ -682,8 +682,7 @@
         "success": true,
         "tags": [
           "dispatcher_used:goal-host",
-          "reached:true",
-          "completion_shapes:llm_completion_dispatch"
+          "reached:true"
         ],
         "template_id": "universal-tool-fallback",
         "tokens": {
@@ -723,9 +722,7 @@
     {
       "auth": true,
       "body": {
-        "completion_shapes": [
-          "llm_completion_dispatch"
-        ],
+        "completion_shapes": [],
         "execution_id": "universal-tool-fallback-d6f170dc-1791633600165",
         "goal_hash": "d6f170dc",
         "reached": true,
@@ -802,7 +799,7 @@
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=d6f170dc verdictNull=false reached=true groundedOk=0 finalTextLen=20",
         "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-d6f170dc-1791633600165 reached=true tools=0/0 — this run is now gradable",
         "reached :: [log] [goal-host-vessel] universal ReAct fallback REACHED goal (0 grounded read(s), 0/0 tool(s) OK)",
-        "floor :: [log] [goal-host-vessel] recordGoalPath (floor reach) shapes=[\"llm_completion_dispatch\"] goal=\"Explain why the sky looks blue during the day\"",
+        "floor :: [log] [goal-host-vessel] recordGoalPath (floor reach) shapes=[] goal=\"Explain why the sky looks blue during the day\"",
         "floor :: [log] [goal-host-vessel] reach-patch ok (walk-complete): universal-tool-fallback-d6f170dc-1791633600165 reached=true rows=1 attempts=1",
         "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)"
       ],
@@ -811,9 +808,7 @@
         "answerBody": "Rayleigh scattering.",
         "attemptCount": 1,
         "attempts": 1,
-        "completionShapes": [
-          "llm_completion_dispatch"
-        ],
+        "completionShapes": [],
         "executionId": "universal-tool-fallback-d6f170dc-1791633600165",
         "executionPath": "universal_tool_fallback",
         "goalReachReason": "explains",
@@ -835,9 +830,7 @@
         "betaWithheld": [],
         "reachDeliveries": [
           {
-            "completion_shapes": [
-              "llm_completion_dispatch"
-            ],
+            "completion_shapes": [],
             "execution_id": "universal-tool-fallback-d6f170dc-1791633600165",
             "goal_hash": "d6f170dc",
             "reached": true,

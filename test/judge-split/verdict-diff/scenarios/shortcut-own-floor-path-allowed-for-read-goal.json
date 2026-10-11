@@ -1,0 +1,102 @@
+{
+  "id": "shortcut-own-floor-path-allowed-for-read-goal",
+  "description": "NEGATIVE CONTROL for item 4: the store recommends this goal's OWN floor pathway (match_mode goal_hash) for a read goal; the shortcut still runs the floor directly and skips the walk.",
+  "covers": [
+    "write-goal-artifact item 4 negative control: own path, read goal"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "ledger-vessel",
+        "endpoint": "http://ledger.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "unaccounted_landing_scan"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [\"llm_completion_dispatch\"], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "aapi:goal-path-recommend",
+      "method": "POST",
+      "url": "/v2/goal-paths/recommend",
+      "respond": {
+        "json": {
+          "mode": "exploit",
+          "recommended_paths": [
+            {
+              "path_activities": [
+                "universal-tool-fallback"
+              ],
+              "successful_executions": 10,
+              "total_executions": 10,
+              "goal_hash": "d6f170dc00000000",
+              "path_signature": "7dae833af19b717d",
+              "match_mode": "goal_hash",
+              "endpoint_output_shapes": [
+                "gap_lifecycle_scan",
+                "substrateGap_write"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"the answer explains Rayleigh scattering of short wavelengths\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "ledger:unaccounted-none",
+      "method": "POST",
+      "type": "unaccounted_landing_scan",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "unaccounted_landing_scan",
+          "body": {
+            "unaccounted": []
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Sunlight scatters off air molecules; shorter blue wavelengths scatter most (Rayleigh scattering), so the sky looks blue."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day",
+        "tags": [
+          "operator:verdict-diff"
+        ]
+      }
+    }
+  ]
+}
