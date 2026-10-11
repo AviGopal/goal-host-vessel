@@ -1,0 +1,35 @@
+{
+  "id": "edit-early-busy",
+  "description": "Early edit-intent: compose answers BUSY -> retryable capacity refusal, no walk.",
+  "covers": [
+    "§1.3 13764-13815 capacity refusal"
+  ],
+  "routes": [
+    {
+      "id": "dev:feature_compose",
+      "method": "POST",
+      "type": "feature_compose",
+      "sequence": [
+        {
+          "json": {
+            "success": true,
+            "shape": "composeReport",
+            "body": {
+              "verdict": "BUSY",
+              "error": "compose capacity cap reached (2 in flight)"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

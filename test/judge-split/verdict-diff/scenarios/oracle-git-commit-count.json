@@ -1,0 +1,94 @@
+{
+  "id": "oracle-git-commit-count",
+  "description": "A commit-count goal over a vessel clone: the git rev-list oracle (stubbed spawn) recomputes the count.",
+  "covers": [
+    "§1.1 2091-2268 verifyGitCommitCountReach"
+  ],
+  "routes": [
+    {
+      "id": "schema:shellResult",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"shellResult\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "shellResult",
+            "known": true,
+            "fields": [
+              {
+                "name": "command",
+                "required": true,
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"command\": \"git -C repos/goal-host-vessel rev-list --count HEAD\"}"
+      }
+    },
+    {
+      "id": "tools:shellResult",
+      "method": "POST",
+      "type": "shellResult",
+      "respond": {
+        "json": {
+          "stdout": "42\n",
+          "stderr": "",
+          "exitCode": 0
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"42 commits\", \"completion_shapes\": [\"shellResult\"]}"
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "42"
+          }
+        }
+      }
+    }
+  ],
+  "spawn": [
+    {
+      "id": "git:rev-list",
+      "argsInclude": [
+        "rev-list",
+        "--count"
+      ],
+      "stdout": "42\n"
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "How many commits are on HEAD in repos/goal-host-vessel?"
+      }
+    }
+  ]
+}

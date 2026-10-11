@@ -1,0 +1,129 @@
+{
+  "id": "satisfier-reuse-recommended-path",
+  "description": "The goal-path store recommends a reached pathway (llm_completion_dispatch) above the exploit threshold -> reuse-before-derive.",
+  "covers": [
+    "§1.3 13902-13965 reuse lookup",
+    "pathway reuse"
+  ],
+  "routes": [
+    {
+      "id": "aapi:goal-path-recommend",
+      "method": "POST",
+      "url": "/v2/goal-paths/recommend",
+      "respond": {
+        "json": {
+          "recommendation": {
+            "path_signature": "sig-1",
+            "path_activities": [
+              "satisfier:llm_completion_dispatch"
+            ],
+            "endpoint_output_shapes": [
+              "llm_completion_dispatch"
+            ],
+            "reach_rate": 0.95,
+            "n": 20,
+            "posterior_mean": 0.93
+          },
+          "paths": []
+        }
+      }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"prompt\": \"Explain why the sky looks blue during the day\"}"
+      }
+    },
+    {
+      "id": "schema:llm_completion_dispatch",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"llm_completion_dispatch\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "llm_completion_dispatch",
+            "known": true,
+            "fields": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "string",
+                "synthesize_from": [
+                  "goal",
+                  "upstream"
+                ]
+              },
+              {
+                "name": "system_prompt",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "name": "max_tokens",
+                "required": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"explains Rayleigh scattering\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "producer:llm_completion_dispatch",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "body": [
+        "\"prompt\""
+      ],
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering of short wavelengths makes the sky blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day"
+      }
+    }
+  ]
+}

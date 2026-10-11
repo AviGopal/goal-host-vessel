@@ -1,0 +1,21 @@
+{
+  "id": "no-pick-empty-target",
+  "description": "A goal with no inferable target and an empty registry -> no pick, ROUTE-AROUND no_target, FEEDBACK-RETRY, floor, recovery loop.",
+  "covers": [
+    "no-pick / ROUTE-AROUND no_target",
+    "FEEDBACK-RETRY trigger (14019-14045)"
+  ],
+  "fleet": {
+    "replace": true,
+    "vessels": []
+  },
+  "routes": [],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Summarize the main points of the long design discussion in one report."
+      }
+    }
+  ]
+}

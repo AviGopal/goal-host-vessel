@@ -1,0 +1,26 @@
+{
+  "id": "boot-interrupted-edit-no-report",
+  "description": "Boot finds a running edit-intent record with no compose report -> interrupted, terminalized failed at the requeue drain (never re-run).",
+  "covers": [
+    "§1.4 18574-18599 drainInterruptedRequeue terminalizes"
+  ],
+  "files": {
+    "/workspace/goal-host-dispatches.json": "[{\"dispatchId\": \"boot-edit-landed\", \"startedAt\": 1791633000000, \"status\": \"running\", \"goal\": \"Edit repos/goal-host-vessel/src/quiesce.ts to add a constant VERDICT_DIFF_MARKER that names the harness\", \"reached\": null}]"
+  },
+  "routes": [],
+  "steps": [
+    {
+      "op": "settle",
+      "label": "past-requeue-timer",
+      "settleMs": 20000
+    },
+    {
+      "op": "resolve",
+      "label": "edit-record",
+      "body": {
+        "type": "goalWalkState",
+        "dispatchId": "boot-edit-landed"
+      }
+    }
+  ]
+}

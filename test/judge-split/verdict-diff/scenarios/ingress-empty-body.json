@@ -1,0 +1,14 @@
+{
+  "id": "ingress-empty-body",
+  "description": "No goal and no template -> the handler's own validation.",
+  "covers": [
+    "§1.4 handleRunGoal validation"
+  ],
+  "routes": [],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {}
+    }
+  ]
+}

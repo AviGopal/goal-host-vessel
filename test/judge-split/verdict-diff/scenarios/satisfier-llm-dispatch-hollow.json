@@ -1,0 +1,108 @@
+{
+  "id": "satisfier-llm-dispatch-hollow",
+  "description": "Same route; the judge says NOT reached -> HOLLOW; β decision for the last pick (culpability), failure memory, reach false delivered.",
+  "covers": [
+    "satisfier hollow",
+    "§1.2 11811-11885 culpability / β",
+    "§1.2 11908-11949 hollow log"
+  ],
+  "routes": [
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"prompt\": \"Explain why the sky looks blue during the day\"}"
+      }
+    },
+    {
+      "id": "schema:llm_completion_dispatch",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"llm_completion_dispatch\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "llm_completion_dispatch",
+            "known": true,
+            "fields": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "string",
+                "synthesize_from": [
+                  "goal",
+                  "upstream"
+                ]
+              },
+              {
+                "name": "system_prompt",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "name": "max_tokens",
+                "required": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": false, \"reason\": \"the output does not explain the mechanism; it restates the question\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "producer:llm_completion_dispatch",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "body": [
+        "\"prompt\""
+      ],
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "The sky is blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "I cannot help with that."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day"
+      }
+    }
+  ]
+}

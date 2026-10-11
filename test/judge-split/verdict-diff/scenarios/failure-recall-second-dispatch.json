@@ -1,0 +1,115 @@
+{
+  "id": "failure-recall-second-dispatch",
+  "description": "The same goal twice in one process: the first is HOLLOW (failure memory written in-process), the second recalls it (prior verdict fed into attempt 1).",
+  "covers": [
+    "§1.3 12873-12911 failure recall",
+    "rememberGoalFailure / recallGoalFailures (W)"
+  ],
+  "routes": [
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"prompt\": \"Explain why the sky looks blue during the day\"}"
+      }
+    },
+    {
+      "id": "schema:llm_completion_dispatch",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"llm_completion_dispatch\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "llm_completion_dispatch",
+            "known": true,
+            "fields": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "string",
+                "synthesize_from": [
+                  "goal",
+                  "upstream"
+                ]
+              },
+              {
+                "name": "system_prompt",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "name": "max_tokens",
+                "required": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": false, \"reason\": \"restates the question without the mechanism\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "producer:llm_completion_dispatch",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "body": [
+        "\"prompt\""
+      ],
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "The sky is blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "It is blue."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day"
+      },
+      "label": "first"
+    },
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day"
+      },
+      "label": "second"
+    }
+  ]
+}

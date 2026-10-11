@@ -1,0 +1,38 @@
+{
+  "id": "floor-no-dispatch-producer",
+  "description": "No llm_completion_dispatch producer in the fleet: the floor exits no_dispatch_url; honest no-producer failure.",
+  "covers": [
+    "floor exit=no_dispatch_url",
+    "no-pick"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "llm-resolver-vessel",
+        "endpoint": "http://llm.test.invalid",
+        "resolve_endpoint": "/resolve",
+        "shapes": [
+          "llm_completion"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?"
+      }
+    }
+  ]
+}

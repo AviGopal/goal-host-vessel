@@ -1,0 +1,160 @@
+{
+  "id": "template-reroute-on-miss",
+  "description": "A supplied template with reroute_on_miss: the first attempt is hollow, the recovery loop may re-select (recommend returns nothing) -> no producer, investigate.",
+  "covers": [
+    "§1.3 15068-15147 recovery target selection",
+    "reroute_on_miss"
+  ],
+  "routes": [
+    {
+      "id": "aapi:template",
+      "method": "GET",
+      "url": "/v2/activities/templates/tmpl-explain",
+      "respond": {
+        "json": {
+          "id": "tmpl-explain",
+          "name": "explain via llm dispatch",
+          "inputShapes": [
+            "goal"
+          ],
+          "outputShapes": [
+            "llm_completion_dispatch"
+          ],
+          "tasks": [
+            {
+              "id": "t1",
+              "description": "explain the goal",
+              "resolver": "llm_completion_dispatch",
+              "inputShapes": [
+                "goal"
+              ],
+              "outputShapes": [
+                "llm_completion_dispatch"
+              ]
+            }
+          ],
+          "metrics": {
+            "thompson_alpha": 5,
+            "thompson_beta": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"prompt\": \"Explain why the sky looks blue during the day\"}"
+      }
+    },
+    {
+      "id": "schema:llm_completion_dispatch",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"llm_completion_dispatch\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "llm_completion_dispatch",
+            "known": true,
+            "fields": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "string",
+                "synthesize_from": [
+                  "goal",
+                  "upstream"
+                ]
+              },
+              {
+                "name": "system_prompt",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "name": "max_tokens",
+                "required": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "producer:llm_completion_dispatch",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "body": [
+        "\"prompt\""
+      ],
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering of short wavelengths makes the sky blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering."
+          }
+        }
+      }
+    },
+    {
+      "id": "producer:template-task",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering of short wavelengths makes the sky blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": false, \"reason\": \"restates the question\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day",
+        "targetTemplateId": "tmpl-explain",
+        "reroute_on_miss": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "boot-reconcile-staged",
+  "description": "Boot finds a running edit-intent record whose FAVORABLE report has no new_git_sha -> staged-not-landed, reached:false; interrupted edit records are terminalized, never requeued.",
+  "covers": [
+    "§1.4 18610-18657 boot reconciliation: staged-not-landed",
+    "no-resume guard"
+  ],
+  "files": {
+    "/workspace/goal-host-dispatches.json": "[{\"dispatchId\": \"boot-edit-landed\", \"startedAt\": 1791633000000, \"status\": \"running\", \"goal\": \"Edit repos/goal-host-vessel/src/quiesce.ts to add a constant VERDICT_DIFF_MARKER that names the harness\", \"reached\": null}]",
+    "/workspace/proposals/route-edit-40ab3a24-compose-report.json": "{\"verdict\": \"FAVORABLE\", \"cutovers\": [{\"result\": {}}]}"
+  },
+  "routes": [],
+  "steps": [
+    {
+      "op": "settle",
+      "label": "past-requeue-timer",
+      "settleMs": 20000
+    },
+    {
+      "op": "resolve",
+      "label": "edit-record",
+      "body": {
+        "type": "goalWalkState",
+        "dispatchId": "boot-edit-landed"
+      }
+    }
+  ]
+}

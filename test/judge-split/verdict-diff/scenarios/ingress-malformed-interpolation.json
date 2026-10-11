@@ -1,0 +1,16 @@
+{
+  "id": "ingress-malformed-interpolation",
+  "description": "A goal with a collapsed {{interpolation}} -> 400 at the door.",
+  "covers": [
+    "§1.4 17020-17039 malformed-interpolation refusal"
+  ],
+  "routes": [],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "scaffold + publish vessel {{extract_vessel_name_text}} supplying capability shape from a routed gap"
+      }
+    }
+  ]
+}

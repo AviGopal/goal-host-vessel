@@ -1,0 +1,18 @@
+{
+  "id": "no-pick-missing-producer",
+  "description": "Target inferred but no producer serves it -> ROUTE-AROUND stall, no-producer capability gap, escalation self-dispatch.",
+  "covers": [
+    "no-pick missing producer",
+    "escalateNoProducerToInvestigation",
+    "fileCapabilityGap"
+  ],
+  "routes": [],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Summarize the main points of the long design discussion in one report."
+      }
+    }
+  ]
+}

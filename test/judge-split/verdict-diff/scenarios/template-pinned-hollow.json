@@ -1,0 +1,159 @@
+{
+  "id": "template-pinned-hollow",
+  "description": "The pinned template's output is judged NOT reached -> hollow at the recovery gate, β for the template, pinned so no re-selection.",
+  "covers": [
+    "§1.3 15176-15259 recovery reach gate (hollow)",
+    "§1.3 15269-15285 retry cap"
+  ],
+  "routes": [
+    {
+      "id": "aapi:template",
+      "method": "GET",
+      "url": "/v2/activities/templates/tmpl-explain",
+      "respond": {
+        "json": {
+          "id": "tmpl-explain",
+          "name": "explain via llm dispatch",
+          "inputShapes": [
+            "goal"
+          ],
+          "outputShapes": [
+            "llm_completion_dispatch"
+          ],
+          "tasks": [
+            {
+              "id": "t1",
+              "description": "explain the goal",
+              "resolver": "llm_completion_dispatch",
+              "inputShapes": [
+                "goal"
+              ],
+              "outputShapes": [
+                "llm_completion_dispatch"
+              ]
+            }
+          ],
+          "metrics": {
+            "thompson_alpha": 5,
+            "thompson_beta": 2
+          }
+        }
+      }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"prompt\": \"Explain why the sky looks blue during the day\"}"
+      }
+    },
+    {
+      "id": "schema:llm_completion_dispatch",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"llm_completion_dispatch\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "llm_completion_dispatch",
+            "known": true,
+            "fields": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "string",
+                "synthesize_from": [
+                  "goal",
+                  "upstream"
+                ]
+              },
+              {
+                "name": "system_prompt",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "name": "max_tokens",
+                "required": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "producer:llm_completion_dispatch",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "body": [
+        "\"prompt\""
+      ],
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering of short wavelengths makes the sky blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering."
+          }
+        }
+      }
+    },
+    {
+      "id": "producer:template-task",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering of short wavelengths makes the sky blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": false, \"reason\": \"restates the question\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day",
+        "targetTemplateId": "tmpl-explain"
+      }
+    }
+  ]
+}

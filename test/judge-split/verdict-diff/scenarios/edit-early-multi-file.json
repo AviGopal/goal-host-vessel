@@ -1,0 +1,57 @@
+{
+  "id": "edit-early-multi-file",
+  "description": "Early edit-intent naming two files: one compose spec lists both; FAVORABLE landed.",
+  "covers": [
+    "§1.3 13545-13616 multi-file spec"
+  ],
+  "files": {
+    "/workspace/git/vessels/goal-host-vessel/src/quiesce.ts": "export const VERDICT_DIFF_MARKER = 1;\n"
+  },
+  "routes": [
+    {
+      "id": "dev:feature_compose",
+      "method": "POST",
+      "type": "feature_compose",
+      "sequence": [
+        {
+          "json": {
+            "success": true,
+            "shape": "composeReport",
+            "body": {
+              "verdict": "FAVORABLE",
+              "summary": "added the constant",
+              "execution_id": "feature-compose-exec-1",
+              "cutovers": [
+                {
+                  "result": {
+                    "push_status": "pushed",
+                    "new_git_sha": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "spawn": [
+    {
+      "id": "git:show-diff",
+      "argsInclude": [
+        "show",
+        "--unified=0"
+      ],
+      "stdout": "@@ -1,0 +2 @@\n+export const VERDICT_DIFF_MARKER = 1;\n"
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts and register it in repos/goal-host-vessel/src/config.ts",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

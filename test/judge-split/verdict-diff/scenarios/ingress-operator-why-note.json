@@ -1,0 +1,129 @@
+{
+  "id": "ingress-operator-why-note",
+  "description": "An operator dispatch that reaches: the WHY note is written to the vault (obsidian:write_note) after the verdict.",
+  "covers": [
+    "§1.4 17625-17760 verdict transport + operator WHY note"
+  ],
+  "fleet": {
+    "vessels": [
+      {
+        "id": "obsidian-vessel",
+        "endpoint": "http://obsidian.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "obsidian:write_note"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"prompt\": \"Explain why the sky looks blue during the day\"}"
+      }
+    },
+    {
+      "id": "schema:llm_completion_dispatch",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"llm_completion_dispatch\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "llm_completion_dispatch",
+            "known": true,
+            "fields": [
+              {
+                "name": "prompt",
+                "required": true,
+                "type": "string",
+                "synthesize_from": [
+                  "goal",
+                  "upstream"
+                ]
+              },
+              {
+                "name": "system_prompt",
+                "required": false,
+                "type": "string"
+              },
+              {
+                "name": "max_tokens",
+                "required": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"explains Rayleigh scattering\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "producer:llm_completion_dispatch",
+      "method": "POST",
+      "type": "llm_completion_dispatch",
+      "body": [
+        "\"prompt\""
+      ],
+      "bodyNot": [
+        "goal-host:floor_tool_loop"
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering of short wavelengths makes the sky blue."
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Rayleigh scattering."
+          }
+        }
+      }
+    },
+    {
+      "id": "obsidian:write",
+      "method": "POST",
+      "type": "obsidian:write_note",
+      "respond": {
+        "json": {
+          "success": true
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Explain why the sky looks blue during the day",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

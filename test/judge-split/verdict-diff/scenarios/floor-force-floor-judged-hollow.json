@@ -1,0 +1,51 @@
+{
+  "id": "floor-force-floor-judged-hollow",
+  "description": "ablation.forceFloor; the floor answers, the judge says not reached -> floor not reached, failed floor trace persisted.",
+  "covers": [
+    "floor verdict not reached",
+    "ablation forceFloor tags"
+  ],
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": false, \"reason\": \"no live listing was retrieved; the figure is from memory\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Probably around $400."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

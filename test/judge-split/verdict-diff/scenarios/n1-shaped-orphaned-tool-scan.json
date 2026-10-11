@@ -1,0 +1,65 @@
+{
+  "id": "n1-shaped-orphaned-tool-scan",
+  "description": "N1-shaped (dispatch 798399a0): a diagnosis goal over the tool offer; inference picks code_modification_proposal + orphaned_capability_scan; the scan runs and finds nothing new; hollow.",
+  "covers": [
+    "N1 decision-log shape",
+    "satisfier on a dev-vessel shape",
+    "hollow with β withheld"
+  ],
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [\"code_modification_proposal\", \"orphaned_capability_scan\"], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": false, \"reason\": \"the scan output lists no orphaned tool; nothing was diagnosed\", \"completion_shapes\": [\"orphaned_capability_scan\"]}"
+      }
+    },
+    {
+      "id": "dev:orphaned_capability_scan",
+      "method": "POST",
+      "type": "orphaned_capability_scan",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "orphaned_capability_scan",
+          "body": {
+            "orphans": [],
+            "new_shapes": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "No orphaned tools were found."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Find where the substrate offers an LLM tool whose name has no producer, and add a scan that reports every offered tool without a producer as a substrate gap",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

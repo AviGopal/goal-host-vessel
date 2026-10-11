@@ -1,0 +1,51 @@
+{
+  "id": "floor-fabricated-transcript",
+  "description": "The floor answer narrates a tool call and a tool response but zero tools ran; the judge says reached; the floor refuses the reach (FABRICATED TOOL TRANSCRIPT).",
+  "covers": [
+    "§1.1 5580-5621 floor verdict: fabricated-transcript refusal",
+    "ablation.forceFloor"
+  ],
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"states a price\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "I made a tool call search_ebay(\"ThinkPad X1 Carbon Gen 9\") and the tool response listed $412. The asking price is about $412."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

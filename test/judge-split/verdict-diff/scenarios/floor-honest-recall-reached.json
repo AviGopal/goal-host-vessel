@@ -1,0 +1,50 @@
+{
+  "id": "floor-honest-recall-reached",
+  "description": "The floor answers from memory without claiming a tool; the judge reaches -> floor reached (ungrounded), not a fabrication.",
+  "covers": [
+    "§1.1 floorReached without a transcript claim"
+  ],
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [], \"confidence\": 0.9, \"alternatives\": []}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"gives a plausible price range, caveated\", \"completion_shapes\": [\"llm_completion_dispatch\"]}"
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Without live data: used Gen 9 units typically list between $350 and $500."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "id": "oracle-ephemeris-abstain",
+  "description": "An Earth-centred live-distance goal: the ephemeris oracle owns the class; Horizons is unreachable -> the oracle abstains and the floor answer is graded.",
+  "covers": [
+    "§1.1 1586-1986 ephemeris oracle (abstain)"
+  ],
+  "routes": [
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"states a distance in AU\", \"completion_shapes\": [\"shellResult\"]}"
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "Io is about 4.2 AU from Earth right now."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "What is the distance from Earth to Io right now in AU?",
+        "ablation": {
+          "forceFloor": true
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+{
+  "fleet": {
+    "vessels": [
+      {
+        "id": "development-vessel",
+        "endpoint": "http://dev-vessel.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "feature_compose",
+          "patch_with_tools",
+          "substrateGap",
+          "substrateGap_write",
+          "memoryNote",
+          "memoryNote_write",
+          "resolver_schema",
+          "code_modification_proposal",
+          "orphaned_capability_scan",
+          "interventionRefused_write"
+        ]
+      },
+      {
+        "id": "local-tools-vessel",
+        "endpoint": "http://local-tools.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "shellResult",
+          "fs_read",
+          "fs_list",
+          "codeReadResult"
+        ]
+      },
+      {
+        "id": "llm-resolver-vessel",
+        "endpoint": "http://llm.test.invalid",
+        "resolve_endpoint": "/resolve",
+        "shapes": [
+          "llm_completion",
+          "llm_completion_dispatch"
+        ]
+      },
+      {
+        "id": "concept-db",
+        "endpoint": "http://concept-db.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "concept",
+          "concept_create_write",
+          "concept_search"
+        ]
+      },
+      {
+        "id": "activity-api",
+        "endpoint": "http://activity-api.test.invalid",
+        "resolve_endpoint": "/v2/impulses/resolve",
+        "shapes": [
+          "goal_verification_label",
+          "goal_verification_label_write",
+          "execution_trace",
+          "activity_template"
+        ]
+      }
+    ]
+  },
+  "routes": [
+    {
+      "id": "default:bus-publish",
+      "url": "/v2/events/publish",
+      "respond": {
+        "status": 200,
+        "json": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "default:reach",
+      "method": "POST",
+      "url": "/v2/activities/execution-traces/reach",
+      "respond": {
+        "status": 200,
+        "json": {
+          "ok": true,
+          "updated": 1
+        }
+      }
+    },
+    {
+      "id": "default:trace-write",
+      "method": "POST",
+      "url": "/v2/activities/execution-traces",
+      "respond": {
+        "status": 201,
+        "json": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "default:feedback",
+      "method": "POST",
+      "url": "/v2/activities/feedback",
+      "respond": {
+        "status": 200,
+        "json": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "default:goal-path-record",
+      "method": "POST",
+      "urlRegex": "/v2/goal-paths$",
+      "respond": {
+        "status": 201,
+        "json": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "id": "default:goal-path-recommend",
+      "method": "POST",
+      "url": "/v2/goal-paths/recommend",
+      "respond": {
+        "status": 200,
+        "json": {
+          "recommendation": null,
+          "paths": []
+        }
+      }
+    },
+    {
+      "id": "default:recommend",
+      "method": "POST",
+      "url": "/v2/activities/recommend",
+      "respond": {
+        "status": 200,
+        "json": {
+          "recommendations": []
+        }
+      }
+    },
+    {
+      "id": "default:discover-by-shapes",
+      "method": "POST",
+      "url": "/v2/activities/discover-by-shapes",
+      "respond": {
+        "status": 200,
+        "json": {
+          "activities": []
+        }
+      }
+    },
+    {
+      "id": "default:label-write",
+      "method": "POST",
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true
+        }
+      },
+      "type": "goal_verification_label_write"
+    },
+    {
+      "id": "default:label-read",
+      "method": "POST",
+      "respond": {
+        "status": 200,
+        "json": {
+          "content": "[]"
+        }
+      },
+      "type": "goal_verification_label"
+    },
+    {
+      "id": "default:gap-write",
+      "method": "POST",
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true,
+          "shape": "substrateGap",
+          "body": {
+            "ok": true
+          }
+        }
+      },
+      "type": "substrateGap_write"
+    },
+    {
+      "id": "default:memory-write",
+      "method": "POST",
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true,
+          "shape": "memoryNote",
+          "body": {
+            "ok": true
+          }
+        }
+      },
+      "type": "memoryNote_write"
+    },
+    {
+      "id": "default:concept-recall",
+      "method": "POST",
+      "type": "concept",
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true,
+          "shape": "concept",
+          "body": {
+            "concepts": []
+          }
+        }
+      }
+    },
+    {
+      "id": "default:concept-write",
+      "method": "POST",
+      "type": "concept_create_write",
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true,
+          "shape": "concept",
+          "body": {
+            "id": "concept-verdict-diff-1"
+          }
+        }
+      }
+    }
+  ],
+  "spawn": []
+}

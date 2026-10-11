@@ -1,0 +1,72 @@
+{
+  "id": "n3-shaped-write-the-symptom",
+  "description": "N3-shaped (dispatch 40e87c1a): inference targets the symptom's write shapes; goal_verification_label_write is refused for missing traceData, interventionRefused_write 500s; the floor fabricates a tool transcript and is refused.",
+  "covers": [
+    "N3 decision-log shape",
+    "write satisfier refusals",
+    "floor fabricated transcript"
+  ],
+  "routes": [
+    {
+      "id": "llm:target-inference",
+      "method": "POST",
+      "caller": "goal-host:goal_target_inference",
+      "respond": {
+        "llm": "{\"target_shapes\": [\"goal_verification_label_write\", \"impulseRelevancePenalty_write\"], \"confidence\": 0.9, \"alternatives\": [[\"interventionRefused_write\"]]}"
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"the answer names a stop\", \"completion_shapes\": [\"goal_verification_label_write\"]}"
+      }
+    },
+    {
+      "id": "aapi:label-write-refused",
+      "method": "POST",
+      "type": "goal_verification_label_write",
+      "respond": {
+        "status": 400,
+        "json": {
+          "error": "traceData required for activityExecution"
+        }
+      }
+    },
+    {
+      "id": "dev:intervention-500",
+      "method": "POST",
+      "type": "interventionRefused_write",
+      "respond": {
+        "status": 500,
+        "json": {
+          "error": "undefined is not an object (evaluating 'incoming.refused_at')"
+        }
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "I issued a tool call to read the label store; the tool response showed the human verdict is never applied."
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Find where a human reach verdict stops: a human label that contradicts the system verdict changes nothing downstream; diagnose the stop and file it",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

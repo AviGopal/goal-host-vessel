@@ -1,0 +1,48 @@
+{
+  "id": "edit-postwalk-admission-refused",
+  "description": "Early compose UNFAVORABLE; the post-walk compose is refused at admission -> final, no escalation.",
+  "covers": [
+    "§1.3 14550-14701 post-walk admission refusal"
+  ],
+  "routes": [
+    {
+      "id": "dev:feature_compose",
+      "method": "POST",
+      "type": "feature_compose",
+      "sequence": [
+        {
+          "json": {
+            "success": true,
+            "shape": "composeReport",
+            "body": {
+              "verdict": "UNFAVORABLE",
+              "execution_id": "feature-compose-exec-1",
+              "stage": "verify",
+              "error": "typecheck failed: TS2304 cannot find name"
+            }
+          }
+        },
+        {
+          "json": {
+            "success": true,
+            "shape": "composeReport",
+            "body": {
+              "verdict": "REFUSED",
+              "stage": "operator_hold",
+              "error": "held"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

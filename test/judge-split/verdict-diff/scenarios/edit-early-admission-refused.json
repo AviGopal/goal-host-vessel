@@ -1,0 +1,37 @@
+{
+  "id": "edit-early-admission-refused",
+  "description": "Early edit-intent: compose REFUSED at admission (stage=ineligible) -> final, neither walked nor escalated.",
+  "covers": [
+    "§1.3 13764-13815 admission refusal",
+    "compose-admission-refusal.ts"
+  ],
+  "routes": [
+    {
+      "id": "dev:feature_compose",
+      "method": "POST",
+      "type": "feature_compose",
+      "sequence": [
+        {
+          "json": {
+            "success": true,
+            "shape": "composeReport",
+            "body": {
+              "verdict": "REFUSED",
+              "stage": "ineligible",
+              "error": "gap route-edit is ineligible (unarmed)"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

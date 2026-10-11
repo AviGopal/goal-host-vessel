@@ -1,0 +1,36 @@
+{
+  "id": "boot-reconcile-favorable-landed",
+  "description": "Boot finds a running edit-intent record and a FAVORABLE compose report with a new_git_sha -> reconciled reached (label written); a plain running record is requeued at +15 s through POST /run-goal.",
+  "covers": [
+    "§1.4 18610-18657 boot reconciliation verdict",
+    "§1.4 18574-18599 drainInterruptedRequeue"
+  ],
+  "files": {
+    "/workspace/goal-host-dispatches.json": "[{\"dispatchId\": \"boot-edit-landed\", \"startedAt\": 1791633000000, \"status\": \"running\", \"goal\": \"Edit repos/goal-host-vessel/src/quiesce.ts to add a constant VERDICT_DIFF_MARKER that names the harness\", \"reached\": null}, {\"dispatchId\": \"boot-plain-running\", \"startedAt\": 1791633590000, \"status\": \"running\", \"goal\": \"Explain why the sky looks blue during the day\", \"reached\": null}, {\"dispatchId\": \"boot-finished\", \"startedAt\": 1791633000000, \"status\": \"completed\", \"goal\": \"Explain why the sky looks blue during the day\", \"reached\": true, \"executionId\": \"walk-satisfier-old\"}]",
+    "/workspace/proposals/route-edit-40ab3a24-compose-report.json": "{\"verdict\": \"FAVORABLE\", \"cutovers\": [{\"result\": {\"new_git_sha\": \"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\"}}]}"
+  },
+  "routes": [],
+  "steps": [
+    {
+      "op": "settle",
+      "label": "past-requeue-timer",
+      "settleMs": 20000
+    },
+    {
+      "op": "resolve",
+      "label": "edit-record",
+      "body": {
+        "type": "goalWalkState",
+        "dispatchId": "boot-edit-landed"
+      }
+    },
+    {
+      "op": "resolve",
+      "label": "finished-record",
+      "body": {
+        "type": "goalWalkState",
+        "dispatchId": "boot-finished"
+      }
+    }
+  ]
+}

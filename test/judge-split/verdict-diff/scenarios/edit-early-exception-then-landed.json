@@ -1,0 +1,60 @@
+{
+  "id": "edit-early-exception-then-landed",
+  "description": "Early edit-intent: the compose call throws; a later probe finds the landing -> reached via LANDED-PROBE.",
+  "covers": [
+    "§1.3 13837-13861 landed-probe after a cut"
+  ],
+  "files": {
+    "/workspace/git/vessels/goal-host-vessel/src/quiesce.ts": "export const VERDICT_DIFF_MARKER = \"verdict-diff\";\n"
+  },
+  "routes": [
+    {
+      "id": "dev:feature_compose",
+      "method": "POST",
+      "type": "feature_compose",
+      "sequence": [
+        {
+          "throw": "The operation timed out."
+        }
+      ]
+    }
+  ],
+  "spawn": [
+    {
+      "id": "git:probe-miss",
+      "argsInclude": [
+        "log",
+        "origin/dev",
+        "--grep="
+      ],
+      "times": 3,
+      "stdout": ""
+    },
+    {
+      "id": "git:landed-commit",
+      "argsInclude": [
+        "log",
+        "origin/dev",
+        "--grep="
+      ],
+      "stdout": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\u001f{{now_s}}\u001ffeat(quiesce): add the constant\n\nGap: {{grep}}\n\u001e"
+    },
+    {
+      "id": "git:show-diff",
+      "argsInclude": [
+        "show",
+        "--unified=0"
+      ],
+      "stdout": "@@ -1,0 +2 @@\n+export const VERDICT_DIFF_MARKER = \"verdict-diff\";\n"
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness",
+        "operator": "operator:verdict-diff"
+      }
+    }
+  ]
+}

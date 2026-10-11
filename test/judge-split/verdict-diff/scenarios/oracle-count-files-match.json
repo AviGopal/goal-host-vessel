@@ -1,0 +1,91 @@
+{
+  "id": "oracle-count-files-match",
+  "description": "A file-count goal: the shellResult satisfier answers 60; the count-files oracle recomputes 60 from the (redirected) tree -> deterministic reach; credit and mint gates run.",
+  "covers": [
+    "§1.1 2269-2513 verifyCountFilesReach",
+    "§1.2 11950-12059 α gate",
+    "§1.2 12319-12401 mint gate"
+  ],
+  "files": {
+    "/workspace/git/vessels/goal-host-vessel/src/a.ts": "export {};\n",
+    "/workspace/git/vessels/goal-host-vessel/src/b.ts": "export {};\n",
+    "/workspace/git/vessels/goal-host-vessel/src/c.ts": "export {};\n"
+  },
+  "routes": [
+    {
+      "id": "schema:shellResult",
+      "method": "POST",
+      "type": "resolver_schema",
+      "body": [
+        "\"shape\":\"shellResult\""
+      ],
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "resolver_schema",
+          "body": {
+            "shape": "shellResult",
+            "known": true,
+            "fields": [
+              {
+                "name": "command",
+                "required": true,
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "llm:arg-extraction",
+      "method": "POST",
+      "caller": "goal-host:pointer_arg_extraction",
+      "respond": {
+        "llm": "{\"command\": \"find repos/goal-host-vessel/src -name '*.ts' | wc -l\"}"
+      }
+    },
+    {
+      "id": "tools:shellResult",
+      "method": "POST",
+      "type": "shellResult",
+      "respond": {
+        "json": {
+          "stdout": "3\n",
+          "stderr": "",
+          "exitCode": 0
+        }
+      }
+    },
+    {
+      "id": "judge",
+      "method": "POST",
+      "caller": "goal-host:reach_verification",
+      "respond": {
+        "llm": "{\"reached\": true, \"reason\": \"3 files\", \"completion_shapes\": [\"shellResult\"]}"
+      }
+    },
+    {
+      "id": "floor:answer",
+      "method": "POST",
+      "caller": "goal-host:floor_tool_loop",
+      "respond": {
+        "json": {
+          "success": true,
+          "shape": "llmTextCompletion",
+          "body": {
+            "text": "3"
+          }
+        }
+      }
+    }
+  ],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "goal": "How many TypeScript files are in repos/goal-host-vessel/src?"
+      }
+    }
+  ]
+}

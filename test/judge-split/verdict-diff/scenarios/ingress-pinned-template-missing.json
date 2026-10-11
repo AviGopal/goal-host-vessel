@@ -1,0 +1,19 @@
+{
+  "id": "ingress-pinned-template-missing",
+  "description": "A caller-pinned targetTemplateId that the store does not know -> pinned refusal path (the catch branch decides whether β is delivered).",
+  "covers": [
+    "§1.4 17747-17782 catch path: pinned refusal vs failed"
+  ],
+  "routes": [],
+  "steps": [
+    {
+      "op": "runGoal",
+      "body": {
+        "targetTemplateId": "verdict-diff-missing-template",
+        "variables": {
+          "x": 1
+        }
+      }
+    }
+  ]
+}
