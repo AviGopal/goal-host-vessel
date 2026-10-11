@@ -1,0 +1,382 @@
+[
+  {
+    "name": "<dynamic>@src/config.ts:process.env[key]#1",
+    "class": "bootstrap",
+    "reason": "parseEnvInt helper plumbing; every name it serves is resolved at its call site and classified individually (read in src/config.ts)"
+  },
+  {
+    "name": "<dynamic>@src/config.ts:process.env[key]#2",
+    "class": "bootstrap",
+    "reason": "parseEnvBool helper plumbing; every name it serves is resolved at its call site and classified individually (read in src/config.ts)"
+  },
+  {
+    "name": "ACTIVITY_API_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: activity-api (read in src/index.ts)"
+  },
+  {
+    "name": "ANTHROPIC_API_KEY",
+    "class": "bootstrap",
+    "reason": "credential/secret: LLM provider key (read in src/config.ts, src/index.ts)"
+  },
+  {
+    "name": "BUS_MAX_INFLIGHT",
+    "class": "behaviour",
+    "reason": "bus inflight cap (read in src/config.ts)"
+  },
+  {
+    "name": "BUS_MAX_INFLIGHT_BYTES",
+    "class": "behaviour",
+    "reason": "bus inflight byte cap (read in src/config.ts)"
+  },
+  {
+    "name": "BUS_QUEUE_MAX",
+    "class": "behaviour",
+    "reason": "bus queue cap (read in src/config.ts)"
+  },
+  {
+    "name": "DEVELOPMENT_VESSEL_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: development-vessel (read in src/index.ts)"
+  },
+  {
+    "name": "DISCOVERY_VESSEL_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: discovery (read in src/config.ts, src/index.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "EDIT_INTENT_COMPOSE_TIMEOUT_MS",
+    "class": "behaviour",
+    "reason": "edit-intent compose timeout (read in src/index.ts)"
+  },
+  {
+    "name": "EVENT_BUS_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: event bus (read in src/index.ts)"
+  },
+  {
+    "name": "EXPECTATION_HEARTBEAT_STALE_MS",
+    "class": "behaviour",
+    "reason": "expectation heartbeat staleness threshold (read in src/index.ts)"
+  },
+  {
+    "name": "EXPECTATION_WATCHDOG_INTERVAL_MS",
+    "class": "behaviour",
+    "reason": "expectation watchdog cadence (read in src/index.ts)"
+  },
+  {
+    "name": "FED_SUBSTRATE_ID",
+    "class": "bootstrap",
+    "reason": "identity/node name: this substrate's federation id (read in src/index.ts)"
+  },
+  {
+    "name": "FED_TRANSPORT_EGRESS",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: federation transport egress (read in src/config.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "GOAL_FAILURE_MEMORY_PATH",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: goal failure memory file (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_DISABLE_SUBSCRIBERS",
+    "class": "behaviour",
+    "reason": "toggle: disable bus subscribers (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_DRAIN_FRESH_MS",
+    "class": "behaviour",
+    "reason": "drain freshness window (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_DRAIN_MS",
+    "class": "behaviour",
+    "reason": "drain deadline (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_FETCH_PROBE",
+    "class": "behaviour",
+    "reason": "toggle: fetch probe (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_GC_INTERVAL_MS",
+    "class": "behaviour",
+    "reason": "GC cadence (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_HORIZONTAL_K",
+    "class": "behaviour",
+    "reason": "walk selection tuning (horizontal K) (read in src/selection-tuning.ts)"
+  },
+  {
+    "name": "GOAL_HOST_NOOP_SINK",
+    "class": "behaviour",
+    "reason": "toggle: no-op trace sink (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_PROXY_TIMEOUT_MS",
+    "class": "behaviour",
+    "reason": "proxy timeout (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_QUIESCE_MARKER",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: quiesce marker file (read in src/quiesce.ts)"
+  },
+  {
+    "name": "GOAL_HOST_VESSEL_API_KEY",
+    "class": "bootstrap",
+    "reason": "credential/secret: goal-host API key (read in src/config.ts, src/index.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "GOAL_HOST_VESSEL_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: goal-host (read in src/config.ts)"
+  },
+  {
+    "name": "GOAL_HOST_VESSEL_HOST",
+    "class": "bootstrap",
+    "reason": "own endpoint/bind address: bind host (read in src/config.ts)"
+  },
+  {
+    "name": "GOAL_HOST_VESSEL_ID",
+    "class": "bootstrap",
+    "reason": "identity/node name: vessel id (read in src/index.ts)"
+  },
+  {
+    "name": "GOAL_HOST_VESSEL_PORT",
+    "class": "bootstrap",
+    "reason": "own endpoint/bind address: listen port (read in src/config.ts)"
+  },
+  {
+    "name": "GOAL_HOST_WALK_MAX_STEPS",
+    "class": "behaviour",
+    "reason": "walk step budget (read in src/selection-tuning.ts)"
+  },
+  {
+    "name": "GOAL_HOST_WS_SUBSCRIBER",
+    "class": "behaviour",
+    "reason": "toggle: websocket subscriber on/off (read in src/index.ts)"
+  },
+  {
+    "name": "HUB_API_KEY",
+    "class": "bootstrap",
+    "reason": "credential/secret: hub API key for federation calls (read in src/index.ts)"
+  },
+  {
+    "name": "IAS_BUS_BACKPRESSURE_MAX_WAIT_MS",
+    "class": "behaviour",
+    "reason": "bus backpressure wait bound (read in src/config.ts)"
+  },
+  {
+    "name": "IAS_BUS_DROP_LOG_PATH",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: bus drop log (read in src/config.ts)"
+  },
+  {
+    "name": "IAS_BUS_MAX_INFLIGHT",
+    "class": "behaviour",
+    "reason": "bus inflight cap (IAS name) (read in src/config.ts)"
+  },
+  {
+    "name": "IAS_BUS_QUEUE_SIZE",
+    "class": "behaviour",
+    "reason": "bus queue cap (IAS name) (read in src/config.ts)"
+  },
+  {
+    "name": "LLM_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: llm resolver (read in src/activities/loopC-vessel-designer.ts)"
+  },
+  {
+    "name": "LLM_MODEL",
+    "class": "behaviour",
+    "reason": "LLM model selection (read in src/activities/loopC-vessel-designer.ts)"
+  },
+  {
+    "name": "LLM_ROUTER_API_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: llm router (read in src/llm-router.ts)"
+  },
+  {
+    "name": "LLM_ROUTER_DISABLED",
+    "class": "behaviour",
+    "reason": "toggle: disable the LLM router (read in src/config.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "LLM_VESSEL_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: llm vessel (read in src/config.ts, src/index.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "MEM_DUMP_INTERVAL_MS",
+    "class": "behaviour",
+    "reason": "memory dump cadence (read in src/config.ts)"
+  },
+  {
+    "name": "MEM_DUMP_PATH",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: memory dump file (read in src/index.ts)"
+  },
+  {
+    "name": "MEM_RING_SIZE",
+    "class": "behaviour",
+    "reason": "memory ring size (read in src/config.ts)"
+  },
+  {
+    "name": "METABOB_API_KEY",
+    "class": "bootstrap",
+    "reason": "credential/secret: service-to-service API key (read in src/config.ts, src/index.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "MITOSIS_BASE_VESSEL",
+    "class": "bootstrap",
+    "reason": "identity/node name: base vessel of a mitosis child process (read in src/index.ts)"
+  },
+  {
+    "name": "MITOSIS_RUNTIME_DIR",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: vessels runtime root (read in src/escalation-target.ts)"
+  },
+  {
+    "name": "MITOSIS_SUPER_REPO_DIR",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: super-repo clone (read in src/escalation-target.ts)"
+  },
+  {
+    "name": "MITOSIS_VERSION_ID",
+    "class": "bootstrap",
+    "reason": "identity/node name: version id of a mitosis child process (read in src/index.ts)"
+  },
+  {
+    "name": "PEER_DISCOVERY_ENDPOINTS",
+    "class": "bootstrap",
+    "reason": "peer endpoint URLs: federation peer discovery list (read in src/index.ts)"
+  },
+  {
+    "name": "PEER_SUBSTRATE_LABELS",
+    "class": "bootstrap",
+    "reason": "identity/node name: labels for federation peers (read in src/index.ts)"
+  },
+  {
+    "name": "PORT",
+    "class": "bootstrap",
+    "reason": "own endpoint/bind address: listen port (read in src/index.ts)"
+  },
+  {
+    "name": "PREFER_LIBP2P_ROUTE",
+    "class": "behaviour",
+    "reason": "toggle: prefer the libp2p route (read in src/index.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "PRODUCER_DISCOVERY_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: producer lookup (activity-api) (read in src/config.ts, src/index.ts, src/llm-router.ts)"
+  },
+  {
+    "name": "QUIESCE_DIR",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: quiesce marker dir (read in src/quiesce.ts)"
+  },
+  {
+    "name": "QUIESCE_MAX_MS",
+    "class": "behaviour",
+    "reason": "maximum quiesce wait (read in src/quiesce.ts)"
+  },
+  {
+    "name": "REACHED_CMD_CACHE_PATH",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: reached-command cache file (read in src/index.ts)"
+  },
+  {
+    "name": "REACH_VERDICT_SPOOL_PATH",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: reach verdict spool file (read in src/index.ts)"
+  },
+  {
+    "name": "RESOLVE_TIMEOUT_MS",
+    "class": "behaviour",
+    "reason": "resolve timeout (read in src/config.ts)"
+  },
+  {
+    "name": "ROUTE_ACTIVITY_REPAIR",
+    "class": "behaviour",
+    "reason": "toggle: route activity-repair goals (read in src/index.ts)"
+  },
+  {
+    "name": "ROUTE_EDIT_INTENT_TO_COMPOSE",
+    "class": "behaviour",
+    "reason": "toggle: route edit-intent goals to feature_compose (read in src/index.ts)"
+  },
+  {
+    "name": "SATISFIER_PROVEN_BAD_ARMED",
+    "class": "behaviour",
+    "reason": "toggle: arm proven-bad satisfier suppression (read in src/index.ts)"
+  },
+  {
+    "name": "SCAFFOLD_ENDPOINT",
+    "class": "bootstrap",
+    "reason": "peer endpoint URL: scaffold resolver (read in src/activities/loopC-vessel-designer.ts)"
+  },
+  {
+    "name": "SIGNATURE_CACHE_MS",
+    "class": "behaviour",
+    "reason": "signature cache TTL (read in src/index.ts)"
+  },
+  {
+    "name": "SUBSTRATE_AUTHORING_DECISION_EMIT",
+    "class": "behaviour",
+    "reason": "toggle: emit authoring decisions (read in src/index.ts)"
+  },
+  {
+    "name": "SUBSTRATE_AUTO_DRAFT_ENABLED",
+    "class": "behaviour",
+    "reason": "toggle: auto-draft (read in src/index.ts)"
+  },
+  {
+    "name": "SUBSTRATE_AUTO_DRAFT_EXPLORE_FLOOR",
+    "class": "behaviour",
+    "reason": "auto-draft exploration floor (read in src/index.ts)"
+  },
+  {
+    "name": "SUBSTRATE_AUTO_DRAFT_THRESHOLD",
+    "class": "behaviour",
+    "reason": "auto-draft threshold (read in src/index.ts)"
+  },
+  {
+    "name": "SUBSTRATE_REUSE_LLM_ENABLED",
+    "class": "behaviour",
+    "reason": "toggle: LLM reuse path (read in src/index.ts)"
+  },
+  {
+    "name": "SUBSTRATE_STATE_DIR",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: state dir (read in src/index.ts)"
+  },
+  {
+    "name": "SUPER_REPO_DIR",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: super-repo clone (read in src/escalation-target.ts)"
+  },
+  {
+    "name": "SYMBOL_PROPOSAL_SAMPLES",
+    "class": "behaviour",
+    "reason": "symbol proposal sample count (read in src/index.ts)"
+  },
+  {
+    "name": "VESSELS_CLONE_ROOT",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: vessel clones root (read in src/escalation-target.ts)"
+  },
+  {
+    "name": "VESSEL_ID",
+    "class": "bootstrap",
+    "reason": "identity/node name: vessel id (read in src/index.ts)"
+  },
+  {
+    "name": "WORKSPACE_ROOT",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: workspace root (read in src/body-honesty-policy.ts, src/escalation-target.ts, src/lesson-execution-policy.ts +3 more)"
+  }
+]
