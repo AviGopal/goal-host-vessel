@@ -31,6 +31,8 @@
  * answer — and this module refuses anything that would let the answer confirm itself.
  */
 
+import { synthesisWithinInputsOrRefuse } from "./command-egress";
+
 /**
  * A recompute command must MEASURE. A command that echoes, prints, or otherwise emits a
  * literal is the model asserting an answer, not evidence for one — the same self-launder the
@@ -118,8 +120,19 @@ export type CommandAccepted = { ok: true };
  * Gate a model-authored recompute command. Refusals name the rule they hit, because a
  * verifier that declines silently is indistinguishable from one that never ran — and this
  * gate's refusals are supposed to be READ, not just obeyed.
+ *
+ * READ-ONLY INCLUDES WHERE IT READS FROM. This gate is the only check in front of two paths
+ * that run a command nobody typed: the verifier's independent derivations (authored by a
+ * model from the goal text) and the learned family recipes (seed, answer, recovery). The
+ * mutation rules above admitted `curl` to any host, so either path could fetch from an origin
+ * the model invented — the same egress class observed when self-correction rewrote
+ * `127.0.0.1:8100/landing/audit` to `api.merlonix.com`. A command therefore passes only if
+ * every network origin it names (command-egress.ts parses them; nothing is re-parsed here) is
+ * loopback (127.0.0.1 ≡ localhost ≡ [::1], any port: the substrate's own vessels) or is named
+ * by `inputs` — the ORIGINAL inputs of the call, i.e. the goal text, never the walk's output.
+ * With no inputs only loopback is admitted, so a caller that omits them fails closed.
  */
-export function isReadOnlyShellCommand(raw: string): CommandAccepted | CommandRefusal {
+export function isReadOnlyShellCommand(raw: string, inputs: Array<string | null | undefined> = []): CommandAccepted | CommandRefusal {
   const cmd = (raw ?? "").trim();
   if (cmd.length === 0) return { ok: false, reason: "empty command" };
   if (cmd.length > 800) return { ok: false, reason: "command too long to audit" };
@@ -132,6 +145,8 @@ export function isReadOnlyShellCommand(raw: string): CommandAccepted | CommandRe
   if (REDIRECT.test(outsideQuotes(cmd))) return { ok: false, reason: "output redirection writes to disk" };
   if (MUTATING_SUBCOMMAND.test(cmd)) return { ok: false, reason: "in-place edit or history-mutating subcommand" };
   if (MUTATING.test(cmd)) return { ok: false, reason: "mutating command" };
+  const egress = synthesisWithinInputsOrRefuse(cmd, inputs);
+  if (!egress.ok) return { ok: false, reason: `network origin(s) neither loopback nor named by the goal: ${egress.introduced.join(", ")}` };
   return { ok: true };
 }
 

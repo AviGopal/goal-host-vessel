@@ -4939,7 +4939,11 @@ function recipeCommandFor(goal: string): string | null {
   if (!r || !recipeIsLive(r) || !recipeAppliesTo(r, family, tree)) return null;
   const cmd = instantiateRecipe(r.template, tree);
   if (!cmd) return null;
-  return isReadOnlyShellCommand(cmd).ok ? cmd : null;
+  // The one gate in front of every recipe run (floor seed, walk answer, executor recovery): an
+  // origin the goal does not name, other than loopback, is refused here and never run.
+  const gate = isReadOnlyShellCommand(cmd, [goal]);
+  if (!gate.ok) { console.log(`[verifier-recipe] recipe for "${family}" REFUSED by the read-only gate (${gate.reason}) — not run`); return null; }
+  return cmd;
 }
 
 async function recomputeIndependently(
@@ -4984,7 +4988,7 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
       command = parsed;
     } catch (e) { console.log(`[recompute] ${nth} authoring threw: ${String((e as Error)?.message ?? e).slice(0, 160)}`); return null; }
 
-    const gate = isReadOnlyShellCommand(command);
+    const gate = isReadOnlyShellCommand(command, [goal]);
     if (!gate.ok) {
       // Name the refusal. A verifier that declines silently cannot be told apart from one that
       // never ran, and this branch is exactly where a bad authoring habit would hide.
@@ -5027,7 +5031,7 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   const deriveFromRecipe = async (): Promise<{ value: number | null; token: string | null; command: string } | null> => {
     const cmd = instantiateRecipe(_recipe!.template, _tree!);
     if (!cmd) return null;
-    const gate = isReadOnlyShellCommand(cmd);
+    const gate = isReadOnlyShellCommand(cmd, [goal]);
     if (!gate.ok) { console.log(`[verifier-recipe] recipe for "${_family}" REFUSED by the read-only gate (${gate.reason}) — not used`); return null; }
     const shell = await ufExecuteTool("shellResult", { command: cmd }, new Set<string>(["shellResult"]));
     if (!shell.ok) return null;
