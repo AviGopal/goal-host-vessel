@@ -309,7 +309,7 @@ import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { spliceExecPlaceholders } from "./exec-placeholder";
-import { consumeOracleLabel, type OracleLabelRecord } from "./oracle-label-consumer";
+import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { orderProducers, buildShapeProducerCache, pickProducerRoute, type ProducerRow } from "./producer-order";
 import type {
@@ -1915,9 +1915,9 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
 // BUILDER (buildAggregateCommand). Only an explicit immediate-directory phrasing narrows a
 // file count to depth 1; everything else means "under this directory", recursively.
 (() => {
-  // Burn the latch for automated oracle labels by:
+  // Burn the latch for oracle labels by:
   // 1) De-duplicating repeated POST /v2/impulses/resolve goal_verification_label requests with identical bodies
-  //    once their response contains verdict:"achieved" and no override field.
+  //    once their response is terminal for the consumer (isCacheableLabelResponse: a genuine human verdict).
   // 2) Suppressing duplicate logs of the exact automated-achieved consume line for the same execution id.
   // This avoids re-fetching a machine label on every walk-state poll when the execution already completed.
   try {
@@ -1950,13 +1950,12 @@ function verifyUnmeasurableCountReach(goal: string): GoalReachVerdict | null {
               return new Response(cached.bodyText, { status: cached.status, headers: { "Content-Type": "application/json" } });
             }
             const res = await originalFetch(...args);
-            // Cache only when it's clearly an automated achieved label with no override present.
+            // A kept body is never re-read, so keep only a response the consumer never needs again:
+            // its consumable row is a genuine human verdict (oracle-label-consumer.ts
+            // isCacheableLabelResponse — the consumer's own pick and principal predicate).
             try {
               const text = await res.clone().text();
-              // Never cache a body carrying a calibration row (purpose "calibration"): the cache is
-              // never re-read, so a calibration "achieved" would hide a later ordinary human verdict.
-              // activity-api returns rows as a JSON string in `content`, so quotes may be escaped.
-              if (/\b"verdict"\s*:\s*"achieved"\b/i.test(text) && !/\boverride\b\s*:/i.test(text) && !/purpose\\?"\s*:\s*\\?"calibration/.test(text)) {
+              if (isCacheableLabelResponse(text)) {
                 responseCache.set(key, { bodyText: text, status: res.status });
               }
             } catch { /* ignore */ }

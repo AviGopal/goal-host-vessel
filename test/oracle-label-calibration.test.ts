@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { consumeOracleLabel, type OracleLabelRecord } from "../src/oracle-label-consumer";
+import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "../src/oracle-label-consumer";
 
 /**
  * CALIBRATION LABELS INFLUENCE NOTHING.
@@ -108,7 +108,7 @@ describe("oracle-label consumer: calibration labels influence nothing", () => {
     expect(JSON.stringify(gapWrites(calls)[0].body)).not.toContain("win-2026-10-03");
   });
 
-  it("MUST-FAIL: the read asks activity-api to exclude calibration rows at limit 1, so ANY number of newer calibration rows cannot hide the human row", async () => {
+  it("MUST-FAIL: the read asks activity-api to exclude calibration rows (bounded window), so ANY number of newer calibration rows cannot hide the human row", async () => {
     const rec = sealedRun(true);
     const humanRow = { ...ordinaryHumanLabel, notes: "operator: the artifact is missing the open-gap list" };
     const fifteen = Array.from({ length: 15 }, (_, i) => ({ ...calibrationLabel, sample_draw_id: `draw-${i}` }));
@@ -116,7 +116,7 @@ describe("oracle-label consumer: calibration labels influence nothing", () => {
     await consumeOracleLabel(rec, { activityApiEndpoint: ACT, devVesselEndpoint: DEV, apiKey: "", fetchImpl: impl });
     await settle();
     const read = calls.find((c) => c.url.startsWith(ACT))!;
-    expect(read.body.pointer).toEqual({ type: "goal_verification_label", execution_id: "exec-sealed-1", limit: 1, exclude_purpose: "calibration" });
+    expect(read.body.pointer).toEqual({ type: "goal_verification_label", execution_id: "exec-sealed-1", limit: 20, exclude_purpose: "calibration" });
     expect(rec.reached).toBe(false);
     expect(rec.humanGraded).toBe(true);
     expect(rec.humanReachNotes).toBe(humanRow.notes);
@@ -200,15 +200,12 @@ describe("oracle-label read cache: a calibration row never freezes the label rea
     const src = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     const idx = src.indexOf("responseCache.set(key");
     expect(idx).toBeGreaterThan(-1);
-    // the CONDITION guarding the set, not a comment near it
+    // the CONDITION guarding the set is the consumer's own predicate
     const before = src.slice(Math.max(0, idx - 600), idx);
-    const cond = before.slice(before.lastIndexOf("if ("));
-    const m = cond.match(/!\/(purpose[^/]*calibration)\/\.test\(text\)/);
-    expect(m).not.toBeNull();
-    // and that regex matches the escaped form activity-api actually returns
-    const re = new RegExp(m![1]!);
-    const body = JSON.stringify({ success: true, content: JSON.stringify([{ verdict: "achieved", labeler: "human", purpose: "calibration" }]) });
-    expect(re.test(body)).toBe(true);
-    expect(re.test(JSON.stringify({ success: true, content: JSON.stringify([{ verdict: "achieved", labeler: "human" }]) }))).toBe(false);
+    expect(before.slice(before.lastIndexOf("if ("))).toContain("isCacheableLabelResponse(text)");
+    // and that predicate refuses a calibration "achieved" in the escaped form activity-api returns
+    const body = (rows: unknown[]) => JSON.stringify({ success: true, content: JSON.stringify(rows) });
+    expect(isCacheableLabelResponse(body([{ verdict: "achieved", labeler: "human", purpose: "calibration", labeled_by_principal: calibrationLabel.labeled_by_principal }]))).toBe(false);
+    expect(isCacheableLabelResponse(body([{ verdict: "achieved", labeler: "human", labeled_by_principal: calibrationLabel.labeled_by_principal }]))).toBe(true);
   });
 });

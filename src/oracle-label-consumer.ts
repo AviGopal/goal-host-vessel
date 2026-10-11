@@ -82,14 +82,18 @@ export interface OracleLabelDeps {
 }
 
 /**
- * One row per consumption: the newest NON-calibration row. activity-api serves the exclusion
+ * The read: the newest NON-calibration rows, newest first. activity-api serves the exclusion
  * (`exclude_purpose`: rows whose purpose is absent or differs), so any number of newer
- * calibration rows cannot hide an ordinary verdict — the bound a client-side filter over a
- * fixed window had. The client-side check below stays as a second layer: an activity-api
- * that predates exclude_purpose ignores it and may return a calibration row, which is then
- * skipped (the ordinary verdict under it is picked up once activity-api is upgraded).
+ * calibration rows cannot hide an ordinary verdict. The client-side check in pickConsumableLabel
+ * stays as a second layer for an activity-api that predates exclude_purpose.
+ *
+ * WHY A WINDOW, NOT ONE ROW: a human-labeled row without a human-verdict principal is ignored
+ * (hasHumanVerdictPrincipal), and with a one-row read such a row, while newest, hid every older
+ * row — including a genuine operator verdict. The label read has no principal filter, so the
+ * consumer reads a bounded window and picks in code. The bound is the resolver's default page:
+ * more than this many newer unprincipalled human rows on one execution still hide an older verdict.
  */
-export const ORACLE_LABEL_FETCH_LIMIT = 1;
+export const ORACLE_LABEL_FETCH_LIMIT = 20;
 export const ORACLE_LABEL_EXCLUDE_PURPOSE = "calibration";
 
 /**
@@ -102,9 +106,38 @@ export function isCalibrationLabel(label: OracleLabelRow | undefined): boolean {
   return label?.purpose === "calibration";
 }
 
-/** Choose the row the consumer acts on: the newest row that is not a calibration label. */
+/** A labeler:"human" row that does not carry a human-verdict principal: never acted on. */
+export function isUnprincipalledHumanLabel(label: OracleLabelRow | undefined): boolean {
+  return label?.labeler === "human" && !hasHumanVerdictPrincipal(label);
+}
+
+/**
+ * Choose the row the consumer acts on: the newest row that is neither a calibration label nor an
+ * unprincipalled human label (so an ignored row cannot hide an older one beneath it).
+ */
 export function pickConsumableLabel(labels: OracleLabelRow[]): OracleLabelRow | undefined {
-  return labels.find((l) => !isCalibrationLabel(l));
+  return labels.find((l) => !isCalibrationLabel(l) && !isUnprincipalledHumanLabel(l));
+}
+
+/**
+ * WHICH LABEL RESPONSES index.ts's read cache may keep. The cache never re-reads a kept body, so
+ * it may keep only a response the consumer will never need to read again: one whose consumable
+ * row is a genuine human verdict (that burns the latch, so the execution is never polled again).
+ * Anything else must be re-read: an automated row (a later human verdict must surface — the
+ * source-aware latch), an unprincipalled human row (a later genuine verdict must surface), a
+ * calibration row, no row. Unparseable → not cacheable.
+ */
+export function isCacheableLabelResponse(text: string): boolean {
+  try {
+    const payload = JSON.parse(text) as { content?: unknown } | null;
+    const content = payload?.content;
+    const rows = typeof content === "string" ? JSON.parse(content) : content;
+    if (!Array.isArray(rows)) return false;
+    const label = pickConsumableLabel(rows as OracleLabelRow[]);
+    return label?.labeler === "human" && hasHumanVerdictPrincipal(label);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -132,11 +165,22 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     let labels: OracleLabelRow[] = [];
     try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as OracleLabelRow[]) : []; } catch { labels = []; }
     const label = pickConsumableLabel(labels);
+    // Unprincipalled human rows NEWER than the row acted on (or all of them, when none is acted on).
+    const pickedAt = label ? labels.indexOf(label) : labels.length;
+    const ignoredHuman = labels.slice(0, pickedAt).filter((l) => !isCalibrationLabel(l) && isUnprincipalledHumanLabel(l));
     const skippedCalibration = labels.length - labels.filter((l) => !isCalibrationLabel(l)).length;
     if (skippedCalibration > 0) {
       console.log(`[oracle-label] skipped ${skippedCalibration} calibration label(s) for ${labelExecId} (purpose=calibration influences nothing)`);
     }
-    if (!label && skippedCalibration > 0) return;
+    // A "human" row without a human-verdict principal is NOT a human verdict (hasHumanVerdictPrincipal).
+    // It is skipped by pickConsumableLabel, so it cannot block or hide a genuine override; counted and
+    // logged once per execution (this runs on every poll).
+    if (ignoredHuman.length > 0 && !ignoredHumanLabelExecs.has(String(labelExecId))) {
+      ignoredHumanLabelExecs.add(String(labelExecId));
+      ignoredHumanLabelCount += 1;
+      console.warn(`[oracle-label] human label IGNORED: no operator principal exec=${labelExecId} verdict=${String(ignoredHuman[0]!.verdict)} ignored_total=${ignoredHumanLabelCount}`);
+    }
+    if (!label && (skippedCalibration > 0 || ignoredHuman.length > 0)) return;
     const labelVerdict = label?.verdict;
     if (labelVerdict !== "achieved" && labelVerdict !== "not_achieved" && labelVerdict !== "partial") {
       const reason = labels.length === 0 ? "no_labels" : (labelVerdict === undefined ? "verdict_field_missing" : "verdict_unrecognised");
@@ -151,18 +195,6 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     // against 81 machine consumptions. Leaving the latch unburned for machine labels is
     // sufficient: the corpus read is ORDER BY created_at DESC (activity-api
     // src/routes/impulses.ts), so a later human row is already first on the next poll.
-    // A "human" row without a human-verdict principal is NOT a human verdict (hasHumanVerdictPrincipal).
-    // It is ignored before the latch, so it cannot block a later genuine override. Counted and logged once
-    // per execution (this runs on every poll). Note: the read is limit 1, newest first, so while such a
-    // row is the newest it also hides any older row beneath it; nothing is applied from it either way.
-    if (label?.labeler === "human" && !hasHumanVerdictPrincipal(label)) {
-      if (!ignoredHumanLabelExecs.has(String(labelExecId))) {
-        ignoredHumanLabelExecs.add(String(labelExecId));
-        ignoredHumanLabelCount += 1;
-        console.warn(`[oracle-label] human label IGNORED: no operator principal exec=${labelExecId} verdict=${labelVerdict} ignored_total=${ignoredHumanLabelCount}`);
-      }
-      return;
-    }
     if (label?.labeler === "human") learn.oracleLabelWritten = true;
     if (label?.labeler === "human") {
       const priorReached = record.reached;
