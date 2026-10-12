@@ -81,7 +81,11 @@ describe("judge capture wiring pin: every decision site calls the closed capture
   });
 
   test("floorVerdict: recorded right after the floor's reached decision", () => {
-    callAfter("const floorReached = _floorV.reached;", `judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput({`, 2);
+    // The decision is the closed judge entry; floorReached is taken from it, and the capture follows both.
+    const entry = lineOf("const _floorV = judge.floorVerdict(judgeInputs.floorInput(");
+    const decided = callAfter("const _floorV = judge.floorVerdict(judgeInputs.floorInput(", "const floorReached = _floorV.reached;", 6);
+    const cap = callAfter("const floorReached = _floorV.reached;", `judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput({`, 2);
+    expect(entry < decided && decided < cap).toBe(true);
   });
 
   test("floorShortcut: recorded after the shortcut decision and before it is acted on", () => {
@@ -97,7 +101,11 @@ describe("judge capture wiring pin: every decision site calls the closed capture
   });
 
   test("creditOnHollow: recorded right after the β withhold/charge decision", () => {
-    callAfter("const _betaWithheldForSymmetry = _creditOnHollow.withheld ===", `judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput({`, 12);
+    // The decision is the closed judge entry; the symmetry flag is taken from it, and the capture follows both.
+    const entry = lineOf("const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput(");
+    const decided = callAfter("const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput(", "const _betaWithheldForSymmetry = _creditOnHollow.withheld ===", 3);
+    const cap = callAfter("const _betaWithheldForSymmetry = _creditOnHollow.withheld ===", `judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput({`, 12);
+    expect(entry < decided && decided < cap).toBe(true);
   });
 
   test("routing: the pathless resolution at the door runs through the recorder and its record is attached to the dispatch", () => {

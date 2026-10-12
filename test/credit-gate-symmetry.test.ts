@@ -44,22 +44,29 @@ async function source(): Promise<string> {
   return await Bun.file(SRC).text();
 }
 
-/** The β-penalty block, located by its own guard rather than by line number. */
+/** The β-penalty block, located STRUCTURALLY: from its own guard (`const _noOracle =`) to the start of the next
+ *  block (`// CREDIT FROM USE ON FAILURE`), never by a character count. Both markers must be found once, in that
+ *  order; the slice then holds exactly the withhold decision, its capture and the three log branches, and nothing of
+ *  the chain-carrier / failed-composite block that follows. (A character window, last 7000, also took in the start of
+ *  that next block.) */
+const BLOCK_START = "const _noOracle =";
+const BLOCK_END = "// CREDIT FROM USE ON FAILURE";
 async function betaBlock(): Promise<string> {
   const src = await source();
-  const i = src.indexOf("const _noOracle =");
+  const i = src.indexOf(BLOCK_START);
   expect(i).toBeGreaterThan(-1);
-  // 4500, not 3500: the first draft cut the window off three characters before the second
-  // log line and reported a defect that was not there. An instrument that truncates its
-  // subject reports on the truncation. 5500 since OP-1 (2026-10-10): the culpability withhold added three
-  // lines between the guard and the second log line, which ended at 4,712 characters.
-  // 7000 since the judge split and the judge-input capture added lines between the guard and the second log line.
-  return src.slice(i, i + 7000);
+  expect(src.indexOf(BLOCK_START, i + 1)).toBe(-1);
+  const j = src.indexOf(BLOCK_END, i);
+  expect(j).toBeGreaterThan(i);
+  return src.slice(i, j);
 }
 
 describe("credit gate — β is held to the same evidence standard as α", () => {
   it("guards the instrument: the β block is findable and is the right one", async () => {
     const b = await betaBlock();
+    // ...and it is ONLY that block: the next block's chain-carrier code is outside the slice.
+    expect(b).not.toContain("chargeChainCarrier(");
+    expect(b).not.toContain("walkFailureMode(");
     // A mislocated slice would make every assertion below pass or fail for the wrong reason.
     expect(b).toContain("penaliseHollowTemplate");
     expect(b).toContain("no-oracle-for-goal-class");
@@ -76,6 +83,9 @@ describe("credit gate — β is held to the same evidence standard as α", () =>
     expect(b).toContain("deterministic: verdict.deterministic === true");
     expect(b).toContain("consumedInChain: consumedInChain.size");
     expect(b).toMatch(/const _alphaWasReachable = _creditOnHollow\.alpha_reachable;/);
+    // The symmetry withhold is the entry's own verdict, taken verbatim: removing or inverting it here is red.
+    expect(b).toContain(`const _betaWithheldForSymmetry = _creditOnHollow.withheld === "alpha-unreachable-non-deterministic-no-edge";`);
+    expect(b).toContain("walkBetaWithheld = _noOracle || _betaWithheldForSymmetry;");
     expect(await decisionSource()).toMatch(/i\.verdict\.deterministic === true \|\|\s*i\.consumed_in_chain > 0/);
   });
 
