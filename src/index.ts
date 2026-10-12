@@ -13370,7 +13370,7 @@ async function runGoalWithRecoveryInner(
             goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: ${String(hydGap.summary ?? "").slice(0, 300)})`;
           }
           // CAPTURE (closed, src/judge/capture.ts): the gap record's routing hint, after it was applied or not.
-          judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal });
+          judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? "") });
           tap(`[goal-host-vessel] gap-hydration: injected record ${hydGap.id} (cited file: ${hydFile ?? "none"})`);
         }
       }
@@ -13712,6 +13712,8 @@ async function runGoalWithRecoveryInner(
       // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
+      // CAPTURE (closed, src/judge/capture.ts): the route switch exactly as this check read it.
+      judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: earlyEditIntentEnabled });
       const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
       // EDIT-VERB predicate — RESTORED to the same clean edit-verb set as the late 0-step
       // detector (goalIsEditIntent / _reEditIntent, lines ~5203/~5282) after two substrate-authored

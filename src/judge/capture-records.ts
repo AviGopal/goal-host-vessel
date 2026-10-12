@@ -31,10 +31,12 @@ export interface JudgeInputRecord {
 
 export interface RoutingResolution {
   terms: string[];
-  candidates: Array<{ via: "term" | "symbol" | "proposal"; term: string; scope: string | null; hits: string[] | null; error: boolean }>;
+  /** prefer_call_sites: the term search's preferCallSites flag (the search is keyed by it); null for symbol searches and proposals. */
+  candidates: Array<{ via: "term" | "symbol" | "proposal"; term: string; scope: string | null; prefer_call_sites: boolean | null; hits: string[] | null; error: boolean }>;
   chosen_file: string | null;
   method: string;
-  reads: Array<{ path: string; readable: boolean }>;
+  /** text: what the resolver read (null when unreadable), capped at CAPTURE_READ_CAP_CHARS; a cut read has capped:true and caps the record. */
+  reads: Array<{ path: string; readable: boolean; text: string | null; capped?: boolean }>;
 }
 
 export interface RoutingInputRecord {
@@ -47,9 +49,14 @@ export interface RoutingInputRecord {
   restated_goal: string | null;
   compose_gap_id: string | null;
   routed_to: "feature_compose" | "walk";
+  /** Additive: the early edit-intent route switch as the hand-off read it in-process; null until that check ran. */
+  route_enabled: boolean | null;
+  /** Additive: the localizationRecord the routing read for this need; null when there was none (always present as a key). */
+  localization: unknown;
   edit_site: string | null;
-  /** Additive: the gap record the walk hydrated, the file it cites, and whether that file was put on the routing goal. */
-  gap_hint: { gap_id: string; cited_file: string | null; applied: boolean } | null;
+  /** Additive: the gap record the walk hydrated, the file it cites, whether that file was put on the routing goal, and
+   *  (when applied) the record's summary the routing goal was built from. */
+  gap_hint: { gap_id: string; cited_file: string | null; applied: boolean; summary: string | null } | null;
   trail: string[];
   capped?: boolean;
 }

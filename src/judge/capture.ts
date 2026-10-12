@@ -36,6 +36,8 @@ export const ROUTING_INPUT_SCHEMA = 1;
 export const CAPTURE_RECORD_CAP_BYTES = 32 * 1024;
 /** The per-DISPATCH cap: every judge_input entry and the routing_input together, serialized. */
 export const CAPTURE_DISPATCH_CAP_BYTES = 16 * 1024;
+/** The per-read cap on a routing read's recorded text (characters); a cut read is marked and makes its record capped. */
+export const CAPTURE_READ_CAP_CHARS = 4 * 1024;
 /** Every truncated string or array carries this marker. */
 export const CAPTURE_TRUNCATION_MARKER = "[judge-capture: truncated";
 
@@ -215,6 +217,8 @@ export function capDispatchTotal(meta: JudgeCaptureMetadata, cap: number = CAPTU
     size = byteLen(JSON.stringify(body()));
   }
   const marker: CaptureTruncation = { cap_bytes: cap, original_bytes: original, final_bytes: size, truncated: [...truncated] };
+  // A routing record with any cut field cannot be replayed as recorded: say so on the record itself.
+  if (meta.routing_input && [...truncated].some((p) => p.startsWith("routing_input") || p.startsWith("(an array"))) meta.routing_input.capped = true;
   meta.capture_truncated = marker;
   return true;
 }
@@ -490,8 +494,8 @@ export function routingRecorder(): RoutingRecorder {
     safe(() => {
       noteTerm(term);
       p.then(
-        (hits) => safe(() => { candidates.push({ via, term, scope: vessel ?? null, hits: [...hits], error: false }); }),
-        () => safe(() => { candidates.push({ via, term, scope: vessel ?? null, hits: null, error: true }); }),
+        (hits) => safe(() => { candidates.push({ via, term, scope: vessel ?? null, prefer_call_sites: via === "term" ? preferCallSites === true : null, hits: [...hits], error: false }); }),
+        () => safe(() => { candidates.push({ via, term, scope: vessel ?? null, prefer_call_sites: via === "term" ? preferCallSites === true : null, hits: null, error: true }); }),
       );
     });
     return p;
@@ -503,15 +507,24 @@ export function routingRecorder(): RoutingRecorder {
       const p = fn(g);
       safe(() => {
         p.then(
-          (words) => safe(() => { candidates.push({ via: "proposal", term: "(proposed symbols)", scope: null, hits: [...words], error: false }); }),
-          () => safe(() => { candidates.push({ via: "proposal", term: "(proposed symbols)", scope: null, hits: null, error: true }); }),
+          (words) => safe(() => { candidates.push({ via: "proposal", term: "(proposed symbols)", scope: null, prefer_call_sites: null, hits: [...words], error: false }); }),
+          () => safe(() => { candidates.push({ via: "proposal", term: "(proposed symbols)", scope: null, prefer_call_sites: null, hits: null, error: true }); }),
         );
       });
       return p;
     },
     read: (fn) => (path) => {
       const p = fn(path);
-      safe(() => { p.then((txt) => safe(() => { reads.push({ path, readable: typeof txt === "string" }); }), () => safe(() => { reads.push({ path, readable: false }); })); });
+      safe(() => {
+        p.then(
+          (txt) => safe(() => {
+            if (typeof txt !== "string") { reads.push({ path, readable: false, text: null }); return; }
+            if (txt.length > CAPTURE_READ_CAP_CHARS) reads.push({ path, readable: true, text: cutString(txt, CAPTURE_READ_CAP_CHARS, `${CAPTURE_READ_CAP_CHARS}-char read`), capped: true });
+            else reads.push({ path, readable: true, text: txt });
+          }),
+          () => safe(() => { reads.push({ path, readable: false, text: null }); }),
+        );
+      });
       return p;
     },
     tap: (fn) => (message) => {
@@ -539,10 +552,13 @@ export function routingRecorder(): RoutingRecorder {
           restated_goal: restated ? resolvedGoal : null,
           compose_gap_id: null,
           routed_to: "walk",
+          route_enabled: null,
+          localization: null,
           edit_site: null,
           gap_hint: null,
           trail: trail.slice(0, 40),
         };
+        if (reads.some((r) => r.capped === true)) rec.capped = true;
         capRecord(rec as unknown as Record<string, unknown>);
         counters.captured++;
         return rec;
@@ -579,6 +595,8 @@ function routingInputOf(t: CaptureTarget, goal: string): RoutingInputRecord {
       restated_goal: null,
       compose_gap_id: null,
       routed_to: "walk",
+      route_enabled: null,
+      localization: null,
       edit_site: null,
       gap_hint: null,
       trail: [],
@@ -589,14 +607,24 @@ function routingInputOf(t: CaptureTarget, goal: string): RoutingInputRecord {
 }
 
 /** The walk hydrated a gap record named by the goal; `applied` = its cited file was put on the routing goal. */
-export function noteGapHydration(h: { goal: string; gapId: string; citedFile: string | null; applied: boolean }): void {
+export function noteGapHydration(h: { goal: string; gapId: string; citedFile: string | null; applied: boolean; summary: string }): void {
   try {
     const t = boundTarget();
     if (!t) return;
     const rec = routingInputOf(t, h.goal);
-    rec.gap_hint = { gap_id: h.gapId, cited_file: h.citedFile, applied: h.applied };
+    rec.gap_hint = { gap_id: h.gapId, cited_file: h.citedFile, applied: h.applied, summary: h.applied ? h.summary : null };
     capRecord(rec as unknown as Record<string, unknown>);
     capDispatchTotal(t.metadata!);
+    counters.captured++;
+  } catch (e) { captureError("editIntent", e); }
+}
+
+/** The early edit-intent check read its route switch (the in-process value it decided with; no new read). */
+export function noteRouteEnabled(h: { goal: string; enabled: boolean }): void {
+  try {
+    const t = boundTarget();
+    if (!t) return;
+    routingInputOf(t, h.goal).route_enabled = h.enabled;
     counters.captured++;
   } catch (e) { captureError("editIntent", e); }
 }

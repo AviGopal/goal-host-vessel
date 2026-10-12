@@ -118,8 +118,12 @@ describe("judge capture wiring pin: every decision site calls the closed capture
 
   test("routing: the gap-record hydration records its routing hint after the routing goal is decided", () => {
     const decided = lineOf("goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record:");
-    const cap = callAfter("goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record:", "judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal });", 4);
+    const cap = callAfter("goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record:", "judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? \"\") });", 4);
     expect(cap).toBeGreaterThan(decided);
+  });
+
+  test("routing: the early edit-intent check records the route switch it decided with", () => {
+    callAfter(`const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";`, "judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: earlyEditIntentEnabled });", 2);
   });
 
   test("binding: the /run-goal dispatch binds its record for every capture below it", () => {

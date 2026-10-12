@@ -44,7 +44,7 @@ const REACH_GATE_FIELDS = ["deliverables", "digest_excerpt", "evidence", "gate_c
 const EVIDENCE_FIELDS = ["consumed_in_chain", "grounded_reads", "landed", "landed_effective", "output_impulses", "persisted_writes", "post_reach_sink", "produced_shapes", "tools_total"];
 const GATE_CONTEXT_FIELDS = ["command_evidence", "judge_view", "task_summary", "walk_gaps_filed", "walk_step_lines"];
 const RECORD_FIELDS = ["calls", "entry", "input", "llm", "ports", "schema", "verdict"];
-const ROUTING_FIELDS = ["compose_gap_id", "edit_site", "entry", "gap_hint", "goal", "is_edit_intent", "is_pathless_code_change", "resolution", "restated_goal", "routed_to", "schema", "trail"];
+const ROUTING_FIELDS = ["compose_gap_id", "edit_site", "entry", "gap_hint", "goal", "is_edit_intent", "is_pathless_code_change", "localization", "resolution", "restated_goal", "route_enabled", "routed_to", "schema", "trail"];
 const RESOLUTION_FIELDS = ["candidates", "chosen_file", "method", "reads", "terms"];
 
 describe("judge_input schema: each entry's input has its documented fields", () => {
@@ -178,8 +178,8 @@ describe("routing_input schema (entry editIntent)", () => {
     expect(rec.resolution.chosen_file).toBe(FILE);
     expect(rec.resolution.method).toBe("unique-term-hit");
     expect(rec.resolution.terms.slice(0, 2)).toEqual(["retry budget", "backoff helper"]);
-    expect(rec.resolution.candidates[0]).toEqual({ via: "term", term: "retry budget", scope: null, hits: [FILE, "repos/example-vessel/src/other.ts"], error: false });
-    expect(rec.resolution.reads).toEqual([{ path: FILE, readable: true }]);
+    expect(rec.resolution.candidates[0]).toEqual({ via: "term", term: "retry budget", scope: null, prefer_call_sites: false, hits: [FILE, "repos/example-vessel/src/other.ts"], error: false });
+    expect(rec.resolution.reads).toEqual([{ path: FILE, readable: true, text: "export const backoffHelper = (n: number) => n; // the backoff helper\nconst x = 'backoff helper';\n" }]);
     expect(rec.routed_to).toBe("walk");
     expect(rec.compose_gap_id).toBeNull();
     expect(rec.trail).toEqual(taps);
@@ -217,12 +217,12 @@ describe("routing_input schema (entry editIntent)", () => {
     attachRoutingInput(target, rr.finish(goal, goal));
     expect(target.metadata!.routing_input!.gap_hint).toBeNull();
     await withCaptureTarget(target, async () => {
-      noteGapHydration({ goal, gapId: "gap-fixture-stale-stage", citedFile: FILE, applied: true });
+      noteGapHydration({ goal, gapId: "gap-fixture-stale-stage", citedFile: FILE, applied: true, summary: "the stage timer never resets" });
       noteRoutingHandOff({ goal, composeGapId: "gap-fixture-stale-stage", editSite: FILE });
     });
     const rec = target.metadata!.routing_input!;
     expect(keys(rec)).toEqual(ROUTING_FIELDS);
-    expect(rec.gap_hint).toEqual({ gap_id: "gap-fixture-stale-stage", cited_file: FILE, applied: true });
+    expect(rec.gap_hint).toEqual({ gap_id: "gap-fixture-stale-stage", cited_file: FILE, applied: true, summary: "the stage timer never resets" });
     expect(rec.routed_to).toBe("feature_compose");
   });
 
