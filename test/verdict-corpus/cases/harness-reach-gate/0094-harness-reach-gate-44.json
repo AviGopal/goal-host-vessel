@@ -1,0 +1,47 @@
+{
+  "class": "harness-reach-gate",
+  "control": false,
+  "credit_class": "walk:read-target",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/write-goal.ts",
+  "entry": "reachGate",
+  "expect": {
+    "gate": "pass"
+  },
+  "id": "0094-harness-reach-gate-44",
+  "input": {
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "reachGate",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [
+        "universal_fallback_result"
+      ],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "Assemble a short briefing on why vessels restart after a schema migration",
+    "original_targets": [],
+    "reframed_from": null,
+    "schema": 1,
+    "surface": "floor",
+    "targets_seen_by_walk": []
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "harness-recorded",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

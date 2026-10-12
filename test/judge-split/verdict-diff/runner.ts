@@ -1,6 +1,6 @@
 // VERDICT-DIFF RUNNER — spawns one hermetic child per scenario (child.ts) against a goal-host tree
 // and collects the canonical outputs. Used by run.ts (golden generation, tree-vs-tree diff) and by
-// test/judge-split/verdict-diff.test.ts (tree vs committed golden).
+// test/judge-split/verdict-diff.check.ts (tree vs committed golden).
 import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,7 +15,7 @@ export const ENVIRONMENT_PATH = join(HARNESS_DIR, "golden-environment.json");
  * What the golden depends on besides goal-host's own source: the executor library (its engine runs
  * pinned templates, its trace sink builds the execution-trace bodies, its adapter sends recommend)
  * and the runtime. The build hash is recorded; the byte comparison is pinned to the executor
- * version; a different build of the same version warns and is still compared (see verdict-diff.test.ts).
+ * version; a different build of the same version warns and is still compared (see verdict-diff.check.ts).
  */
 export function environmentOf(tree: string): { bun: string; ias_executor_version: string | null; ias_executor_dist_sha256: string | null } {
   const pkgDir = join(tree, "node_modules", "@avigopal", "ias-executor-ts");

@@ -1,0 +1,31 @@
+{
+  "class": "harness-completion-shapes",
+  "control": false,
+  "credit_class": "floor:completion-shapes",
+  "edit_site": "repos/goal-host-vessel/src/judge/floor-clamps.ts",
+  "entry": "completionShapes",
+  "expect": {
+    "completion_shapes": []
+  },
+  "id": "0060-harness-completion-shapes-10",
+  "input": {
+    "entry": "completionShapes",
+    "judge_named": [
+      "llm_completion_dispatch"
+    ],
+    "produced": [],
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "harness-recorded",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

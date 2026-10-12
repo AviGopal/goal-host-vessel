@@ -1,0 +1,64 @@
+{
+  "class": "floor-unverified-reach",
+  "control": false,
+  "credit_class": "floor:citation-only",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": false,
+    "shortcut": "refused"
+  },
+  "id": "0018-floor-row-04-citation-only",
+  "input": {
+    "answer_text": "[answer text not captured]",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "investigate and decompose gap gap-env-gated-td-lambda: env-gated capability: TD_LAMBDA is read by activity-api, unset in the running environment, and its unset branch disables a capability or silently falls back (1 site(s), e.g.",
+    "original_targets": [
+      "sourceCodeAnalysis",
+      "substrateGap_write",
+      "concept_write"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "sourceCodeAnalysis",
+      "substrateGap_write",
+      "concept_write"
+    ],
+    "verdict_reason": "deterministic:code-investigation-cited — the answer cites /workspace/git/vessels/development-vessel/src/resolvers/learning-policy.ts, which independently re-reads (/workspace/git/vessels/development-vessel/src/resolvers/learning-policy.ts) and CONTAINS \"TD_LAMBDA\"; the investigation names a real source location holding the symbol"
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "citation_oracle": {
+      "abstain": false,
+      "reached": true,
+      "reason": "deterministic:code-investigation-cited — the answer cites /workspace/git/vessels/development-vessel/src/resolvers/learning-policy.ts, which independently re-reads (/workspace/git/vessels/development-vessel/src/resolvers/learning-policy.ts) and CONTAINS \"TD_LAMBDA\"; the investigation names a real source location holding the symbol"
+    }
+  },
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "bounded-journal reconstruction of a floor reach (citation-only): tools 0/0, no write, no output impulse; no answer text recorded (a placeholder stands in for the authored answer); ids stripped",
+    "recorded": "2026-10-12",
+    "source": "live-run",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

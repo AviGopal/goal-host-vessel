@@ -1,0 +1,62 @@
+{
+  "class": "repeat-write-refusal-credit",
+  "control": true,
+  "credit_class": "template:repeat-write-refusal",
+  "edit_site": "repos/goal-host-vessel/src/judge/credit-decision.ts",
+  "entry": "creditOnHollow",
+  "expect": {
+    "credit": "withheld"
+  },
+  "id": "0012-varied-failures-withheld",
+  "input": {
+    "consumed_in_chain": 0,
+    "edit_effect_reach": false,
+    "entry": "creditOnHollow",
+    "history": [
+      {
+        "attempt": 1,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      },
+      {
+        "attempt": 2,
+        "refusal": {
+          "error": "transport_timeout",
+          "field": null
+        },
+        "write_shape": "substrateGap_write"
+      },
+      {
+        "attempt": 3,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "title"
+        },
+        "write_shape": "substrateGap_write"
+      }
+    ],
+    "last_pick_produced_judged_artifact": true,
+    "schema": 1,
+    "template_id_class": "config-less-write-template",
+    "verdict": {
+      "deterministic": false,
+      "hollow_class": null,
+      "no_oracle": false
+    }
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: a template whose attempts fail in different ways, non-deterministic, nothing consumed in chain: beta withheld as today",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

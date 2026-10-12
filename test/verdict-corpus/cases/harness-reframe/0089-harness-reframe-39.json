@@ -1,0 +1,45 @@
+{
+  "class": "harness-reframe",
+  "control": false,
+  "credit_class": "walk:reframed-target",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/reframe.ts",
+  "entry": "reframeAccept",
+  "expect": {
+    "reached": true
+  },
+  "id": "0089-harness-reframe-39",
+  "input": {
+    "alt_walk": {
+      "only_raw_input": false,
+      "reached": true,
+      "skipped_planned_retrieval": false,
+      "substantive_shapes": [
+        "llm_completion_dispatch"
+      ]
+    },
+    "alternatives": [
+      [
+        "llm_completion_dispatch"
+      ]
+    ],
+    "entry": "reframeAccept",
+    "goal": "Assemble a short briefing on why vessels restart after a schema migration",
+    "orig_wanted_derived": true,
+    "original_targets": [
+      "shellResult"
+    ],
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "harness-recorded",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

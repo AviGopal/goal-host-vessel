@@ -1,0 +1,62 @@
+{
+  "class": "prose-writeback-as-change",
+  "control": false,
+  "credit_class": "walk:prose-sink-for-change",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/write-goal.ts",
+  "entry": "reachGate",
+  "expect": {
+    "gate": "hollow",
+    "hollow_class": "write-goal-no-artifact",
+    "reached": false
+  },
+  "id": "0112-prose-writeback-as-change-variant-b",
+  "input": {
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "reachGate",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [
+        "concept_write",
+        "learningPolicyWriteback"
+      ],
+      "post_reach_sink": true,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "Certain saved workflows never succeed although their failures are logged, yet selection still prefers them. Change selection so the logged failures count against them.",
+    "original_targets": [
+      "concept_write",
+      "posteriorCompensation"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "surface": "walk",
+    "targets_seen_by_walk": [
+      "concept_write",
+      "posteriorCompensation"
+    ]
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The note explains how logged failures should weigh against those workflows in selection."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "class features only (surface variant B): a change verb aimed at selection behaviour; the walk persisted a prose concept_write plus an unrelated policy writeback; LLM judge reached; surface variant B (anti-overfitting: same mechanism and expected verdict as the original, different surface text)",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

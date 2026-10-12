@@ -1,0 +1,61 @@
+{
+  "class": "plan-text-as-change",
+  "control": false,
+  "credit_class": "floor:zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/write-goal.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "hollow_class": "write-goal-no-artifact",
+    "reached": false
+  },
+  "id": "0001-plan-text-as-change",
+  "input": {
+    "answer_text": "Plan: stamp each item with a last-advanced time, add a stall detector that compares it with the expected cadence, and raise a stall item when a stage stops. Each stage would record why it did not advance.",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "A queue of the system's own work items can stop moving at any stage, and nothing notices except a person reading logs. Make the system notice by itself when a stage stops advancing, and treat that as a work item of its own.",
+    "original_targets": [
+      "gap_lifecycle_scan",
+      "substrateGap_write"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "gap_lifecycle_scan",
+      "substrateGap_write"
+    ],
+    "verdict_reason": "The plan addresses every part of the request with a detector and a new kind of item raised automatically."
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The plan addresses every part of the request with a detector and a new kind of item raised automatically."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "class features only: an imperative mechanism change about the system's own work stalling unnoticed; floor tools 0/0; a plan-only answer; LLM judge reached",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

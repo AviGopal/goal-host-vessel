@@ -1,0 +1,35 @@
+{
+  "class": "floor-control",
+  "control": true,
+  "credit_class": "shortcut:own-floor",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorShortcut",
+  "expect": {
+    "shortcut": "allowed"
+  },
+  "id": "0010-shortcut-own-floor-path-for-read-goal",
+  "input": {
+    "activities": [
+      "universal-tool-fallback"
+    ],
+    "borrowed": false,
+    "entry": "floorShortcut",
+    "goal": "Explain why the sky looks blue during the day",
+    "schema": 1,
+    "targets": [
+      "llm_completion_dispatch"
+    ]
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: a goal's OWN floor pathway still serves its read goal",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

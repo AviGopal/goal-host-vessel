@@ -1,0 +1,54 @@
+{
+  "class": "harness-floor-verdict",
+  "control": false,
+  "credit_class": "floor:zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "reached": false
+  },
+  "id": "0138-harness-floor-verdict-variant-b-138",
+  "input": {
+    "answer_text": "Plan: open an item for any stage whose heartbeat goes quiet.",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "Pipeline stages in the system sometimes freeze, and only a human spots it. Teach the system to catch a frozen stage by itself and open an item for it.",
+    "original_targets": [],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [],
+    "verdict_reason": "deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it"
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": false,
+      "reason": "deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it"
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned; the goal or answer text is a class paraphrase; surface variant B (anti-overfitting: same mechanism and expected verdict as the original, different surface text)",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

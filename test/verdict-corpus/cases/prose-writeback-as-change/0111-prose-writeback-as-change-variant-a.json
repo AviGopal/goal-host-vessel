@@ -1,0 +1,62 @@
+{
+  "class": "prose-writeback-as-change",
+  "control": false,
+  "credit_class": "walk:prose-sink-for-change",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/write-goal.ts",
+  "entry": "reachGate",
+  "expect": {
+    "gate": "hollow",
+    "hollow_class": "write-goal-no-artifact",
+    "reached": false
+  },
+  "id": "0111-prose-writeback-as-change-variant-a",
+  "input": {
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "reachGate",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [
+        "concept_write",
+        "learningPolicyWriteback"
+      ],
+      "post_reach_sink": true,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "A few stored routines always fail, the record shows it, and they keep getting picked. Stop the picker from choosing them, and let it use one that works.",
+    "original_targets": [
+      "concept_write",
+      "posteriorCompensation"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "surface": "walk",
+    "targets_seen_by_walk": [
+      "concept_write",
+      "posteriorCompensation"
+    ]
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The concept lays out a strategy that makes the failure record stop selection and falls back to the working path."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "class features only (surface variant A): a change verb aimed at selection behaviour; the walk persisted a prose concept_write plus an unrelated policy writeback; LLM judge reached; surface variant A (anti-overfitting: same mechanism and expected verdict as the original, different surface text)",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

@@ -1,0 +1,62 @@
+{
+  "class": "repeat-write-refusal-credit",
+  "control": false,
+  "credit_class": "template:repeat-write-refusal",
+  "edit_site": "repos/goal-host-vessel/src/judge/credit-decision.ts",
+  "entry": "creditOnHollow",
+  "expect": {
+    "credit": "charged"
+  },
+  "id": "0011-repeat-write-refusal-charged",
+  "input": {
+    "consumed_in_chain": 0,
+    "edit_effect_reach": false,
+    "entry": "creditOnHollow",
+    "history": [
+      {
+        "attempt": 1,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      },
+      {
+        "attempt": 2,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      },
+      {
+        "attempt": 3,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      }
+    ],
+    "last_pick_produced_judged_artifact": true,
+    "schema": 1,
+    "template_id_class": "config-less-write-template",
+    "verdict": {
+      "deterministic": false,
+      "hollow_class": null,
+      "no_oracle": false
+    }
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "learning integrity (K = 3, ruling: charged): a template whose only task is a config-less *_write; three consecutive attempts each refused missing_required_field on the same field; non-deterministic hollow; nothing consumed in chain. From attempt K the beta is charged, not withheld forever.",
+    "recorded": "2026-10-12",
+    "source": "operator-ruling",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

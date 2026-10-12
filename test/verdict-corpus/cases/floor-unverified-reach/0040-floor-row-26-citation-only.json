@@ -1,0 +1,64 @@
+{
+  "class": "floor-unverified-reach",
+  "control": false,
+  "credit_class": "floor:citation-only",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": false,
+    "shortcut": "refused"
+  },
+  "id": "0040-floor-row-26-citation-only",
+  "input": {
+    "answer_text": "[answer text not captured]",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "investigate and decompose gap the-hourly-retire-sweep-lists-templates-with-the-bearer-scheme-gets-401-and-reports-covered-0-of-0-step-2: [step 2 of the-hourly-retire-sweep-lists-templates-with-the-bearer-scheme-gets-401-and-reports-covered-0-of-0] Update shouldRetire to use posterior-based retirement criterion (P(success) < 0.05 under Beta(alpha,beta) with alpha+beta >= 30)",
+    "original_targets": [
+      "thompson_posterior",
+      "activityTemplate_update",
+      "concept_write"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "thompson_posterior",
+      "activityTemplate_update",
+      "concept_write"
+    ],
+    "verdict_reason": "deterministic:code-investigation-cited — the answer cites /workspace/git/vessels/light-dispatch-vessel/src/index.ts, which independently re-reads (/workspace/git/vessels/light-dispatch-vessel/src/index.ts) and CONTAINS \"shouldRetire\"; the investigation names a real source location holding the symbol"
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "citation_oracle": {
+      "abstain": false,
+      "reached": true,
+      "reason": "deterministic:code-investigation-cited — the answer cites /workspace/git/vessels/light-dispatch-vessel/src/index.ts, which independently re-reads (/workspace/git/vessels/light-dispatch-vessel/src/index.ts) and CONTAINS \"shouldRetire\"; the investigation names a real source location holding the symbol"
+    }
+  },
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "bounded-journal reconstruction of a floor reach (citation-only): tools 0/0, no write, no output impulse; no answer text recorded (a placeholder stands in for the authored answer); ids stripped",
+    "recorded": "2026-10-12",
+    "source": "live-run",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

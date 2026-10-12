@@ -1,0 +1,62 @@
+{
+  "class": "floor-unverified-reach",
+  "control": false,
+  "credit_class": "floor:zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": false,
+    "shortcut": "refused"
+  },
+  "id": "0043-floor-row-29-llm-prose",
+  "input": {
+    "answer_text": "[answer text not captured]",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "investigate and decompose: Capability \"satisfier:trace_failu",
+    "original_targets": [
+      "trace_failure_pattern_report",
+      "concept_write"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "trace_failure_pattern_report",
+      "concept_write"
+    ],
+    "verdict_reason": "The output successfully identifies the failure mode (unhandled fetch exception) and provides a concrete code improvement with a try...catch block, which is then documented via concept_write."
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The output successfully identifies the failure mode (unhandled fetch exception) and provides a concrete code improvement with a try...catch block, which is then documented via concept_write."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "bounded-journal reconstruction of a floor reach (llm-prose): tools 0/0, no write, no output impulse; goal truncated at 60 chars; no answer text recorded (a placeholder stands in for the authored answer); ids stripped",
+    "recorded": "2026-10-12",
+    "source": "live-run",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

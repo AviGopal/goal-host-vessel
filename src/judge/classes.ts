@@ -82,6 +82,12 @@ export const CREDIT_CLASSES = [
   "any:write-claim-zero-tool",
   "shortcut:borrowed-floor",
   "template:repeat-write-refusal",
+  "template:hollow-charge",
+  "walk:mutation-target",
+  "shortcut:own-floor",
+  "floor:completion-shapes",
+  "walk:read-target",
+  "floor:tooled",
 ] as const;
 export type CreditClass = (typeof CREDIT_CLASSES)[number];
 

@@ -9,6 +9,11 @@
 // shows the same writes in the same order. The golden is generated on the BASE tree (run.ts generate)
 // and never edited by hand; a difference here is a behaviour change, whatever its size.
 //
+// HOST-SIDE MOVE-EQUIVALENCE TOOL, NOT ADMISSION. It refuses to run where /workspace or /vessels exists (the
+// container), and its golden pins one bun and executor build, so it is a `.check.ts`: never in the gate suite,
+// never a protected test. Admission is the verdict corpus (test/verdict-corpus/). Run it on purpose:
+//   bun test ./test/judge-split/verdict-diff.check.ts
+//
 // A failure names the scenario and the first differing line. To localize it:
 //   bun test/judge-split/verdict-diff/run.ts out /tmp/a --tree <base>   &&   bun test/judge-split/verdict-diff/run.ts out /tmp/b
 //   diff -r /tmp/a /tmp/b        (the .log.json files carry each run's captured console)
@@ -23,12 +28,13 @@ const ids = listScenarios();
 // environmentOf). The byte test is pinned to the executor VERSION only: a different build of the same
 // version prints a warning naming both fingerprints and the byte comparison STILL RUNS. A diff caused
 // by a build change is then a rare false failure, never a false pass. A different executor VERSION
-// (or bun) skips the byte test visibly; the replay-completes tests run everywhere.
+// (or bun) FAILS the byte test, naming the difference: a runtime this check cannot judge is a failure,
+// never a skip (a silent skip reads as a pass).
 const thisEnvObj = environmentOf(TREE);
 const goldenEnvObj = (existsSync(ENVIRONMENT_PATH) ? JSON.parse(readFileSync(ENVIRONMENT_PATH, "utf8")) : {}) as Partial<ReturnType<typeof environmentOf>>;
 const sameVersion = thisEnvObj.ias_executor_version === goldenEnvObj.ias_executor_version && thisEnvObj.bun === goldenEnvObj.bun;
 if (thisEnvObj.ias_executor_dist_sha256 !== goldenEnvObj.ias_executor_dist_sha256 || !sameVersion) {
-  console.warn(`[verdict-diff] environment differs from the golden's${sameVersion ? " (same executor version: byte comparison still runs)" : " (executor version or bun differs: byte comparison SKIPPED)"}\n  golden: ${JSON.stringify(goldenEnvObj)}\n  this:   ${JSON.stringify(thisEnvObj)}`);
+  console.warn(`[verdict-diff] environment differs from the golden's${sameVersion ? " (same executor version: byte comparison still runs)" : " (executor version or bun differs: the byte comparison FAILS, it cannot judge this runtime)"}\n  golden: ${JSON.stringify(goldenEnvObj)}\n  this:   ${JSON.stringify(thisEnvObj)}`);
 }
 
 describe("verdict diff: hermetic replay of the walk/judge corpus equals the committed golden", () => {
@@ -51,7 +57,8 @@ describe("verdict diff: hermetic replay of the walk/judge corpus equals the comm
     expect(failures).toEqual([]);
   }, 600_000);
 
-  test.skipIf(!sameVersion)("every scenario replays to its golden, byte for byte", async () => {
+  test("every scenario replays to its golden, byte for byte", async () => {
+    if (!sameVersion) throw new Error(`cannot judge this runtime: the golden was generated under ${JSON.stringify(goldenEnvObj)}, this is ${JSON.stringify(thisEnvObj)}`);
     const failures: string[] = [];
     for (const r of await replay()) {
       const golden = readFileSync(join(GOLDEN_DIR, `${r.id}.json`), "utf8");

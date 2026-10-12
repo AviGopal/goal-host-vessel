@@ -1,0 +1,60 @@
+{
+  "class": "harness-floor-verdict",
+  "control": false,
+  "credit_class": "floor:zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "reached": false
+  },
+  "id": "0069-harness-floor-verdict-19",
+  "input": {
+    "answer_text": "No orphaned tools were found.",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "Find where the system offers a model tool that nothing produces, and add a scan listing each such tool without a producer as a substrate gap",
+    "original_targets": [
+      "code_modification_proposal",
+      "orphaned_capability_scan"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "code_modification_proposal",
+      "orphaned_capability_scan"
+    ],
+    "verdict_reason": "the scan output lists no orphaned tool; nothing was diagnosed"
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": false,
+      "reason": "the scan output lists no orphaned tool; nothing was diagnosed"
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned; the goal or answer text is a class paraphrase",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

@@ -1,0 +1,45 @@
+{
+  "class": "reframe-control",
+  "control": true,
+  "credit_class": "walk:reframed-target",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/reframe.ts",
+  "entry": "reframeAccept",
+  "expect": {
+    "reached": true
+  },
+  "id": "0006-reframe-accepted-read-goal",
+  "input": {
+    "alt_walk": {
+      "only_raw_input": false,
+      "reached": true,
+      "skipped_planned_retrieval": false,
+      "substantive_shapes": [
+        "llm_completion"
+      ]
+    },
+    "alternatives": [
+      [
+        "llm_completion"
+      ]
+    ],
+    "entry": "reframeAccept",
+    "goal": "Summarise what changed in the walk budget over the last week",
+    "orig_wanted_derived": true,
+    "original_targets": [
+      "summary_report"
+    ],
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: a read goal whose re-framed walk reached with a substantive derived answer is accepted",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

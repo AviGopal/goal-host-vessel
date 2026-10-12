@@ -1,0 +1,43 @@
+{
+  "class": "harness-reframe",
+  "control": false,
+  "credit_class": "walk:reframed-target",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/reframe.ts",
+  "entry": "reframeAccept",
+  "expect": {
+    "reached": false
+  },
+  "id": "0072-harness-reframe-22",
+  "input": {
+    "alt_walk": {
+      "only_raw_input": false,
+      "reached": false,
+      "skipped_planned_retrieval": false,
+      "substantive_shapes": []
+    },
+    "alternatives": [
+      [
+        "interventionRefused_write"
+      ]
+    ],
+    "entry": "reframeAccept",
+    "goal": "Find where an operator verdict is ignored: a human label that disagrees with the system changes nothing later; diagnose where it stops and file it",
+    "orig_wanted_derived": true,
+    "original_targets": [
+      "goal_verification_label_write"
+    ],
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned; the goal or answer text is a class paraphrase",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

@@ -1,0 +1,35 @@
+{
+  "class": "harness-floor-shortcut",
+  "control": false,
+  "credit_class": "shortcut:own-floor",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorShortcut",
+  "expect": {
+    "shortcut": "allowed"
+  },
+  "id": "0106-harness-floor-shortcut-56",
+  "input": {
+    "activities": [
+      "universal-tool-fallback"
+    ],
+    "borrowed": false,
+    "entry": "floorShortcut",
+    "goal": "Explain why the sky looks blue during the day",
+    "schema": 1,
+    "targets": [
+      "llm_completion_dispatch"
+    ]
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "harness-recorded",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

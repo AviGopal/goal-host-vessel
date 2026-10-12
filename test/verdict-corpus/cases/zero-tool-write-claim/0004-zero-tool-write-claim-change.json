@@ -1,0 +1,60 @@
+{
+  "class": "zero-tool-write-claim",
+  "control": false,
+  "credit_class": "any:write-claim-zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/write-goal.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "reached": false
+  },
+  "id": "0004-zero-tool-write-claim-change",
+  "input": {
+    "answer_text": "Plan: add a stall detector and raise a stall item. Since I cannot see the output, the write to substrateGap_write was most likely successful.",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "A queue of the system's own work items can stop moving at any stage, and nothing notices except a person reading logs. Make the system notice by itself when a stage stops advancing, and treat that as a work item of its own.",
+    "original_targets": [
+      "gap_lifecycle_scan",
+      "substrateGap_write"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "gap_lifecycle_scan",
+      "substrateGap_write"
+    ],
+    "verdict_reason": "The plan covers each part of the request."
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The plan covers each part of the request."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "class features only: an imperative change goal; the floor ran 0 tools and wrote nothing; the answer says the write call was likely successful; LLM judge reached",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

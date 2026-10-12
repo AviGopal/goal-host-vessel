@@ -21,7 +21,7 @@ import { reachInput, shortcutInput } from "../src/judge/inputs";
 
 const MECHANISM_CHANGE_GOAL = "Some learned procedures fail every time, the failures are already on record, and they are still chosen first. Make that record stop them being chosen, and let selection fall back to a procedure that works.";
 const STALL_NOTICE_GOAL = "A queue of the system's own work items can stop moving at any stage and nothing notices except a person reading logs. Make the system notice by itself when a stage stops advancing and treat that as a work item of its own. Whatever it adds must fire on flow stopping, not on backlog size.";
-const PLAN_FINAL_TEXT = "Plan: stamp each item with a last-advanced time, add a stall detector, and raise a stall item. Since I cannot see the output, it's likely that the actual call to substrateGap_write was successful. I have shown how such a stall item would be raised.";
+const PLAN_FINAL_TEXT = "Plan: stamp each item with a last-advanced time, add a stall detector, and raise a stall item. Since I cannot see the output, the write to substrateGap_write was most likely successful. I have shown how such a stall item would be raised.";
 const PLAN_REASON = "The plan covers each part of the request with a progress stamp, a stall detector and a new kind of item raised automatically.";
 const shortcut = (goal: string, activities: string[], borrowed: boolean, targets: string[]) => shortcutAllowed(shortcutInput({ goal, activities, borrowed, targets }));
 
@@ -39,13 +39,13 @@ describe("change/write intent reuses goal-intent and adds only a sentence-initia
       "Explain what makes the reach judge accept prose",
       "Why does the gate stop the walk?",
       "How many files changed in repos/goal-host-vessel/src last week?",
-      "Is there an open gap for the stalled compose stage of the improvement lane?",
+      "Is there an open gap for the stalled review stage?",
       "Write three interview questions for a backend engineering role",
       "Write a summary of today's failing tests in goal-host-vessel.",
     ]) expect([g, goalAsksForChange(g)]).toEqual([g, false]);
   });
   test("write/create/file lead a persist instruction only with a stored-thing object", () => {
-    expect(goalAsksForChange("File a gap recording that the improvement lane's compose stage has not advanced in six hours.")).toBe(true);
+    expect(goalAsksForChange("File a gap recording that the review stage has not advanced in six hours.")).toBe(true);
     expect(goalAsksForChange("Write ONE failing test that reproduces the defect in the gap store's retention sweep.")).toBe(true);
   });
   test("a mutation-shape target alone is write intent", () => {
@@ -72,7 +72,7 @@ describe("item 1: a change/write goal counts as reached only with an artifact", 
     expect(writeGoalArtifactGate(STALL_NOTICE_GOAL, { persistedWrites: ["goal_verification_label_write"], targets: ["substrateGap_write"] }).hollow).toBe(true);
   });
   test("NEGATIVE CONTROL: a write goal with a real persisted write of its own target reaches", () => {
-    expect(writeGoalArtifactGate("File a gap recording that the compose stage stalled.", { persistedWrites: ["substrateGap_write"], targets: ["substrateGap_write"] }).hollow).toBe(false);
+    expect(writeGoalArtifactGate("File a gap recording that the review stage stalled.", { persistedWrites: ["substrateGap_write"], targets: ["substrateGap_write"] }).hollow).toBe(false);
     expect(writeGoalArtifactGate(STALL_NOTICE_GOAL, { persistedWrites: ["substrateGap_write"], targets: ["substrateGap_write", "gap_lifecycle_scan"] }).hollow).toBe(false);
   });
   test("NEGATIVE CONTROL: an edit goal with a landed sha reaches", () => {

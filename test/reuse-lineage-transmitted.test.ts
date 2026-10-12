@@ -27,7 +27,9 @@ const src = async (): Promise<string> => await Bun.file(SRC).text();
 function recordGoalPathBody(s: string): string {
   const i = s.indexOf("async function recordGoalPath");
   expect(i).toBeGreaterThan(-1);
-  return s.slice(i, i + 6500);
+  // 6800, not 6500: the verdict-corpus credit-hold guard at the top of recordGoalPath (src/judge/credit-hold.ts)
+  // pushed the last asserted line to ~6,600 characters. A window that truncates its subject reports on the cut.
+  return s.slice(i, i + 6800);
 }
 
 describe("reuse lineage is transmitted", () => {

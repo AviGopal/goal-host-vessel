@@ -1,0 +1,37 @@
+{
+  "class": "harness-credit",
+  "control": false,
+  "credit_class": "template:hollow-charge",
+  "edit_site": "repos/goal-host-vessel/src/judge/credit-decision.ts",
+  "entry": "creditOnHollow",
+  "expect": {
+    "credit": "withheld"
+  },
+  "id": "0078-harness-credit-28",
+  "input": {
+    "consumed_in_chain": 0,
+    "edit_effect_reach": false,
+    "entry": "creditOnHollow",
+    "history": [],
+    "last_pick_produced_judged_artifact": false,
+    "schema": 1,
+    "template_id_class": "satisfier:shellResult",
+    "verdict": {
+      "deterministic": true,
+      "hollow_class": null,
+      "no_oracle": false
+    }
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "harness-recorded",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

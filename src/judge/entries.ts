@@ -17,6 +17,7 @@ import { isHollowClass, isReasonCode, isReframeCode, isShortcutCode, type Hollow
 import { floorCompletionShapes } from "./floor-clamps";
 import { isMutationShape } from "./shapes";
 import { creditOnHollow as creditDecision, type CreditOnHollowDecision } from "./credit-decision";
+import { creditClassesOf, noteClasses } from "./credit-classes";
 
 interface OpenRules {
   reachGate: (i: ReachGateInput) => unknown;
@@ -41,6 +42,17 @@ export function judgeRulesFellBack(): Record<string, number> { return Object.fro
 function fallBack(entry: string, why: string): void {
   fellBack.set(entry, (fellBack.get(entry) ?? 0) + 1);
   console.warn(`[judge] judge_rules.fell_back entry=${entry} — ${why}; the closed fallback verdict is used`);
+}
+
+/** A replay (the verdict corpus) is not a live verdict: its classes are not noted for the credit hold. */
+let replayDepth = 0;
+export function replaying<T>(fn: () => T): T {
+  replayDepth++;
+  try { return fn(); } finally { replayDepth--; }
+}
+function note(goal: string, input: Parameters<typeof creditClassesOf>[0], upstreamReason?: string | null): void {
+  if (replayDepth > 0) return;
+  try { noteClasses(goal, creditClassesOf(input, upstreamReason)); } catch { /* noting never changes a verdict */ }
 }
 
 /** Test seam: run the entries against a different rules module (the corpus mutants and the clamp tests). */
@@ -105,6 +117,7 @@ function renderReachGateReason(code: ReasonCode, i: ReachGateInput): string {
 
 /** The write-goal gate within the reach verdict: a change/write goal is reached only by an artifact. */
 export function reachGate(input: ReachGateInput): ReachGateResult {
+  note(input?.goal, input);
   const bad = validRecord(input, "reachGate");
   const r = bad ? { error: bad } : callRule("reachGate", rules?.reachGate, input);
   const refused = "error" in r ? r.error : clampRuleVerdict(r.out);
@@ -133,6 +146,7 @@ export interface FloorVerdictResult {
  * a replay passes the recorded one.
  */
 export function floorVerdict(input: FloorVerdictInput, upstream: RecordedJudgeVerdict | null): FloorVerdictResult {
+  note(input?.goal, input, upstream?.reason ?? null);
   const bad = validRecord(input, "floorVerdict");
   const r = bad ? { error: bad } : callRule("floorVerdict", rules?.floorDecide, { upstream, answer_text: input.answer_text, evidence: input.evidence });
   const refused = "error" in r ? r.error : clampRuleVerdict(r.out, ["fabricated_transcript"]);
@@ -162,6 +176,7 @@ function renderShortcutWhy(code: ShortcutCode, i: FloorShortcutInput): string {
 
 /** REUSE-BEFORE-DERIVE: may a learned floor pathway stand in for the walk? */
 export function floorShortcut(input: FloorShortcutInput): FloorShortcutResult {
+  note(input?.goal, input);
   const bad = validRecord(input, "floorShortcut");
   const r = bad ? { error: bad } : callRule("floorShortcut", rules?.floorShortcutAllowed, input);
   let refused: string | null = "error" in r ? r.error : null;
@@ -186,6 +201,7 @@ export interface ReframeAcceptResult { accept: boolean; reason_code: ReframeCode
 
 /** Does the re-framed walk's reach stand in for the original goal? */
 export function reframeAccept(input: ReframeAcceptInput): ReframeAcceptResult {
+  note(input?.goal, input);
   const bad = validRecord(input, "reframeAccept");
   const r = bad ? { error: bad } : callRule("reframeAccept", rules?.reframeAccept, input);
   let refused: string | null = "error" in r ? r.error : null;

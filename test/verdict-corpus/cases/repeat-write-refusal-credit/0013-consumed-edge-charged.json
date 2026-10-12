@@ -1,0 +1,62 @@
+{
+  "class": "repeat-write-refusal-credit",
+  "control": true,
+  "credit_class": "template:repeat-write-refusal",
+  "edit_site": "repos/goal-host-vessel/src/judge/credit-decision.ts",
+  "entry": "creditOnHollow",
+  "expect": {
+    "credit": "charged"
+  },
+  "id": "0013-consumed-edge-charged",
+  "input": {
+    "consumed_in_chain": 1,
+    "edit_effect_reach": false,
+    "entry": "creditOnHollow",
+    "history": [
+      {
+        "attempt": 1,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      },
+      {
+        "attempt": 2,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      },
+      {
+        "attempt": 3,
+        "refusal": {
+          "error": "missing_required_field",
+          "field": "gap"
+        },
+        "write_shape": "substrateGap_write"
+      }
+    ],
+    "last_pick_produced_judged_artifact": true,
+    "schema": 1,
+    "template_id_class": "config-less-write-template",
+    "verdict": {
+      "deterministic": false,
+      "hollow_class": null,
+      "no_oracle": false
+    }
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: the same repeated refusal but the chain formed a producer -> consumer edge: beta charged as today",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

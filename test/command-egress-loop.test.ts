@@ -12,7 +12,7 @@
 //   step 52: 127.0.0.1:8100/landing/audit → dannykeane.com → api.github.com → api.merlonix.com → merlonix.com
 //
 // The harness child refuses to run where /workspace or /vessels exists (its hermetic precondition,
-// shared with verdict-diff.test.ts), so this file runs on a host checkout, not inside the container.
+// shared with verdict-diff.check.ts), so this file runs on a host checkout, not inside the container.
 // The rule itself is pinned by test/command-egress.test.ts, which runs anywhere.
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

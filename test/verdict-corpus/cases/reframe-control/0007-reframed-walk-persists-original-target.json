@@ -1,0 +1,59 @@
+{
+  "class": "reframe-control",
+  "control": true,
+  "credit_class": "walk:reframed-target",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/write-goal.ts",
+  "entry": "reachGate",
+  "expect": {
+    "reached": true
+  },
+  "id": "0007-reframed-walk-persists-original-target",
+  "input": {
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "reachGate",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [
+        "concept_write"
+      ],
+      "post_reach_sink": true,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "Turn the lesson from the failed nightly run into a concept the graph keeps.",
+    "original_targets": [
+      "concept_write"
+    ],
+    "reframed_from": [
+      "concept_write"
+    ],
+    "schema": 1,
+    "surface": "walk",
+    "targets_seen_by_walk": [
+      "memoryNote_write"
+    ]
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The lesson is stored as a concept."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: the same record-shaped goal; the re-framed walk persisted the ORIGINAL target concept_write; it reaches",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

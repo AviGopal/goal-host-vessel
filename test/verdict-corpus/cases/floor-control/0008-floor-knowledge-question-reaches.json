@@ -1,0 +1,60 @@
+{
+  "class": "floor-control",
+  "control": true,
+  "credit_class": "floor:zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": true,
+    "shortcut": "allowed"
+  },
+  "id": "0008-floor-knowledge-question-reaches",
+  "input": {
+    "answer_text": "Sunlight scatters off air molecules; shorter blue wavelengths scatter most (Rayleigh scattering), so the sky looks blue.",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "Explain why the sky looks blue during the day",
+    "original_targets": [
+      "llm_completion_dispatch"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "llm_completion_dispatch"
+    ],
+    "verdict_reason": "The answer explains Rayleigh scattering correctly."
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The answer explains Rayleigh scattering correctly."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: a pure-knowledge question answered by the floor with 0 tools reaches; nothing produced, so no completion shapes; a borrowed floor serves a read goal",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

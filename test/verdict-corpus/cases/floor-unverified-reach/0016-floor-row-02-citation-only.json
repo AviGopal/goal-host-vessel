@@ -1,0 +1,62 @@
+{
+  "class": "floor-unverified-reach",
+  "control": false,
+  "credit_class": "floor:citation-only",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": false,
+    "shortcut": "refused"
+  },
+  "id": "0016-floor-row-02-citation-only",
+  "input": {
+    "answer_text": "[answer text not captured]",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "investigate and decompose gap satisfier:git_diff-failure: The git_diff capability fails systematically with an execution error when attempted to be executed outside of a valid git repository.",
+    "original_targets": [
+      "execution_trace",
+      "git_diff"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "execution_trace",
+      "git_diff"
+    ],
+    "verdict_reason": "deterministic:code-investigation-cited — the answer cites /workspace/git/vessels/development-vessel/src/resolvers/git-diff.ts, which independently re-reads (/workspace/git/vessels/development-vessel/src/resolvers/git-diff.ts) and CONTAINS \"git_diff\"; the investigation names a real source location holding the symbol"
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "citation_oracle": {
+      "abstain": false,
+      "reached": true,
+      "reason": "deterministic:code-investigation-cited — the answer cites /workspace/git/vessels/development-vessel/src/resolvers/git-diff.ts, which independently re-reads (/workspace/git/vessels/development-vessel/src/resolvers/git-diff.ts) and CONTAINS \"git_diff\"; the investigation names a real source location holding the symbol"
+    }
+  },
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "bounded-journal reconstruction of a floor reach (citation-only): tools 0/0, no write, no output impulse; no answer text recorded (a placeholder stands in for the authored answer); ids stripped",
+    "recorded": "2026-10-12",
+    "source": "live-run",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

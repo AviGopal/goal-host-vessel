@@ -1,0 +1,60 @@
+{
+  "class": "floor-control",
+  "control": true,
+  "credit_class": "floor:citation-only",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": true,
+    "shortcut": "allowed"
+  },
+  "id": "0009-floor-grounded-citation-reaches",
+  "input": {
+    "answer_text": "The decision lives in the floor rules module, in shortcutAllowed, which refuses a borrowed pathway for a change goal.",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 2,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 3,
+      "tools_total": 3
+    },
+    "goal": "Which module decides whether a learned floor pathway is reused instead of a walk?",
+    "original_targets": [
+      "codeSearchResult"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "codeSearchResult"
+    ],
+    "verdict_reason": "deterministic:code-investigation-cited — the answer cites a file that contains the named symbol"
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "citation_oracle": {
+      "abstain": false,
+      "reached": true,
+      "reason": "deterministic:code-investigation-cited — the answer cites a file that contains the named symbol"
+    }
+  },
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "control: a question whose citation names a file not in the goal text and contains the symbol; the floor made grounded reads (a real investigation); the citation oracle verified it",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

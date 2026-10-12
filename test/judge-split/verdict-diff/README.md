@@ -20,7 +20,7 @@ Run every command from the goal-host root.
 | Regenerate the golden on the current base | `bun test/judge-split/verdict-diff/run.ts generate` |
 | Compare a split tree with this harness | `bun test/judge-split/verdict-diff/run.ts check --tree <split root>` |
 | Write a run's outputs, including captured console | `bun test/judge-split/verdict-diff/run.ts out <dir> [--tree <root>]` |
-| Suite test | `bun test test/judge-split/verdict-diff.test.ts` |
+| Suite test | `bun test ./test/judge-split/verdict-diff.check.ts` (host only; never in the gate suite) |
 | Typecheck the harness | `bunx tsc -p test/judge-split/verdict-diff/tsconfig.vd.json` |
 
 To find where a difference starts, run `out` on both trees and `diff -r` the two directories.
@@ -39,7 +39,8 @@ version and dist hash.
 
 - **Same executor version and bun, different build hash:** a warning is printed and the byte test
   still runs. A build change that matters can then cause a rare false failure, never a false pass.
-- **Different executor version or bun:** the byte test is skipped visibly.
+- **Different executor version or bun:** the byte test FAILS, naming the difference (it cannot judge
+  that runtime; a skip would read as a pass).
 
 ## Scenarios are the source of truth
 

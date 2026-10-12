@@ -1,0 +1,33 @@
+{
+  "class": "harness-floor-shortcut",
+  "control": false,
+  "credit_class": "shortcut:borrowed-floor",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorShortcut",
+  "expect": {
+    "shortcut": "refused"
+  },
+  "id": "0134-harness-floor-shortcut-variant-b-134",
+  "input": {
+    "activities": [
+      "universal-tool-fallback"
+    ],
+    "borrowed": true,
+    "entry": "floorShortcut",
+    "goal": "Pipeline stages in the system sometimes freeze, and only a human spots it. Teach the system to catch a frozen stage by itself and open an item for it.",
+    "schema": 1,
+    "targets": []
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "harness-scenario conversion: the entry's arguments at a recorded call in a hermetic walk replay, expect = the verdict that call returned; the goal or answer text is a class paraphrase; surface variant B (anti-overfitting: same mechanism and expected verdict as the original, different surface text)",
+    "recorded": "2026-10-12",
+    "source": "harness-scenario",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

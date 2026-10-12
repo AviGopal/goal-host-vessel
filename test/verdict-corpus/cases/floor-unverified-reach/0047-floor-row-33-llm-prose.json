@@ -1,0 +1,64 @@
+{
+  "class": "floor-unverified-reach",
+  "control": false,
+  "credit_class": "floor:zero-tool",
+  "edit_site": "repos/goal-host-vessel/src/judge-rules/floor.ts",
+  "entry": "floorVerdict",
+  "expect": {
+    "completion_shapes": [],
+    "reached": false,
+    "shortcut": "refused"
+  },
+  "id": "0047-floor-row-33-llm-prose",
+  "input": {
+    "answer_text": "[answer text not captured]",
+    "deliverables": null,
+    "digest_excerpt": null,
+    "entry": "floorVerdict",
+    "evidence": {
+      "consumed_in_chain": 0,
+      "grounded_reads": 0,
+      "landed": false,
+      "output_impulses": 0,
+      "persisted_writes": [],
+      "post_reach_sink": false,
+      "produced_shapes": [],
+      "tools_ok": 0,
+      "tools_total": 0
+    },
+    "goal": "learning-loop-selftest: exercise the execution→learning chai",
+    "original_targets": [
+      "gate_saturation_scan",
+      "performance_reach_gate",
+      "perf_canary_resolve"
+    ],
+    "reframed_from": null,
+    "schema": 1,
+    "seeded_evidence": false,
+    "surface": "floor",
+    "targets_seen_by_walk": [
+      "gate_saturation_scan",
+      "performance_reach_gate",
+      "perf_canary_resolve"
+    ],
+    "verdict_reason": "The output correctly identified the purpose of the `learning-loop-selftest-tick.ts` script, detailed the specific assertions it performs, and accurately described the 'known answer' for each assertion in the context of the gate probe's success criteria."
+  },
+  "licenses": null,
+  "llm": {
+    "judge": {
+      "abstain": false,
+      "reached": true,
+      "reason": "The output correctly identified the purpose of the `learning-loop-selftest-tick.ts` script, detailed the specific assertions it performs, and accurately described the 'known answer' for each assertion in the context of the gate probe's success criteria."
+    }
+  },
+  "ports": {},
+  "provenance": {
+    "fidelity": "paraphrase-only",
+    "note": "bounded-journal reconstruction of a floor reach (llm-prose): tools 0/0, no write, no output impulse; goal truncated at 60 chars; no answer text recorded (a placeholder stands in for the authored answer); ids stripped",
+    "recorded": "2026-10-12",
+    "source": "live-run",
+    "trace_ref": null
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

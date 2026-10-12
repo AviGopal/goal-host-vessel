@@ -291,6 +291,7 @@ import * as judge from "./judge/entries";
 import * as judgeInputs from "./judge/inputs";
 import { zeroToolWriteClaim } from "./judge/floor-clamps";
 import { isMutationShape } from "./judge/shapes";
+import * as creditHold from "./judge/credit-hold";
 import type { WriteArtifactEvidence } from "./judge/inputs";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
@@ -1175,7 +1176,7 @@ export function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "verdictCorpusRun"] as const;
 const VERSION = "0.1.0";
 const _dupOwnerFiled = new Set<string>();
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
@@ -4139,7 +4140,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   if (writeEvidence) {
     const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
     const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
-    if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", completion_shapes: [] };
+    if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
   }
 
   // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
@@ -6277,6 +6278,7 @@ async function mintGovernorAllows(shape: string): Promise<boolean> {
   }
 }
 async function penaliseHollowTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> { let _betaApplied = false;
+  if (creditHold.heldForGoal(goalText, "hollow", "penaliseHollowTemplate")) return { templateId: activityId, dAlpha: 0, dBeta: 0 }; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   try {
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
@@ -6495,7 +6497,8 @@ async function producedShapesConsumable(shapes: string[]): Promise<boolean> {
 // is graded exclusively by /reach, which alone sees failure_mode, tasks/cost_usd, signature
 // and composition_chain. Do not re-add a posterior write here.
 // Only ever called behind a substance gate (deterministic flag OR producedShapesConsumable).
-async function creditReachedTemplate(activityId: string, reason: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
+async function creditReachedTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
+  if (creditHold.heldForGoal(goalText, "reach", "creditReachedTemplate")) return { templateId: activityId, dAlpha: 0, dBeta: 0 }; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   try {
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
       method: "POST",
@@ -6785,6 +6788,7 @@ async function landedShaForGo(goalHash: string): Promise<string | null> {
 }
 
 async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
+  if (creditHold.heldForGoal(goalText, reached ? "reach" : "hollow", "recordGoalPath")) return; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   const landedSha = await landedShaForGoal(goalText);
   // Situation at decision time (2026-09-20). Selection ASKS with this signature
   // (recommendReachingPath and both recommend calls send it) but the RECORD never
@@ -7484,7 +7488,8 @@ const foreignConsumptionGate = makeForeignConsumptionGate({
     console.warn(`[foreign-consumption] filed gap ${gap.id} (http ${r.status})`);
   },
 });
-async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string, carriedProvenanceVerdict?: ForeignConsumptionVerdict | null): Promise<void> {
+async function mintReachedTrace(trace: { id?: string; status?: string; templateId?: string; durationMs?: number; costUsd?: number; tasks?: Array<{ outputShapes?: string[] }>; compositionChain?: string[]; outputImpulseIds?: string[] }, grounded: boolean, goalSignature?: string, carriedProvenanceVerdict?: ForeignConsumptionVerdict | null, goalText?: string): Promise<void> {
+  if (creditHold.heldForGoal(goalText, "reach", "mintReachedTrace")) return; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   const executionId = trace?.id;
   if (!executionId) return;
   if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
@@ -12233,7 +12238,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             .filter((id) => { if (_alreadyCredited.has(id)) { tap(`[goal-host-vessel] walk(${opts.surface}): α-credit for ${id} already applied in this dispatch — not credited twice`); return false; } return true; });
           if (_involved.length === 0) tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit — no involved step is creditable (unverified writes only)`);
           for (const _stepId of _involved) {
-            const _abCredit = await creditReachedTemplate(_stepId, verdict.reason ?? "goal reached");
+            const _abCredit = await creditReachedTemplate(_stepId, verdict.reason ?? "goal reached", goal);
             opts.learningSink?.alphaBetaDelta.push(_abCredit);
             // Report what HAPPENED, not what was attempted (a rejected or lost credit is named so).
             tap(_abCredit.dAlpha > 0
@@ -12522,7 +12527,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const mintGrounded = isGroundedHonestReach(verdict, { commandEvidence, consumedInChain: consumedInChain.size, editEffectReach });
         walkGroundedVerdict = mintGrounded;
         if (!satisfierOnly) {
-          if (opts.learningMode !== "observe") void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal), lastTrace.id ? stepProvenanceVerdicts.get(lastTrace.id) : undefined);
+          if (opts.learningMode !== "observe") void mintReachedTrace(lastTrace as any, mintGrounded, goalHashOf(goal), lastTrace.id ? stepProvenanceVerdicts.get(lastTrace.id) : undefined, goal);
         } else if (chain.length >= 2) {
           // CARRY THE VERDICT THE WALK ALREADY COMPUTED (2026-08-09).
           //
@@ -12581,7 +12586,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             } catch (e) {
               console.warn(`[goal-host-vessel] composite record FAILED id=${composite.id}: ${(e as Error)?.message ?? String(e)}`);
             }
-            if (opts.learningMode !== "observe") await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal));
+            if (opts.learningMode !== "observe") await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal), undefined, goal);
           })();
         }
       }
@@ -14136,7 +14141,8 @@ async function runGoalWithRecoveryInner(
         borrowed: _shortcutPathway.borrowed !== false,
         targets: seededOutputShapes ?? [],
       }), _floorShortcut);
-      const floorIsTheProvenPathway = _floorShortcut.allowed;
+      // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts): a held class withholds REUSE donor eligibility.
+      const floorIsTheProvenPathway = _floorShortcut.allowed && !(creditHold.heldFor([...(reachingPathway?.borrowed !== false ? ["shortcut:borrowed-floor"] : ["shortcut:own-floor"])], "reach", "floorShortcut"));
       if (!floorIsTheProvenPathway && reachingPathway && (reachingPathway.activities ?? []).length === 1 && normActivityId(String(reachingPathway.activities[0] ?? "")) === "universal-tool-fallback" && !isEditIntentGoal(goal) && !goalRequestsDurableArtifact(goal)) {
         tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but ${_floorShortcut.why}; walking instead`);
       }
@@ -15471,8 +15477,8 @@ async function runGoalWithRecoveryInner(
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
-          if (isSubstanceHonestReach(verdict)) { opts.learningSink?.alphaBetaDelta.push(await creditReachedTemplate(selId, verdict.reason ?? "goal reached")); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
-          if (opts.learningMode !== "observe") void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string), _gRun);  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
+          if (isSubstanceHonestReach(verdict)) { opts.learningSink?.alphaBetaDelta.push(await creditReachedTemplate(selId, verdict.reason ?? "goal reached", goal as string)); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
+          if (opts.learningMode !== "observe") void mintReachedTrace(result.trace as any, isGroundedHonestReach(verdict, {}), goalHashOf(goal as string), _gRun, goal as string);  // reach → mint — gated on grounded honesty (only deterministic/landed anchor in scope here)
         }
       } catch (e) { console.warn("[goal-host-vessel] goal-reach verify error (non-fatal):", (e as Error).message); }
     } else if (!goal && status === "completed" && selId) {
@@ -18181,6 +18187,55 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
   });
 }
 
+// THE VERDICT CORPUS RUNNER ACTIVITY (src/judge/corpus-activity.ts, closed): replay the deployed corpus
+// against the live in-process judge entries, publish the verdictCorpusStatus record the credit hold reads,
+// record a traced report, and file one gap per red case. Triggered by a `verdictCorpusRun` resolve (the
+// rhythm conductor's time-shaped impulse) and once at boot. One run at a time.
+let _verdictCorpusRun: Promise<unknown> | null = null;
+const _verdictCorpusGapsFiled = new Set<string>();
+async function runVerdictCorpusNow(trigger: string): Promise<unknown> {
+  if (_verdictCorpusRun) return await _verdictCorpusRun;
+  _verdictCorpusRun = (async () => {
+    const { runVerdictCorpusActivity, readEverGreenFile, writeStatusFile } = await import("./judge/corpus-activity");
+    const { DEPLOYED_CORPUS_DIR, STATUS_SHAPE } = creditHold;
+    const { hostname } = await import("node:os");
+    const runId = `verdict-corpus-runner-${Date.now()}`;
+    return await runVerdictCorpusActivity({
+      dir: DEPLOYED_CORPUS_DIR, node: hostname(), deployedSha: null, trigger, nowMs: Date.now(),
+      sinks: {
+        readPreviousStatus: () => resolveShapedPolicy(STATUS_SHAPE),
+        readEverGreen: () => readEverGreenFile(),
+        writeStatus: async (st) => { await writeStatusFile(st); creditHold.invalidateHolds(); },
+        recordReport: async (rep) => {
+          await persistSatisfierTrace({
+            id: runId, templateId: "verdict-corpus-runner", templateName: "verdict corpus runner (judge behaviour pins)",
+            status: rep.status.state === "ok" ? "completed" : "failed", compositionChain: [], inputImpulseIds: [], outputImpulseIds: [], tasks: [], costUsd: 0, durationMs: Math.round(rep.ms),
+            tags: ["dispatcher_used:goal-host", "verdict_corpus:run", `verdict_corpus:trigger:${trigger}`, rep.status.state === "ok" && rep.status.flips.length === 0 ? "reached:true" : "reached:false"],
+            metadata: { verdictCorpusReport: { state: rep.status.state, corpus: rep.status.corpus, fidelity: rep.status.fidelity, judge_sha: rep.status.judge_sha, ever_green: rep.status.ever_green, green: rep.status.green.length, flips: rep.status.flips, known_red: rep.status.known_red, entry_missing: rep.status.entry_missing, holds: rep.status.holds.map((h) => `${h.credit_class}:${h.direction}`), red: rep.red.slice(0, 40).map((r) => `${r.id} ${r.outcome}`) } },
+          } as unknown as ExecutionTrace);
+        },
+        fileGap: async (g) => {
+          if (_verdictCorpusGapsFiled.has(`${g.id}|${g.severity}`)) return; // filed once per process (idempotent by id in the store)
+          try {
+            const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+              body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
+                id: g.id, category: g.category, source: "substrate_detected", status: "open", severity: g.severity, summary: g.summary, detected_at: new Date().toISOString(),
+                classification_metadata: { kind: "verdict_corpus", edit_site: g.edit_site, case_id: g.case_id, credit_class: g.credit_class, falsifier: g.falsifier },
+              } } } }),
+              signal: AbortSignal.timeout(15_000),
+            });
+            if (r.ok) _verdictCorpusGapsFiled.add(`${g.id}|${g.severity}`);
+            else console.warn(`[verdict-corpus] gap ${g.id} NOT filed (${r.status})`);
+          } catch (e) { console.warn(`[verdict-corpus] gap ${g.id} NOT filed: ${(e as Error)?.message ?? e}`); }
+        },
+      },
+    });
+  })();
+  try { return await _verdictCorpusRun; } finally { _verdictCorpusRun = null; }
+}
+
 async function handleResolve(req: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try {
@@ -18341,6 +18396,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
   }
   if (type === "fleetActivityFeed") { return Response.json({ resolved: true, shape: "fleetActivityFeed", body: await buildFleetActivityFeedBody() }); }
+  if (type === "verdictCorpusRun") { return Response.json({ resolved: true, shape: "verdictCorpusReport", body: await runVerdictCorpusNow(typeof body.trigger === "string" ? body.trigger.slice(0, 40) : "rhythm") }); }
   // bodyHonestyPolicy (task #61): the walk resolves this on every use and logs a
   // law-1 fallback when nothing answers — measured 0 of 417 advertised shapes.
   // Serving the STORED policy makes the denial vocabulary editable data; serving
@@ -19075,6 +19131,7 @@ console.log(
 );
 
 void loadReachedCommandCache(); // populate the known-command library from durable storage (fail-open, async)
+void runVerdictCorpusNow("boot"); // the verdict corpus runs against the live judge at boot (src/judge/corpus-activity.ts)
 void loadGoalFailureMemory(); // populate the failure memory (why prior dispatches of a goal were hollow) from durable storage (fail-open, async)
 registerBuiltinResolvers();
 await registerDevVesselProxies();
