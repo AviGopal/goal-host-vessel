@@ -23,11 +23,11 @@
  *   - every hold carries `since` and `review_by`; it lifts only when the runner observes its case green.
  */
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { isUsablePolicy, shapedPolicyPath } from "../shaped-policy-store";
 import { classesForGoal } from "./credit-classes";
 import { everRedCases, everRedHolds, loadCorpus, type Hold, type HoldDirection } from "./corpus-runner";
+import { verdictCorpusDir } from "./corpus-location";
 
 export const STATUS_SHAPE = "verdictCorpusStatus";
 export const HOLD_CACHE_TTL_MS = 60_000;
@@ -56,8 +56,9 @@ export interface VerdictCorpusStatus {
 
 export interface HoldView { holds: Hold[]; source: "status" | "stale" | "unreadable" }
 
-/** Where the deployed corpus lives, relative to this module (src/judge/ -> test/verdict-corpus/). */
-export const DEPLOYED_CORPUS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "test", "verdict-corpus");
+/** Where the deployed corpus is read: the vessel CLONE's test/verdict-corpus/ (corpus-location.ts), never a path relative
+ *  to this module. The deployed mirror carries src/ only, so a module-relative test/ path names nothing on a running node. */
+export const DEPLOYED_CORPUS_DIR = verdictCorpusDir();
 
 type Reader = () => Record<string, unknown> | null;
 type EverGreenReader = () => string[] | null;
