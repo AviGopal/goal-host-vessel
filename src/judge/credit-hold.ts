@@ -59,7 +59,10 @@ type UnavailableHook = (why: string, holds: Hold[]) => void;
 
 /** The workspace root, as the shaped-policy store resolves it (no environment read of its own). */
 export function workspaceRoot(): string { return dirname(dirname(shapedPolicyPath(STATUS_SHAPE))); }
-export const everGreenPath = (vessel = "goal-host-vessel"): string => join(workspaceRoot(), ".gate-public", `verdict-corpus-green.${vessel}.json`);
+/** The gate's published ever-green set: a FIXED path (the constant pull-sync publishes to and development-vessel
+ *  reads), never relative to WORKSPACE_ROOT, so every reader names the same file whatever its workspace root is. */
+export const GATE_PUBLIC_DIR = "/workspace/.gate-public";
+export const everGreenPath = (vessel = "goal-host-vessel"): string => `${GATE_PUBLIC_DIR}/verdict-corpus-green.${vessel}.json`;
 export function parseEverGreen(text: string): string[] | null {
   try {
     const v = JSON.parse(text) as unknown;

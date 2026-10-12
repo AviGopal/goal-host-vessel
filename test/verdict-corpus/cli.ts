@@ -8,7 +8,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendCheck, checkCase, observe, runCorpus, type CorpusCase } from "./runner";
+import { appendCheck, checkCase, runCorpus } from "./runner";
+import { heldoutReplay } from "../../src/judge/captured-to-replay";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -34,18 +35,13 @@ if (argv[0] === "run") {
   console.log(JSON.stringify({ case: id, ...r }));
   process.exit(r.green ? 0 : 1);
 } else if (argv[0] === "heldout") {
+  // INPUT: JSONL of held-out records {record_hash, family, entry, delivered, input, ports, llm}, where input is the
+  // captured record (metadata.judge_input.<entry>). OUTPUT: a JSON array [{record_hash, reached}] where an
+  // unreplayable record is {record_hash, reached: null, unreplayable: [fields]}.
   const sample = flag("--sample");
   if (!sample) { console.error("heldout: --sample <file.jsonl> is required"); process.exit(2); }
-  const out: Array<{ record_hash: string; reached: boolean | null; error?: string }> = [];
-  for (const line of readFileSync(sample, "utf8").split("\n").filter(Boolean)) {
-    const rec = JSON.parse(line) as { record_hash: string; judge_input: CorpusCase["input"]; llm?: CorpusCase["llm"]; ports?: Record<string, unknown> };
-    const c = { schema: 1, id: "0000-heldout", class: "heldout", entry: rec.judge_input?.entry, credit_class: "", edit_site: "", provenance: { source: "heldout", recorded: "", note: "" }, input: rec.judge_input, llm: rec.llm ?? null, ports: rec.ports ?? {}, expect: {}, status_at_append: "green", control: false, licenses: null } as unknown as CorpusCase;
-    try {
-      const o = observe(c);
-      out.push({ record_hash: rec.record_hash, reached: o === "entry_missing" ? null : (o.reached ?? null) });
-    } catch (e) { out.push({ record_hash: rec.record_hash, reached: null, error: (e as Error)?.message ?? String(e) }); }
-  }
-  console.log(JSON.stringify(out));
+  const rows = readFileSync(sample, "utf8").split("\n").filter((l) => l.trim()).map((l) => { try { return JSON.parse(l) as unknown; } catch { return { record_hash: null, family: null }; } });
+  console.log(JSON.stringify(await heldoutReplay(rows)));
 } else {
   console.error("usage: cli.ts run --json [--ever-green <f>] | append-check --from <n> | heldout --sample <f> --json | check --case <id>");
   process.exit(2);
