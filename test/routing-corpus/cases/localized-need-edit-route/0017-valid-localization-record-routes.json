@@ -1,0 +1,52 @@
+{
+  "class": "localized-need-edit-route",
+  "control": true,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": false,
+    "route": "feature_compose",
+    "target": "repos/example-vessel/src/retry/policy.ts"
+  },
+  "id": "0017-valid-localization-record-routes",
+  "input": {
+    "entry": "editIntent",
+    "goal": "The retry handler should stop retrying a request after it failed validation.",
+    "hydration": null,
+    "localization": {
+      "created_at": "2026-10-12T00:00:00Z",
+      "evidence": [
+        {
+          "read": "repos/example-vessel/src/retry/policy.ts",
+          "why": "shouldRetry decides whether a failed request is retried"
+        }
+      ],
+      "file": "repos/example-vessel/src/retry/policy.ts",
+      "gap_id": "gap-example-retry",
+      "method": "read-and-cite"
+    },
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {
+      "repos/example-vessel/src/retry/policy.ts": "export const NAME = \"retry handler\";\nexport function shouldRetry(n: number): boolean { return n < 3; }\n"
+    },
+    "search": {
+      "*|0|retry handler": [
+        "repos/example-vessel/src/retry/policy.ts"
+      ]
+    },
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "class features only: a need that names no file may be routed to a file edit only with a valid localizationRecord (test/routing-corpus/localization-record.schema.json) naming that file",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

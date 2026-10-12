@@ -5,8 +5,21 @@
 /** Where a goal goes after the hand-off. A new value is a closed (core) change. */
 export type RouteName = "feature_compose" | "walk";
 
-/** A file + the evidence that it is the site (what was read and why). Null until a localization record exists. */
-export type Localization = { file: string; evidence: readonly string[] };
+/**
+ * A LOCALIZATION RECORD (shape `localizationRecord`): which file a need is about, and the evidence that it is the site
+ * (what was read, and why it shows the site). Persisted on the gap record (gap.localization) and on the trace; the
+ * routing core and the compose admission read it. Schema: test/routing-corpus/localization-record.schema.json. The
+ * core passes a record to the rules only when it is valid (validLocalizationRecord), so a rule never sees a malformed one.
+ */
+export type LocalizationRecord = {
+  gap_id?: string;
+  dispatch_id?: string;
+  file: string;
+  evidence: ReadonlyArray<{ read: string; why: string }>;
+  method: string;
+  created_at: string;
+};
+export type Localization = LocalizationRecord;
 
 export type DoorInput = {
   /** The goal as dispatched, before any restatement. */
@@ -53,7 +66,8 @@ export type EditIntentInput = {
   route_enabled: boolean;
   /** Gap-record hydration found for the dispatched goal, or null (no gap id, no record, or no cited file). */
   hydration: Hydration | null;
-  localization: Localization | null;
+  /** The localizationRecord found for this need, as recorded (validated by the core before any rule sees it), or null. */
+  localization: unknown;
 };
 
 /** The composed route, as the corpus pins it. */

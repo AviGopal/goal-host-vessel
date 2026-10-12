@@ -18,6 +18,7 @@ import { resolvePathlessCodeChangeGoal, isPathlessCodeChangeGoal, extractSearchT
 import { isEditIntentGoal } from "../goal-intent";
 import { decideDoor, decideHandoff } from "../routing-rules/edit-intent";
 import { floorDoor, floorHandoff } from "./floor";
+import { validLocalizationRecord } from "./localization";
 import type {
   DoorDecision, DoorInput, EditIntentInput, HandoffDecision, HandoffInput, Hydration, RouteDecision, RoutingLlm, RoutingPorts,
 } from "./types";
@@ -134,7 +135,7 @@ export async function resolveDoorRouting(
   symbolSearch?: FileSearch,
   proposeSymbols?: (goal: string) => Promise<readonly string[]>,
   readFileText?: (path: string) => Promise<string | undefined>,
-  localization: DoorInput["localization"] = null,
+  localization: unknown = null,
 ): Promise<{ goal: string; record: DoorRecord }> {
   const ports: RoutingPorts = { search: {}, symbol_search: {}, read_file: {} };
   const llm: { propose_symbols: readonly string[] | null } = { propose_symbols: null };
@@ -168,7 +169,8 @@ export async function resolveDoorRouting(
   const restated = await resolvePathlessCodeChangeGoal(goal, rSearch, rTap, rSymbol, rPropose, rRead);
   const restatedGoal = restated !== goal ? restated : null;
   const chosen = restatedGoal ? restatedFileOf(restatedGoal) : null;
-  const doorInput: DoorInput = { goal, restated_goal: restatedGoal, chosen_file: chosen, localization };
+  // A localization record reaches the rules only when it is valid (localization.ts): an invalid one reads as none.
+  const doorInput: DoorInput = { goal, restated_goal: restatedGoal, chosen_file: chosen, localization: validLocalizationRecord(localization) ? localization : null };
   const { decision, fell_back } = doorDecision(doorInput);
   if (restatedGoal && decision.goal === goal) tap?.(`routing door: the restatement onto ${chosen ?? "(unparsed)"} was declined${decision.needs_localization ? " — the goal needs a localization record first" : ""}`);
   const record: DoorRecord = {
