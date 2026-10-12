@@ -13,7 +13,8 @@
 //     the two sites. The corpus and the held-out replay call this, never the rules directly, so a rule that is green in
 //     the corpus is the rule production calls.
 // Every answer from the rules passes a clamp (exact keys and types, and only choices the input offered). An answer
-// that fails it is replaced by the floor (floor.ts, today's behaviour) and counted.
+// that fails it is replaced by the floor (floor.ts, today's behaviour) and counted. The rules are handed a deep-frozen
+// copy of the input; the clamp and the floor read the core's own.
 import { resolvePathlessCodeChangeGoal, isPathlessCodeChangeGoal, extractSearchTerms, type FileSearch } from "../goal-file-resolution";
 import { isEditIntentGoal } from "../goal-intent";
 import { decideDoor, decideHandoff } from "../routing-rules/edit-intent";
@@ -54,10 +55,25 @@ export function clampHandoff(input: HandoffInput, out: unknown): HandoffDecision
   return { route: "feature_compose", target: out.target };
 }
 
-/** decideDoor, clamped; the floor on a refused answer. */
+/**
+ * A deep-frozen structured copy of a rule's input. The rules never hold the core's own input, so a rule that mutates
+ * what it is given cannot widen the clamp that judges its answer, nor change what the floor or the caller read after.
+ */
+function frozenCopy<T>(v: T): T {
+  const copy = structuredClone(v);
+  const freeze = (o: unknown): void => {
+    if (o === null || typeof o !== "object" || Object.isFrozen(o)) return;
+    Object.freeze(o);
+    for (const k of Object.keys(o as object)) freeze((o as Record<string, unknown>)[k]);
+  };
+  freeze(copy);
+  return copy;
+}
+
+/** decideDoor over a frozen copy, clamped against the core's own input; the floor on a refused answer. */
 export function doorDecision(input: DoorInput): { decision: DoorDecision; fell_back: boolean } {
   let out: unknown;
-  try { out = decideDoor(input); } catch { out = undefined; }
+  try { out = decideDoor(frozenCopy(input)); } catch { out = undefined; }
   const ok = clampDoor(input, out);
   if (ok) return { decision: ok, fell_back: false };
   routingFellBack.door++;
@@ -65,10 +81,10 @@ export function doorDecision(input: DoorInput): { decision: DoorDecision; fell_b
   return { decision: floorDoor(input), fell_back: true };
 }
 
-/** decideHandoff, clamped; the floor on a refused answer. index.ts calls this at the early edit-intent hand-off. */
+/** decideHandoff over a frozen copy, clamped against the core's own input; the floor on a refused answer. index.ts calls this at the early edit-intent hand-off. */
 export function handoffRoute(input: HandoffInput): HandoffDecision {
   let out: unknown;
-  try { out = decideHandoff(input); } catch { out = undefined; }
+  try { out = decideHandoff(frozenCopy(input)); } catch { out = undefined; }
   const ok = clampHandoff(input, out);
   if (ok) return ok;
   routingFellBack.handoff++;
