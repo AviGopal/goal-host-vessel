@@ -1,0 +1,35 @@
+{
+  "class": "read-only-question",
+  "control": true,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": false,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0015-pathless-question",
+  "input": {
+    "entry": "editIntent",
+    "goal": "What does the retry handler do when a request fails validation?",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {},
+    "search": {},
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "control: class features only",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

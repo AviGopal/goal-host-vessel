@@ -1,0 +1,38 @@
+{
+  "class": "named-file-edit-route",
+  "control": true,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": false,
+    "route": "feature_compose",
+    "target": "repos/example-vessel/src/retry.ts"
+  },
+  "id": "0014-gap-record-cites-file",
+  "input": {
+    "entry": "editIntent",
+    "goal": "Close substrate gap gap-example-retry-cap: the retry cap is not enforced.",
+    "hydration": {
+      "cited_file": "repos/example-vessel/src/retry.ts",
+      "summary": "the retry cap is not enforced in repos/example-vessel/src/retry.ts"
+    },
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {},
+    "search": {},
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "control: class features only",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

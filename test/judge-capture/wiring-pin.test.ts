@@ -110,7 +110,7 @@ describe("judge capture wiring pin: every decision site calls the closed capture
 
   test("routing: the pathless resolution at the door runs through the recorder and its record is attached to the dispatch", () => {
     lineOf("const _routeRec = judgeCapture.routingRecorder();");
-    const call = lineOf("await resolvePathlessCodeChangeGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap(");
+    const call = lineOf("await resolveDoorGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap(");
     const rest = LINES.slice(call, call + 120).join("\n");
     expect(rest).toContain("_routeRec.symbolSearch(searchWorkspaceForSymbol)");
     expect(rest).toContain("_routeRec.propose(async (g: string)");
@@ -125,8 +125,8 @@ describe("judge capture wiring pin: every decision site calls the closed capture
   });
 
   test("routing: the gap-record hydration records its routing hint after the routing goal is decided", () => {
-    const decided = lineOf("goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record:");
-    const cap = callAfter("goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record:", "judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? \"\") });", 4);
+    const decided = lineOf("if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });");
+    const cap = callAfter("if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });", "judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? \"\") });", 4);
     expect(cap).toBeGreaterThan(decided);
   });
 

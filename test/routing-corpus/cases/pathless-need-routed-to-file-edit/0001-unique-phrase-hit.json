@@ -1,0 +1,41 @@
+{
+  "class": "pathless-need-routed-to-file-edit",
+  "control": false,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": true,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0001-unique-phrase-hit",
+  "input": {
+    "entry": "editIntent",
+    "goal": "The retry handler should stop retrying a request after it failed validation.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {
+      "repos/example-vessel/src/retry/policy.ts": "export const NAME = \"retry handler\";\nexport function shouldRetry(n: number): boolean { return n < 3; }\n"
+    },
+    "search": {
+      "*|0|retry handler": [
+        "repos/example-vessel/src/retry/policy.ts"
+      ]
+    },
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "class features only: a need that names no file is routed to a file edit before any localization record exists",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

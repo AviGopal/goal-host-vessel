@@ -1,0 +1,39 @@
+{
+  "class": "pathless-need-routed-to-file-edit",
+  "control": false,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": true,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0005-hyphenated-token-hit-on-entrypoint",
+  "input": {
+    "entry": "editIntent",
+    "goal": "A hand-off request should keep the caller's credential when the route forwards it.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {},
+    "search": {
+      "*|0|hand-off": [
+        "repos/example-vessel/src/index.ts"
+      ]
+    },
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "reconstructed from a recorded pathless resolution: its mechanism (term kind, candidate counts, comment-only rejections, method) is kept; goal, terms and files are class paraphrases",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

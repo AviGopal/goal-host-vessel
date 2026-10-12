@@ -1,0 +1,54 @@
+{
+  "class": "pathless-need-routed-to-file-edit",
+  "control": false,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": true,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0003-symbol-word-fallback",
+  "input": {
+    "entry": "editIntent",
+    "goal": "Each worker should refuse a job whose deadline already passed; the queue check itself must enforce it.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {
+      "repos/example-vessel/src/queue/scan.ts": "// the check itself runs once per sweep\nexport const SWEEP_MS = 1000;\n"
+    },
+    "search": {
+      "*|0|already passed": [],
+      "*|0|check itself": [
+        "repos/example-vessel/src/queue/scan.ts"
+      ],
+      "*|0|deadline already": [],
+      "*|0|each worker": [],
+      "*|0|queue check": []
+    },
+    "symbol_search": {
+      "*|refuse": [
+        "repos/other-vessel/src/tools/dispatch.ts"
+      ],
+      "*|worker": [
+        "repos/example-vessel/src/a.ts",
+        "repos/example-vessel/src/b.ts",
+        "repos/example-vessel/src/c.ts"
+      ]
+    }
+  },
+  "provenance": {
+    "note": "reconstructed from a recorded pathless resolution: its mechanism (term kind, candidate counts, comment-only rejections, method) is kept; goal, terms and files are class paraphrases",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

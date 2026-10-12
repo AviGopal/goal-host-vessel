@@ -1,0 +1,39 @@
+{
+  "class": "pathless-need-routed-to-file-edit",
+  "control": false,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": true,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0010-subsystem-name-hit-e",
+  "input": {
+    "entry": "editIntent",
+    "goal": "Tighten the batch-flush gate so a partial batch is never flushed twice.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {},
+    "search": {
+      "*|0|batch-flush": [
+        "repos/example-vessel/src/metrics/names.ts"
+      ]
+    },
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "reconstructed from a recorded pathless resolution: its mechanism (term kind, candidate counts, comment-only rejections, method) is kept; goal, terms and files are class paraphrases",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}

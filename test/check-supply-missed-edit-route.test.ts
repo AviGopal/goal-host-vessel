@@ -41,7 +41,7 @@ function stopOf(name: string): ((variables: Record<string, unknown>, goal: strin
 }
 
 const at = (s: string, from = 0): number => INDEX.indexOf(s, from);
-const EARLY_IF = "if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {";
+const EARLY_IF = "if (earlyHandoff.route === \"feature_compose\" && earlyHandoff.target) {";
 const STOP_DECL = "const _checkSupplyMissedEditRoute = ";
 
 /** Brace depth of `to` relative to `from`, skipping string and template-literal text (template ${} counted). */

@@ -301,7 +301,7 @@ import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
-import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
+import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
@@ -13372,9 +13372,9 @@ async function runGoalWithRecoveryInner(
             const _bare = _hydText.match(/\b([\w.-]+\/src\/[\w.\/-]+\.\w+)/)?.[1];
             if (_bare) hydFile = `repos/${_bare}`;
           }
-          if (hydFile && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
-            goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: ${String(hydGap.summary ?? "").slice(0, 300)})`;
-          }
+          // The hydrated hand-off goal is composed by the routing core (goalForRoutingOf), the same function the routing
+          // corpus replays.
+          if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? "") });
           // CAPTURE (closed, src/judge/capture.ts): the gap record's routing hint, after it was applied or not.
           judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? "") });
           tap(`[goal-host-vessel] gap-hydration: injected record ${hydGap.id} (cited file: ${hydFile ?? "none"})`);
@@ -13717,35 +13717,15 @@ async function runGoalWithRecoveryInner(
     try {
       // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
+      // The decision is the routing rules' (src/routing-rules/edit-intent.ts decideHandoff, clamped by the closed
+      // routing core), pinned by the routing corpus; the predicate and its history live there.
       const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
       // CAPTURE (closed, src/judge/capture.ts): the route switch exactly as this check read it.
       judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: earlyEditIntentEnabled });
-      const earlyFileMatch = earlyEditIntentEnabled ? goalForRouting.match(/repos\/([\w.-]+)\/[\w.\/-]+\.\w+/) : null;
-      // EDIT-VERB predicate — RESTORED to the same clean edit-verb set as the late 0-step
-      // detector (goalIsEditIntent / _reEditIntent, lines ~5203/~5282) after two substrate-authored
-      // "compose-report" mitosis cutovers POLLUTED it with READ verbs (report/read/count/list/show/
-      // summarize/explain/...) and injected an orphan countAsyncFunctions function mid-body. That
-      // self-corruption made READ-ONLY goals ("report the value of the version field in repos/
-      // activity-api/package.json") match a fake "edit verb" and route to feature_compose, which
-      // then EDITED + committed the file (an unrequested version bump 1.20.9->1.20.10) — a read goal
-      // causing a code change. Keep this list IDENTICAL to the two late detectors.
-      const earlyEditVerb = earlyFileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|create|register|scaffold)\b/i.test(goalForRouting) : false;
-      // READ-ONLY intent: a goal that REPORTS/READS/SUMMARIZES/EXPLAINS/COUNTS a file's content or a
-      // field is NOT an edit, even when it names exactly one repos file — without this the file-only
-      // heuristic below routes every read-over-a-named-file goal into feature_compose.
-      const earlyReadOnlyVerb = earlyFileMatch
-        ? /\b(report|read|show|display|print|summar(?:y|ise|ize|ising|izing)?|explain|describe|what(?:'s| is| are)|which|value of|the\s+\w+\s+of|count|how many|number of|list|enumerate|tell me|based on|overview|gist)\b/i.test(goalForRouting)
-        : false;
-      // Also treat as an edit intent when the goal names exactly one repos source file with NO edit
-      // verb AND NO read-only verb (aligns with the late 0-step detector's file-path-only test, but
-      // never hijacks a read-only goal into an edit).
-      const earlyInterrogative = earlyFileMatch ? (/\?\s*$/.test(goalForRouting.trim()) || /^\s*(what|how many|how much|how long|how big|which|whose|whether|count|list|show me|tell me|is there|are there|does |do |can )/i.test(goalForRouting) || /\b(percentage|fraction|proportion|ratio|average|mean|median|number of|how many)\b/i.test(goalForRouting)) : false;
-      const earlyFileOnlyMatch = earlyEditIntentEnabled && earlyFileMatch && !earlyEditVerb && !earlyReadOnlyVerb && !earlyInterrogative
-        ? (goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? []).length === 1
-        : false;
-      if (earlyEditIntentEnabled && earlyFileMatch && (earlyEditVerb || earlyFileOnlyMatch)) {
-        const earlyEditFile = earlyFileMatch[0]!;
-        const earlyEditVessel = earlyFileMatch[1]!;
+      const earlyHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: earlyEditIntentEnabled });
+      if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {
+        const earlyEditFile = earlyHandoff.target;
+        const earlyEditVessel = earlyEditFile.split("/")[1]!;
         // Multi-file goals (2026-07-17): a goal may name SEVERAL repos paths; the
         // single-path spec told feature_compose "this EXACT path only" and silently
         // dropped the rest (gap spliceability-goal-host-index-edit-intent-region
@@ -17140,7 +17120,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   const _routeRec = judgeCapture.routingRecorder();
   const goal = rawGoal === undefined
     ? undefined
-    : await resolvePathlessCodeChangeGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap((m) =>
+    : await resolveDoorGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap((m) =>
         console.log(`[goal-host-vessel] /run-goal: ${m}`)), _routeRec.symbolSearch(searchWorkspaceForSymbol),
         // SYMPTOM -> IDENTIFIER translation, consulted ONLY after every lexical
         // route above has already failed.

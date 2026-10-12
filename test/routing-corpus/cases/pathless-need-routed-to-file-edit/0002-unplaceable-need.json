@@ -1,0 +1,50 @@
+{
+  "class": "pathless-need-routed-to-file-edit",
+  "control": false,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": true,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0002-unplaceable-need",
+  "input": {
+    "entry": "editIntent",
+    "goal": "The parser should reject an empty header block.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": {
+    "propose_symbols": [
+      "parseHeaderBlock"
+    ]
+  },
+  "ports": {
+    "read_file": {},
+    "search": {
+      "*|0|empty header": [],
+      "*|0|header block": [],
+      "*|0|parseHeaderBlock": []
+    },
+    "symbol_search": {
+      "*|block": [],
+      "*|empty": [],
+      "*|header": [],
+      "*|parseHeaderBlock": [],
+      "*|parser": [],
+      "*|reject": []
+    }
+  },
+  "provenance": {
+    "note": "class features only: a need that names no file is routed to a file edit before any localization record exists",
+    "recorded": "2026-10-12",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "known_red"
+}
