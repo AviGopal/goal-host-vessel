@@ -75,6 +75,18 @@ describe("wiring pin: index.ts calls each judge entry at its site", () => {
   for (const m of MOVED) test(`moved expression is gone from index.ts: ${m}`, () => { expect([m, SRC.includes(m)]).toEqual([m, false]); });
 });
 
+describe("the verdictCorpusRun handler acknowledges at once and reads the pointer's trigger", () => {
+  test("the handler answers with the acceptor's acknowledgement, never awaiting the replay", () => {
+    const i = SRC.indexOf(`if (type === "verdictCorpusRun") {`);
+    expect(i).toBeGreaterThan(-1);
+    const block = SRC.slice(i, SRC.indexOf("\n  }\n", i) + 4);
+    expect(block).toContain("triggerOf(pointer, body)");
+    expect(block).toContain("(await verdictCorpusAcceptor()).accept(");
+    expect(block).not.toContain("runVerdictCorpusNow(");
+    expect(block).not.toContain(".current()");
+  });
+});
+
 describe("MUST-FAIL: the pin sees an off-path copy", () => {
   test("a reach site that calls a local copy instead of judge.reachGate is red", () => {
     const mutant = SRC.replace("judge.reachGate(judgeInputs.reachInput(", "localReachGate(judgeInputs.reachInput(");

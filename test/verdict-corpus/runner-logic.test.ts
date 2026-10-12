@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { appendCheck, checkCase, canonicalJson, chainLink, classify, compare, GENESIS_LINK, holdsFrom, loadCorpus, replayCase, sha256Hex, type CorpusCase, type ReplayOverrides } from "./runner";
-import { dispositionFor, planGapWrite, routeGap, RUNNER_ID, runVerdictCorpusActivity, type CorpusGap, type GapRow } from "../../src/judge/corpus-activity";
+import { createRunAcceptor, dispositionFor, planGapWrite, routeGap, RUNNER_ID, runVerdictCorpusActivity, triggerOf, type CorpusGap, type GapRow } from "../../src/judge/corpus-activity";
 import type { VerdictCorpusStatus } from "../../src/judge/credit-hold";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -357,6 +357,49 @@ describe("MUST-FAIL: the runner re-derives each of its gaps' disposition on EVER
     expect(planGapWrite({ status: "closed", classification_metadata: {} }, g).write).toBe(false);
     expect(planGapWrite("unreadable", g).write).toBe(false);
     expect(planGapWrite("unreadable", { ...g, route: { to: "operator_review", reason: "", scope_entry: null } }).write).toBe(true);
+  });
+});
+
+describe("MUST-FAIL: a verdictCorpusRun resolve is acknowledged at once; the replay runs after, single-flight", () => {
+  // impulse-resolve aborts a resolve at IMPULSE_RESOLVE_TIMEOUT_MS (8 s). The handler must answer well inside that
+  // whatever the replay costs; the run then completes and writes its status on its own.
+  const SLOW_MS = 400; // a stand-in for a replay slower than the caller's bound
+  const BOUND_MS = 100;
+  const slowRun = (log: string[]) => async (trigger: string, runId: string) => {
+    await new Promise((r) => setTimeout(r, SLOW_MS));
+    const st = await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger, nowMs: Date.now(), sinks: {
+      readPreviousStatus: async () => null, readEverGreen: async () => null, readScopeExcluded: async () => null, readGap: async () => null,
+      writeStatus: async () => { log.push(`status:${runId}`); }, recordReport: async () => { log.push(`report:${runId}`); }, fileGap: async () => {},
+    } });
+    return st;
+  };
+  const timed = (f: () => unknown): number => { const t0 = performance.now(); f(); return performance.now() - t0; };
+  test("the acknowledgement returns within the bound, and the run still completes and writes its status", async () => {
+    const log: string[] = [];
+    let n = 0;
+    const acc = createRunAcceptor(slowRun(log), () => `run-${++n}`);
+    let ack: ReturnType<typeof acc.accept> | null = null;
+    expect(timed(() => { ack = acc.accept("rhythm"); })).toBeLessThan(BOUND_MS);
+    expect(ack).toEqual({ accepted: true, status: "accepted", run_id: "run-1", trigger: "rhythm", gradable: false });
+    expect(log).toEqual([]); // nothing ran before the acknowledgement
+    expect(acc.accept("rhythm")).toMatchObject({ status: "in_flight", run_id: "run-1" }); // single-flight
+    await acc.current();
+    expect(log).toEqual(["status:run-1", "report:run-1"]);
+    expect(acc.current()).toBeNull();
+    expect(acc.accept("boot")).toMatchObject({ status: "accepted", run_id: "run-2" });
+    await acc.current();
+  });
+  test("the checker sees a mutant handler that awaits the replay before answering", async () => {
+    const log: string[] = [];
+    const awaiting = async () => { await slowRun(log)("rhythm", "m"); return { accepted: true }; };
+    const t0 = performance.now(); await awaiting();
+    expect(performance.now() - t0).toBeGreaterThanOrEqual(BOUND_MS); // over the bound: red under the bound check
+  });
+  test("the trigger is the pointer's (impulse-resolve posts {pointer}), else the body's, else rhythm", () => {
+    expect(triggerOf({ trigger: "boot" }, { trigger: "x" })).toBe("boot");
+    expect(triggerOf({}, { trigger: "manual" })).toBe("manual");
+    expect(triggerOf(null, null)).toBe("rhythm");
+    expect(triggerOf({ trigger: " " + "y".repeat(60) }, null)).toBe("y".repeat(40));
   });
 });
 

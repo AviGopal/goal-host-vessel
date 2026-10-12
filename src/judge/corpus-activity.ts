@@ -213,3 +213,46 @@ export async function writeStatusFile(s: VerdictCorpusStatus, path = shapedPolic
   await writeFile(tmp, JSON.stringify(s, null, 2) + "\n");
   await rename(tmp, path);
 }
+
+// ── the verdictCorpusRun resolve: acknowledge at once, run asynchronously, one at a time ─────────────────────────
+
+/** The trigger a verdictCorpusRun resolve names: the pointer's (impulse-resolve posts {pointer}), else the body's. */
+export function triggerOf(pointer: Record<string, unknown> | null | undefined, body: Record<string, unknown> | null | undefined): string {
+  const t = pointer?.["trigger"] ?? body?.["trigger"];
+  return typeof t === "string" && t.trim() ? t.trim().slice(0, 40) : "rhythm";
+}
+
+/** Whether the caller is an activity template (the seeded runner template posts {pointer} through impulse-resolve). */
+export function viaTemplate(pointer: Record<string, unknown> | null | undefined): boolean {
+  return typeof pointer?.["template_id"] === "string" || typeof pointer?.["templateId"] === "string" || pointer?.["via"] === "template";
+}
+
+export interface RunAck {
+  accepted: true;
+  status: "accepted" | "in_flight";
+  run_id: string;
+  trigger: string;
+  /** The template-execution wrapper is not a graded run of anything: the runner's own trace (run_id) carries the
+   *  outcome. Stated here so the wrapper's caller can tag its trace; the wrapper itself is not goal-host's to write. */
+  gradable: false;
+}
+
+/**
+ * Accept a run request IMMEDIATELY and start the replay asynchronously. Single-flight: a request while a run is in
+ * flight is acknowledged with that run's id. The caller never waits on the replay (impulse-resolve aborts at its own
+ * timeout); the run reports through its own trace and status.
+ */
+export function createRunAcceptor(start: (trigger: string, runId: string) => Promise<unknown>, idOf: () => string) {
+  let inflight: { runId: string; done: Promise<unknown> } | null = null;
+  return {
+    accept(trigger: string): RunAck {
+      if (inflight) return { accepted: true, status: "in_flight", run_id: inflight.runId, trigger, gradable: false };
+      const runId = idOf();
+      const done = (async () => { try { return await start(trigger, runId); } catch (e) { console.warn(`[verdict-corpus] RUNNER FAILED run=${runId}: ${(e as Error)?.message ?? e}`); return null; } finally { inflight = null; } })();
+      inflight = { runId, done };
+      return { accepted: true, status: "accepted", run_id: runId, trigger, gradable: false };
+    },
+    /** The in-flight run (null when none): tests and boot await it. */
+    current(): Promise<unknown> | null { return inflight?.done ?? null; },
+  };
+}

@@ -18254,13 +18254,21 @@ creditHold.configureCreditHold({
     })();
   },
 });
-async function runVerdictCorpusNow(trigger: string): Promise<unknown> {
+let _verdictCorpusAcceptor: ReturnType<typeof import("./judge/corpus-activity").createRunAcceptor> | null = null;
+async function verdictCorpusAcceptor() {
+  if (!_verdictCorpusAcceptor) {
+    const { createRunAcceptor } = await import("./judge/corpus-activity");
+    _verdictCorpusAcceptor = createRunAcceptor((trigger, runId) => runVerdictCorpusNow(trigger, runId), () => `verdict-corpus-runner-${Date.now()}`);
+  }
+  return _verdictCorpusAcceptor;
+}
+async function runVerdictCorpusNow(trigger: string, givenRunId?: string): Promise<unknown> {
   if (_verdictCorpusRun) return await _verdictCorpusRun;
   _verdictCorpusRun = (async () => {
     const { runVerdictCorpusActivity, readEverGreenFile, writeStatusFile } = await import("./judge/corpus-activity");
     const { DEPLOYED_CORPUS_DIR, STATUS_SHAPE } = creditHold;
     const { hostname } = await import("node:os");
-    const runId = `verdict-corpus-runner-${Date.now()}`;
+    const runId = givenRunId ?? `verdict-corpus-runner-${Date.now()}`;
     return await runVerdictCorpusActivity({
       dir: DEPLOYED_CORPUS_DIR, node: hostname(), deployedSha: null, trigger, nowMs: Date.now(),
       sinks: {
@@ -18444,7 +18452,14 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
   }
   if (type === "fleetActivityFeed") { return Response.json({ resolved: true, shape: "fleetActivityFeed", body: await buildFleetActivityFeedBody() }); }
-  if (type === "verdictCorpusRun") { return Response.json({ resolved: true, shape: "verdictCorpusReport", body: await runVerdictCorpusNow(typeof body.trigger === "string" ? body.trigger.slice(0, 40) : "rhythm") }); }
+  // verdictCorpusRun: acknowledged AT ONCE, the replay runs asynchronously (single-flight) and reports through its
+  // own trace and status (impulse-resolve aborts a resolve at its own timeout). The trigger is the pointer's.
+  if (type === "verdictCorpusRun") {
+    const { triggerOf, viaTemplate } = await import("./judge/corpus-activity");
+    const _trigger = triggerOf(pointer, body);
+    const _ack = (await verdictCorpusAcceptor()).accept(viaTemplate(pointer) ? `template:${_trigger}`.slice(0, 40) : _trigger);
+    return Response.json({ resolved: true, shape: "verdictCorpusReport", body: _ack });
+  }
   // bodyHonestyPolicy (task #61): the walk resolves this on every use and logs a
   // law-1 fallback when nothing answers — measured 0 of 417 advertised shapes.
   // Serving the STORED policy makes the denial vocabulary editable data; serving
