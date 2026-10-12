@@ -18262,24 +18262,12 @@ creditHold.configureCreditHold({
   },
   onRefreshed: (st) => { void import("./judge/corpus-activity").then(({ writeStatusFile }) => writeStatusFile(st as never)).catch(() => {}); },
 });
-/** Publish a corpus status through dev-vessel's runner grant with goal-host's own credential. A refusal throws, so
+/** Publish a corpus status through dev-vessel's runner grant under the RUNNER'S OWN credential (judge/corpus-publish.ts,
+ *  closed): goal-host's process-wide key is never used for this write. A missing runner key or a refusal throws, so
  *  the runner reports itself failed (and files its gap) instead of believing a status it could not publish. */
 async function publishVerdictCorpusStatus(st: import("./judge/credit-hold").VerdictCorpusStatus): Promise<void> {
-  const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-    body: JSON.stringify({ impulse: { type: "poolImpulse_write", pointer: { type: "poolImpulse_write", id: creditHold.STATUS_ID, shape: creditHold.STATUS_SHAPE, source: creditHold.STATUS_SOURCE, status: "open", body: st } } }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!r.ok) {
-    let err = ""; try { err = String(((await r.json()) as { error?: unknown }).error ?? "").slice(0, 300); } catch { /* no body */ }
-    console.error(`[verdict-corpus] STATUS NOT PUBLISHED: development-vessel answered HTTP ${r.status}${err ? ` (${err})` : ""}; the credit stop keeps reading the last verified record`);
-    throw new Error(`verdictCorpusStatus not published: HTTP ${r.status}${err ? ` ${err}` : ""}`);
-  }
-  let ok = false; try { ok = ((await r.json()) as { body?: { ok?: unknown } }).body?.ok === true; } catch { ok = false; }
-  if (!ok) throw new Error("verdictCorpusStatus not published: development-vessel did not confirm the write");
-  const refreshed = await creditHold.refreshStatusFromPool();
-  if (!refreshed.ok) console.warn(`[verdict-corpus] status published but not read back verified: ${refreshed.why}`);
+  const { publishVerdictCorpusStatusAsRunner } = await import("./judge/corpus-publish");
+  await publishVerdictCorpusStatusAsRunner(st, { devVesselEndpoint: DEV_VESSEL_ENDPOINT, refresh: () => creditHold.refreshStatusFromPool() });
 }
 let _verdictCorpusAcceptor: ReturnType<typeof import("./judge/corpus-activity").createRunAcceptor> | null = null;
 async function verdictCorpusAcceptor() {

@@ -80,6 +80,11 @@
     "reason": "filesystem root/path: goal failure memory file (read in src/index.ts)"
   },
   {
+    "name": "GOAL_HOST_CORPUS_RUNNER_API_KEY",
+    "class": "bootstrap",
+    "reason": "credential/secret: the verdict corpus runner's own key (principal goal-host-corpus-runner, scope verdict-corpus:write), read at use time only by the corpus publish module (read in src/judge/corpus-publish.ts)"
+  },
+  {
     "name": "GOAL_HOST_DISABLE_SUBSCRIBERS",
     "class": "behaviour",
     "reason": "toggle: disable bus subscribers (read in src/index.ts)"

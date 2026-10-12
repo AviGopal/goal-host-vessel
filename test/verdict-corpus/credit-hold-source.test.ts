@@ -120,12 +120,18 @@ describe("the last good copy ages by refresh ticks", () => {
 });
 
 describe("index.ts wiring: the runner publishes through the grant and never reads the file back", () => {
-  test("MUST-FAIL: the status sink publishes a poolImpulse_write of the status id with the run's source and goal-host's key", () => {
+  test("MUST-FAIL: the status sink publishes a poolImpulse_write of the status id with the run's source under the runner's own key", () => {
     const fn = SRC.slice(SRC.indexOf("async function publishVerdictCorpusStatus("), SRC.indexOf("async function runVerdictCorpusNow("));
     expect(fn.length).toBeGreaterThan(0);
-    expect(fn).toContain('type: "poolImpulse_write", id: creditHold.STATUS_ID, shape: creditHold.STATUS_SHAPE, source: creditHold.STATUS_SOURCE');
-    expect(fn).toContain("Authorization: `ApiKey ${API_KEY}`");
-    expect(fn).toContain("throw new Error(");
+    // The write lives in the closed publish module (judge/corpus-publish.ts), under the runner's credential; the
+    // process-wide key is never used for it (test/corpus-runner-identity.test.ts pins the credential by effect).
+    expect(fn).toContain('await import("./judge/corpus-publish")');
+    expect(fn).toContain("await publishVerdictCorpusStatusAsRunner(st, { devVesselEndpoint: DEV_VESSEL_ENDPOINT, refresh: () => creditHold.refreshStatusFromPool() });");
+    expect(fn).not.toContain("API_KEY");
+    const pub = readFileSync(join(DIR, "..", "..", "src", "judge", "corpus-publish.ts"), "utf8");
+    expect(pub).toContain('type: "poolImpulse_write", id: STATUS_ID, shape: STATUS_SHAPE, source: STATUS_SOURCE');
+    expect(pub).toContain("Authorization: `ApiKey ${runnerKey.trim()}`");
+    expect(pub).toContain("throw new Error(");
     const run = SRC.slice(SRC.indexOf("async function runVerdictCorpusNow("), SRC.indexOf("async function handleResolve("));
     expect(run).toContain("writeStatus: async (st) => { await publishVerdictCorpusStatus(st);");
     expect(run).toContain("readPreviousStatus: async () => { await creditHold.refreshStatusFromPool(); return creditHold.lastVerifiedStatus(); }");
