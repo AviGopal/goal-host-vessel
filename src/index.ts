@@ -297,6 +297,8 @@ import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeToken
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
 import { resolvePathlessCodeChangeGoal } from "./goal-file-resolution";
+// Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
+import * as judgeCapture from "./judge/capture";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
@@ -3588,6 +3590,7 @@ export async function verifyCodeInvestigationCitation(goal: string, digest: stri
   let fileOnlyRead = 0;
   for (const c of cites) {
     const f = await read(c.path);
+    judgeCapture.noteCitationPort({ path: c.path, line: c.line, at: f?.at ?? null, lines: f?.lines ?? null, symbols: syms });
     if (!f) continue;
     if (c.line === null) {
       fileOnlyRead++;
@@ -3665,12 +3668,34 @@ async function rereadFileContentViaProducer(path: string): Promise<FileRead | nu
  * (`deliverables`, else the goal's inferred targets) name it. /reach, recordGoalPath and gap filing
  * therefore never read a judge-invented name, whichever site asked.
  */
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence): Promise<GoalReachVerdict | null> {
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
   const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables, writeEvidence);
   if (v && v.deterministic !== true) {
     const keep = new Set(deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
     v.completion_shapes = restrictCompletionShapes(v.completion_shapes, new Set(producedShapes), false, keep);
   }
+  // CAPTURE (closed, src/judge/capture.ts): the reach gate's inputs and its verdict, after the decision.
+  judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput({
+    goal,
+    originalTargets: inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? null,
+    deliverables: deliverables ?? null,
+    targetsSeenByWalk: writeEvidence?.targets ?? deliverables ?? null,
+    reframedFrom: null,
+    persistedWrites: writeEvidence?.persistedWrites ?? null,
+    landed: writeEvidence?.landed ?? null,
+    producedShapes,
+    postReachSink: writeEvidence?.postReachSink ?? null,
+    toolsTotal: null,
+    groundedReads: null,
+    outputImpulses: null,
+    consumedInChain: null,
+    surface: captureSurface ?? (judgeView ? "walk" : null),
+    digest: contentDigest ?? null,
+    taskSummary,
+    commandEvidence: commandEvidence ?? null,
+    walkEvidence: walkEvidence ?? null,
+    judgeView: judgeView ?? null,
+  }), v);
   return v;
 }
 async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, poolEvidence?: PoolEvidence[], deliverables?: string[], writeEvidence?: WriteArtifactEvidence): Promise<GoalReachVerdict | null> {
@@ -4198,6 +4223,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     };
   }
   const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  judgeCapture.noteLlmJudge(judged);
   // G1 OBSERVE: the judge's verdict stands; record whether G1 agreed (the promotion evidence).
   if (groundedObserved && judged) {
     const key = dispatchContext.getStore()?.dispatchId ?? goalHashOf(goal);
@@ -5607,7 +5633,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // The floor's write evidence is its own successful write-tool calls (side effects the vessel accepted);
   // the requested targets in `produced` above are what the judge is told to look for, never evidence.
   const floorWrites = [...calledWriteShapes];
-  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined, undefined, undefined, undefined, undefined, { persistedWrites: floorWrites, targets: targetShapes });
+  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined, undefined, undefined, undefined, undefined, { persistedWrites: floorWrites, targets: targetShapes }, "floor");
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
   // execution id (`universal-tool-fallback:<goalHash>`) that named no row anywhere: a
@@ -5661,6 +5687,38 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   const _fabricatedTranscript = _claimsToolUse && executed.length === 0;
   if (_fabricatedTranscript) console.log(`[goal-host-vessel] floor: FABRICATED TOOL TRANSCRIPT goalHash=${goalHashOf(goal)} — the answer narrates a tool call/response but ZERO tools executed; refusing the reach`);
   const floorReached = verdict?.reached === true && !_fabricatedTranscript && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0);
+  // CAPTURE (closed, src/judge/capture.ts): the floor verdict's inputs and its decision, after the decision.
+  judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput({
+    goal,
+    originalTargets: inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? null,
+    deliverables: null,
+    targetsSeenByWalk: targetShapes,
+    reframedFrom: null,
+    persistedWrites: floorWrites,
+    landed: null,
+    producedShapes: produced,
+    postReachSink: null,
+    toolsTotal: executed.length,
+    groundedReads: groundedOk,
+    outputImpulses: null,
+    consumedInChain: null,
+    surface: "floor",
+    digest,
+    taskSummary,
+    commandEvidence: commandEvidence || null,
+    walkEvidence: null,
+    judgeView: null,
+    answerText: finalText,
+    verdictReason: verdict?.reason ?? null,
+    seededEvidence: recipeSeed.length > 0 || investigationSeed.length > 0,
+    toolsOk: executedOk,
+    authoredAnswer: authoredFinalAnswer,
+  }), {
+    reached: floorReached,
+    gate_verdict: verdict ? { reached: verdict.reached === true, reason: verdict.reason ?? null, deterministic: verdict.deterministic === true, abstain: verdict.abstain ? true : false, completion_shapes: verdict.completion_shapes ?? [] } : null,
+    zero_tool_write_claim: _zeroToolWriteClaim,
+    fabricated_transcript: _fabricatedTranscript,
+  });
   if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
     await persistSatisfierTrace({
       id: floorExecId,
@@ -8497,7 +8555,11 @@ async function runGoalAsPoolWalkBody(
    *  stated "no resolve attempted" — never the previous shape's leftover reason. */
   const resolveFailureSince = (seqBefore: number): string =>
     rawResolveSeq !== seqBefore ? (lastRawResolveReason ?? "resolver returned nothing") : "no resolve attempted (already tried, refused before resolving, or no endpoint)";
-  async function verifyWritePersisted(
+  // The walk's write read-back, observed (not changed) by the capture: the same promise is returned.
+  function verifyWritePersisted(writeShape: string, writeResult: unknown): Promise<{ persisted: true; content: unknown } | { persisted: false } | null> {
+    return judgeCapture.observeWriteReadback(writeShape, verifyWritePersistedRead(writeShape, writeResult));
+  }
+  async function verifyWritePersistedRead(
     writeShape: string,
     writeResult: unknown,
   ): Promise<{ persisted: true; content: unknown } | { persisted: false } | null> {
@@ -11641,6 +11703,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // end the walk on G1 before the surfaced deliverable is produced.
           undefined,
           walkWriteEvidence(),
+          "walk",
         );
         if (interim && interim.reached === true) {
           earlyReachVerdict = interim;
@@ -11971,6 +12034,15 @@ If one of those sibling shapes is the action that would create what the goal ask
         // trace kind. Two reasons, two tokens: a missing verifier and a missing edge are different gaps.
         if (walkBetaWithheld) opts.betaWithheld?.set(lastTrace.id, _noOracle ? "no-oracle-for-goal-class" : _withheldWhy);
         if (walkBetaWithheld) walkBetaWithheldReason = opts.betaWithheld?.get(lastTrace.id) ?? _withheldWhy;
+        // CAPTURE (closed, src/judge/capture.ts): the β decision's inputs and its outcome, after the decision.
+        judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput({
+          templateId: String(lastPick),
+          verdict: { deterministic: verdict.deterministic === true, reason: verdict.reason ?? null },
+          consumedInChain: consumedInChain.size,
+          editEffectReach: null,
+          lastPickProducedJudgedArtifact: _culpability.culpable,
+          noOracle: _noOracle,
+        }), { beta: walkBetaWithheld ? "withheld" : "charged", withheld_why: walkBetaWithheld ? (_noOracle ? "no-oracle-for-goal-class" : _withheldWhy) : null, alpha_was_reachable: _alphaWasReachable });
 
         if (!_noOracle && !_betaWithheldForSymmetry) {
           if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
@@ -13287,6 +13359,8 @@ async function runGoalWithRecoveryInner(
           if (hydFile && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
             goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: ${String(hydGap.summary ?? "").slice(0, 300)})`;
           }
+          // CAPTURE (closed, src/judge/capture.ts): the gap record's routing hint, after it was applied or not.
+          judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal });
           tap(`[goal-host-vessel] gap-hydration: injected record ${hydGap.id} (cited file: ${hydFile ?? "none"})`);
         }
       }
@@ -13676,6 +13750,8 @@ async function runGoalWithRecoveryInner(
             `GOAL: ${goalForRouting}`,
           ].join("\n") + await verbatimExcerptBlock(earlyEditFile, earlyEditLine, goalForRouting);
           const earlyGapId = composeGapIdOf(goal, opts.variables);
+          // CAPTURE (closed, src/judge/capture.ts): this dispatch is handed to the compose producer.
+          judgeCapture.noteRoutingHandOff({ goal: String(goal ?? ""), composeGapId: earlyGapId, editSite: earlyEditSite });
           let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
           try {
             const earlyDr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
@@ -14040,6 +14116,14 @@ async function runGoalWithRecoveryInner(
         targets: seededOutputShapes ?? [],
         isFloorId: (a) => normActivityId(a) === "universal-tool-fallback",
       }) : { allowed: false, why: "no pathway" };
+      // CAPTURE (closed, src/judge/capture.ts): the shortcut's inputs and its decision, after the decision.
+      const _shortcutPathway = reachingPathway;
+      if (_shortcutPathway) judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput({
+        goal,
+        activities: (_shortcutPathway.activities ?? []).map(String),
+        borrowed: _shortcutPathway.borrowed !== false,
+        targets: seededOutputShapes ?? [],
+      }), _floorShortcut);
       const floorIsTheProvenPathway = _floorShortcut.allowed;
       if (!floorIsTheProvenPathway && reachingPathway && (reachingPathway.activities ?? []).length === 1 && normActivityId(String(reachingPathway.activities[0] ?? "")) === "universal-tool-fallback" && !isEditIntentGoal(goal) && !goalRequestsDurableArtifact(goal)) {
         tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but ${_floorShortcut.why}; walking instead`);
@@ -14346,6 +14430,23 @@ async function runGoalWithRecoveryInner(
           const altRetrieved = walkRetrieved(altProduced, altWalkResult.fedDeliverableShapes ?? [], RETRIEVAL_EVIDENCE);
           const altSkippedPlannedRetrieval = plannedRetrieval.length > 0 && !altRetrieved;
           const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput) && !altSkippedPlannedRetrieval;
+          // CAPTURE (closed, src/judge/capture.ts): reframe acceptance's inputs and its decision, after the decision.
+          judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput({
+            goal,
+            originalTargets: origTarget,
+            alternatives: goalTargetDecision!.alternatives.filter((alt: string[]) => Array.isArray(alt)).map((alt: string[]) => alt.map(String)),
+            altTargets: altShapes.map(String),
+            altWalk: {
+              reached: typeof altWalkResult.reached === "boolean" ? altWalkResult.reached : null,
+              abstain: altWalkResult.abstain ? true : false,
+              produced: altProduced,
+              substantiveShapes: altSubstantive,
+              onlyRawInput: altOnlyRawInput,
+              skippedPlannedRetrieval: altSkippedPlannedRetrieval,
+            },
+            origWantedDerived,
+            plannedRetrieval,
+          }), { accepted: !altWalkResult.abstain && altWalkResult.reached === true && altHasSubstance, abstain: altWalkResult.abstain ? true : false, has_substance: altHasSubstance });
           if (altWalkResult.abstain) {
             return altWalkResult; // ABSTAIN (§9.2): the re-frame's deliverable was ungraded, not hollow
           } else if (altWalkResult.reached && altHasSubstance) {
@@ -15331,7 +15432,7 @@ async function runGoalWithRecoveryInner(
             .slice(0, 4000);
         }
         // The engine's produced shapes are real emits of the run's tasks, so its mutation shapes are its writes.
-        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined, undefined, undefined, undefined, undefined, undefined, { persistedWrites: producedShapes.filter(isMutationShape) });
+        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined, undefined, undefined, undefined, undefined, undefined, { persistedWrites: producedShapes.filter(isMutationShape) }, "recovery");
         if (verdict) recordDeterministicLabel(String(goal), execId, selId, verdict);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;
@@ -17015,10 +17116,13 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // Fail-closed: unchanged unless the goal passes a conservative predicate AND
   // the search returns exactly one file. A goal left alone behaves as it does
   // today; a goal restated onto the WRONG file commits code nobody asked for.
+  // CAPTURE (closed, src/judge/capture.ts): the recorder observes what the resolution searched, found and read
+  // through the callbacks it is handed (each returns the callee's own promise), never changing them.
+  const _routeRec = judgeCapture.routingRecorder();
   const goal = rawGoal === undefined
     ? undefined
-    : await resolvePathlessCodeChangeGoal(rawGoal, searchWorkspaceForTerm, (m) =>
-        console.log(`[goal-host-vessel] /run-goal: ${m}`), searchWorkspaceForSymbol,
+    : await resolvePathlessCodeChangeGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap((m) =>
+        console.log(`[goal-host-vessel] /run-goal: ${m}`)), _routeRec.symbolSearch(searchWorkspaceForSymbol),
         // SYMPTOM -> IDENTIFIER translation, consulted ONLY after every lexical
         // route above has already failed.
         //
@@ -17036,7 +17140,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // or win corroboration as a strict leader. A model that guesses wildly
         // cannot restate a goal onto a file the search does not independently single
         // out, so the fail-closed contract is preserved.
-        async (g: string): Promise<readonly string[]> => {
+        _routeRec.propose(async (g: string): Promise<readonly string[]> => {
           const SAMPLES = Number(process.env["SYMBOL_PROPOSAL_SAMPLES"] ?? 3);
           const oneSample = async (): Promise<readonly string[]> => {
           // Hand the model the codebase's OWN vocabulary to choose from.
@@ -17094,7 +17198,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           const agreed = consensusSymbols(samples);
           console.log(`[goal-host-vessel] /run-goal: symbol proposal — ${samples.length} sample(s), consensus [${agreed.slice(0, 8).join(", ")}]`);
           return agreed;
-        },
+        }),
         // COMMENT VERIFICATION for a prose term's unique hit. Reads the candidate so
         // `termAppearsOutsideComments` can reject a match that exists only in a comment.
         // Both phantom localisations measured 2026-08-11 were comments — one inline, one
@@ -17102,14 +17206,15 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // a symptom goal about that defect. Reuses authoritativeRoots so "repos/<v>/..."
         // resolves to the same clone every other reader here uses. Any failure returns
         // undefined, which skips verification: fail-open, never a new refusal path.
-        async (rel: string): Promise<string | undefined> => {
+        _routeRec.read(async (rel: string): Promise<string | undefined> => {
           for (const candidate of authoritativeRoots(rel)) {
             try {
               return await readFile(candidate, "utf8");
             } catch { /* try the next root */ }
           }
           return undefined;
-        });
+        }));
+  const _routingInput = rawGoal === undefined || goal === undefined ? null : _routeRec.finish(rawGoal, goal);
   const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
 
   // A GOAL WITH A COLLAPSED INTERPOLATION IS NOT ANSWERABLE — REFUSE IT AT THE DOOR.
@@ -17333,6 +17438,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
     return "run-goal";
   })();
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
+  judgeCapture.attachRoutingInput(record, _routingInput);
   executionStore.set(dispatchId, record);
   persistDispatchStore();
       // A check-supply dispatch carries the id minted here, never a caller-supplied one (compose-gap-id.ts).
@@ -17716,6 +17822,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         return authoredTemplateId;
       };
       const learningSink: LearningConsequences = { alphaBetaDelta: [], gapsFiled: [], goalPathRecorded: false, oracleLabelWritten: false };
+      // Every capture below this point attaches to THIS dispatch's record (src/judge/capture.ts).
+      judgeCapture.bindCaptureTarget(record);
       const seek = await runGoalWithRecovery(goal, {
         firstTarget: targetTemplateId,
         callerPinned: callerPinnedTarget,
@@ -18458,6 +18566,8 @@ interface DispatchRecord {
   learning?: LearningConsequences;
   /** Decision-ready markdown answer for an obsidian question goal (answer-delivery reach fix). */
   answerBody?: string;
+  /** Captured decision inputs (src/judge/capture.ts): metadata.judge_input.<entry> and metadata.routing_input. */
+  metadata?: judgeCapture.JudgeCaptureMetadata;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18908,6 +19018,9 @@ server = Bun.serve({
         // panel received answers this endpoint could not. One surface got the product and the
         // other got only the process, from the same record, for the same run.
         answerBody: (record as { answerBody?: string }).answerBody ?? null,
+        // CAPTURED DECISION INPUTS (src/judge/capture.ts), only on request: they can be tens of KB, and
+        // this endpoint is polled.
+        ...(url.searchParams.get("include") === "metadata" ? { metadata: record.metadata ?? null } : {}),
       });
     }
 
