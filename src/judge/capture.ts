@@ -30,7 +30,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { isEditIntentGoal } from "../goal-intent";
 import { isPathlessCodeChangeGoal } from "../goal-file-resolution";
 
-export const JUDGE_INPUT_SCHEMA = 1;
+import { JUDGE_INPUT_SCHEMA } from "./records";
+export { JUDGE_INPUT_SCHEMA };
 export const ROUTING_INPUT_SCHEMA = 1;
 /** The per-record cap, in bytes of the record's JSON serialization. */
 export const CAPTURE_RECORD_CAP_BYTES = 32 * 1024;

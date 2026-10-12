@@ -81,23 +81,23 @@ describe("judge capture wiring pin: every decision site calls the closed capture
   });
 
   test("floorVerdict: recorded right after the floor's reached decision", () => {
-    callAfter("const floorReached = verdict?.reached === true && !_fabricatedTranscript", `judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput({`, 2);
+    callAfter("const floorReached = _floorV.reached;", `judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput({`, 2);
   });
 
   test("floorShortcut: recorded after the shortcut decision and before it is acted on", () => {
-    const cap = callAfter("const _floorShortcut = reachingPathway ? floorShortcutAllowed({", `judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput({`, 12);
-    expect(lineOf("const floorIsTheProvenPathway = _floorShortcut.allowed;")).toBeGreaterThan(cap);
+    const cap = callAfter("const _floorShortcut = reachingPathway ? judge.floorShortcut(", `judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput({`, 12);
+    expect(lineOf("const floorIsTheProvenPathway = _floorShortcut.allowed")).toBeGreaterThan(cap);
   });
 
   test("reframeAccept: recorded after the acceptance inputs and before the acceptance branch", () => {
-    const cap = callAfter("const altHasSubstance = altSubstantive.length > 0", `judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput({`, 2);
+    const cap = callAfter("const _reframe = judge.reframeAccept(", `judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput({`, 2);
     const branch = LINES.findIndex((l, i) => i > cap && l.includes("if (altWalkResult.abstain) {"));
     expect(branch).toBeGreaterThan(cap);
     expect(branch - cap).toBeLessThan(25);
   });
 
   test("creditOnHollow: recorded right after the β withhold/charge decision", () => {
-    callAfter("const _betaWithheldForSymmetry = !_noOracle && !_alphaWasReachable;", `judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput({`, 12);
+    callAfter("const _betaWithheldForSymmetry = _creditOnHollow.withheld ===", `judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput({`, 12);
   });
 
   test("routing: the pathless resolution at the door runs through the recorder and its record is attached to the dispatch", () => {

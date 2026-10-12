@@ -1,35 +1,34 @@
-// A WRITE OR CHANGE GOAL IS REACHED BY AN ARTIFACT, NEVER BY PROSE (src/write-goal-artifact.ts).
+// A WRITE OR CHANGE GOAL IS REACHED BY AN ARTIFACT, NEVER BY PROSE (the rules: src/judge-rules/write-goal.ts and
+// src/judge-rules/floor.ts; the closed floor clamps: src/judge/floor-clamps.ts; the closed adapters that render the
+// reason text: src/judge/entries.ts).
 //
-// Measured: the floor's 36 reached=true runs over ~5 days produced 0 shapes, persisted 0 writes and
-// landed 0 shas; 17 of them stored a write shape as the path's endpoint output, and REUSE-BEFORE-DERIVE
-// then lent that "proven" floor to later write goals. The fixtures below are reconstructed from the two
-// recorded instances (N5: execution universal-tool-fallback-c154c685-1791710679359; N10: dispatch
-// 0f03761a). The index.ts wiring of each rule is pinned by the verdict-diff scenarios
-// n10-shaped-mechanism-change-prose-concept, n5-shaped-floor-*, floor-zero-tool-write-claim-question,
-// floor-read-reach-records-produced-shapes-only and shortcut-*.
+// The class: the floor's reached runs produced no shape, persisted no write and landed no sha, yet were graded
+// reached on text, and a write shape stored as such a path's endpoint let REUSE-BEFORE-DERIVE lend the "proven"
+// floor to later write goals. The fixtures below are class paraphrases: a pathless imperative asking the system to
+// change its own behaviour, judged on a plan; and a mechanism-change goal judged on a prose note.
 import { describe, expect, test } from "bun:test";
 import {
   artifactWrites,
-  claimsWriteSucceeded,
-  floorCompletionShapes,
-  floorShortcutAllowed,
   goalAsksForBehaviourChange,
   goalAsksForChange,
   goalRequiresArtifact,
   writeGoalArtifactGate,
-  zeroToolWriteClaim,
-} from "../src/write-goal-artifact";
+} from "../src/judge-rules/write-goal";
+import { shortcutAllowed } from "../src/judge-rules/floor";
+import { claimsWriteSucceeded, floorCompletionShapes, zeroToolWriteClaim } from "../src/judge/floor-clamps";
+import * as judge from "../src/judge/entries";
+import { reachInput, shortcutInput } from "../src/judge/inputs";
 
-const N10_GOAL = "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.";
-const N5_GOAL = "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap. The lane's stages are recorded on each gap and in the lane's execution record; the system's existing joint observer already reads registered joints from the pool each tick, but it can only see open gaps, cannot ask 'has anything advanced recently', and no stage records why a gap was not admitted. Whatever the system adds must be data it writes itself where possible, and must fire on flow stopping, not on the size of the backlog.";
-const N5_FINAL_TEXT = "Plan: augment each gap with a last_advanced_at stamp, add a stagnation detector, and file a 'stagnation' gap. Since I cannot see the output, it's likely that the actual call to substrateGap_write was successful. I have demonstrated how such a stagnation gap would be created.";
-const N5_REASON = "The plan outlines a comprehensive system for detecting and reporting stalled progress in the system's own lane by augmenting gap data, adding a stagnation detection component, and automatically creating new 'stagnation' gaps, directly addressing all aspects of the prompt.";
-const isFloor = (a: string) => a === "universal-tool-fallback";
+const MECHANISM_CHANGE_GOAL = "Some learned procedures fail every time, the failures are already on record, and they are still chosen first. Make that record stop them being chosen, and let selection fall back to a procedure that works.";
+const STALL_NOTICE_GOAL = "A queue of the system's own work items can stop moving at any stage and nothing notices except a person reading logs. Make the system notice by itself when a stage stops advancing and treat that as a work item of its own. Whatever it adds must fire on flow stopping, not on backlog size.";
+const PLAN_FINAL_TEXT = "Plan: stamp each item with a last-advanced time, add a stall detector, and raise a stall item. Since I cannot see the output, it's likely that the actual call to substrateGap_write was successful. I have shown how such a stall item would be raised.";
+const PLAN_REASON = "The plan covers each part of the request with a progress stamp, a stall detector and a new kind of item raised automatically.";
+const shortcut = (goal: string, activities: string[], borrowed: boolean, targets: string[]) => shortcutAllowed(shortcutInput({ goal, activities, borrowed, targets }));
 
 describe("change/write intent reuses goal-intent and adds only a sentence-initial imperative", () => {
-  test("N10 and N5 ask for a change in behaviour (neither names a path or a code word)", () => {
-    expect(goalAsksForBehaviourChange(N10_GOAL)).toBe(true);
-    expect(goalAsksForBehaviourChange(N5_GOAL)).toBe(true);
+  test("a mechanism-change goal and a stall-notice goal ask for a change in behaviour (neither names a path or a code word)", () => {
+    expect(goalAsksForBehaviourChange(MECHANISM_CHANGE_GOAL)).toBe(true);
+    expect(goalAsksForBehaviourChange(STALL_NOTICE_GOAL)).toBe(true);
   });
   test("an edit goal naming a repos file is a change (isEditIntentGoal reused)", () => {
     expect(goalAsksForChange("Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness")).toBe(true);
@@ -56,22 +55,25 @@ describe("change/write intent reuses goal-intent and adds only a sentence-initia
 });
 
 describe("item 1: a change/write goal counts as reached only with an artifact", () => {
-  test("(a) N10: reach via a prose concept_write + learningPolicyWriteback for a mechanism change -> HOLLOW", () => {
-    const g = writeGoalArtifactGate(N10_GOAL, { persistedWrites: ["concept_write", "learningPolicyWriteback"], targets: ["concept_write", "posteriorCompensation"], postReachSink: true });
+  test("(a) reach via a prose concept_write + an unrelated policy writeback for a mechanism change -> HOLLOW", () => {
+    const g = writeGoalArtifactGate(MECHANISM_CHANGE_GOAL, { persistedWrites: ["concept_write", "learningPolicyWriteback"], targets: ["concept_write", "posteriorCompensation"], postReachSink: true });
     expect(g.hollow).toBe(true);
-    expect(artifactWrites(N10_GOAL, { persistedWrites: ["concept_write", "learningPolicyWriteback"], targets: ["concept_write", "posteriorCompensation"] })).toEqual([]);
+    expect(artifactWrites(MECHANISM_CHANGE_GOAL, { persistedWrites: ["concept_write", "learningPolicyWriteback"], targets: ["concept_write", "posteriorCompensation"] })).toEqual([]);
   });
-  test("(b) N5: the floor, tools 0/0, targets [substrateGap_write, gap_lifecycle_scan], no write -> HOLLOW", () => {
-    const g = writeGoalArtifactGate(N5_GOAL, { persistedWrites: [], targets: ["substrateGap_write", "gap_lifecycle_scan"] });
+  test("(b) the floor, tools 0/0, targets [substrateGap_write, gap_lifecycle_scan], no write -> HOLLOW, and the core renders the reason", () => {
+    const g = writeGoalArtifactGate(STALL_NOTICE_GOAL, { persistedWrites: [], targets: ["substrateGap_write", "gap_lifecycle_scan"] });
     expect(g.hollow).toBe(true);
-    if (g.hollow) expect(g.reason).toStartWith("deterministic:write-goal-no-artifact");
+    const targets = ["substrateGap_write", "gap_lifecycle_scan"];
+    const v = judge.reachGate(reachInput({ goal: STALL_NOTICE_GOAL, writeEvidence: { persistedWrites: [], targets }, targets, landed: false }));
+    expect(v.hollow).toBe(true);
+    expect(v.reason).toBe("deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write, gap_lifecycle_scan]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it");
   });
   test("an unrelated write does not count when the goal's targets are known", () => {
-    expect(writeGoalArtifactGate(N5_GOAL, { persistedWrites: ["goal_verification_label_write"], targets: ["substrateGap_write"] }).hollow).toBe(true);
+    expect(writeGoalArtifactGate(STALL_NOTICE_GOAL, { persistedWrites: ["goal_verification_label_write"], targets: ["substrateGap_write"] }).hollow).toBe(true);
   });
   test("NEGATIVE CONTROL: a write goal with a real persisted write of its own target reaches", () => {
     expect(writeGoalArtifactGate("File a gap recording that the compose stage stalled.", { persistedWrites: ["substrateGap_write"], targets: ["substrateGap_write"] }).hollow).toBe(false);
-    expect(writeGoalArtifactGate(N5_GOAL, { persistedWrites: ["substrateGap_write"], targets: ["substrateGap_write", "gap_lifecycle_scan"] }).hollow).toBe(false);
+    expect(writeGoalArtifactGate(STALL_NOTICE_GOAL, { persistedWrites: ["substrateGap_write"], targets: ["substrateGap_write", "gap_lifecycle_scan"] }).hollow).toBe(false);
   });
   test("NEGATIVE CONTROL: an edit goal with a landed sha reaches", () => {
     expect(writeGoalArtifactGate("Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts", { persistedWrites: [], landed: true }).hollow).toBe(false);
@@ -96,25 +98,25 @@ describe("item 1: a change/write goal counts as reached only with an artifact", 
 });
 
 describe("item 2: a write/call success claim with zero tools and zero writes is hollow by construction", () => {
-  test("(b) N5's floor text and (c) a generic 0-tool claim are claims", () => {
-    expect(claimsWriteSucceeded(N5_FINAL_TEXT)).toBe(true);
+  test("(b) a plan text claiming a write and (c) a generic 0-tool claim are claims", () => {
+    expect(claimsWriteSucceeded(PLAN_FINAL_TEXT)).toBe(true);
     expect(claimsWriteSucceeded("There was no gap, so I created one: the substrateGap_write call succeeded and the gap is now open.")).toBe(true);
     expect(claimsWriteSucceeded("I have successfully filed the gap.")).toBe(true);
   });
   test("(b)/(c) with tools 0/0 and no write -> hollow; the verdict's own reason counts too", () => {
-    expect(zeroToolWriteClaim([N5_FINAL_TEXT, N5_REASON], { toolsTotal: 0, writes: 0 })).toBe(true);
+    expect(zeroToolWriteClaim([PLAN_FINAL_TEXT, PLAN_REASON], { toolsTotal: 0, writes: 0 })).toBe(true);
     expect(zeroToolWriteClaim(["prose", "I created the gap and the write was successful"], { toolsTotal: 0, writes: 0 })).toBe(true);
   });
   test("NEGATIVE CONTROL: the same claim with a real write, or tools run, is not refused here", () => {
-    expect(zeroToolWriteClaim([N5_FINAL_TEXT], { toolsTotal: 1, writes: 1 })).toBe(false);
-    expect(zeroToolWriteClaim([N5_FINAL_TEXT], { toolsTotal: 2, writes: 0 })).toBe(false);
-    expect(zeroToolWriteClaim([N5_FINAL_TEXT], { toolsTotal: 0, writes: 0, outputImpulses: 1 })).toBe(false);
+    expect(zeroToolWriteClaim([PLAN_FINAL_TEXT], { toolsTotal: 1, writes: 1 })).toBe(false);
+    expect(zeroToolWriteClaim([PLAN_FINAL_TEXT], { toolsTotal: 2, writes: 0 })).toBe(false);
+    expect(zeroToolWriteClaim([PLAN_FINAL_TEXT], { toolsTotal: 0, writes: 0, outputImpulses: 1 })).toBe(false);
   });
   test("NEGATIVE CONTROL: an honest answer that claims no write is not a claim", () => {
     for (const t of [
       "Sunlight scatters off air molecules; shorter blue wavelengths scatter most (Rayleigh scattering), so the sky looks blue.",
       "Without live data: used Gen 9 units typically list between $350 and $500.",
-      N5_REASON,
+      PLAN_REASON,
       "I cannot write to the gap store from here; nothing was filed.",
     ]) expect([t, claimsWriteSucceeded(t)]).toEqual([t, false]);
   });
@@ -133,19 +135,19 @@ describe("item 3: the floor's completion shapes are what it produced, never what
 });
 
 describe("item 4: the floor shortcut never reuses a borrowed path for a change/write goal", () => {
-  test("(e) N5: borrowed floor (shape-signature donor) for a change goal -> refused", () => {
-    const r = floorShortcutAllowed({ goal: N5_GOAL, activities: ["universal-tool-fallback"], borrowed: true, targets: ["gap_lifecycle_scan"], isFloorId: isFloor });
+  test("(e) borrowed floor (shape-signature donor) for a change goal -> refused", () => {
+    const r = shortcut(STALL_NOTICE_GOAL, ["universal-tool-fallback"], true, ["gap_lifecycle_scan"]);
     expect(r.allowed).toBe(false);
   });
   test("(e) a *_write target is a durable artifact: refused even on the goal's own path", () => {
-    expect(floorShortcutAllowed({ goal: "Is the lane stalled", activities: ["universal-tool-fallback"], borrowed: false, targets: ["substrateGap_write"], isFloorId: isFloor }).allowed).toBe(false);
+    expect(shortcut("Is the lane stalled", ["universal-tool-fallback"], false, ["substrateGap_write"]).allowed).toBe(false);
   });
   test("(e) NEGATIVE CONTROL: the goal's OWN floor path for a read goal is still reused", () => {
-    expect(floorShortcutAllowed({ goal: "Explain why the sky looks blue during the day", activities: ["universal-tool-fallback"], borrowed: false, targets: ["llm_completion_dispatch"], isFloorId: isFloor }).allowed).toBe(true);
+    expect(shortcut("Explain why the sky looks blue during the day", ["universal-tool-fallback"], false, ["llm_completion_dispatch"]).allowed).toBe(true);
   });
   test("edit and durable-artifact goals keep their existing refusal; a longer path is never the shortcut", () => {
-    expect(floorShortcutAllowed({ goal: "Add X to repos/goal-host-vessel/src/quiesce.ts", activities: ["universal-tool-fallback"], borrowed: false, targets: [], isFloorId: isFloor }).allowed).toBe(false);
-    expect(floorShortcutAllowed({ goal: "Write a note recording the findings", activities: ["universal-tool-fallback"], borrowed: false, targets: [], isFloorId: isFloor }).allowed).toBe(false);
-    expect(floorShortcutAllowed({ goal: "Explain why the sky looks blue", activities: ["satisfier:x", "universal-tool-fallback"], borrowed: false, targets: [], isFloorId: isFloor }).allowed).toBe(false);
+    expect(shortcut("Add X to repos/goal-host-vessel/src/quiesce.ts", ["universal-tool-fallback"], false, []).allowed).toBe(false);
+    expect(shortcut("Write a note recording the findings", ["universal-tool-fallback"], false, []).allowed).toBe(false);
+    expect(shortcut("Explain why the sky looks blue", ["satisfier:x", "universal-tool-fallback"], false, []).allowed).toBe(false);
   });
 });

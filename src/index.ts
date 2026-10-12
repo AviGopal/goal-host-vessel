@@ -287,7 +287,11 @@ import { parseFileExtension } from "./file-extension";
 import { decideEscalationTarget } from "./escalation-target";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite, walkResolveBody } from "./applied-write";
-import { floorCompletionShapes, floorShortcutAllowed, isMutationShape, writeGoalArtifactGate, zeroToolWriteClaim, type WriteArtifactEvidence } from "./write-goal-artifact";
+import * as judge from "./judge/entries";
+import * as judgeInputs from "./judge/inputs";
+import { zeroToolWriteClaim } from "./judge/floor-clamps";
+import { isMutationShape } from "./judge/shapes";
+import type { WriteArtifactEvidence } from "./judge/inputs";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
@@ -4123,25 +4127,19 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     return { reached: false, reason: "deterministic:edit-intent-no-landed-edit — an edit goal is reached only by an edit-result shape WITH landing evidence (push_status:pushed / new_git_sha); an advertised/stub edit-result with no landing is not an applied edit", completion_shapes: [] };
   }
 
-  // A WRITE OR CHANGE GOAL IS REACHED BY AN ARTIFACT, NEVER BY PROSE (write-goal-artifact.ts).
-  // Measured: the floor's 36 reached runs in ~5 days produced 0 shapes, persisted 0 writes and landed
-  // 0 shas; 22 were LLM-judged prose and 14 a citation check. N5 was reached on "the call to
-  // substrateGap_write was successful" with tools 0/0; N10 on a prose concept_write for a goal asking
-  // for a mechanism change. Placed here on purpose: the oracles above that verify an artifact
-  // themselves (favorable compose landed, the compute-artifact note read-back) have already returned,
-  // and the citation oracle and the LLM judge below grade TEXT, which cannot reach such a goal.
-  // The evidence is the caller's own record of writes (the walk's applied-write ledger, the floor's
-  // successful write calls, the engine's produced shapes), never the digest's prose.
+  // A WRITE OR CHANGE GOAL IS REACHED BY AN ARTIFACT, NEVER BY PROSE (judge entry reachGate; the rule
+  // is src/judge-rules/write-goal.ts). The class: a change or write goal judged reached on a plan or on a
+  // prose note, with nothing produced, written or landed. Placed here on purpose: the oracles above that
+  // verify an artifact themselves (favorable compose landed, the compute-artifact note read-back) have
+  // already returned, and the citation oracle and the LLM judge below grade TEXT, which cannot reach
+  // such a goal. The evidence is the caller's own record of writes (the walk's applied-write ledger, the
+  // floor's successful write calls, the engine's produced shapes), never the digest's prose.
   // Only a caller that passes its write record is gated (every production site does: the walk's
   // interim and end checks, the floor, the engine path); a bare call has no evidence to judge.
   if (writeEvidence) {
-    const _wg = writeGoalArtifactGate(goal, {
-      persistedWrites: writeEvidence.persistedWrites,
-      targets: writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [],
-      landed: landedEdit || writeEvidence.landed === true,
-      postReachSink: writeEvidence.postReachSink === true,
-    });
-    if (_wg.hollow) return { reached: false, reason: _wg.reason, completion_shapes: [] };
+    const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
+    const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
+    if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", completion_shapes: [] };
   }
 
   // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
@@ -5642,7 +5640,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // The floor's write evidence is its own successful write-tool calls (side effects the vessel accepted);
   // the requested targets in `produced` above are what the judge is told to look for, never evidence.
   const floorWrites = [...calledWriteShapes];
-  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined, undefined, undefined, undefined, undefined, { persistedWrites: floorWrites, targets: targetShapes }, "floor");
+  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined, undefined, undefined, undefined, undefined, { persistedWrites: floorWrites, targets: targetShapes, surface: "floor" }, "floor");
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
   // execution id (`universal-tool-fallback:<goalHash>`) that named no row anywhere: a
@@ -5661,9 +5659,9 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   //
   // The id carries a timestamp: the old goalHash-only form collided across every re-run
   // of the same goal, so repeat executions would have overwritten each other's outcome.
-  // A WRITE CLAIMED WITH NOTHING RUN IS HOLLOW BY CONSTRUCTION (write-goal-artifact.ts zeroToolWriteClaim).
-  // N5 (universal-tool-fallback-c154c685-1791710679359): "it's likely that the actual call to
-  // substrateGap_write was successful", tools 0/0, no write, judged reached. The answer (or the
+  // A WRITE CLAIMED WITH NOTHING RUN IS HOLLOW BY CONSTRUCTION (closed floor clamp F-a,
+  // src/judge/floor-clamps.ts zeroToolWriteClaim). The class: an answer saying a write call "was likely
+  // successful" with tools 0/0 and no write, judged reached. The answer (or the
   // verdict's own reason) asserting a write or a call succeeded, with zero tools executed and zero
   // writes, is false whatever the goal is; no judge is consulted about it.
   const _zeroToolWriteClaim = verdict?.reached === true && zeroToolWriteClaim([finalText, verdict?.reason], { toolsTotal: executed.length, writes: floorWrites.length });
@@ -5692,10 +5690,12 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // mean-radius control, which reaches by searching and states its value plainly), and so is the
   // agentic dispatch wrapper, whose genuinely-grounded answers arrive with no client-side tool_calls
   // and do not narrate tool responses.
-  const _claimsToolUse = /\btool\s+(?:call|response|output|result)\b/i.test(finalText);
-  const _fabricatedTranscript = _claimsToolUse && executed.length === 0;
+  // The floor's reach decision (judge entry floorVerdict; the rule is src/judge-rules/floor.ts): the
+  // fabricated-transcript refusal above, plus a substantive answer and not every tool failed.
+  const _floorV = judge.floorVerdict(judgeInputs.floorInput({ goal, targets: targetShapes, writes: floorWrites, answerText: finalText, verdictReason: verdict?.reason ?? null, toolsTotal: executed.length, toolsOk: executedOk, groundedReads: groundedOk }), verdict ? { reached: verdict.reached === true, reason: String(verdict.reason ?? ""), abstain: !!verdict.abstain } : null);
+  const _fabricatedTranscript = _floorV.fabricated_transcript;
   if (_fabricatedTranscript) console.log(`[goal-host-vessel] floor: FABRICATED TOOL TRANSCRIPT goalHash=${goalHashOf(goal)} — the answer narrates a tool call/response but ZERO tools executed; refusing the reach`);
-  const floorReached = verdict?.reached === true && !_fabricatedTranscript && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0);
+  const floorReached = _floorV.reached;
   // CAPTURE (closed, src/judge/capture.ts): the floor verdict's inputs and its decision, after the decision.
   judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput({
     goal,
@@ -5768,11 +5768,11 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
       tags: verdict?.abstain ? withBetaWithheld(["dispatcher_used:goal-host"], "verdict-abstain") : [
         "dispatcher_used:goal-host",
         floorReached ? "reached:true" : "reached:false",
-        // PRODUCED, NEVER REQUESTED (write-goal-artifact.ts floorCompletionShapes). This tag used to
-        // carry the targets the floor was ASKED for: N5 stored [gap_lifecycle_scan, substrateGap_write]
-        // with tools 0/0, a cover-1.0 donor for the next gap-writing goal that wrote nothing. A floor
-        // reach that produced nothing tags nothing.
-        ...(floorReached && floorCompletionShapes(verdict?.completion_shapes, floorWrites).length > 0 ? [`completion_shapes:${floorCompletionShapes(verdict?.completion_shapes, floorWrites).join(",")}`] : []),
+        // PRODUCED, NEVER REQUESTED (judge entry completionShapes, closed floor clamp F-b). This tag used
+        // to carry the targets the floor was ASKED for: a tools-0/0 floor reach stored a gap-write target
+        // as its endpoint shape, a cover-1.0 donor for the next gap-writing goal that wrote nothing. A
+        // floor reach that produced nothing tags nothing.
+        ...(floorReached && judge.completionShapes(judgeInputs.completionInput(verdict?.completion_shapes, floorWrites)).length > 0 ? [`completion_shapes:${judge.completionShapes(judgeInputs.completionInput(verdict?.completion_shapes, floorWrites)).join(",")}`] : []),
       ],
       metadata: {
         floor: true,
@@ -5805,7 +5805,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   }
   // Reach when the reach gate passes on a SUBSTANTIVE answer — grounded either by CLIENT-executed
   // tools (groundedOk>0) OR by the agentic dispatch wrapper's own verified-grounded final answer.
-  if (verdict?.reached && !_fabricatedTranscript && (groundedOk > 0 || finalText.trim().length > 0) && !(executed.length > 0 && executedOk === 0)) {
+  if (verdict?.reached && floorReached) {
     console.log(`[goal-host-vessel] universal ReAct fallback REACHED goal (${groundedOk} grounded read(s), ${executedOk}/${executed.length} tool(s) OK)`);
     // Carry the answer the floor actually produced. This return used to drop
     // `finalText` on the floor: the ReAct loop reasoned over real tool output,
@@ -5826,7 +5826,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
     // look for), so falling back to it recorded a 0-tool prose reach under the target shapes it never
     // produced, and recordGoalPath stored them as the path's endpoint shapes. With nothing produced,
     // nothing is recorded.
-    const _floorCompletionShapes = floorCompletionShapes(verdict.completion_shapes, floorWrites);
+    const _floorCompletionShapes = judge.completionShapes(judgeInputs.completionInput(verdict.completion_shapes, floorWrites));
     return { result: null, status: "completed", selectedTemplateId: "universal-tool-fallback", completionShapes: _floorCompletionShapes, attempts: 1, goalReachReason: verdict.reason, reached: true, answerBody: authoredFinalAnswer ? finalText.trim() : undefined, executionId: floorExecId };
   }
   return null;
@@ -8548,7 +8548,7 @@ async function runGoalAsPoolWalkBody(
     tags: opts.tags ?? [],
     parentExecutionId: () => { try { return lastExecId; } catch { return undefined; } },
   });
-  /** The walk's WRITE EVIDENCE for the reach gate (write-goal-artifact.ts): the mutation shapes this
+  /** The walk's WRITE EVIDENCE for the reach gate (judge entry reachGate): the mutation shapes this
    *  walk applied (a vessel accepted the write, applied-write ledger) or read back persisted. Never the
    *  shape names in the pool, which can be declared-output stubs. The walk's post-reach bridge writes
    *  a durable-record goal's note after the verdict, hence postReachSink. */
@@ -12032,9 +12032,10 @@ If one of those sibling shapes is the action that would create what the goal ask
         // the SAME verdict — a deterministic verdict still penalises normally, and so does any
         // chain that actually formed an edge. It removes an asymmetry; it does not soften
         // grading.
-        const _alphaWasReachable =
-          verdict.deterministic === true || consumedInChain.size > 0;
-        const _betaWithheldForSymmetry = !_noOracle && !_alphaWasReachable;
+        // The decision itself is the closed judge entry creditOnHollow (src/judge/credit-decision.ts).
+        const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput({ templateClass: String(lastPick ?? ""), deterministic: verdict.deterministic === true, noOracle: _noOracle, consumedInChain: consumedInChain.size, lastPickProducedJudgedArtifact: _culpability.culpable }));
+        const _alphaWasReachable = _creditOnHollow.alpha_reachable;
+        const _betaWithheldForSymmetry = _creditOnHollow.withheld === "alpha-unreachable-non-deterministic-no-edge";
         const _betaWithheldForCulpability = !_noOracle && !_betaWithheldForSymmetry && !_culpability.culpable;
         const _withheldWhy = _noOracle ? "no-oracle-for-goal-class" : _betaWithheldForSymmetry ? "alpha-unreachable-non-deterministic-no-edge" : "not-producer-of-judged-artifact";
         walkBetaWithheld = _noOracle || _betaWithheldForSymmetry;
@@ -14117,17 +14118,16 @@ async function runGoalWithRecoveryInner(
       // bridge, so skipping the walk for a goal that asked for a durable note reaches,
       // grades itself honestly, and writes nothing — observed once, live, as a clean
       // green with no note. Artifact goals keep the full walk; the shortcut is for
-      // question goals, where the answer IS the deliverable (write-goal-artifact.ts
-      // floorShortcutAllowed: also no *_write/mutation target, and never a BORROWED pathway
-      // for a change/write goal — N5 borrowed donor efef9d23 at cover 0.50 for a gap-writing
-      // goal and skipped its walk on a prose reach count).
-      const _floorShortcut = reachingPathway ? floorShortcutAllowed({
+      // question goals, where the answer IS the deliverable (judge entry floorShortcut; the rule is
+      // src/judge-rules/floor.ts: also no *_write/mutation target, and never a BORROWED pathway for a
+      // change/write goal — a gap-writing goal once borrowed a half-cover floor donor and skipped its
+      // walk on a prose reach count).
+      const _floorShortcut = reachingPathway ? judge.floorShortcut(judgeInputs.shortcutInput({
         goal,
-        activities: reachingPathway.activities ?? [],
+        activities: (reachingPathway.activities ?? []).map((a) => normActivityId(String(a ?? ""))),
         borrowed: reachingPathway.borrowed !== false,
         targets: seededOutputShapes ?? [],
-        isFloorId: (a) => normActivityId(a) === "universal-tool-fallback",
-      }) : { allowed: false, why: "no pathway" };
+      })) : { allowed: false, why: "no pathway" };
       // CAPTURE (closed, src/judge/capture.ts): the shortcut's inputs and its decision, after the decision.
       const _shortcutPathway = reachingPathway;
       if (_shortcutPathway) judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput({
@@ -14441,7 +14441,8 @@ async function runGoalWithRecoveryInner(
           // (walk-pool.ts walkRetrieved).
           const altRetrieved = walkRetrieved(altProduced, altWalkResult.fedDeliverableShapes ?? [], RETRIEVAL_EVIDENCE);
           const altSkippedPlannedRetrieval = plannedRetrieval.length > 0 && !altRetrieved;
-          const altHasSubstance = altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput) && !altSkippedPlannedRetrieval;
+          // The acceptance decision (judge entry reframeAccept; the rule is src/judge-rules/reframe.ts).
+          const _reframe = judge.reframeAccept(judgeInputs.reframeInput({ goal, originalTargets: origTarget, alternatives: goalTargetDecision.alternatives, altReached: altWalkResult.reached === true, substantive: altSubstantive, onlyRawInput: altOnlyRawInput, skippedPlannedRetrieval: altSkippedPlannedRetrieval, origWantedDerived }));
           // CAPTURE (closed, src/judge/capture.ts): reframe acceptance's inputs and its decision, after the decision.
           judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput({
             goal,
@@ -14458,10 +14459,10 @@ async function runGoalWithRecoveryInner(
             },
             origWantedDerived,
             plannedRetrieval,
-          }), { accepted: !altWalkResult.abstain && altWalkResult.reached === true && altHasSubstance, abstain: altWalkResult.abstain ? true : false, has_substance: altHasSubstance });
+          }), { accepted: !altWalkResult.abstain && _reframe.accept, abstain: altWalkResult.abstain ? true : false, has_substance: altSubstantive.length > 0 && !(origWantedDerived && altOnlyRawInput) && !altSkippedPlannedRetrieval /* recorded as data only; the decision is _reframe */ });
           if (altWalkResult.abstain) {
             return altWalkResult; // ABSTAIN (§9.2): the re-frame's deliverable was ungraded, not hollow
-          } else if (altWalkResult.reached && altHasSubstance) {
+          } else if (_reframe.accept) {
             walk = altWalkResult;
           } else if (altWalkResult.reached) {
             const why = altSkippedPlannedRetrieval

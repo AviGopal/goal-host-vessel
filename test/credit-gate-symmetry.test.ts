@@ -1,4 +1,6 @@
 import { describe, it, expect } from "bun:test";
+import { creditOnHollow } from "../src/judge/credit-decision";
+import { creditInput } from "../src/judge/inputs";
 
 /**
  * AN ARM THAT CAN LOSE BUT CANNOT WIN IS NOT BEING GRADED — IT IS BEING DRAINED.
@@ -33,6 +35,10 @@ import { describe, it, expect } from "bun:test";
  */
 
 const SRC = new URL("../src/index.ts", import.meta.url);
+const DECISION = new URL("../src/judge/credit-decision.ts", import.meta.url);
+async function decisionSource(): Promise<string> {
+  return await Bun.file(DECISION).text();
+}
 
 async function source(): Promise<string> {
   return await Bun.file(SRC).text();
@@ -47,7 +53,8 @@ async function betaBlock(): Promise<string> {
   // log line and reported a defect that was not there. An instrument that truncates its
   // subject reports on the truncation. 5500 since OP-1 (2026-10-10): the culpability withhold added three
   // lines between the guard and the second log line, which ended at 4,712 characters.
-  return src.slice(i, i + 5500);
+  // 7000 since the judge split and the judge-input capture added lines between the guard and the second log line.
+  return src.slice(i, i + 7000);
 }
 
 describe("credit gate — β is held to the same evidence standard as α", () => {
@@ -63,8 +70,13 @@ describe("credit gate — β is held to the same evidence standard as α", () =>
     expect(b).toMatch(/_alphaWasReachable/);
     expect(b).toMatch(/_betaWithheldForSymmetry/);
     // The predicate must mirror the α gate's two admissible grounds, or it is a new rule
-    // rather than the same rule applied symmetrically.
-    expect(b).toMatch(/verdict\.deterministic === true \|\|\s*consumedInChain\.size > 0/);
+    // rather than the same rule applied symmetrically. The decision lives in the closed judge entry
+    // creditOnHollow (src/judge/credit-decision.ts); the β block takes both values from it.
+    expect(b).toContain("judge.creditOnHollow(");
+    expect(b).toContain("deterministic: verdict.deterministic === true");
+    expect(b).toContain("consumedInChain: consumedInChain.size");
+    expect(b).toMatch(/const _alphaWasReachable = _creditOnHollow\.alpha_reachable;/);
+    expect(await decisionSource()).toMatch(/i\.verdict\.deterministic === true \|\|\s*i\.consumed_in_chain > 0/);
   });
 
   it("the penalty is guarded by BOTH exemptions, not just the original one", async () => {
@@ -88,7 +100,10 @@ describe("credit gate — β is held to the same evidence standard as α", () =>
     // _alphaWasReachable is true whenever the verdict is deterministic, so the symmetry
     // exemption cannot fire there. If someone later drops that disjunct, deterministic
     // misses stop being penalised and grading really does soften.
-    expect(b).toMatch(/verdict\.deterministic === true \|\|/);
+    expect(b).toContain("const _alphaWasReachable = _creditOnHollow.alpha_reachable;");
+    expect(await decisionSource()).toMatch(/i\.verdict\.deterministic === true \|\|/);
+    const d = creditOnHollow(creditInput({ templateClass: "t", deterministic: true, noOracle: false, consumedInChain: 0, lastPickProducedJudgedArtifact: true }));
+    expect(d).toEqual({ alpha_reachable: true, charge: true, withheld: null, retire_candidate: false });
   });
 
   it("NEGATIVE CONTROL: the predicate distinguishes reachable from unreachable", () => {
@@ -98,6 +113,11 @@ describe("credit gate — β is held to the same evidence standard as α", () =>
     expect(alphaReachable(true, 0)).toBe(true);    // deterministic verdict — β still applies
     expect(alphaReachable(false, 2)).toBe(true);   // real edge formed — β still applies
     expect(alphaReachable(false, 0)).toBe(false);  // satisfier chain, LLM verdict — β withheld
+    // The closed entry agrees with the mirror on all three, and names why it withholds.
+    const at = (deterministic: boolean, consumed: number) => creditOnHollow(creditInput({ templateClass: "t", deterministic, noOracle: false, consumedInChain: consumed, lastPickProducedJudgedArtifact: true }));
+    expect(at(true, 0).alpha_reachable).toBe(true);
+    expect(at(false, 2).alpha_reachable).toBe(true);
+    expect(at(false, 0)).toEqual({ alpha_reachable: false, charge: false, withheld: "alpha-unreachable-non-deterministic-no-edge", retire_candidate: false });
   });
 
   it("satisfier steps still declare NO inputs — the premise is not quietly patched", async () => {
