@@ -16,7 +16,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import * as judge from "./entries";
 import { zeroToolWriteClaim } from "./floor-clamps";
-import { isCreditClass, type CreditClass } from "./classes";
+import { CREDIT_CLASSES, isCreditClass, type CreditClass } from "./classes";
 import { creditClassesOf } from "./credit-classes";
 export { creditClassesOf };
 import { shortcutInput } from "./inputs";
@@ -363,6 +363,19 @@ export function everRedCases(cases: CorpusCase[], everGreen: ReadonlySet<string>
 export function everRedHolds(cases: CorpusCase[], everGreen: ReadonlySet<string> | null, nowIso: string): Hold[] {
   const red = everRedCases(cases, everGreen).map((c) => c.id);
   return holdsFrom(cases, { green: [], flips: [], known_red: red, entry_missing: [], nondeterministic: [] }, nowIso);
+}
+
+/**
+ * The holds when the corpus ITSELF is unreadable (MANIFEST absent or unreadable, or its hash chain broken): EVERY credit class
+ * the corpus governs (the closed CREDIT_CLASSES, from code), in BOTH directions. The ever-red set is derived from the corpus,
+ * so an unreadable corpus yields an empty one: holding that would hold nothing, which is fail-OPEN on credit. These holds
+ * lift only when a run reads the corpus.
+ */
+export function unreadableCorpusHolds(nowIso: string): Hold[] {
+  const review_by = new Date(Date.parse(nowIso) + REVIEW_AFTER_MS).toISOString();
+  const dirs: HoldDirection[] = ["hollow", "reach"];
+  return CREDIT_CLASSES.flatMap((k) => dirs.map((d) => ({ credit_class: k as string, direction: d, case_ids: [] as string[], since: nowIso, review_by })))
+    .sort((a, b) => `${a.credit_class}|${a.direction}`.localeCompare(`${b.credit_class}|${b.direction}`));
 }
 
 /** The machine check of a red case's gap: does this one case replay green at this tree? */

@@ -6,8 +6,9 @@
  * Triggered by a resolve of the `verdictCorpusRun` shape (the rhythm conductor's time-shaped impulse) and once
  * at goal-host boot. Every sink is injected by the host, so this module does no network I/O of its own.
  *
- *   - a manifest that is absent or does not verify: state corpus_unreadable, only the classes of the ever-red
- *     cases it could load are held (else the previous holds are kept), and a runner-failed gap is filed;
+ *   - a manifest that is absent or does not verify: state corpus_unreadable, EVERY corpus-governed credit class is
+ *     held in both directions (the ever-red set is derived from the unreadable corpus, so holding it would hold
+ *     nothing), and one runner-failed gap is filed at the credit hold;
  *   - no ever-green set (an ungated node, or before the first publish): every red case is a flip except one
  *     recorded red at append (fail closed, stated in the status);
  *   - a hold past review_by escalates its gap; it is never silently dropped.
@@ -16,7 +17,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classify, everRedHolds, fidelityCounts, holdsFrom, loadCorpus, replayCase, type CorpusCase, type Hold } from "./corpus-runner";
+import { classify, fidelityCounts, holdsFrom, loadCorpus, replayCase, unreadableCorpusHolds, type CorpusCase, type Hold } from "./corpus-runner";
 import { scopeEntryFor } from "../escalation-target";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { shapedPolicyPath } from "../shaped-policy-store";
@@ -50,6 +51,8 @@ export const evidenceFor = (id: string): CaseEvidenceResolve => ({ shape: "test_
 /** The parking disposition dev-vessel's compose eligibility honours, and the marker that says THIS runner set it. */
 export const RUNNER_PARK = "awaiting_operator_review";
 export const RUNNER_ID = "verdict-corpus-runner";
+/** Where an unreadable corpus is fixed: the credit hold reads the corpus (through corpus-location.ts). */
+export const UNREADABLE_CORPUS_SITE = "repos/goal-host-vessel/src/judge/credit-hold.ts";
 export const dispositionFor = (route: GapRoute): string => (route.to === "operator_review" ? RUNNER_PARK : "");
 
 /** What the store holds for a gap id: the row, null when absent, or "unreadable". */
@@ -143,7 +146,6 @@ export async function runVerdictCorpusActivity(o: { dir: string; node: string; d
   const base = { schema: 1 as const, node: o.node, judge_sha: judgeSourcesSha(), deployed_sha: o.deployedSha, run_at: nowIso, period_s: period, live_shadow: { sampled: 0, mismatched: 0 } };
   let everGreenList: string[] | null = null;
   try { everGreenList = await o.sinks.readEverGreen(); } catch { everGreenList = null; }
-  const egSet = everGreenList ? new Set(everGreenList) : null;
   let excluded: string[] | null = null;
   try { excluded = await o.sinks.readScopeExcluded(); } catch { excluded = null; }
   const route = (site: string | null) => routeGap(site, excluded);
@@ -162,11 +164,12 @@ export async function runVerdictCorpusActivity(o: { dir: string; node: string; d
   try {
     const lc = loadCorpus(o.dir);
     if (!lc.ok) {
-      const status: VerdictCorpusStatus = { ...base, corpus: lc.head, fidelity: fidelityCounts(lc.cases), ever_green: "absent (fail closed)", state: "corpus_unreadable", green: [], flips: [], known_red: [], entry_missing: [], holds: lc.cases.length > 0 ? everRedHolds(lc.cases, egSet, nowIso) : prevHolds };
-      console.warn(`[verdict-corpus] CORPUS UNREADABLE node=${o.node} — only the ever-red classes it could load are held: ${lc.errors.slice(0, 3).join("; ")}`);
+      const holds = unreadableCorpusHolds(nowIso);
+      const status: VerdictCorpusStatus = { ...base, corpus: lc.head, fidelity: fidelityCounts(lc.cases), ever_green: "absent (fail closed)", state: "corpus_unreadable", green: [], flips: [], known_red: [], entry_missing: [], holds };
+      console.warn(`[verdict-corpus] CORPUS UNREADABLE node=${o.node} — holding EVERY corpus-governed credit class: ${holds.length} hold(s): ${lc.errors.slice(0, 3).join("; ")}`);
       await o.sinks.writeStatus(status);
       await o.sinks.recordReport({ shape: "verdictCorpusReport", trigger: o.trigger, status, red: [], ms: performance.now() - t0 });
-      await put({ id: `verdict-corpus-runner-failed-${o.node}`, severity: "high", category: "judge_regression", summary: `The verdict corpus on ${o.node} is unreadable (${lc.errors.slice(0, 3).join("; ")}); the classes of ever-red cases are held until a run verifies it.`, edit_site: "repos/goal-host-vessel/src/judge/corpus-runner.ts", falsifier: CHAIN_FALSIFIER, case_id: null, credit_class: null, evidence_resolve: null, route: route("repos/goal-host-vessel/src/judge/corpus-runner.ts") });
+      await put({ id: `verdict-corpus-runner-failed-${o.node}`, severity: "high", category: "judge_regression", summary: `The verdict corpus on ${o.node} is unreadable (${lc.errors.slice(0, 3).join("; ")}); every corpus-governed credit class is held (${holds.length} holds) until a run reads the corpus (the runner's status reads state ok).`, edit_site: UNREADABLE_CORPUS_SITE, falsifier: CHAIN_FALSIFIER, case_id: null, credit_class: null, evidence_resolve: null, route: route(UNREADABLE_CORPUS_SITE) });
       return status;
     }
     const results = lc.cases.map((c) => replayCase(c));

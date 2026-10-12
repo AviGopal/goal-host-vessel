@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { isUsablePolicy, shapedPolicyPath } from "../shaped-policy-store";
 import { classesForGoal } from "./credit-classes";
-import { everRedCases, everRedHolds, loadCorpus, type Hold, type HoldDirection } from "./corpus-runner";
+import { everRedCases, everRedHolds, loadCorpus, unreadableCorpusHolds, type Hold, type HoldDirection } from "./corpus-runner";
 import { verdictCorpusDir } from "./corpus-location";
 
 export const STATUS_SHAPE = "verdictCorpusStatus";
@@ -54,7 +54,9 @@ export interface VerdictCorpusStatus {
   live_shadow: { sampled: number; mismatched: number };
 }
 
-export interface HoldView { holds: Hold[]; source: "status" | "stale" | "unreadable" }
+/** source: the runner's status ("status"), a stale one ("stale"), no usable status with a readable corpus ("unreadable":
+ *  the ever-red classes), or an UNREADABLE CORPUS ("corpus_unreadable": every governed class, both directions). */
+export interface HoldView { holds: Hold[]; source: "status" | "stale" | "unreadable" | "corpus_unreadable" }
 
 /** Where the deployed corpus is read: the vessel CLONE's test/verdict-corpus/ (corpus-location.ts), never a path relative
  *  to this module. The deployed mirror carries src/ only, so a module-relative test/ path names nothing on a running node. */
@@ -185,8 +187,13 @@ export function configureCreditHold(o: { reader?: Reader; corpusDir?: string; cl
 
 /** Interpret a status record (pure). */
 export function holdView(status: Record<string, unknown> | null, nowMs: number, dir: string, everGreen: ReadonlySet<string> | null = null): HoldView {
+  const nowIso = new Date(nowMs).toISOString();
+  // A status that says the runner could not read the corpus holds every governed class, whatever holds it lists.
+  if (status && status["state"] === "corpus_unreadable") return { holds: unreadableCorpusHolds(nowIso), source: "corpus_unreadable" };
   if (!status || !Array.isArray(status["holds"]) || typeof status["run_at"] !== "string") {
-    return { holds: everRedHolds(loadCorpus(dir).cases, everGreen, new Date(nowMs).toISOString()), source: "unreadable" };
+    const lc = loadCorpus(dir);
+    if (!lc.ok) return { holds: unreadableCorpusHolds(nowIso), source: "corpus_unreadable" };
+    return { holds: everRedHolds(lc.cases, everGreen, nowIso), source: "unreadable" };
   }
   const period = typeof status["period_s"] === "number" && status["period_s"] > 0 ? status["period_s"] : DEFAULT_PERIOD_S;
   const runAt = Date.parse(status["run_at"]);
@@ -203,9 +210,13 @@ export function currentHolds(): HoldView {
   if (!status || !Array.isArray(status["holds"])) { try { eg = everGreenReader(); } catch { eg = null; } }
   const view = holdView(status, now, corpusDir, eg ? new Set(eg) : null);
   if (view.source === "stale") console.warn(`[verdict-corpus] STALE status — ${view.holds.length} hold(s) kept; never treated as green`);
-  if (view.source === "unreadable") {
+  if (view.source === "corpus_unreadable") {
+    console.warn(`[verdict-corpus] CORPUS UNREADABLE — holding EVERY corpus-governed credit class: ${view.holds.length} hold(s) (${new Set(view.holds.map((h) => h.credit_class)).size} classes × both directions) until a run reads the corpus`);
+  }
+  const statusMissing = !status || !Array.isArray(status["holds"]) || typeof status["run_at"] !== "string";
+  if (view.source === "unreadable" || (view.source === "corpus_unreadable" && statusMissing)) {
     const classes = view.holds.map((h) => `${h.credit_class}:${h.direction}`).join(",");
-    console.warn(`[verdict-corpus] STATUS UNAVAILABLE — the runner's verdictCorpusStatus is missing or unreadable; holding ONLY the ever-red classes [${classes}] (${everRedCases(loadCorpus(corpusDir).cases, eg ? new Set(eg) : null).length} ever-red case(s), ever-green record ${eg ? "present" : "absent"}); every other class keeps learning`);
+    if (view.source === "unreadable") console.warn(`[verdict-corpus] STATUS UNAVAILABLE — the runner's verdictCorpusStatus is missing or unreadable; holding ONLY the ever-red classes [${classes}] (${everRedCases(loadCorpus(corpusDir).cases, eg ? new Set(eg) : null).length} ever-red case(s), ever-green record ${eg ? "present" : "absent"}); every other class keeps learning`);
     if (!unavailableReported) {
       unavailableReported = true;
       const detail = reader === readStatusSync ? poolMissingWhy() : null;

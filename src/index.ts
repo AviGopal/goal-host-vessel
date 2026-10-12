@@ -18233,7 +18233,8 @@ async function readLiveScopeExcluded(): Promise<string[] | null> {
     return Array.isArray(ep) && ep.every((x) => typeof x === "string") && ep.length > 0 ? (ep as string[]) : null;
   } catch { return null; }
 }
-// A missing or unreadable corpus status holds only ever-red classes and files ONE high-severity gap (stable id).
+// A missing or unreadable corpus status holds the ever-red classes (EVERY governed class when the corpus itself is
+// unreadable, credit-hold.ts) and files ONE high-severity gap (stable id).
 creditHold.configureCreditHold({
   onUnavailable: (why, holds) => {
     void (async () => {
@@ -18242,7 +18243,7 @@ creditHold.configureCreditHold({
       const { routeGap, planGapWrite } = await import("./judge/corpus-activity");
       const site = "repos/goal-host-vessel/src/judge/corpus-activity.ts";
       const g = { id: `verdict-corpus-status-unavailable-${node}`, severity: "high" as const, category: "judge_regression",
-        summary: `Verdict corpus status unavailable on ${node} (${why}): only the ever-red classes are held (${holds.map((h) => `${h.credit_class}:${h.direction}`).join(", ") || "none"}); every other class keeps learning until the runner publishes a status.`,
+        summary: `Verdict corpus status unavailable on ${node} (${why}): ${holds.length} hold(s) (${holds.map((h) => `${h.credit_class}:${h.direction}`).join(", ") || "none"}); the ever-red classes are held while the corpus is readable, every governed class while it is not, until the runner publishes a status.`,
         edit_site: site, falsifier: { class: "class1" as const, check: "verdict-corpus-run" as const, case_id: null }, case_id: null, credit_class: null, evidence_resolve: null, route: routeGap(site, await readLiveScopeExcluded()) };
       if (planGapWrite(await readVerdictCorpusGap(g.id), g).write) await fileVerdictCorpusGap(g);
     })();

@@ -235,7 +235,7 @@ describe("the runner activity", () => {
     }
     expect(st.holds.length).toBeGreaterThan(0);
   });
-  test("M15: an unreadable corpus is corpus_unreadable, holds no more than the ever-red classes, and files a runner-failed gap", async () => {
+  test("M15: an unreadable corpus is corpus_unreadable and files a runner-failed gap (it holds every governed class: unreadable-corpus-holds.test.ts)", async () => {
     const d = mkdtempSync(join(tmpdir(), "vc-unread-"));
     try {
       cpSync(join(DIR, "cases"), join(d, "cases"), { recursive: true });
