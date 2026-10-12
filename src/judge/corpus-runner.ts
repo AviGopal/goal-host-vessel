@@ -348,9 +348,31 @@ export function holdsFrom(cases: CorpusCase[], cl: Classified, nowIso: string, p
   return [...m.values()].sort((a, b) => `${a.credit_class}|${a.direction}`.localeCompare(`${b.credit_class}|${b.direction}`));
 }
 
-/** The fail-closed holds when no status exists: every class any case names, in its case's direction. */
-export function failClosedHolds(cases: CorpusCase[], nowIso: string): Hold[] {
-  return holdsFrom(cases, { green: [], flips: cases.map((c) => c.id), known_red: [], entry_missing: [], nondeterministic: [] }, nowIso);
+/**
+ * The EVER-RED cases: recorded red at append (known_red / entry_missing) and never published green by the gate
+ * (the ever-green record). With no ever-green record, every case recorded red at append is ever-red.
+ */
+export function everRedCases(cases: CorpusCase[], everGreen: ReadonlySet<string> | null): CorpusCase[] {
+  return cases.filter((c) => c.status_at_append !== "green" && !(everGreen?.has(c.id) ?? false));
+}
+
+/**
+ * The holds when the runner's status is missing or unreadable: ONLY the classes of ever-red cases, each in its
+ * case's direction. Never every class: a class no case has ever been red for keeps learning.
+ */
+export function everRedHolds(cases: CorpusCase[], everGreen: ReadonlySet<string> | null, nowIso: string): Hold[] {
+  const red = everRedCases(cases, everGreen).map((c) => c.id);
+  return holdsFrom(cases, { green: [], flips: [], known_red: red, entry_missing: [], nondeterministic: [] }, nowIso);
+}
+
+/** The machine check of a red case's gap: does this one case replay green at this tree? */
+export function checkCase(dir: string, id: string): { green: boolean; outcome: string; diffs: string[] } {
+  const lc = loadCorpus(dir);
+  if (!lc.ok) return { green: false, outcome: "corpus_unreadable", diffs: lc.errors.slice(0, 5) };
+  const c = lc.cases.find((x) => x.id === id);
+  if (!c) return { green: false, outcome: "no_such_case", diffs: [`no case ${id}`] };
+  const r = replayCase(c);
+  return { green: r.outcome === "green", outcome: r.outcome, diffs: r.diffs };
 }
 
 // ── a whole run ──────────────────────────────────────────────────────────────────────────────────────

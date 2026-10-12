@@ -18192,7 +18192,68 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
 // record a traced report, and file one gap per red case. Triggered by a `verdictCorpusRun` resolve (the
 // rhythm conductor's time-shaped impulse) and once at boot. One run at a time.
 let _verdictCorpusRun: Promise<unknown> | null = null;
-const _verdictCorpusGapsFiled = new Set<string>();
+/** File (or re-file) one of the verdict-corpus runner's gaps (dev-vessel substrateGap_write). The disposition is
+ *  written explicitly ("" included) because the gap store carries omitted keys forward. */
+async function fileVerdictCorpusGap(g: import("./judge/corpus-activity").CorpusGap): Promise<void> {
+  const { dispositionFor, RUNNER_ID, RUNNER_PARK } = await import("./judge/corpus-activity");
+  const disposition = dispositionFor(g.route);
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
+        id: g.id, category: g.category, source: "substrate_detected", status: "open", severity: g.severity, summary: g.summary, detected_at: new Date().toISOString(),
+        classification_metadata: { kind: "verdict_corpus", edit_site: g.edit_site, case_id: g.case_id, credit_class: g.credit_class, falsifier: g.falsifier, ...(g.evidence_resolve ? { evidence_resolve: g.evidence_resolve } : {}),
+          disposition, parked_by: disposition === RUNNER_PARK ? RUNNER_ID : "", route: g.route.to, route_reason: g.route.reason, route_scope_entry: g.route.scope_entry },
+      } } } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) console.warn(`[verdict-corpus] gap ${g.id} NOT filed (${r.status})`);
+  } catch (e) { console.warn(`[verdict-corpus] gap ${g.id} NOT filed: ${(e as Error)?.message ?? e}`); }
+}
+/** The store's row for one gap id: the row, null when absent, "unreadable" when the read failed. */
+async function readVerdictCorpusGap(id: string): Promise<import("./judge/corpus-activity").GapRow | null | "unreadable"> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "substrateGap", pointer: { type: "substrateGap", id } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return "unreadable";
+    const j = (await r.json()) as { body?: { gaps?: Array<{ id?: string; status?: unknown; severity?: unknown; classification_metadata?: Record<string, unknown> }> } };
+    if (!Array.isArray(j?.body?.gaps)) return "unreadable";
+    return j.body!.gaps!.find((x) => x.id === id) ?? null;
+  } catch { return "unreadable"; }
+}
+/** The judge opening state, read at use time: the live autonomyScope record's excluded paths (null = unreadable). */
+async function readLiveScopeExcluded(): Promise<string[] | null> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "poolImpulse", shape: "autonomyScope", status: "open" } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return null;
+    const j = (await r.json()) as { body?: { impulses?: Array<{ body?: { excluded_paths?: unknown } }> } };
+    const ep = j.body?.impulses?.[0]?.body?.excluded_paths;
+    return Array.isArray(ep) && ep.every((x) => typeof x === "string") && ep.length > 0 ? (ep as string[]) : null;
+  } catch { return null; }
+}
+// A missing or unreadable corpus status holds only ever-red classes and files ONE high-severity gap (stable id).
+creditHold.configureCreditHold({
+  onUnavailable: (why, holds) => {
+    void (async () => {
+      const { hostname } = await import("node:os");
+      const node = hostname();
+      const { routeGap, planGapWrite } = await import("./judge/corpus-activity");
+      const site = "repos/goal-host-vessel/src/judge/corpus-activity.ts";
+      const g = { id: `verdict-corpus-status-unavailable-${node}`, severity: "high" as const, category: "judge_regression",
+        summary: `Verdict corpus status unavailable on ${node} (${why}): only the ever-red classes are held (${holds.map((h) => `${h.credit_class}:${h.direction}`).join(", ") || "none"}); every other class keeps learning until the runner publishes a status.`,
+        edit_site: site, falsifier: { class: "class1" as const, check: "verdict-corpus-run" as const, case_id: null }, case_id: null, credit_class: null, evidence_resolve: null, route: routeGap(site, await readLiveScopeExcluded()) };
+      if (planGapWrite(await readVerdictCorpusGap(g.id), g).write) await fileVerdictCorpusGap(g);
+    })();
+  },
+});
 async function runVerdictCorpusNow(trigger: string): Promise<unknown> {
   if (_verdictCorpusRun) return await _verdictCorpusRun;
   _verdictCorpusRun = (async () => {
@@ -18205,6 +18266,8 @@ async function runVerdictCorpusNow(trigger: string): Promise<unknown> {
       sinks: {
         readPreviousStatus: () => resolveShapedPolicy(STATUS_SHAPE),
         readEverGreen: () => readEverGreenFile(),
+        readScopeExcluded: () => readLiveScopeExcluded(),
+        readGap: (id) => readVerdictCorpusGap(id),
         writeStatus: async (st) => { await writeStatusFile(st); creditHold.invalidateHolds(); },
         recordReport: async (rep) => {
           await persistSatisfierTrace({
@@ -18214,22 +18277,7 @@ async function runVerdictCorpusNow(trigger: string): Promise<unknown> {
             metadata: { verdictCorpusReport: { state: rep.status.state, corpus: rep.status.corpus, fidelity: rep.status.fidelity, judge_sha: rep.status.judge_sha, ever_green: rep.status.ever_green, green: rep.status.green.length, flips: rep.status.flips, known_red: rep.status.known_red, entry_missing: rep.status.entry_missing, holds: rep.status.holds.map((h) => `${h.credit_class}:${h.direction}`), red: rep.red.slice(0, 40).map((r) => `${r.id} ${r.outcome}`) } },
           } as unknown as ExecutionTrace);
         },
-        fileGap: async (g) => {
-          if (_verdictCorpusGapsFiled.has(`${g.id}|${g.severity}`)) return; // filed once per process (idempotent by id in the store)
-          try {
-            const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-              body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
-                id: g.id, category: g.category, source: "substrate_detected", status: "open", severity: g.severity, summary: g.summary, detected_at: new Date().toISOString(),
-                classification_metadata: { kind: "verdict_corpus", edit_site: g.edit_site, case_id: g.case_id, credit_class: g.credit_class, falsifier: g.falsifier },
-              } } } }),
-              signal: AbortSignal.timeout(15_000),
-            });
-            if (r.ok) _verdictCorpusGapsFiled.add(`${g.id}|${g.severity}`);
-            else console.warn(`[verdict-corpus] gap ${g.id} NOT filed (${r.status})`);
-          } catch (e) { console.warn(`[verdict-corpus] gap ${g.id} NOT filed: ${(e as Error)?.message ?? e}`); }
-        },
+        fileGap: (g) => fileVerdictCorpusGap(g),
       },
     });
   })();

@@ -13,8 +13,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync, readdirSync }
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendCheck, canonicalJson, chainLink, classify, compare, GENESIS_LINK, holdsFrom, loadCorpus, replayCase, sha256Hex, type CorpusCase, type ReplayOverrides } from "./runner";
-import { runVerdictCorpusActivity, type CorpusGap } from "../../src/judge/corpus-activity";
+import { appendCheck, checkCase, canonicalJson, chainLink, classify, compare, GENESIS_LINK, holdsFrom, loadCorpus, replayCase, sha256Hex, type CorpusCase, type ReplayOverrides } from "./runner";
+import { dispositionFor, planGapWrite, routeGap, RUNNER_ID, runVerdictCorpusActivity, type CorpusGap, type GapRow } from "../../src/judge/corpus-activity";
 import type { VerdictCorpusStatus } from "../../src/judge/credit-hold";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -215,9 +215,9 @@ describe("M13: append-check refuses a wrong status_at_append", () => {
 });
 
 describe("the runner activity", () => {
-  const sinks = (everGreen: string[] | null) => {
+  const sinks = (everGreen: string[] | null, excluded: string[] | null = ["repos/goal-host-vessel/src/judge/", "repos/goal-host-vessel/src/judge-rules/"]) => {
     const out = { statuses: [] as VerdictCorpusStatus[], reports: 0, gaps: [] as CorpusGap[] };
-    return { out, s: { readPreviousStatus: async () => null, readEverGreen: async () => everGreen, writeStatus: async (st: VerdictCorpusStatus) => { out.statuses.push(st); }, recordReport: async () => { out.reports++; }, fileGap: async (g: CorpusGap) => { out.gaps.push(g); } } };
+    return { out, s: { readPreviousStatus: async () => null, readEverGreen: async () => everGreen, readScopeExcluded: async () => excluded, writeStatus: async (st: VerdictCorpusStatus) => { out.statuses.push(st); }, recordReport: async () => { out.reports++; }, fileGap: async (g: CorpusGap) => { out.gaps.push(g); }, readGap: async () => null } };
   };
   test("a run publishes a status with holds for every red case and files one gap per red case", async () => {
     const { out, s } = sinks(corpus.cases.filter((c) => c.status_at_append === "green").map((c) => c.id));
@@ -227,10 +227,15 @@ describe("the runner activity", () => {
     expect(st.known_red.length).toBe(corpus.cases.filter((c) => c.status_at_append !== "green").length);
     expect(out.reports).toBe(1);
     expect(out.gaps.map((g) => g.id).sort()).toEqual(st.known_red.map((id) => `verdict-corpus-red-${id}`).sort());
-    for (const g of out.gaps) expect(g.falsifier?.command).toBe(`bun test test/verdict-corpus/corpus.test.ts -t '${g.case_id}'`);
+    for (const g of out.gaps) {
+      expect(g.falsifier).toEqual({ class: "class1", check: "verdict-corpus-case", case_id: g.case_id });
+      expect(g.evidence_resolve).toEqual({ shape: "test_suite", input: { vessel: "repos/goal-host-vessel", test_file: "test/verdict-corpus/case-check.check.ts", only_tests: [g.case_id!], timeout_ms: 60_000 }, zero_field: "requested_not_passing" });
+      // before the judge opening every edit site is closed: operator review
+      expect([g.id, g.route.to]).toEqual([g.id, "operator_review"]);
+    }
     expect(st.holds.length).toBeGreaterThan(0);
   });
-  test("M15: an unreadable corpus is corpus_unreadable, holds every named class, and files a runner-failed gap", async () => {
+  test("M15: an unreadable corpus is corpus_unreadable, holds no more than the ever-red classes, and files a runner-failed gap", async () => {
     const d = mkdtempSync(join(tmpdir(), "vc-unread-"));
     try {
       cpSync(join(DIR, "cases"), join(d, "cases"), { recursive: true });
@@ -242,11 +247,116 @@ describe("the runner activity", () => {
       expect(readdirSync(d)).toContain("cases");
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("routing follows the opening state read at use time: after the opening, rule-site gaps go to the lane; closed-core sites never do", async () => {
+    const opened = sinks(null, ["repos/goal-host-vessel/src/judge/"]);
+    await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger: "test", nowMs: Date.now(), sinks: opened.s });
+    const byRoute = (to: string) => opened.out.gaps.filter((g) => g.route.to === to).map((g) => g.edit_site);
+    expect(byRoute("lane").length).toBeGreaterThan(0);
+    expect(byRoute("lane").every((e) => e!.startsWith("repos/goal-host-vessel/src/judge-rules/"))).toBe(true);
+    expect(byRoute("operator_review").every((e) => e!.startsWith("repos/goal-host-vessel/src/judge/"))).toBe(true);
+    const unreadable = sinks(null, null);
+    await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger: "test", nowMs: Date.now(), sinks: unreadable.s });
+    expect(unreadable.out.gaps.every((g) => g.route.to === "operator_review" && /fail closed/.test(g.route.reason))).toBe(true);
+  });
+  test("routeGap (pure): excluded -> operator review naming the entry; open -> lane; unreadable -> operator review", () => {
+    expect(routeGap("repos/goal-host-vessel/src/judge-rules/floor.ts", ["repos/goal-host-vessel/src/judge-rules/"])).toMatchObject({ to: "operator_review", scope_entry: "repos/goal-host-vessel/src/judge-rules/" });
+    expect(routeGap("repos/goal-host-vessel/src/judge-rules/floor.ts", ["repos/goal-host-vessel/src/judge/"]).to).toBe("lane");
+    expect(routeGap("repos/goal-host-vessel/src/judge-rules/floor.ts", null).to).toBe("operator_review");
+  });
+  test("the case-check file registers exactly ONE test per case, titled by the case id (only_tests resolves to one test)", () => {
+    const src = readFileSync(join(DIR, "case-check.check.ts"), "utf8");
+    expect(src).toContain("for (const c of corpus.cases) test(c.id, () => {");
+    const ids = corpus.cases.map((c) => c.id);
+    for (const id of ids) expect([id, ids.filter((x) => x.includes(id)).length]).toEqual([id, 1]);
+  });
+  test("the class1 falsifier check is red while its case is red and green when it is green", () => {
+    expect(checkCase(DIR, "0005-reframed-target-write").green).toBe(false);
+    expect(checkCase(DIR, "0001-plan-text-as-change").green).toBe(true);
+    expect(checkCase(DIR, "9999-no-such-case")).toMatchObject({ green: false, outcome: "no_such_case" });
+  });
   test("M23: no ever-green set: the status says so, and a record-green red case would flip", async () => {
     const { s } = sinks(null);
     const st = await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger: "test", nowMs: Date.now(), sinks: s });
     expect(st.ever_green).toBe("absent (fail closed)");
     expect(st.flips).toEqual([]);
+  });
+});
+
+describe("MUST-FAIL: the runner re-derives each of its gaps' disposition on EVERY run from the live scope", () => {
+  // A mirror of dev-vessel's composeEligibilitySkipReason on the fields this runner writes (the authoritative
+  // function is exercised operator-side against dev-vessel's own module).
+  const PARKING = ["needs_information", "needs_info", "awaiting_operator_review"];
+  const eligibility = (row: GapRow): string | null => {
+    const m = row.classification_metadata ?? {};
+    if (String(row.status ?? "open") !== "open") return "not_open";
+    const f = m["falsifier"] as { class?: string } | undefined;
+    if (!["class1", "class2"].includes(String(f?.class ?? ""))) return "unarmed";
+    if (!m["edit_site"]) return "no_edit_site";
+    if (m["operator_hold"] === true || PARKING.includes(String(m["disposition"] ?? ""))) return "held";
+    return null;
+  };
+  /** An in-memory gap store with the dev-vessel write semantics that matter here: omitted keys carry forward. */
+  const store = () => {
+    const rows = new Map<string, GapRow>();
+    const write = (g: CorpusGap) => {
+      const d = dispositionFor(g.route);
+      const prev = rows.get(g.id);
+      rows.set(g.id, { status: "open", severity: g.severity, classification_metadata: { ...(prev?.classification_metadata ?? {}), edit_site: g.edit_site, falsifier: g.falsifier, evidence_resolve: g.evidence_resolve, disposition: d, parked_by: d ? RUNNER_ID : "" } });
+    };
+    return { rows, write };
+  };
+  const CLOSED = ["repos/goal-host-vessel/src/judge/", "repos/goal-host-vessel/src/judge-rules/"];
+  const OPEN = ["repos/goal-host-vessel/src/judge/"];
+  const pass = async (st: ReturnType<typeof store>, excluded: string[] | null, plan = planGapWrite) => {
+    await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger: "test", nowMs: Date.parse("2026-10-12T00:00:00Z"), sinks: {
+      readPreviousStatus: async () => null, readEverGreen: async () => null, readScopeExcluded: async () => excluded,
+      writeStatus: async () => {}, recordReport: async () => {},
+      readGap: async (id) => st.rows.get(id) ?? null,
+      fileGap: async (g) => { if (plan === planGapWrite) st.write(g); else if (plan(st.rows.get(g.id) ?? null, g).write) st.write(g); },
+    } });
+  };
+  const ruleGap = "verdict-corpus-red-0005-reframed-target-write"; // its edit site is under src/judge-rules/
+  const coreGap = "verdict-corpus-red-0011-repeat-write-refusal-charged"; // its edit site is the closed core
+  test("parked before the opening, eligible on the FIRST pass after its site opens, parked again if it closes", async () => {
+    const st = store();
+    await pass(st, CLOSED);
+    expect(eligibility(st.rows.get(ruleGap)!)).toBe("held");
+    await pass(st, OPEN);
+    expect(eligibility(st.rows.get(ruleGap)!)).toBeNull();
+    expect(st.rows.get(ruleGap)!.classification_metadata!["disposition"]).toBe("");
+    expect(eligibility(st.rows.get(coreGap)!)).toBe("held"); // the closed core never goes to the lane
+    await pass(st, CLOSED);
+    expect(eligibility(st.rows.get(ruleGap)!)).toBe("held");
+  });
+  test("an unreadable scope parks (fail closed)", async () => {
+    const st = store();
+    await pass(st, OPEN);
+    expect(eligibility(st.rows.get(ruleGap)!)).toBeNull();
+    await pass(st, null);
+    expect(eligibility(st.rows.get(ruleGap)!)).toBe("held");
+  });
+  test("RED under a mutant that derives the disposition only at filing time", async () => {
+    const atFilingOnly: typeof planGapWrite = (row, g) => (row === null ? { write: true, why: "new" } : { write: false, why: "existing" });
+    const st = store();
+    const mutantPass = async (ex: string[] | null) => {
+      await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger: "test", nowMs: Date.now(), sinks: {
+        readPreviousStatus: async () => null, readEverGreen: async () => null, readScopeExcluded: async () => ex, writeStatus: async () => {}, recordReport: async () => {},
+        readGap: async () => null, // the mutant never consults the stored row
+        fileGap: async (g) => { if (atFilingOnly(st.rows.get(g.id) ?? null, g).write) st.write(g); },
+      } });
+    };
+    await mutantPass(CLOSED);
+    await mutantPass(OPEN);
+    expect(eligibility(st.rows.get(ruleGap)!)).toBe("held"); // stale park: the opening released nothing
+  });
+  test("planGapWrite never touches a hold it does not own, never reopens, and never releases blind", () => {
+    const g = { id: "x", severity: "normal", category: "c", summary: "s", edit_site: "repos/goal-host-vessel/src/judge-rules/floor.ts", falsifier: null, case_id: "x", credit_class: null, evidence_resolve: null, route: { to: "lane", reason: "", scope_entry: null } } as CorpusGap;
+    expect(planGapWrite({ status: "open", classification_metadata: { disposition: "pending_verification" } }, g).write).toBe(false);
+    expect(planGapWrite({ status: "open", classification_metadata: { disposition: "awaiting_operator_review" } }, g).write).toBe(false); // a human's park
+    expect(planGapWrite({ status: "open", classification_metadata: { disposition: "awaiting_operator_review", parked_by: RUNNER_ID } }, g)).toMatchObject({ write: true });
+    expect(planGapWrite({ status: "closed", classification_metadata: {} }, g).write).toBe(false);
+    expect(planGapWrite("unreadable", g).write).toBe(false);
+    expect(planGapWrite("unreadable", { ...g, route: { to: "operator_review", reason: "", scope_entry: null } }).write).toBe(true);
   });
 });
 

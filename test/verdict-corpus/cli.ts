@@ -2,11 +2,13 @@
 //   bun test/verdict-corpus/cli.ts run --json [--ever-green <file>]   every case, classified; exit 1 on any flip
 //   bun test/verdict-corpus/cli.ts append-check --from <n>             cases n.. must observe their status_at_append
 //   bun test/verdict-corpus/cli.ts heldout --sample <file.jsonl> --json  the verdict this tree gives each held-out record
+//   bun test/verdict-corpus/cli.ts check --case <id>                   exit 0 iff that one case replays green (an
+//                                                                      operator tool; the gap check is case-check.check.ts)
 // The admission glue compares these JSON outputs itself; it never uses this tree's compare logic.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { appendCheck, observe, runCorpus, type CorpusCase } from "./runner";
+import { appendCheck, checkCase, observe, runCorpus, type CorpusCase } from "./runner";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -25,6 +27,12 @@ if (argv[0] === "run") {
   const r = appendCheck(DIR, from);
   console.log(JSON.stringify(r));
   process.exit(r.ok ? 0 : 1);
+} else if (argv[0] === "check") {
+  const id = flag("--case");
+  if (!id) { console.error("check: --case <id> is required"); process.exit(2); }
+  const r = checkCase(DIR, id);
+  console.log(JSON.stringify({ case: id, ...r }));
+  process.exit(r.green ? 0 : 1);
 } else if (argv[0] === "heldout") {
   const sample = flag("--sample");
   if (!sample) { console.error("heldout: --sample <file.jsonl> is required"); process.exit(2); }
@@ -39,6 +47,6 @@ if (argv[0] === "run") {
   }
   console.log(JSON.stringify(out));
 } else {
-  console.error("usage: cli.ts run --json [--ever-green <f>] | append-check --from <n> | heldout --sample <f> --json");
+  console.error("usage: cli.ts run --json [--ever-green <f>] | append-check --from <n> | heldout --sample <f> --json | check --case <id>");
   process.exit(2);
 }
