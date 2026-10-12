@@ -156,9 +156,10 @@ function callsTo(fn: ts.Node, callee: string): number[] {
   walk(fn, (n) => { if (ts.isCallExpression(n) && calleeName(n) === callee) out.push(n.getStart()); });
   return out;
 }
-/** The producer POST: the LAST fetch call in the site (the discovery proxy fetches discovery first). */
+/** The producer POST: the LAST fetch call in the site (the discovery proxy fetches discovery first). A walk
+ *  egress POSTs through walkEgressFetch (walk-egress-guard.ts: fetch after the single-writer check), so it counts. */
 const producerPost = (fn: ts.Node): number => {
-  const f = callsTo(fn, "fetch");
+  const f = [...callsTo(fn, "fetch"), ...callsTo(fn, "walkEgressFetch")].sort((a, b) => a - b);
   expect(f.length, "the site must POST to its producer").toBeGreaterThan(0);
   return f[f.length - 1]!;
 };

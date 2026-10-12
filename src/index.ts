@@ -313,6 +313,7 @@ import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type Po
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
+import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
@@ -4842,7 +4843,7 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
   const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
   if (!dispatchContext.getStore()?.dispatchId) console.warn(`[uf] tool call WITHOUT dispatch id: tool=${name} (the resolver will receive no execution_id)`);
   try {
-    const r = await fetch(turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: toolPointer(name, args, dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}, name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}) } }), signal: AbortSignal.timeout(60_000) });
+    const r = await walkEgressFetch(name, turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: toolPointer(name, args, dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}, name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}) } }), signal: AbortSignal.timeout(60_000) });
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     const j = await r.json() as any;
     let c: unknown = j;
@@ -4853,7 +4854,11 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
     }
     if (c == null || (typeof c === "string" && c.trim().length === 0)) return { ok: false, error: "empty result" };
     return { ok: true, result: typeof c === "string" ? c : JSON.stringify(c) };
-  } catch (e) { return { ok: false, error: String((e as Error)?.message ?? e).slice(0, 160) }; }
+  } catch (e) {
+    // A single-writer pool write (walk-egress-guard.ts) is refused before egress, as a failed exec.
+    if (isWalkEgressRefused(e)) { console.log(`[uf] tool ${name}: ${e.message.slice(0, 200)}`); return { ok: false, error: e.message.slice(0, 180) }; }
+    return { ok: false, error: String((e as Error)?.message ?? e).slice(0, 160) };
+  }
 }
 /**
  * Recompute a countable goal's answer INDEPENDENTLY and grade the walk against it.
@@ -8743,7 +8748,8 @@ async function runGoalAsPoolWalkBody(
     }
     let resp: Response;
     try {
-      resp = await fetch(resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
+      // SINGLE-WRITER POOL ROWS (walk-egress-guard.ts): a write the walk may never make is refused before egress.
+      resp = await walkEgressFetch(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
         // The LLM resolver reads a TOP-LEVEL `prompt` (a prompt nested only in
@@ -8754,6 +8760,11 @@ async function runGoalAsPoolWalkBody(
         signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
       });
     } catch (e) {
+      if (isWalkEgressRefused(e)) {
+        noteRawResolveFailure(shape, e.message.slice(0, 200));
+        console.log(`[goal-host-vessel] walk rawResolve ${shape} (${site}): ${e.message.slice(0, 200)}`);
+        return null;
+      }
       noteRawResolveFailure(shape, `transport: ${String((e as Error).message ?? e).slice(0, 180)}`);
       console.log(`[goal-host-vessel] walk rawResolve ${shape}: transport error — ${String((e as Error).message ?? e).slice(0, 140)}`);
       return null;
@@ -16179,7 +16190,9 @@ function buildProxyResolver(shape: string) {
       const proxyTimer = setTimeout(() => proxyCtrl.abort(), PROXY_TIMEOUT_MS);
       let resp: Response;
       try {
-        resp = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+        // A template task inside a walk: single-writer pool rows are refused before egress (walk-egress-guard.ts); the
+        // refusal throws, which is this resolver's failure path.
+        resp = await walkEgressFetch(shape, `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -16390,7 +16403,8 @@ function buildDiscoveryProxyResolver(shape: string) {
       let resp: Response;
       try {
         if (!pointer.execution_id) { const _did = dispatchContext.getStore()?.dispatchId ?? (typeof variables.dispatch_id === "string" ? variables.dispatch_id : undefined); if (_did) pointer.execution_id = _did; else if (/^(shell|shellResult|bash|bounded_shell|git_commit|gitCommitResult)$/.test(shape)) console.log(`[goal-host-vessel] discovery-proxy ${shape} call WITHOUT dispatch id`); }
-        resp = await fetch(resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
+        // Single-writer pool rows are refused before egress (walk-egress-guard.ts); the refusal throws.
+        resp = await walkEgressFetch(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify({ impulse: { pointer } }),

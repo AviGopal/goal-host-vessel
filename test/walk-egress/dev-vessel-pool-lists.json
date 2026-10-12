@@ -1,0 +1,8 @@
+{
+  "source": "development-vessel src/resolvers/pool-impulse.ts",
+  "dev_vessel_sha": "143dc3339c90bb54f0739921b1f444a52163f345",
+  "runner_only_shapes": ["verdictCorpusStatus", "verdictCorpusWriteRefusal"],
+  "runner_only_ids": ["verdictCorpusStatus"],
+  "runner_only_id_prefixes": ["verdictCorpusWriteRefusal:"],
+  "trust_root_shapes": ["autonomyScope", "calibrationWindow", "operatorHold", "posteriorReplayAuthorization", "scriptRunnerAllowlist", "spendEnvelope", "substrateNodes", "verdictCorpusWriter"]
+}
