@@ -5,7 +5,8 @@
  * Each entry takes a judge-input record (src/judge/records.ts), calls the open rule (src/judge-rules/)
  * where there is one, CLAMPS the rule's output to the closed schema (src/judge/classes.ts), and renders
  * the reason text from the rule's reason code, so an open rule can neither forge a reason nor return a
- * shape the core does not know. A refused output, or rules that failed to load, fall back closed:
+ * shape the core does not know. The rule is handed a deep-frozen copy of its input (callRule), so the clamp,
+ * the renderer and everything after the call read the core's own input, which the rule cannot reach. A refused output, or rules that failed to load, fall back closed:
  * not reached, shortcut refused, re-frame rejected. Each fallback is counted and logged.
  *
  * The open rules are loaded by ONE dynamic import of exactly the named functions, once, when this module
@@ -86,9 +87,27 @@ function validRecord(i: { schema?: unknown; entry?: unknown }, entry: string): s
   return null;
 }
 
+/**
+ * A deep-frozen structured copy of a rule's input. The rule never holds the core's own objects, so it cannot move what
+ * the clamp, the reason renderer, the capture or the caller read after the call (each reads the core's input, which
+ * the rule never saw).
+ */
+function frozenCopy<T>(v: T): T {
+  const copy = structuredClone(v);
+  const freeze = (o: unknown): void => {
+    if (o === null || typeof o !== "object" || Object.isFrozen(o)) return;
+    Object.freeze(o);
+    for (const k of Object.keys(o as object)) freeze((o as Record<string, unknown>)[k]);
+  };
+  freeze(copy);
+  return copy;
+}
+
 function callRule(entry: string, f: ((i: never) => unknown) | undefined, input: unknown): { out: unknown } | { error: string } {
   if (!f) return { error: rulesLoadError ? `rules unloadable: ${rulesLoadError}` : "rule missing" };
-  try { return { out: (f as (i: unknown) => unknown)(input) }; } catch (e) { return { error: `rule threw: ${(e as Error)?.message ?? String(e)}` }; }
+  let given: unknown;
+  try { given = frozenCopy(input); } catch (e) { return { error: `input not copyable: ${(e as Error)?.message ?? String(e)}` }; }
+  try { return { out: (f as (i: unknown) => unknown)(given) }; } catch (e) { return { error: `rule threw: ${(e as Error)?.message ?? String(e)}` }; }
 }
 
 // ── reachGate ─────────────────────────────────────────────────────────────────────────────────────────
