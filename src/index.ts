@@ -18253,7 +18253,40 @@ creditHold.configureCreditHold({
       if (planGapWrite(await readVerdictCorpusGap(g.id), g).write) await fileVerdictCorpusGap(g);
     })();
   },
+  // THE STATUS LIVES IN DEV-VESSEL'S POOL (dev-vessel pool-impulse.ts, the runner grant). The read is open there (the
+  // key is sent as on every dev-vessel resolve, and grants nothing); only a row dev-vessel marks attested_verified
+  // under the runner's stamp is adopted. The shaped-policy file is
+  // rewritten from each verified copy as a cache and is never read for a hold.
+  poolFetcher: async () => {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "poolImpulse", id: creditHold.STATUS_ID, shape: creditHold.STATUS_SHAPE, status: "open", limit: 1 } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) throw new Error(`development-vessel answered HTTP ${r.status}`);
+    return await r.json();
+  },
+  onRefreshed: (st) => { void import("./judge/corpus-activity").then(({ writeStatusFile }) => writeStatusFile(st as never)).catch(() => {}); },
 });
+/** Publish a corpus status through dev-vessel's runner grant with goal-host's own credential. A refusal throws, so
+ *  the runner reports itself failed (and files its gap) instead of believing a status it could not publish. */
+async function publishVerdictCorpusStatus(st: import("./judge/credit-hold").VerdictCorpusStatus): Promise<void> {
+  const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+    body: JSON.stringify({ impulse: { type: "poolImpulse_write", pointer: { type: "poolImpulse_write", id: creditHold.STATUS_ID, shape: creditHold.STATUS_SHAPE, source: creditHold.STATUS_SOURCE, status: "open", body: st } } }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!r.ok) {
+    let err = ""; try { err = String(((await r.json()) as { error?: unknown }).error ?? "").slice(0, 300); } catch { /* no body */ }
+    console.error(`[verdict-corpus] STATUS NOT PUBLISHED: development-vessel answered HTTP ${r.status}${err ? ` (${err})` : ""}; the credit stop keeps reading the last verified record`);
+    throw new Error(`verdictCorpusStatus not published: HTTP ${r.status}${err ? ` ${err}` : ""}`);
+  }
+  let ok = false; try { ok = ((await r.json()) as { body?: { ok?: unknown } }).body?.ok === true; } catch { ok = false; }
+  if (!ok) throw new Error("verdictCorpusStatus not published: development-vessel did not confirm the write");
+  const refreshed = await creditHold.refreshStatusFromPool();
+  if (!refreshed.ok) console.warn(`[verdict-corpus] status published but not read back verified: ${refreshed.why}`);
+}
 let _verdictCorpusAcceptor: ReturnType<typeof import("./judge/corpus-activity").createRunAcceptor> | null = null;
 async function verdictCorpusAcceptor() {
   if (!_verdictCorpusAcceptor) {
@@ -18265,18 +18298,18 @@ async function verdictCorpusAcceptor() {
 async function runVerdictCorpusNow(trigger: string, givenRunId?: string): Promise<unknown> {
   if (_verdictCorpusRun) return await _verdictCorpusRun;
   _verdictCorpusRun = (async () => {
-    const { runVerdictCorpusActivity, readEverGreenFile, writeStatusFile } = await import("./judge/corpus-activity");
-    const { DEPLOYED_CORPUS_DIR, STATUS_SHAPE } = creditHold;
+    const { runVerdictCorpusActivity, readEverGreenFile } = await import("./judge/corpus-activity");
+    const { DEPLOYED_CORPUS_DIR } = creditHold;
     const { hostname } = await import("node:os");
     const runId = givenRunId ?? `verdict-corpus-runner-${Date.now()}`;
     return await runVerdictCorpusActivity({
       dir: DEPLOYED_CORPUS_DIR, node: hostname(), deployedSha: null, trigger, nowMs: Date.now(),
       sinks: {
-        readPreviousStatus: () => resolveShapedPolicy(STATUS_SHAPE),
+        readPreviousStatus: async () => { await creditHold.refreshStatusFromPool(); return creditHold.lastVerifiedStatus(); },
         readEverGreen: () => readEverGreenFile(),
         readScopeExcluded: () => readLiveScopeExcluded(),
         readGap: (id) => readVerdictCorpusGap(id),
-        writeStatus: async (st) => { await writeStatusFile(st); creditHold.invalidateHolds(); },
+        writeStatus: async (st) => { await publishVerdictCorpusStatus(st); creditHold.invalidateHolds(); },
         recordReport: async (rep) => {
           await persistSatisfierTrace({
             id: runId, templateId: "verdict-corpus-runner", templateName: "verdict corpus runner (judge behaviour pins)",
@@ -19194,6 +19227,8 @@ console.log(
 );
 
 void loadReachedCommandCache(); // populate the known-command library from durable storage (fail-open, async)
+void creditHold.refreshStatusFromPool(); // the credit stop's last verified status, read from dev-vessel's pool at boot
+setInterval(() => { void creditHold.refreshStatusFromPool(); }, creditHold.REFRESH_TICK_MS).unref(); // the hold refresh tick
 void runVerdictCorpusNow("boot"); // the verdict corpus runs against the live judge at boot (src/judge/corpus-activity.ts)
 void loadGoalFailureMemory(); // populate the failure memory (why prior dispatches of a goal were hollow) from durable storage (fail-open, async)
 registerBuiltinResolvers();

@@ -6,10 +6,16 @@
  * eligibility); a red control holds HOLLOW-direction credit (β, goal-path failure, hollow penalties). The
  * judge's verdict is still delivered; only learning from it is withheld.
  *
- * The holds are read from the shaped `verdictCorpusStatus` record (written only by the corpus runner) at
- * every credit site from the shaped-policy store (the file resolveShapedPolicy reads), cached for at most
- * HOLD_CACHE_TTL_MS. Not an env var, not a constant. The read is SYNCHRONOUS on purpose: a credit site that
- * consults the hold must not gain an await, or the order of the walk's fire-and-forget writes would change.
+ * The holds are read from the `verdictCorpusStatus` pool record on development-vessel. Only goal-host's own
+ * principal can write it (dev-vessel pool-impulse.ts, the runner grant), and dev-vessel's open poolImpulse read
+ * marks it attested_verified only under that grant's signed stamp. A refresher (refreshStatusFromPool, injected
+ * fetch, no network I/O here) keeps the LAST GOOD verified record in memory; it runs at boot, on the hold refresh
+ * tick (REFRESH_TICK_MS) and after every runner write, never from a credit site (a credit site starts no network
+ * call, so the walk's call order is unchanged). Every credit site reads that copy SYNCHRONOUSLY, cached for at most HOLD_CACHE_TTL_MS: a credit site that consults the
+ * hold must not gain an await, or the order of the walk's fire-and-forget writes would change. Not an env var, not
+ * a constant, and NOT a file: the shaped-policy file goal-host writes is a cache for readers that want it and is
+ * never read for a hold, so a module that writes "no holds" there changes nothing.
+ *   - a last-good copy not refreshed for STALE_REFRESH_TICKS ticks is treated as missing (below);
  *   - stale (run_at older than STALE_PERIODS x period_s): the last holds are kept, never treated as green;
  *   - missing or unreadable: ONLY the classes of EVER-RED cases are held (recorded red at append and never
  *     published green), it is logged loudly, and one high-severity "status unavailable" gap is filed. A class
@@ -74,8 +80,79 @@ export function parseEverGreen(text: string): string[] | null {
 export function readEverGreenSync(path = everGreenPath()): string[] | null {
   try { return parseEverGreen(readFileSync(path, "utf8")); } catch { return null; }
 }
-/** The shaped status record, read synchronously from where resolveShapedPolicy reads it; absent/corrupt = null. */
+/** The status record's pool id and the runner path's source label (dev-vessel pool-impulse.ts, the runner grant). */
+export const STATUS_ID = "verdictCorpusStatus";
+export const STATUS_SOURCE = "verdictCorpusRun";
+/** The hold refresh tick: the cadence the last-good copy is re-read from the pool. */
+export const REFRESH_TICK_MS = HOLD_CACHE_TTL_MS;
+/** A last-good copy older than this many refresh ticks (counted from its last verified fetch) is missing. */
+export const STALE_REFRESH_TICKS = 5;
+
+/**
+ * The verified status in a dev-vessel poolImpulse read (pure): the open row of this shape under STATUS_ID that the
+ * route marked attested_verified under the runner's stamp, with a usable body. Anything else is no status, and why.
+ */
+export function statusFromPoolRead(j: unknown): { status: Record<string, unknown>; why?: undefined } | { status: null; why: string } {
+  const imps = (j as { body?: { impulses?: unknown } } | null)?.body?.impulses;
+  if (!Array.isArray(imps)) return { status: null, why: "the pool read carried no impulses" };
+  const row = imps.find((r) => r && typeof r === "object" && (r as Record<string, unknown>)["id"] === STATUS_ID && (r as Record<string, unknown>)["shape"] === STATUS_SHAPE) as Record<string, unknown> | undefined;
+  if (!row) return { status: null, why: "development-vessel holds no verdictCorpusStatus record" };
+  if (row["status"] !== "open") return { status: null, why: `the record is ${String(row["status"])}` };
+  if (row["attested_verified"] !== true || (row["attested"] as { by?: unknown } | undefined)?.by !== "runner") return { status: null, why: "the record is not verified under the runner grant's stamp" };
+  const b = row["body"];
+  if (!isUsablePolicy(b) || !Array.isArray((b as Record<string, unknown>)["holds"]) || typeof (b as Record<string, unknown>)["run_at"] !== "string") return { status: null, why: "the record's body is not a readable status" };
+  return { status: b as Record<string, unknown> };
+}
+
+type PoolFetcher = () => Promise<unknown>;
+let poolFetcher: PoolFetcher | null = null;
+let onRefreshed: (status: Record<string, unknown>) => void = () => {};
+let lastGood: { status: Record<string, unknown>; fetchedAtMs: number } | null = null;
+let lastRefreshWhy: string | null = null;
+let refreshing: Promise<{ ok: boolean; why?: string }> | null = null;
+
+/**
+ * Re-read the status from the pool (one at a time). A verified record replaces the last-good copy; anything else
+ * (development-vessel unreachable, no record, an unverified row) leaves the last-good copy to age.
+ */
+export function refreshStatusFromPool(): Promise<{ ok: boolean; why?: string }> {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    if (!poolFetcher) return { ok: false, why: "no pool reader is configured" };
+    let r: ReturnType<typeof statusFromPoolRead>;
+    try { r = statusFromPoolRead(await poolFetcher()); } catch (e) { r = { status: null, why: `development-vessel unreadable: ${String((e as Error)?.message ?? e).slice(0, 200)}` }; }
+    if (r.status) {
+      lastGood = { status: r.status, fetchedAtMs: clock() };
+      lastRefreshWhy = null;
+      cache = null;
+      try { onRefreshed(r.status); } catch { /* the cache file never changes a hold */ }
+      return { ok: true };
+    }
+    if (r.why !== lastRefreshWhy) console.warn(`[verdict-corpus] status refresh from development-vessel failed: ${r.why}; the last verified copy ${lastGood ? `(fetched ${new Date(lastGood.fetchedAtMs).toISOString()})` : "(none)"} is kept until ${STALE_REFRESH_TICKS} refresh ticks old`);
+    lastRefreshWhy = r.why;
+    return { ok: false, why: r.why };
+  })();
+  return refreshing.finally(() => { refreshing = null; });
+}
+
+/** The last verified status regardless of age (the runner carries its holds forward from it), or null. */
+export function lastVerifiedStatus(): Record<string, unknown> | null { return lastGood?.status ?? null; }
+
+/** Why the default reader has no status (folded into the unavailable report), or null. */
+function poolMissingWhy(): string | null {
+  if (!lastGood) return `no verified record read from development-vessel${lastRefreshWhy ? ` (${lastRefreshWhy})` : ""}`;
+  const age = clock() - lastGood.fetchedAtMs;
+  return age > STALE_REFRESH_TICKS * REFRESH_TICK_MS ? `the last verified copy is ${Math.round(age / 1000)} s old, past ${STALE_REFRESH_TICKS} refresh ticks${lastRefreshWhy ? ` (${lastRefreshWhy})` : ""}` : null;
+}
+
+/** The default reader: the last verified pool status, synchronously; null (missing) when none was ever read or the
+ *  copy is past STALE_REFRESH_TICKS ticks. Never a file. */
 export function readStatusSync(): Record<string, unknown> | null {
+  return poolMissingWhy() === null ? lastGood!.status : null;
+}
+
+/** The goal-host-written status file, for cache readers only (never consulted for a hold). */
+export function readStatusCacheFileSync(): Record<string, unknown> | null {
   try {
     const v = JSON.parse(readFileSync(shapedPolicyPath(STATUS_SHAPE), "utf8")) as unknown;
     return isUsablePolicy(v) ? v : null;
@@ -93,8 +170,11 @@ let cache: { at: number; view: HoldView } | null = null;
 export function invalidateHolds(): void { cache = null; }
 
 /** Test seam: a different status reader / corpus dir / clock; resets the cache. */
-export function configureCreditHold(o: { reader?: Reader; corpusDir?: string; clock?: () => number; everGreen?: EverGreenReader; onUnavailable?: UnavailableHook }): void {
+export function configureCreditHold(o: { reader?: Reader; corpusDir?: string; clock?: () => number; everGreen?: EverGreenReader; onUnavailable?: UnavailableHook; poolFetcher?: PoolFetcher; onRefreshed?: (status: Record<string, unknown>) => void; resetPoolCopy?: boolean }): void {
+  if (o.resetPoolCopy) { lastGood = null; lastRefreshWhy = null; poolFetcher = null; onRefreshed = () => {}; }
   if (o.reader) reader = o.reader;
+  if (o.poolFetcher) poolFetcher = o.poolFetcher;
+  if (o.onRefreshed) onRefreshed = o.onRefreshed;
   if (o.everGreen) everGreenReader = o.everGreen;
   if (o.onUnavailable) { onUnavailable = o.onUnavailable; unavailableReported = false; }
   if (o.corpusDir) corpusDir = o.corpusDir;
@@ -127,7 +207,8 @@ export function currentHolds(): HoldView {
     console.warn(`[verdict-corpus] STATUS UNAVAILABLE — the runner's verdictCorpusStatus is missing or unreadable; holding ONLY the ever-red classes [${classes}] (${everRedCases(loadCorpus(corpusDir).cases, eg ? new Set(eg) : null).length} ever-red case(s), ever-green record ${eg ? "present" : "absent"}); every other class keeps learning`);
     if (!unavailableReported) {
       unavailableReported = true;
-      try { onUnavailable(status ? "status record malformed" : "status record missing", view.holds); } catch { /* reporting never changes a hold */ }
+      const detail = reader === readStatusSync ? poolMissingWhy() : null;
+      try { onUnavailable(status ? "status record malformed" : detail ? `status record missing: ${detail}` : "status record missing", view.holds); } catch { /* reporting never changes a hold */ }
     }
   } else unavailableReported = false;
   cache = { at: now, view };
