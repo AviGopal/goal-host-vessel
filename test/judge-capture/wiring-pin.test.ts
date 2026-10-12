@@ -128,6 +128,11 @@ describe("judge capture wiring pin: every decision site calls the closed capture
     const decided = lineOf("if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });");
     const cap = callAfter("if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });", "judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? \"\") });", 4);
     expect(cap).toBeGreaterThan(decided);
+    // The recorded hint is the decided one: nothing in the hydration block assigns the routing goal again (a local copy
+    // after the capture would route on a goal the record never saw).
+    const end = lineOf("// --- end gap-record hydration ---");
+    const block = LINES.slice(lineOf("// --- gap-record hydration (walk-no-gap-record-hydration-from-goal-text) ---"), end).join("\n");
+    expect(block.match(/\bgoalForRouting\s*=(?!=)/g)?.length).toBe(1);
   });
 
   test("routing: the early edit-intent check records the route switch it decided with", () => {
