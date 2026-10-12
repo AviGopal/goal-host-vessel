@@ -4,7 +4,10 @@
 //   rendered reason nor change the caller's record, and the rule always sees a deep-frozen input.
 //   Controls: an in-schema answer from the test rules is used (the rules are consulted), and a non-mutating adversary
 //   gets exactly the verdict it answered (the clamp is schema-only; the render is the core's).
-// Every must-fail is shown red on a named mutant of the core (unfixed; shallow copy; copy without freeze; freeze in place).
+//   OUTPUT  the rule's answer is read once (structured-cloned before any clamp read): an answer whose fields shift between
+//           reads delivers its first read or a refusal, and a Proxy answer is refused (fails closed).
+// Every must-fail is shown red on a named mutant of the core (unfixed; shallow copy; copy without freeze; freeze in place;
+// no output copy; an uncopyable output used raw).
 import { describe, expect, test } from "bun:test";
 import * as judge from "../../src/judge/entries";
 import { JUDGE_INPUT_SCHEMA, neutralEvidence, type FloorShortcutInput, type FloorVerdictInput, type ReachGateInput, type ReframeAcceptInput, type RecordedJudgeVerdict } from "../../src/judge/records";
@@ -128,5 +131,63 @@ describe("must-fail: a rule that mutates its input moves nothing the core reads 
     const adv = run({ floorShortcutAllowed: (i) => { swallow(() => { i.targets.push(FORGED); }); return ans; } }, () => judge.floorShortcut(shortcutIn()));
     const ctl = run({ floorShortcutAllowed: () => ans }, () => judge.floorShortcut(shortcutIn()));
     expect(adv).toEqual(ctl);
+  });
+});
+
+/** An answer whose `key` reads `first` on the first k reads and `later` after: what a clamp checks is not what it returns. */
+function shifting(base: Record<string, unknown>, key: string, first: unknown, later: unknown, k: number): Record<string, unknown> {
+  let reads = 0;
+  const o: Record<string, unknown> = {};
+  for (const [name, v] of Object.entries(base)) {
+    if (name === key) Object.defineProperty(o, name, { enumerable: true, get: () => (++reads <= k ? first : later) });
+    else o[name] = v;
+  }
+  return o;
+}
+const KS = [1, 2, 3, 4, 5, 6, 7, 8];
+const FLOOR_HOLLOW = { reached: false, hollow_class: "floor-no-substance", reason_code: "floor:no-substance", deterministic: true, fabricated_transcript: false };
+
+describe("output: the core reads the rule's answer once", () => {
+  test("control: a stable getter answer is read once and used (getters as such are not refused)", () => {
+    const r = run({ reachGate: () => shifting(HOLLOW_CHANGE, "reached", false, false, 0) }, () => judge.reachGate(reachIn()));
+    expect(r).toMatchObject({ hollow: true, hollow_class: "write-goal-no-artifact", fell_back: false });
+  });
+
+  test("must-fail: reachGate — a shifting answer delivers its first read or a refusal, at every switch point", () => {
+    for (const k of KS) {
+      const g = run({ reachGate: () => shifting(HOLLOW_CHANGE, "reached", false, true, k) }, () => judge.reachGate(reachIn()));
+      expect({ k, hollow: g.hollow, classed: g.hollow_class !== null }).toEqual({ k, hollow: true, classed: true });
+    }
+  });
+  test("must-fail: floorVerdict — a shifting answer delivers its first read or a refusal, at every switch point", () => {
+    for (const k of KS) {
+      const f = run({ floorDecide: () => shifting(FLOOR_HOLLOW, "reached", false, true, k) }, () => judge.floorVerdict(floorIn(), null));
+      expect({ k, reached: f.reached }).toEqual({ k, reached: false });
+    }
+  });
+  test("must-fail: floorShortcut — a shifting answer delivers its first read or a refusal, at every switch point", () => {
+    for (const k of KS) {
+      const sh = run({ floorShortcutAllowed: () => shifting({ allowed: false, reason_code: "shortcut:not-the-floor" }, "allowed", false, true, k) }, () => judge.floorShortcut(shortcutIn()));
+      expect({ k, allowed: sh.allowed }).toEqual({ k, allowed: false });
+    }
+  });
+  test("must-fail: reframeAccept — a shifting answer delivers its first read or a refusal, at every switch point", () => {
+    for (const k of KS) {
+      const a = run({ reframeAccept: () => shifting({ accept: false, reason_code: "reframe:not-reached" }, "accept", false, true, k) }, () => judge.reframeAccept(reframeIn()));
+      expect({ k, accept: a.accept }).toEqual({ k, accept: false });
+    }
+  });
+
+  test("must-fail: a Proxy answer is refused and every entry falls back closed", () => {
+    const px = <T extends object>(o: T) => new Proxy(o, {});
+    const g = run({ reachGate: () => px({ reached: true, hollow_class: null, reason_code: "write-goal-gate:pass", deterministic: true }) }, () => judge.reachGate(reachIn()));
+    expect(g).toMatchObject({ hollow: true, hollow_class: "judge-rules-refused", fell_back: true });
+    expect(g.reason).toContain("output not copyable");
+    const f = run({ floorDecide: () => px(FLOOR_REACHED) }, () => judge.floorVerdict(floorIn(), null));
+    expect(f).toMatchObject({ reached: false, fell_back: true });
+    const s = run({ floorShortcutAllowed: () => px({ allowed: true, reason_code: "shortcut:own-pathway" }) }, () => judge.floorShortcut(shortcutIn()));
+    expect(s).toMatchObject({ allowed: false, fell_back: true });
+    const a = run({ reframeAccept: () => px({ accept: true, reason_code: "reframe:accepted" }) }, () => judge.reframeAccept(reframeIn()));
+    expect(a).toMatchObject({ accept: false, fell_back: true });
   });
 });

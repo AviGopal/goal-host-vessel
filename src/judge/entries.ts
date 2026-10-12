@@ -6,7 +6,8 @@
  * where there is one, CLAMPS the rule's output to the closed schema (src/judge/classes.ts), and renders
  * the reason text from the rule's reason code, so an open rule can neither forge a reason nor return a
  * shape the core does not know. The rule is handed a deep-frozen copy of its input (callRule), so the clamp,
- * the renderer and everything after the call read the core's own input, which the rule cannot reach. A refused output, or rules that failed to load, fall back closed:
+ * the renderer and everything after the call read the core's own input, which the rule cannot reach. The rule's
+ * answer is structured-cloned once before any clamp reads it; an answer that cannot be copied is refused. A refused output, or rules that failed to load, fall back closed:
  * not reached, shortcut refused, re-frame rejected. Each fallback is counted and logged.
  *
  * The open rules are loaded by ONE dynamic import of exactly the named functions, once, when this module
@@ -107,7 +108,10 @@ function callRule(entry: string, f: ((i: never) => unknown) | undefined, input: 
   if (!f) return { error: rulesLoadError ? `rules unloadable: ${rulesLoadError}` : "rule missing" };
   let given: unknown;
   try { given = frozenCopy(input); } catch (e) { return { error: `input not copyable: ${(e as Error)?.message ?? String(e)}` }; }
-  try { return { out: (f as (i: unknown) => unknown)(given) }; } catch (e) { return { error: `rule threw: ${(e as Error)?.message ?? String(e)}` }; }
+  let out: unknown;
+  try { out = (f as (i: unknown) => unknown)(given); } catch (e) { return { error: `rule threw: ${(e as Error)?.message ?? String(e)}` }; }
+  // The answer is read ONCE, here: a getter or a proxy cannot show the clamp one value and the entry another.
+  try { return { out: structuredClone(out) }; } catch (e) { return { error: `output not copyable: ${(e as Error)?.message ?? String(e)}` }; }
 }
 
 // ── reachGate ─────────────────────────────────────────────────────────────────────────────────────────

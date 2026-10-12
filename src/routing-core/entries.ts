@@ -14,7 +14,9 @@
 //     the corpus is the rule production calls.
 // Every answer from the rules passes a clamp (exact keys and types, and only choices the input offered). An answer
 // that fails it is replaced by the floor (floor.ts, today's behaviour) and counted. The rules are handed a deep-frozen
-// copy of the input; the clamp and the floor read the core's own.
+// copy of the input; the clamp and the floor read the core's own. The answer is structured-cloned once before the clamp
+// reads it, so a getter or a proxy cannot show the clamp one value and deliver another; one that cannot be copied
+// takes the floor.
 import { resolvePathlessCodeChangeGoal, isPathlessCodeChangeGoal, extractSearchTerms, type FileSearch } from "../goal-file-resolution";
 import { isEditIntentGoal } from "../goal-intent";
 import { decideDoor, decideHandoff } from "../routing-rules/edit-intent";
@@ -73,7 +75,7 @@ function frozenCopy<T>(v: T): T {
 /** decideDoor over a frozen copy, clamped against the core's own input; the floor on a refused answer. */
 export function doorDecision(input: DoorInput): { decision: DoorDecision; fell_back: boolean } {
   let out: unknown;
-  try { out = decideDoor(frozenCopy(input)); } catch { out = undefined; }
+  try { out = structuredClone(decideDoor(frozenCopy(input))); } catch { out = undefined; }
   const ok = clampDoor(input, out);
   if (ok) return { decision: ok, fell_back: false };
   routingFellBack.door++;
@@ -84,7 +86,7 @@ export function doorDecision(input: DoorInput): { decision: DoorDecision; fell_b
 /** decideHandoff over a frozen copy, clamped against the core's own input; the floor on a refused answer. index.ts calls this at the early edit-intent hand-off. */
 export function handoffRoute(input: HandoffInput): HandoffDecision {
   let out: unknown;
-  try { out = decideHandoff(frozenCopy(input)); } catch { out = undefined; }
+  try { out = structuredClone(decideHandoff(frozenCopy(input))); } catch { out = undefined; }
   const ok = clampHandoff(input, out);
   if (ok) return ok;
   routingFellBack.handoff++;
