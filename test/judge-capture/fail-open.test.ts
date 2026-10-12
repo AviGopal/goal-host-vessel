@@ -34,7 +34,7 @@ describe("capture throws -> the verdict is still delivered and capture_error is 
   test("a verdict that cannot be serialized (a cycle, a BigInt)", async () => {
     const target: CaptureTarget = {};
     const cyclic: Record<string, unknown> = { reached: true }; cyclic["self"] = cyclic;
-    const args = { goal: "g", originalTargets: null, deliverables: null, targetsSeenByWalk: null, reframedFrom: null, persistedWrites: null, landed: null, producedShapes: [], postReachSink: null, toolsTotal: null, groundedReads: null, outputImpulses: null, consumedInChain: null, surface: null, digest: null, taskSummary: null, commandEvidence: null, walkEvidence: null, judgeView: null };
+    const args = { goal: "g", originalTargets: null, deliverables: null, targetsSeenByWalk: null, reframedFrom: null, persistedWrites: null, landed: null, landedEffective: null, producedShapes: [], postReachSink: null, toolsTotal: null, groundedReads: null, outputImpulses: null, consumedInChain: null, surface: null, digest: null, taskSummary: null, commandEvidence: null, walkEvidence: null, judgeView: null };
     await withCaptureTarget(target, async () => {
       expect(site(() => captureJudgeInput("reachGate", () => reachGateInput(args), cyclic)).reached).toBe(false);
       expect(site(() => captureJudgeInput("floorVerdict", () => reachGateInput(args), { n: 1n })).reached).toBe(false);

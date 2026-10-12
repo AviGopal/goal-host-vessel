@@ -237,6 +237,7 @@ export interface ReachGateCaptureArgs {
   reframedFrom: readonly string[] | null;
   persistedWrites: readonly string[] | null;
   landed: boolean | null;
+  landedEffective: boolean | null;
   producedShapes: readonly string[];
   postReachSink: boolean | null;
   toolsTotal: number | null;
@@ -261,6 +262,7 @@ export function reachGateInput(a: ReachGateCaptureArgs): ReachGateInput {
     evidence: {
       persisted_writes: clean(a.persistedWrites),
       landed: a.landed,
+      landed_effective: a.landedEffective,
       produced_shapes: clean(a.producedShapes),
       post_reach_sink: a.postReachSink,
       tools_total: a.toolsTotal,

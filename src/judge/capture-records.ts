@@ -76,6 +76,8 @@ export interface CaptureTarget { metadata?: JudgeCaptureMetadata }
 export interface ReachGateEvidence {
   persisted_writes: string[] | null;
   landed: boolean | null;
+  /** Additive: the gate's effective landed value, `landedEdit || writeEvidence.landed` (landed is the caller's flag alone). */
+  landed_effective: boolean | null;
   produced_shapes: string[];
   post_reach_sink: boolean | null;
   tools_total: number | null;

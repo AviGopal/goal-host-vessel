@@ -62,6 +62,13 @@ describe("judge capture wiring pin: every decision site calls the closed capture
     expect(INDEX).toContain(`surface: captureSurface ?? (judgeView ? "walk" : null),`);
   });
 
+  test("reachGate: the gate and its capture share ONE landed definition (landedEditOf)", () => {
+    lineOf("const landedEdit = landedEditOf(meaningfulShapes, dig);");
+    lineOf("function landedEditOf(meaningfulShapes: readonly string[], dig: string): boolean {");
+    lineOf("landedEffective: landedEditOf(producedShapes.filter((s) => s !== \"goal\"), (contentDigest ?? \"\").trim()) || writeEvidence?.landed === true,");
+    lineOf("landed: landedEdit || writeEvidence.landed === true,");
+  });
+
   test("reachGate: the LLM judge's verdict is recorded as data where the gate consults it", () => {
     callAfter("const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);", "judgeCapture.noteLlmJudge(judged);", 1);
   });

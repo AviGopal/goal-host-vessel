@@ -10,7 +10,7 @@ import {
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const BASE: ReachGateCaptureArgs = {
   goal: "Write a note listing every stage of the build", originalTargets: ["memoryNote_write"], deliverables: null, targetsSeenByWalk: null,
-  reframedFrom: null, persistedWrites: [], landed: null, producedShapes: [], postReachSink: null, toolsTotal: null, groundedReads: null,
+  reframedFrom: null, persistedWrites: [], landed: null, landedEffective: null, producedShapes: [], postReachSink: null, toolsTotal: null, groundedReads: null,
   outputImpulses: null, consumedInChain: null, surface: "walk", digest: null, taskSummary: "walk(1 steps)", commandEvidence: null,
   walkEvidence: null, judgeView: null,
 };

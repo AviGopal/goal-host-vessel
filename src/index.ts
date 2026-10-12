@@ -3668,6 +3668,14 @@ async function rereadFileContentViaProducer(path: string): Promise<FileRead | nu
  * (`deliverables`, else the goal's inferred targets) name it. /reach, recordGoalPath and gap filing
  * therefore never read a judge-invented name, whichever site asked.
  */
+/**
+ * An edit-result shape WITH landing evidence (push_status:pushed / new_git_sha) in the digest: the reach gate's
+ * `landedEdit` (verifyGoalReachedUnrestricted). One definition, so the gate and its input capture cannot disagree.
+ */
+function landedEditOf(meaningfulShapes: readonly string[], dig: string): boolean {
+  return meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))
+    && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
+}
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
   const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables, writeEvidence);
   if (v && v.deterministic !== true) {
@@ -3683,6 +3691,8 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     reframedFrom: null,
     persistedWrites: writeEvidence?.persistedWrites ?? null,
     landed: writeEvidence?.landed ?? null,
+    // The gate's EFFECTIVE landed value, exactly as writeGoalArtifactGate is handed it.
+    landedEffective: landedEditOf(producedShapes.filter((s) => s !== "goal"), (contentDigest ?? "").trim()) || writeEvidence?.landed === true,
     producedShapes,
     postReachSink: writeEvidence?.postReachSink ?? null,
     toolsTotal: null,
@@ -4089,8 +4099,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // Require LANDING EVIDENCE (push_status:pushed / new_git_sha — same conjunct the favorable-compose
   // positive above trusts; NOT featureComposeReport, which is set on typecheck BEFORE landing). Fires
   // when the edit shape is ABSENT (old behavior) OR present-but-STUB (the bug). Fail-toward-honest.
-  const landedEdit = meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))
-    && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
+  const landedEdit = landedEditOf(meaningfulShapes, dig);
   // WIDENED 2026-08-11 — the entry test used to require a LITERAL repos/<vessel>/<file>
   // in the goal text, so a symptom-phrased change request skipped the landing requirement
   // entirely and could be graded reached on a report. Measured on dispatch
@@ -5696,6 +5705,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
     reframedFrom: null,
     persistedWrites: floorWrites,
     landed: null,
+    landedEffective: landedEditOf(produced.filter((s) => s !== "goal"), digest.trim()),
     producedShapes: produced,
     postReachSink: null,
     toolsTotal: executed.length,

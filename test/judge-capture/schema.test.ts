@@ -25,6 +25,7 @@ const REACH_ARGS: ReachGateCaptureArgs = {
   reframedFrom: null,
   persistedWrites: ["memoryNote_write"],
   landed: false,
+  landedEffective: false,
   producedShapes: ["shellResult", "memoryNote_write"],
   postReachSink: true,
   toolsTotal: 2,
@@ -40,7 +41,7 @@ const REACH_ARGS: ReachGateCaptureArgs = {
 };
 
 const REACH_GATE_FIELDS = ["deliverables", "digest_excerpt", "evidence", "gate_context", "goal", "original_targets", "reframed_from", "surface", "targets_seen_by_walk"];
-const EVIDENCE_FIELDS = ["consumed_in_chain", "grounded_reads", "landed", "output_impulses", "persisted_writes", "post_reach_sink", "produced_shapes", "tools_total"];
+const EVIDENCE_FIELDS = ["consumed_in_chain", "grounded_reads", "landed", "landed_effective", "output_impulses", "persisted_writes", "post_reach_sink", "produced_shapes", "tools_total"];
 const GATE_CONTEXT_FIELDS = ["command_evidence", "judge_view", "task_summary", "walk_gaps_filed", "walk_step_lines"];
 const RECORD_FIELDS = ["calls", "entry", "input", "llm", "ports", "schema", "verdict"];
 const ROUTING_FIELDS = ["compose_gap_id", "edit_site", "entry", "gap_hint", "goal", "is_edit_intent", "is_pathless_code_change", "resolution", "restated_goal", "routed_to", "schema", "trail"];
