@@ -16200,7 +16200,7 @@ function buildProxyResolver(shape: string) {
           },
           body: JSON.stringify({ impulse: { pointer } }),
           signal: proxyCtrl.signal,
-        });
+        }, "dev-vessel-proxy");
       } finally {
         clearTimeout(proxyTimer);
       }
@@ -16409,7 +16409,7 @@ function buildDiscoveryProxyResolver(shape: string) {
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify({ impulse: { pointer } }),
           signal: ctrl.signal,
-        });
+        }, "discovery-proxy");
       } finally {
         clearTimeout(timer);
       }

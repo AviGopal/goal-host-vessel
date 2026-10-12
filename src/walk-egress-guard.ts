@@ -103,13 +103,24 @@ function bodyOf(init: RequestInit | undefined): unknown {
   try { return JSON.parse(raw) as unknown; } catch { return undefined; }
 }
 
+/** The one line a refusal is logged with when the site has no log of its own: shape and site only (never args,
+ *  body or credential). */
+export function walkEgressRefusalLine(shape: string, site: string): string {
+  return `[walk-egress] REFUSED shape=${shape} site=${site}`;
+}
+
 /**
  * fetch() for a walk egress: checks the outgoing body first and throws WalkEgressRefused WITHOUT calling fetch when
  * it would write a single-writer pool row. Every walk egress whose pointer is synthesised goes through this.
+ * `site` is given by a site whose failure path is a bare throw (the proxy resolvers): the refusal is then logged
+ * here, once, before the throw. Sites that log their own refusal (rawResolve, the floor tool loop) omit it.
  */
-export async function walkEgressFetch(shape: string, url: string, init: RequestInit): Promise<Response> {
+export async function walkEgressFetch(shape: string, url: string, init: RequestInit, site?: string): Promise<Response> {
   const why = walkEgressRefusal(shape, bodyOf(init));
-  if (why) throw new WalkEgressRefused(shape, why);
+  if (why) {
+    if (site) console.log(walkEgressRefusalLine(shape, site));
+    throw new WalkEgressRefused(shape, why);
+  }
   return await fetch(url, init);
 }
 

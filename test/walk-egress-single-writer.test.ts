@@ -20,6 +20,7 @@ import {
   RUNNER_ONLY_POOL_ID_PREFIXES, RUNNER_ONLY_POOL_IDS, RUNNER_ONLY_POOL_SHAPES, TRUST_ROOT_POOL_SHAPES,
   isWalkEgressRefused, walkEgressFetch, walkEgressRefusal,
 } from "../src/walk-egress-guard";
+import { spyOn } from "bun:test";
 
 const REPO = join(import.meta.dir, "..");
 const indexSrc = readFileSync(join(REPO, "src", "index.ts"), "utf8");
@@ -220,4 +221,32 @@ describe("(e) every synthesised walk egress goes through the guard", () => {
     const body = region("const rawResolve = async (shape: string, endpoint: string, resolvePath: string", "const refuseReapply = (shape: string, site: string)");
     expect(body).toMatch(/if \(isWalkEgressRefused\(e\)\) \{\s*noteRawResolveFailure\(shape, e\.message[^\n]*\n[^\n]*\n\s*return null;/);
   });
+});
+
+// ── (f) the proxy sites log their refusal ────────────────────────────────────────────────────────────────────
+describe("(f) a refusal through either proxy resolver is logged, once, with shape and site only", () => {
+  const proxies: Array<[string, string, string]> = [
+    ["buildProxyResolver", "function buildProxyResolver(shape: string)", "dev-vessel-proxy"],
+    ["buildDiscoveryProxyResolver", "function buildDiscoveryProxyResolver(shape: string)", "discovery-proxy"],
+  ];
+  for (const [name, start, site] of proxies) {
+    it(`MUST-FAIL: ${name} passes its site, and a refused write emits exactly "[walk-egress] REFUSED shape=<shape> site=${site}"`, async () => {
+      const body = region(start, "\n}\n");
+      expect(body).toContain(`}, "${site}");`);
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        // The proxy's own body form: { impulse: { pointer } }, the pointer built by buildResolvePointer.
+        const init = { method: "POST", headers: { Authorization: "ApiKey main-key" }, body: JSON.stringify({ impulse: { pointer: buildResolvePointer("poolImpulse_write", { shape: "verdictCorpusStatus", secret_arg: "s3cr3t" }, {}) } }) };
+        expect(await outcome(walkEgressFetch("poolImpulse_write", "http://dv/r", init, site))).toBe("refused");
+        const lines = spy.mock.calls.map((c) => c.map(String).join(" "));
+        expect(lines).toEqual([`[walk-egress] REFUSED shape=poolImpulse_write site=${site}`]);
+        expect(lines.join("\n")).not.toMatch(/s3cr3t|main-key|verdictCorpusStatus/);
+        // an ordinary write through the same site logs nothing
+        spy.mockClear();
+        expect(await outcome(walkEgressFetch("poolImpulse_write", "http://dv/r", rawResolveInit("poolImpulse_write", { shape: "goalNote" }), site))).toBe("sent 200");
+        expect(spy.mock.calls.length).toBe(0);
+      } finally { spy.mockRestore(); }
+      expect(calls.length).toBe(1);
+    });
+  }
 });
