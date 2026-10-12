@@ -607,6 +607,23 @@ function reasonClass(reason: unknown): string | null {
 async function main(): Promise<void> {
   const mod = (await drivePromise(import(INDEX_PATH) as Promise<Mod>, "import")).value;
   if (!mod) throw new Error("index.ts import did not settle");
+  // THE VERDICT-CORPUS STATUS FIXTURE. The golden records walk and judge behaviour from BEFORE any credit hold
+  // existed, and this harness is a move-equivalence tool, so it compares like with like: the tree's credit hold
+  // (the same module instance index.ts imported) is given a fresh runner status that holds nothing
+  // (deterministic: a fixed run_at and a period no virtual run outlives), through its own test seam, whatever the
+  // tree reads its status from (a file or the pool). The hold's own behaviour (fail-closed with no status, holds
+  // from red cases) is pinned by test/verdict-corpus/, not by this golden. A tree without the module is unchanged.
+  const CREDIT_HOLD_PATH = `${TREE.replace(/\/+$/, "")}/src/judge/credit-hold.ts`;
+  if (nodeFs.existsSync(CREDIT_HOLD_PATH)) {
+    const ch = (await import(CREDIT_HOLD_PATH)) as { configureCreditHold?: (o: { reader?: () => Record<string, unknown> | null }) => void };
+    const FRESH_EMPTY_STATUS = {
+      schema: 1, node: "verdict-diff", judge_sha: "", deployed_sha: null, corpus: { n: 0, link: "0".repeat(64) }, fidelity: {},
+      run_at: "2026-01-01T00:00:00.000Z", period_s: 3_153_600_000, ever_green: "absent (fail closed)", state: "ok",
+      green: [], flips: [], known_red: [], entry_missing: [], holds: [], live_shadow: { sampled: 0, mismatched: 0 },
+    };
+    if (typeof ch.configureCreditHold !== "function") throw new Error("src/judge/credit-hold.ts exposes no configureCreditHold: the status fixture cannot be applied");
+    ch.configureCreditHold({ reader: () => FRESH_EMPTY_STATUS });
+  }
   for (const n of NEEDED_NAMES) if (!(`__vd_${n}` in mod)) throw new Error(`index.ts does not expose ${n}`);
   const store = mod.__vd_executionStore;
 

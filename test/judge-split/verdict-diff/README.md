@@ -32,6 +32,15 @@ later timestamp.
 The golden includes the walk log and the decision-marker lines. A split that renames a log string
 therefore shows as a difference. A pure move keeps log strings unchanged.
 
+## The verdict-corpus status fixture
+
+After importing the tree's `src/index.ts`, the child gives the tree's credit hold (`src/judge/credit-hold.ts`, the
+same module instance) a fresh runner status that holds nothing, through its `configureCreditHold({ reader })` seam,
+whatever the tree reads its status from. The status is deterministic: a fixed `run_at` and a period no virtual run
+outlives. The golden records behaviour from before any credit hold existed, so the comparison is like with like.
+The hold itself (fail-closed with no status, holds from red cases) is pinned by `test/verdict-corpus/`, not by this
+golden. A tree without the module is unchanged.
+
 ## Environment
 
 `golden-environment.json` records the bun version and the executor (`@avigopal/ias-executor-ts`)
