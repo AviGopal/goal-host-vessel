@@ -74,6 +74,13 @@ describe("(a) a walk step writing the runner-only corpus status is refused befor
 });
 
 describe("(b) a trust-root shape is refused before egress", () => {
+  it("MUST-FAIL: a walk may not write fedIngressAuthPolicy (the overlay's inbound-auth mode): by shape, qualified, and bare", () => {
+    for (const body of [
+      { impulse: { pointer: { type: "poolImpulse_write", shape: "fedIngressAuthPolicy", body: { mode: "off" } } } },
+      { impulse: { pointer: { type: "development-vessel:poolImpulse_write", shape: "fedIngressAuthPolicy" } } },
+      { type: "poolImpulse_write", shape: "fedIngressAuthPolicy", body: { mode: "log", same_authority_peers: ["attacker"] } },
+    ]) expect([JSON.stringify(body).slice(0, 60), walkEgressRefusal("poolImpulse_write", body)?.startsWith("single-writer")]).toEqual([JSON.stringify(body).slice(0, 60), true]);
+  });
   it("every trust-root shape, by shape and by an id equal to the shape name", async () => {
     const res: string[] = [];
     for (const s of [...TRUST_ROOT_POOL_SHAPES].sort()) {
@@ -170,7 +177,7 @@ describe("(d) the lists cannot drift from development-vessel's", () => {
 
   it("the parser reads dev-vessel's form (pinned on a fixture of the pinned sha's declarations)", () => {
     const fixture = [
-      "export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set(['substrateNodes', 'autonomyScope', 'spendEnvelope', 'calibrationWindow', 'scriptRunnerAllowlist', 'operatorHold', 'posteriorReplayAuthorization', 'verdictCorpusWriter']);",
+      "export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set(['substrateNodes', 'autonomyScope', 'spendEnvelope', 'calibrationWindow', 'scriptRunnerAllowlist', 'operatorHold', 'posteriorReplayAuthorization', 'verdictCorpusWriter', 'fedIngressAuthPolicy']);",
       "export const VERDICT_CORPUS_STATUS_SHAPE = 'verdictCorpusStatus';",
       "export const VERDICT_CORPUS_STATUS_ID = 'verdictCorpusStatus';",
       "export const VERDICT_CORPUS_REFUSAL_SHAPE = 'verdictCorpusWriteRefusal';",
