@@ -241,7 +241,8 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
+import { capabilityDemand, exactFailuresSince } from "./capability-demand";
+import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId } from "./compose-gap-id";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
@@ -4440,7 +4441,7 @@ function markGoalReached(goalText: string): void {
 function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
   const hash = goalHashOf(goalText); const cls = goalClassTokenOf(goalText);
   const since = (h: string) => goalLastReachedAt.get(h) ?? "";
-  const exact = (goalFailureMemory.get(hash) ?? []).filter((r) => r.at > since(hash));
+  const exact = exactFailuresSince(goalFailureMemory.get(hash) ?? [], since(hash));
   const near: GoalFailureRecord[] = [];
   if (cls) for (const [h, list] of goalFailureMemory) { if (h === hash) continue; for (const r of list) if (r.classToken === cls && r.at > since(h)) near.push(r); }
   near.sort((a, b) => b.at.localeCompare(a.at));
@@ -6051,6 +6052,21 @@ function canonicalizeShapeName(raw: string, known: string[]): string | null {
   return raw;
 }
 
+/** R2's min_runs (goalDeficiencyPolicy, the pool record R2 reads), through the same dev-vessel resolve fileCapabilityGap uses for its
+ *  prior row. Default 3 (R2's default) when unreadable or out of R2's own range (2..1000). */
+async function goalDeficiencyMinRuns(): Promise<number> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "poolImpulse", shape: "goalDeficiencyPolicy", status: "open", limit: 1 } } }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = (await r.json()) as { body?: { impulses?: Array<{ body?: { min_runs?: unknown } }> } };
+    const v = j?.body?.impulses?.[0]?.body?.min_runs;
+    return typeof v === "number" && Number.isInteger(v) && v >= 2 && v <= 1000 ? v : 3;
+  } catch { return 3; }
+}
 async function fileCapabilityGap(missingShape: string, goal: string, goalTargets: string[]): Promise<string | null> {
   const knownShapes = await fetchKnownShapes();
   const canonicalShape: string | null = canonicalizeShapeName(missingShape, knownShapes);
@@ -6122,9 +6138,16 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
     priorGoals = Array.isArray(dg) ? dg.filter((x): x is string => typeof x === "string") : (typeof pm["goal"] === "string" ? [pm["goal"] as string] : []);
   } catch { /* unreadable: counted as a first demand */ }
   const goalKey = goal.trim().slice(0, 300);
-  if (priorGoals.includes(goalKey)) return null; // the same goal again is not new demand
-  const demandGoals = [...priorGoals, goalKey].slice(-10);
-  const demanded = demandGoals.length >= 2;
+  // RECURRING DEMAND (openspec contained-self-development 8.14, "revisit only for shapes with recurring demand"; 2026-10-13). One
+  // goal is a walk artifact, but the SAME goal failing again and again for the same missing shape is real demand: it has failed
+  // at least R2's min_runs times since its last reach (goal-host's persisted failure memory, the FAILURE-RECALL feed;
+  // goalDeficiencyPolicy.min_runs, read where R2 reads it, default 3). A one-off goal stays born closed until it recurs. The
+  // policy is read only when the goal has failed at all, so a first-ever demand makes no extra call.
+  const priorFailures = recallGoalFailures(goal).exact.length;
+  const minRuns = priorFailures > 0 ? await goalDeficiencyMinRuns() : 0;
+  const { skip, demandGoals, demanded, recurring } = capabilityDemand({ priorGoals, goalKey, priorFailures, minRuns });
+  if (skip) return null; // the same goal again is not new demand (unless it recurs)
+  if (recurring) console.log(`[fileCapabilityGap] ${canonicalShape}: recurring demand: the same goal failed ${priorFailures} time(s) since its last reach (>= min_runs ${minRuns}); filed OPEN`);
   const summary = `Capability gap: the goal-walk needs a producer for shape "${canonicalShape}" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape "${canonicalShape}" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck.`;
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
@@ -6133,7 +6156,7 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
       body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
         id, category: "missing_capability", source: "substrate_detected", status: demanded ? "open" : "closed", summary,
         detected_at: new Date().toISOString(),
-        classification_metadata: { kind: "capability_gap", missing_shape: canonicalShape, allowed_output_shapes: [canonicalShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true, demand_goals: demandGoals, demand_count: demandGoals.length, ...(demanded ? {} : { closed_reason: "walk_artifact", resolution: "single-goal demand: recorded, filed open only when a second distinct goal needs this shape" }) },
+        classification_metadata: { kind: "capability_gap", missing_shape: canonicalShape, allowed_output_shapes: [canonicalShape], goal, goal_target_shapes: goalTargets, scope_narrowed: true, demand_goals: demandGoals, demand_count: demandGoals.length, ...(recurring ? { demand_basis: { kind: "recurring_failure", prior_failures: priorFailures, min_runs: minRuns } } : {}), ...(demanded ? {} : { closed_reason: "walk_artifact", resolution: "single-goal demand: recorded, filed open only when a second distinct goal needs this shape" }) },
       } } } }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -13600,12 +13623,10 @@ async function runGoalWithRecoveryInner(
     // inference problem. Bind advertised, resolvable shapes whose exact token appears
     // in the goal as required intermediates, so synthesis receives the data it names.
     if (seededOutputShapes && seededOutputShapes.length > 0) {
-      const NAMED_BIND_EXCLUDE = new Set(["goal", "dispatch_id", "shell", "bash", "shellResult", "fileContent"]);
       const namedBindCandidates = [...new Set([...shapeEndpointMap.keys(), ...discoveredProxyShapes])];
       const namedBound = [];
       for (const nb of namedBindCandidates) {
-        if (nb.length < 6 || NAMED_BIND_EXCLUDE.has(nb)) continue;
-        if (!/[A-Z_:]/.test(nb)) continue; // prose-collision guard: real shape names carry a hump, underscore, or colon ("cluster" bound as a junk terminal on 9f7cfb62)
+        if (!isNamedShapeToken(nb)) continue; // the shared guard (goal-target-inference.ts): length >= 6, not excluded, and a hump/underscore/colon (prose-collision: "cluster" bound as a junk terminal on 9f7cfb62)
         if (seededOutputShapes.includes(nb)) continue;
         const nbEsc = nb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const nbRe = new RegExp("(^|[^A-Za-z0-9_])" + nbEsc + "($|[^A-Za-z0-9_])");

@@ -390,6 +390,41 @@ function deterministicVerbatimReadRoute(goal: string, knownShapes: string[]): Go
  * pre-LLM route. A named, advertised shape is the strongest producer signal a goal
  * can carry, so honour it before falling back to the universal executor.
  */
+/** NAMED-SHAPE BINDING's prose-collision guard (moved here from index.ts so both callers share one rule, unchanged): a token is a
+ *  shape name only when it is at least 6 characters, not an excluded executor/meta token, and carries a hump, an underscore or a
+ *  colon (plain words like "cluster" are prose, not shapes). */
+export const NAMED_SHAPE_EXCLUDE: ReadonlySet<string> = new Set(["goal", "dispatch_id", "shell", "bash", "shellResult", "fileContent"]);
+export function isNamedShapeToken(t: string): boolean {
+  return t.length >= 6 && !NAMED_SHAPE_EXCLUDE.has(t) && /[A-Z_:]/.test(t);
+}
+
+/**
+ * A NAMED TARGET NO VESSEL ADVERTISES (2026-10-13, openspec contained-self-development 8.14's recurring-demand half; user ruling
+ * "adjust existing code"). The goal names its deliverable verbatim ("produce <shapeName> …") but no vessel advertises it. Every route
+ * here used to drop it (the vocabulary filter keeps only advertised shapes) and the walk then served an advertised SUBSTITUTE
+ * (typically the universal executor), which the reach judge grades unmet run after run, and nothing ever filed the missing producer.
+ * Kept as the target instead, the walk's EXISTING no-pick path (index.ts, LEAF→AUTHORING ESCALATION) files it via fileCapabilityGap.
+ * No new matcher: the deliverable is _namedShape's verb-object construction with produce|return|emit|generate|build in place of its
+ * action verbs, and the object's leading token must pass NAMED-SHAPE BINDING's guard (isNamedShapeToken). Only deliverable objects
+ * count (an identifier elsewhere in the goal never becomes a target); an advertised deliverable leaves today's behaviour untouched;
+ * two or more unadvertised deliverables are ambiguous and keep nothing (no guess).
+ */
+export function namedUnadvertisedTarget(goal: string, knownShapes: string[]): { shape: string | null; ambiguous: string[] } {
+  // _namedShape's construction (verb, optional article, object), with the object captured as ONE identifier token: a phrase capture
+  // would swallow a second "… and produce Y" into the first match, and that second deliverable would never be judged.
+  const DELIVER = /\b(produce|produces|return|returns|emit|emits|generate|generates|build|builds)\b\s+(?:the\s+|a\s+|an\s+)?([A-Za-z][A-Za-z0-9_]*)/gi;
+  const known = new Set(knownShapes);
+  const missing = new Set<string>();
+  for (const m of goal.matchAll(DELIVER)) {
+    const tok = m[2] ?? "";
+    if (!tok || !isNamedShapeToken(tok)) continue;
+    if (known.has(tok)) return { shape: null, ambiguous: [] }; // an advertised deliverable: today's routes decide
+    missing.add(tok);
+  }
+  if (missing.size === 1) return { shape: [...missing][0]!, ambiguous: [] };
+  return { shape: null, ambiguous: missing.size > 1 ? [...missing] : [] };
+}
+
 function namedAdvertisedShape(goal: string, knownShapes: string[]): GoalTargetDecision | null {
   if (!goal || knownShapes.length === 0) return null;
   // Longest first: "docs_align_tick" must win over a substring like "docs_align".
@@ -630,6 +665,17 @@ export async function inferGoalTargetDecision(
       confidence: 0.8,
       alternatives: knownShapes.includes("shellResult") ? [["shellResult"]] : [],
     });
+  }
+
+  // A NAMED TARGET NO VESSEL ADVERTISES (see namedUnadvertisedTarget): kept as the missing target, so the walk files it instead
+  // of serving a substitute. A composition ask is left to the LLM inferrer (its COMPOSITION RULE), like every shortcut below.
+  if (!isCompositionAsk) {
+    const nm = namedUnadvertisedTarget(goal, knownShapes);
+    if (nm.shape) {
+      console.log(`[goal-target-inference] named target ${nm.shape} is advertised by no vessel: kept as the missing target (the walk files its producer), not substituted`);
+      return remember({ shapes: [nm.shape], confidence: 0.85, alternatives: [] });
+    }
+    if (nm.ambiguous.length > 1) console.log(`[goal-target-inference] ambiguous: ${nm.ambiguous.length} unadvertised named deliverables (${nm.ambiguous.join(", ")}); none kept, no guess`);
   }
 
   // EXPLANATORY / CONCEPTUAL PROSE-ANSWER ROUTE (D1 floor, 2026-07-26). A plain
