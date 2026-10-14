@@ -241,7 +241,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
-import { capabilityDemand, exactFailuresSince } from "./capability-demand";
+import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId } from "./compose-gap-id";
@@ -4408,6 +4408,15 @@ async function loadReachedCommandCache(): Promise<void> {
 type GoalFailureRecord = { hash: string; classToken: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean };
 const goalFailureMemory = new Map<string, GoalFailureRecord[]>();
 const goalLastReachedAt = new Map<string, string>();
+// Every failure stamp per goal (uncapped by GOAL_FAILURE_PER_HASH, bounded below), for counting distinct failed RUNS since the last reach
+// (capability-demand.ts distinctRunsSince): the recall list above keeps only a goal's last few records, and one run writes several.
+const goalFailureStamps = new Map<string, string[]>();
+const GOAL_FAILURE_STAMPS_PER_HASH = 500;
+function noteGoalFailureStamp(hash: string, at: string): void {
+  const l = goalFailureStamps.get(hash) ?? [];
+  l.push(at); while (l.length > GOAL_FAILURE_STAMPS_PER_HASH) l.shift();
+  goalFailureStamps.set(hash, l);
+}
 const GOAL_FAILURE_MEMORY_PATH = process.env.GOAL_FAILURE_MEMORY_PATH ?? "/workspace/.goal-host-failure-memory.jsonl";
 const GOAL_FAILURE_MEMORY_MAX_LOAD = 4000;
 const GOAL_FAILURE_PER_HASH = 5;
@@ -4426,6 +4435,7 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   const list = goalFailureMemory.get(rec.hash) ?? [];
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
   goalFailureMemory.set(rec.hash, list);
+  noteGoalFailureStamp(rec.hash, rec.at);
   appendFile(GOAL_FAILURE_MEMORY_PATH, JSON.stringify(rec) + "\n").catch(() => { /* fail-open: in-process memory is authoritative */ });
   console.log(`[goal-host-vessel] failure-memory: REMEMBERED hash=${rec.hash} class=${rec.classToken || "-"} pick=${rec.pick ?? "-"} (${list.length} on record) reason="${rec.reason.slice(0, 100)}"`);
 }
@@ -4464,13 +4474,14 @@ async function loadGoalFailureMemory(): Promise<void> {
     const raw = await readFile(GOAL_FAILURE_MEMORY_PATH, "utf-8").catch(() => "");
     if (!raw) return;
     const lines = raw.split("\n").filter((l) => l.trim()).slice(-GOAL_FAILURE_MEMORY_MAX_LOAD);
-    goalFailureMemory.clear(); goalLastReachedAt.clear(); let n = 0;
+    goalFailureMemory.clear(); goalLastReachedAt.clear(); goalFailureStamps.clear(); let n = 0;
     for (const l of lines) {
       try {
         const o = JSON.parse(l) as Partial<GoalFailureRecord> & { reachedAt?: string };
         if (!o.hash) continue;
         if (o.reachedAt) { goalLastReachedAt.set(o.hash, o.reachedAt); continue; }
         if (!o.reason) continue;
+        noteGoalFailureStamp(o.hash, o.at ?? "");
         const list = goalFailureMemory.get(o.hash) ?? [];
         list.push({ hash: o.hash, classToken: o.classToken ?? "", reason: o.reason, pick: o.pick ?? null, shapes: o.shapes ?? [], attempts: o.attempts ?? 0, at: o.at ?? "", deterministic: o.deterministic === true });
         while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
@@ -6141,13 +6152,15 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
   // RECURRING DEMAND (openspec contained-self-development 8.14, "revisit only for shapes with recurring demand"; 2026-10-13). One
   // goal is a walk artifact, but the SAME goal failing again and again for the same missing shape is real demand: it has failed
   // at least R2's min_runs times since its last reach (goal-host's persisted failure memory, the FAILURE-RECALL feed;
-  // goalDeficiencyPolicy.min_runs, read where R2 reads it, default 3). A one-off goal stays born closed until it recurs. The
-  // policy is read only when the goal has failed at all, so a first-ever demand makes no extra call.
-  const priorFailures = recallGoalFailures(goal).exact.length;
+  // goalDeficiencyPolicy.min_runs, read where R2 reads it, default 3). Only a goal already on THIS shape's row can recur
+  // (capabilityDemand): a goal's first demand for a shape stays born closed, as does a one-off goal. The policy is read only when
+  // the goal has failed at all, so a first-ever demand makes no extra call.
+  const _gh = goalHashOf(goal);
+  const priorFailures = distinctRunsSince(goalFailureStamps.get(_gh) ?? [], goalLastReachedAt.get(_gh) ?? ""); // RUNS, not records (one run writes one record per reason)
   const minRuns = priorFailures > 0 ? await goalDeficiencyMinRuns() : 0;
   const { skip, demandGoals, demanded, recurring } = capabilityDemand({ priorGoals, goalKey, priorFailures, minRuns });
   if (skip) return null; // the same goal again is not new demand (unless it recurs)
-  if (recurring) console.log(`[fileCapabilityGap] ${canonicalShape}: recurring demand: the same goal failed ${priorFailures} time(s) since its last reach (>= min_runs ${minRuns}); filed OPEN`);
+  if (recurring) console.log(`[fileCapabilityGap] ${canonicalShape}: recurring demand: the same goal failed in ${priorFailures} distinct run(s) since its last reach (>= min_runs ${minRuns}); filed OPEN`);
   const summary = `Capability gap: the goal-walk needs a producer for shape "${canonicalShape}" but no live resolver or activity produces it. AUTHOR a resolver that produces ONLY the shape "${canonicalShape}" — do NOT expand scope, produce no other output shape. Put it in the vessel that should own this capability (if development-vessel: add the resolver in src/resolvers/, register the shape in src/config.ts AND the dispatch case in src/routes/impulses.ts per the three-place rule; otherwise the owning vessel's resolver surface). Keep it dependency-free (Bun built-ins) and make it typecheck.`;
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
