@@ -14,4 +14,10 @@ describe("verifierFamilyOf only handles quantitative repo questions", () => {
     expect(isQuantitativeRepoQuestion(quantGoal)).toBeTrue();
     expect(mod.verifierFamilyOf(quantGoal)).toBe("function-count");
   });
+
+  it("returns null for verbatim file-read goals, which are non-quantitative", () => {
+    const verbatimGoal = "Read the file content of repos/example-vessel/src/index.ts";
+    expect(isQuantitativeRepoQuestion(verbatimGoal)).toBeFalse();
+    expect(mod.verifierFamilyOf(verbatimGoal)).toBeNull();
+  });
 });
