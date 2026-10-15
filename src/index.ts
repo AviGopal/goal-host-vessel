@@ -5579,14 +5579,14 @@ async function runGroundedToolLoop(
   }
   return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
 }
-async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string): Promise<GoalSeekResult | null> {
+async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }): Promise<GoalSeekResult | null> {
   // CARRY THE DISPATCH ID EXPLICITLY. ufExecuteTool reads it from dispatchContext, which was
   // only ever populated by enterWith in runGoalWithRecovery; on a FEEDBACK-RETRY the floor ran
   // with an empty store and posted bare {type, command} shell pointers (run 12 item 7, commit
   // 5a0d780e unlinked). Re-enter under run() with the id the caller passed, so every tool call
   // inside the floor is attributed regardless of how the async chain reached it.
   if (dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) {
-    return await dispatchContext.run({ dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId));
+    return await dispatchContext.run({ dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId, out));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -5863,6 +5863,9 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // SAY WHY THE FLOOR DECIDED. The verdict line logs reached= only and the dispatch recorded the walk's earlier
   // reason, so why a grounded floor answer failed was observable nowhere. Placed after the capture (its pin).
   console.log(`[goal-host-vessel] floor: decision goalHash=${goalHashOf(goal)} reached=${floorReached} rule=${_floorV.reason_code} judge=${verdict === null ? "null (verifier gave no verdict)" : JSON.stringify(String(verdict.reason ?? "").slice(0, 300))} tools=${groundedOk}/${executed.length}`);
+  // The not-reached reason, for the caller to carry: the floor is the last thing a dispatch tried, so its reason is
+  // the dispatch's (supersede). A verifier that gave no verdict is said as such, so the memory filter skips it.
+  if (out && !(verdict?.reached && floorReached)) out.reason = verdict === null ? "floor: reach verifier unreachable — verdict unknown" : `floor ${_floorV.reason_code}: ${String(verdict.reason ?? "").slice(0, 300)}`;
   if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
     await persistSatisfierTrace({
       id: floorExecId,
@@ -7803,6 +7806,8 @@ interface GoalSeekResult {
   completionShapes: string[] | null;
   attempts: number;
   goalReachReason?: string;
+  /** Set only when a not-reached floor superseded goalReachReason: the walk's own reason, for readers about the walk's path (the reached-command cache). */
+  walkReachReason?: string;
   /** A named refusal stage (e.g. check_supply_goal_missed_edit_route), carried onto the dispatch record and served by
    *  GET /executions/:id so refusals of one kind can be counted. Absent on ordinary results. */
   stage?: string;
@@ -14646,7 +14651,8 @@ async function runGoalWithRecoveryInner(
       if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
+          const _ufOut: { reason?: string } = {};
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut);
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
@@ -14666,6 +14672,15 @@ async function runGoalWithRecoveryInner(
               console.log(`[goal-host-vessel] recordGoalPath (floor reach) shapes=${JSON.stringify(uf.completionShapes ?? [])} goal="${goal.slice(0, 60)}"`);
             }
             return uf;
+          }
+          // THE FLOOR'S REASON SUPERSEDES. The floor ran last, so a not-reached dispatch's reason is the floor's, not the
+          // walk's earlier one (a grounded floor answer used to be recorded as the walk's "error-envelope"). The walk's
+          // reason is kept inside it, so the reached-command cache's deterministic-disconfirmation read is unchanged.
+          // Tapped as NOT REACHED (not HOLLOW) so the failure memory takes it once, from the final reason.
+          if (!uf?.reached && walk.reached !== true && _ufOut.reason) {
+            tap(`[goal-host-vessel] ${opts.surface}: floor: NOT REACHED — ${_ufOut.reason}`);
+            walk.walkReachReason = String(walk.goalReachReason || "no reason recorded");
+            walk.goalReachReason = `${_ufOut.reason} (walk: ${String(walk.goalReachReason ?? "no reason recorded").slice(0, 240)})`.slice(0, 600);
           }
         } catch { /* fail-open */ }
       }
@@ -18103,7 +18118,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // known-command library only ever grows: a command from a reach that later graded false
       // stayed on disk and was replayed by the next similar goal after every restart.
       if (record.reached === false && typeof record.goal === "string" && record.goal) {
-        evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String(record.goalReachReason ?? "no reason recorded").slice(0, 120)}`);
+        // The cached command is the WALK's: it is judged on the walk's own reason even when a floor's reason superseded the record's.
+        evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`);
       }
       // FAILURE MEMORY: the verdict reason is the lesson. Persist it keyed by goal_hash so the next
       // dispatch of this goal can avoid the named defect explicitly instead of re-deriving blind.
