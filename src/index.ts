@@ -5320,6 +5320,14 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     }
   }
 
+  // A DEGENERATE TRUTH IS NOT A VERDICT EITHER. The rule above (08-07) kept a degenerate truth out of donation and mint,
+  // but grading still used it: two git/file proxies agreeing on 0 certified "0" as reached (every false green in one probe
+  // batch) and hollowed a walk that had counted the real store. Same predicate, same abstain path as "no measurable
+  // value": the judge grades, and it already carries degenerate-0 skepticism.
+  if (!_truthIsMintable) {
+    console.log(`[recompute] degenerate truth=${isToken ? `"${truth}"` : truth} — two derivations agreeing on nothing measured is evidence about the authoring, not the answer; abstaining (the judge grades)`);
+    return null;
+  }
   const emitted: Array<number | string> = isToken ? extractEmittedTokens(digest) : extractEmittedNumbers(digest);
   const verdict = isToken
     ? gradeTokenRecompute(truth as string, emitted as string[])
