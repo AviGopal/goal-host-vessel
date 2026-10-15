@@ -4417,7 +4417,9 @@ function noteGoalFailureStamp(hash: string, at: string): void {
   l.push(at); while (l.length > GOAL_FAILURE_STAMPS_PER_HASH) l.shift();
   goalFailureStamps.set(hash, l);
 }
-const GOAL_FAILURE_MEMORY_PATH = process.env.GOAL_FAILURE_MEMORY_PATH ?? "/workspace/.goal-host-failure-memory.jsonl";
+// Read at use, not frozen at import: a test that sets GOAL_FAILURE_MEMORY_PATH after another file imported this module
+// must still keep its fixture records out of the live memory file (the gate runs every file in one process).
+const goalFailureMemoryPath = (): string => process.env.GOAL_FAILURE_MEMORY_PATH ?? "/workspace/.goal-host-failure-memory.jsonl";
 const GOAL_FAILURE_MEMORY_MAX_LOAD = 4000;
 const GOAL_FAILURE_PER_HASH = 5;
 function goalClassTokenOf(goalText: string): string {
@@ -4436,8 +4438,72 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
   goalFailureMemory.set(rec.hash, list);
   noteGoalFailureStamp(rec.hash, rec.at);
-  appendFile(GOAL_FAILURE_MEMORY_PATH, JSON.stringify(rec) + "\n").catch(() => { /* fail-open: in-process memory is authoritative */ });
+  appendFile(goalFailureMemoryPath(), JSON.stringify(rec) + "\n").catch(() => { /* fail-open: in-process memory is authoritative */ });
   console.log(`[goal-host-vessel] failure-memory: REMEMBERED hash=${rec.hash} class=${rec.classToken || "-"} pick=${rec.pick ?? "-"} (${list.length} on record) reason="${rec.reason.slice(0, 100)}"`);
+}
+// THE FAILURE SIDE'S REASON (B2). A failed trace carries WHY it failed (failureMode.reason, or the failing task's
+// error), but every goalReachReason assignment sat on the completed/reach-gate path, so a failed attempt reached the
+// recovery loop's next attempt, the dispatch record and the failure memory with no reason at all: the memory stored
+// nothing and the retry chose blind. These read the reason off the evidence that already exists; nothing is invented.
+/** Why a FAILED trace failed: failureMode.reason, else the first task with success === false as "<taskId>(<resolver>): <error>". */
+export function failedTraceReason(trace: unknown): string | undefined {
+  const t = (trace ?? {}) as { failureMode?: { reason?: unknown }; tasks?: Array<{ taskId?: unknown; resolverId?: unknown; success?: unknown; error?: unknown } | null> };
+  const fm = typeof t.failureMode?.reason === "string" ? t.failureMode.reason.trim() : "";
+  if (fm) return fm.slice(0, 600);
+  const task = (Array.isArray(t.tasks) ? t.tasks : []).find((x) => !!x && x.success === false);
+  if (!task) return undefined;
+  const err = typeof task.error === "string" && task.error.trim() ? task.error.trim() : "no error recorded";
+  return `${String(task.taskId ?? "?")}(${String(task.resolverId ?? "?")}): ${err}`.slice(0, 600);
+}
+/** A thrown dispatch's reason: the error's message (a thrown refusal is a decline, and its message is the reason). */
+export function thrownDispatchReason(err: unknown): string {
+  const m = err instanceof Error ? err.message : typeof (err as { message?: unknown } | null)?.message === "string" ? String((err as { message: string }).message) : String(err ?? "");
+  return m.trim() ? m.trim().slice(0, 600) : "dispatch threw with no message";
+}
+/** The distinct failure reasons of one dispatch, attempt 1 first: each walk-log HOLLOW or TRACE FAILED verdict, then the terminal reason. */
+export function dispatchFailureReasons(walkLog: readonly unknown[], finalReason: string | null | undefined): string[] {
+  const seen = new Set<string>(); const reasons: string[] = [];
+  for (const l of walkLog) {
+    const m = /(?:HOLLOW|TRACE FAILED) \u2014 (.+?)(?:; \u03b2|$)/.exec(String(l));
+    if (m && m[1]) { const k = m[1].trim().slice(0, 600); if (k && !seen.has(k)) { seen.add(k); reasons.push(k); } }
+  }
+  const fin = String(finalReason ?? "").trim().slice(0, 600);
+  if (fin && !seen.has(fin)) reasons.push(fin);
+  return reasons;
+}
+/** Remember a not-reached dispatch's failure reasons (at most three, attempt 1 first) in the failure memory. */
+export function rememberDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): string[] {
+  const reasons = dispatchFailureReasons(walkLog, finalReason).slice(0, 3);
+  for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts);
+  return reasons;
+}
+/**
+ * Why a non-FAVORABLE compose report refused: its `error` when it has one (unchanged), else the structured fields the
+ * report always carries — failure_kind, terminal_refusal, the first failed applied op, the first failed verify entry's
+ * error lines, semantic_gate.reason. An admission or check-supply refusal with no `error` used to read as an empty reason.
+ */
+export function composeReportReason(body: Record<string, unknown> | null | undefined): string {
+  const b = (body ?? {}) as Record<string, unknown>;
+  if (b.error !== undefined && b.error !== null && String(b.error).trim()) return String(b.error).slice(0, 200);
+  const parts: string[] = [];
+  if (typeof b.failure_kind === "string" && b.failure_kind.trim()) parts.push(`failure_kind=${b.failure_kind.trim()}`);
+  if (typeof b.terminal_refusal === "string" && b.terminal_refusal.trim()) parts.push(`terminal_refusal=${b.terminal_refusal.trim().slice(0, 120)}`);
+  const failedOp = (Array.isArray(b.applied) ? b.applied : []).find((a: any) => a && a.ok === false) as { detail?: unknown } | undefined;
+  if (failedOp) {
+    const rawDetail = typeof failedOp.detail === "string" ? failedOp.detail : JSON.stringify(failedOp.detail ?? "");
+    let parsedErr = "";
+    try { parsedErr = String(JSON.parse(rawDetail)?.error ?? ""); } catch { /* not JSON */ }
+    parts.push(`apply failed: ${(parsedErr || rawDetail || "op failed with no detail").slice(0, 160)}`);
+  }
+  const fv = (Array.isArray(b.verify) ? b.verify : []).find((v: any) => v && v.ok === false) as { vessel?: unknown; output?: unknown } | undefined;
+  if (fv) {
+    const out = typeof fv.output === "string" ? fv.output : "";
+    const errLines = out.split("\n").filter((l: string) => (/error|EXIT=[1-9]/.test(l) || l.includes("(fail)")) && !l.includes("(pass)")).slice(0, 3).join(" | ");
+    parts.push(`verify failed (${String(fv.vessel ?? "?")}): ${(errLines || out.slice(-200)).slice(0, 240)}`);
+  }
+  const sg = b.semantic_gate as { reason?: unknown } | null | undefined;
+  if (sg && typeof sg === "object" && typeof sg.reason === "string" && sg.reason.trim()) parts.push(`semantic_gate: ${sg.reason.trim().slice(0, 200)}`);
+  return parts.length > 0 ? parts.join("; ") : "no failure detail in compose report";
 }
 function markGoalReached(goalText: string): void {
   if (!goalText) return;
@@ -4445,7 +4511,7 @@ function markGoalReached(goalText: string): void {
   if (!goalFailureMemory.has(hash)) return;
   const at = new Date().toISOString();
   goalLastReachedAt.set(hash, at);
-  appendFile(GOAL_FAILURE_MEMORY_PATH, JSON.stringify({ hash, reachedAt: at }) + "\n").catch(() => { /* fail-open */ });
+  appendFile(goalFailureMemoryPath(), JSON.stringify({ hash, reachedAt: at }) + "\n").catch(() => { /* fail-open */ });
   console.log(`[goal-host-vessel] failure-memory: SUPERSEDED hash=${hash} (goal reached; older failure records no longer fed back)`);
 }
 function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
@@ -4471,7 +4537,7 @@ function priorFailureFeedbackFor(goalText: string): string {
 }
 async function loadGoalFailureMemory(): Promise<void> {
   try {
-    const raw = await readFile(GOAL_FAILURE_MEMORY_PATH, "utf-8").catch(() => "");
+    const raw = await readFile(goalFailureMemoryPath(), "utf-8").catch(() => "");
     if (!raw) return;
     const lines = raw.split("\n").filter((l) => l.trim()).slice(-GOAL_FAILURE_MEMORY_MAX_LOAD);
     goalFailureMemory.clear(); goalLastReachedAt.clear(); goalFailureStamps.clear(); let n = 0;
@@ -4488,7 +4554,7 @@ async function loadGoalFailureMemory(): Promise<void> {
         goalFailureMemory.set(o.hash, list); n++;
       } catch { /* skip a malformed line */ }
     }
-    console.log(`[goal-host-vessel] failure-memory: loaded ${n} record(s) for ${goalFailureMemory.size} goal(s) from ${GOAL_FAILURE_MEMORY_PATH}`);
+    console.log(`[goal-host-vessel] failure-memory: loaded ${n} record(s) for ${goalFailureMemory.size} goal(s) from ${goalFailureMemoryPath()}`);
   } catch { /* fail-open: start empty */ }
 }
 // ── Tier-2 command reuse: deterministic lexical diff-alignment rebind (2026-07-24; multi-slot 2026-07-25) ──
@@ -14021,7 +14087,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `early edit-intent routed to feature_compose; refused at admission (stage=${_earlyAdmissionStage}): ${String(earlyBody.error ?? "").slice(0, 200)} - an admission refusal is final, so it is neither walked nor escalated`,
+                goalReachReason: `early edit-intent routed to feature_compose; refused at admission (stage=${_earlyAdmissionStage}): ${composeReportReason(earlyBody)} - an admission refusal is final, so it is neither walked nor escalated`,
                 reached: false,
               };
             }
@@ -14038,7 +14104,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
-                goalReachReason: `early edit-intent routed to feature_compose; check_supply compose refused at ${_stage} (verdict=${earlyVerdict || "(none)"}): ${String(earlyBody.error ?? "").slice(0, 200)} - a check-supply compose is final, so it is neither walked nor escalated`,
+                goalReachReason: `early edit-intent routed to feature_compose; check_supply compose refused at ${_stage} (verdict=${earlyVerdict || "(none)"}): ${composeReportReason(earlyBody)} - a check-supply compose is final, so it is neither walked nor escalated`,
                 reached: false,
               };
             }
@@ -15433,6 +15499,15 @@ async function runGoalWithRecoveryInner(
     const selId = result.selectedTemplateId;
     reached = false;
     const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
+    // A FAILED TRACE CARRIES ITS REASON (B2): the reach gate below only runs on a completed trace, so without this a
+    // failed attempt reached the next attempt (classifyFailure), the dispatch record and the failure memory reasonless.
+    if (status === "failed") {
+      const _failedWhy = failedTraceReason(result.trace);
+      if (_failedWhy) {
+        goalReachReason = _failedWhy;
+        tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts} via ${selId ?? "(none)"}: TRACE FAILED \u2014 ${_failedWhy}`);
+      }
+    }
     // Goal-reaching gate: a "completed" execution that didn't reach the goal is a
     // hollow completion — downgrade + β-penalise so Thompson stops reinforcing
     // goal-irrelevant gaming/wrapper templates. completion_shapes surface the
@@ -17988,14 +18063,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           // goalReachReason describes the worst producer after suppress-drift, not the closest
           // attempt; the most informative lesson is usually the first verdict (measured: A's
           // attempt-1 "5 families instead of 1" was lost behind the drifted "fails to produce").
-          const _seen = new Set<string>(); const _reasons: string[] = [];
-          for (const l of walkStepSink) {
-            const m = /HOLLOW \u2014 (.+?)(?:; \u03b2|$)/.exec(String(l));
-            if (m && m[1]) { const k = m[1].trim().slice(0, 600); if (k && !_seen.has(k)) { _seen.add(k); _reasons.push(k); } }
-          }
-          const _final = String(record.goalReachReason ?? "").trim().slice(0, 600);
-          if (_final && !_seen.has(_final)) _reasons.push(_final);
-          for (const r of _reasons.slice(0, 3)) rememberGoalFailure(record.goal, r, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+          rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
         }
         else if (record.reached === true) markGoalReached(record.goal);
       }
@@ -18045,6 +18113,13 @@ async function handleRunGoal(req: Request): Promise<Response> {
         record.status = "failed"; record.endedAt = Date.now();
         record.reached = false;
         record.error = (err as Error).message;
+      }
+      // A THROW KEEPS ITS REASON (B2): the record carried only `error`, so goalReachReason was null and the failure
+      // memory never heard of the throw. A pinned refusal is recorded with its reason but not remembered: it refuses
+      // one pinned target, not the goal, and a remembered failure turns off reached-command replay for the goal.
+      record.goalReachReason = thrownDispatchReason(err);
+      if (!__isPinnedRefusal && typeof record.goal === "string" && record.goal) {
+        rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, record.selectedTemplateId, (record as { completionShapes?: string[] | null }).completionShapes ?? null, (record as { attempts?: number }).attempts);
       }
       // A throw is an honest negative verdict, and it was never delivered: the only
       // delivery site sat on the success path above this catch, so the executions the
@@ -19314,6 +19389,9 @@ export {
   walkFailureMode,
   buildCompositeTraceFromChain,
   resolveFleetActivityFeed,
+  runGoalWithRecovery,
+  rememberGoalFailure,
+  recallGoalFailures,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 
