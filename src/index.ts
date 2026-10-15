@@ -16291,6 +16291,10 @@ function registerBuiltinResolvers(): void {
 // and produce useful diff logs. Keyed on the bare shape name (we register both bare
 // and qualified forms but the bare name is the canonical identity).
 const registeredProxyShapes = new Set<string>();
+// Shapes held ONLY by a discovery proxy (registered while the dev-vessel /shapes list was unavailable, e.g. a startup
+// that lost the race to a saturated dev-vessel). The dev-vessel registration reclaims them, so a lost race heals on the
+// next poll instead of persisting until the next restart.
+const discoveryOnlyProxyShapes = new Set<string>();
 
 // shape -> {endpoint, resolvePath} captured at registration time from the vessel
 // registry (which carries endpoints), because the per-resolve vesselCapability
@@ -16369,6 +16373,72 @@ function interpolateProxyValue(value: unknown, variables: Record<string, unknown
   return value;
 }
 
+// THE DEV-VESSEL ENVELOPE, ONE RULE FOR EVERY PROXY. development-vessel's /v2/impulses/resolve wraps a resolver's result as
+// { success, shape, body }. The dev-vessel proxy and the discovery proxy both receive it (the discovery proxy whenever a
+// startup lost the race to register the dev-vessel proxies). The discovery proxy had neither rule below: a structuredError
+// read as SUCCESS, and json_path_extract handed on its whole {value,path,valueJson} object, which broke every JSON body
+// that interpolated it (the trace-store reconcile's lease token). Moved here verbatim from the dev-vessel proxy.
+/** A structuredError inner shape is a resolver-level failure even on HTTP 200: throw, so the engine records the failure. */
+function devEnvelopeThrowIfError(label: string, parsedObj: Record<string, unknown> | null): void {
+  if (!parsedObj || parsedObj["shape"] !== "structuredError") return;
+  const innerBody = parsedObj["body"] as Record<string, unknown> | undefined;
+  const reason = innerBody?.["failure_mode"]
+    ? `failure_mode=${innerBody["failure_mode"]}`
+    : `status=${innerBody?.["status"] ?? "n/a"}`;
+  const detail = String(innerBody?.["detail"] ?? innerBody?.["error"] ?? "no detail");
+  throw new Error(`${label} resolver returned structuredError (${reason}): ${detail.slice(0, 200)}`);
+}
+/** The envelope's content: the body, with the known shapes unwrapped to their canonical value; anything else unchanged. */
+function devEnvelopeUnwrap(parsed: unknown): unknown {
+  const parsedObj = (typeof parsed === "object" && parsed !== null) ? (parsed as Record<string, unknown>) : null;
+  let impulseContent: unknown = parsed;
+  if (parsedObj && parsedObj["success"] === true && "body" in parsedObj) {
+    const innerBody = parsedObj["body"];
+    const innerShapeName = parsedObj["shape"];
+    // For llm-completion-style results, the text is the canonical content
+    // of the response. For other shapes, return the body object.
+    if (innerBody && typeof innerBody === "object" && !Array.isArray(innerBody)) {
+      const body = innerBody as Record<string, unknown>;
+      // SHAPE-NAME MISMATCH — the unwrap below was DEAD ON THE REAL ENVELOPE.
+      // development-vessel's llm_completion_dispatch returns
+      //   { shape: "llmTextCompletion", body: { text, model, requested_model, ... } }
+      // and has never returned "llm_completion_result". That literal appears zero
+      // times in this file's producer, so this branch never matched and execution
+      // fell to the generic `impulseContent = innerBody` below — handing the whole
+      // envelope object downstream. Anything that then stringifies a value slot
+      // writes {"text":"...","model":"auto","requested_model":"auto"} into a file.
+      //
+      // Measured consequence, 2026-08-07: that exact JSON was written into
+      // ribosome-vessel/src/index.ts, and 7 files in /workspace/proposals are
+      // ENTIRELY this envelope where a patch_proposal belongs — the artifact sink
+      // that feeds apply_proposal_as_patch. One wrong string literal, two sinks.
+      //
+      // Accept BOTH names rather than swapping one for the other: "llmTextCompletion"
+      // is what the live producer emits, and "llm_completion_result" is retained
+      // because federated peers and older seeds may still use it, and silently
+      // breaking those would trade one dead branch for another.
+      if ((innerShapeName === "llmTextCompletion" || innerShapeName === "llm_completion_result") && typeof body["text"] === "string") {
+        // Strip markdown code fences that LLMs commonly wrap JSON in.
+        let text = body["text"] as string;
+        text = text.replace(/^```(?:json|JSON)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+        impulseContent = text;
+      } else if (innerShapeName === "fileContent" && typeof body["content"] === "string") {
+        // fs_read returns {shape:"fileContent", body:{content:"..."}}. Unwrap so
+        // {{taskId_content}} gives the raw file string rather than the envelope object.
+        impulseContent = body["content"];
+      } else if (innerShapeName === "json_extracted_value") {
+        // json_path_extract returns {valueJson, value, path}. Expose value directly.
+        impulseContent = body["value"] ?? body["valueJson"] ?? innerBody;
+      } else {
+        impulseContent = innerBody;
+      }
+    } else {
+      impulseContent = innerBody;
+    }
+  }
+  return impulseContent;
+}
+
 function buildProxyResolver(shape: string) {
   return {
     id: shape,
@@ -16444,6 +16514,8 @@ function buildProxyResolver(shape: string) {
           // structuredError WITHOUT failure_mode. Treat all of them as task
           // failure so the substrate sees real signal instead of silent
           // swallowing.
+          // The carrier stays INLINE here: its contract-conformance test pins the format at this emitting site. The discovery
+          // proxy emits the same format through devEnvelopeThrowIfError.
           if (innerShape === "structuredError") {
             const reason = innerBody?.["failure_mode"]
               ? `failure_mode=${innerBody["failure_mode"]}`
@@ -16461,51 +16533,7 @@ function buildProxyResolver(shape: string) {
         // Without this unwrap, register_variant gets fed the entire envelope and
         // activity-api rejects on schema validation. Set impulse.content = body
         // when the wrapper shape is detected; else pass parsed through.
-        let impulseContent: unknown = parsed;
-        if (parsedObj && parsedObj["success"] === true && "body" in parsedObj) {
-          const innerBody = parsedObj["body"];
-          const innerShapeName = parsedObj["shape"];
-          // For llm-completion-style results, the text is the canonical content
-          // of the response. For other shapes, return the body object.
-          if (innerBody && typeof innerBody === "object" && !Array.isArray(innerBody)) {
-            const body = innerBody as Record<string, unknown>;
-            // SHAPE-NAME MISMATCH — the unwrap below was DEAD ON THE REAL ENVELOPE.
-            // development-vessel's llm_completion_dispatch returns
-            //   { shape: "llmTextCompletion", body: { text, model, requested_model, ... } }
-            // and has never returned "llm_completion_result". That literal appears zero
-            // times in this file's producer, so this branch never matched and execution
-            // fell to the generic `impulseContent = innerBody` below — handing the whole
-            // envelope object downstream. Anything that then stringifies a value slot
-            // writes {"text":"...","model":"auto","requested_model":"auto"} into a file.
-            //
-            // Measured consequence, 2026-08-07: that exact JSON was written into
-            // ribosome-vessel/src/index.ts, and 7 files in /workspace/proposals are
-            // ENTIRELY this envelope where a patch_proposal belongs — the artifact sink
-            // that feeds apply_proposal_as_patch. One wrong string literal, two sinks.
-            //
-            // Accept BOTH names rather than swapping one for the other: "llmTextCompletion"
-            // is what the live producer emits, and "llm_completion_result" is retained
-            // because federated peers and older seeds may still use it, and silently
-            // breaking those would trade one dead branch for another.
-            if ((innerShapeName === "llmTextCompletion" || innerShapeName === "llm_completion_result") && typeof body["text"] === "string") {
-              // Strip markdown code fences that LLMs commonly wrap JSON in.
-              let text = body["text"] as string;
-              text = text.replace(/^```(?:json|JSON)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-              impulseContent = text;
-            } else if (innerShapeName === "fileContent" && typeof body["content"] === "string") {
-              // fs_read returns {shape:"fileContent", body:{content:"..."}}. Unwrap so
-              // {{taskId_content}} gives the raw file string rather than the envelope object.
-              impulseContent = body["content"];
-            } else if (innerShapeName === "json_extracted_value") {
-              // json_path_extract returns {valueJson, value, path}. Expose value directly.
-              impulseContent = body["value"] ?? body["valueJson"] ?? innerBody;
-            } else {
-              impulseContent = innerBody;
-            }
-          } else {
-            impulseContent = innerBody;
-          }
-        }
+        const impulseContent: unknown = devEnvelopeUnwrap(parsed);
 
         return [{
           id: random.id(`dev:${shape}`),
@@ -16637,8 +16665,9 @@ function buildDiscoveryProxyResolver(shape: string) {
         if (pObj["success"] === false) {
           throw new Error(`${shape} resolver returned error: ${String(pObj["error"] ?? "no detail").slice(0, 200)}`);
         }
+        devEnvelopeThrowIfError(`${shape} via ${endpoint}`, pObj);
         if ("content" in pObj) impulseContent = pObj["content"];
-        else if ("body" in pObj) impulseContent = pObj["body"];
+        else if ("body" in pObj) impulseContent = devEnvelopeUnwrap(parsed);
       }
 
       return [{
@@ -16812,6 +16841,7 @@ async function registerDiscoveryProxies(): Promise<string[]> {
     const resolver = buildDiscoveryProxyResolver(shape);
     host.runtime.resolvers.register(resolver as unknown as Parameters<typeof host.runtime.resolvers.register>[0]);
     registeredProxyShapes.add(shape);
+    discoveryOnlyProxyShapes.add(shape);
     added.push(shape);
   }
   if (added.length > 0) {
@@ -16856,8 +16886,9 @@ async function registerDevVesselProxies(): Promise<{ added: string[]; total: num
     }
 
     const added: string[] = [];
+    const reclaimed: string[] = [];
     for (const shape of shapes) {
-      if (registeredProxyShapes.has(shape)) continue;
+      if (registeredProxyShapes.has(shape) && !discoveryOnlyProxyShapes.has(shape)) continue;
       const resolver = buildProxyResolver(shape);
       // Cast: the proxy resolve fn uses a loose Record-typed context for
       // forward-compat with engine context shape evolution. The runtime
@@ -16865,7 +16896,10 @@ async function registerDevVesselProxies(): Promise<{ added: string[]; total: num
       host.runtime.resolvers.register(resolver as unknown as Parameters<typeof host.runtime.resolvers.register>[0]);
       host.runtime.resolvers.register({ ...resolver, id: `development-vessel:${shape}` } as unknown as Parameters<typeof host.runtime.resolvers.register>[0]);
       registeredProxyShapes.add(shape);
-      added.push(shape);
+      if (discoveryOnlyProxyShapes.delete(shape)) reclaimed.push(shape); else added.push(shape);
+    }
+    if (reclaimed.length > 0) {
+      console.log(`[goal-host-vessel] proxy registration: reclaimed ${reclaimed.length} shapes from the discovery proxy (a startup lost the race to dev-vessel) — ${reclaimed.slice(0, 5).join(", ")}${reclaimed.length > 5 ? ", ..." : ""}`);
     }
 
     if (added.length > 0) {
