@@ -145,6 +145,17 @@ describe("(r3) the strip covers every walk-built shape, and credentials too", ()
     expect(hits[0]).not.toContain("model-chosen-key");
   });
 
+  test("MUST-FAIL: a maintenance lease keeps its own `token` (the lease handle is its contract input), and nothing else credential-named", () => {
+    // The strip dropped maintenanceLease_write's token, so every trace-store reconcile failed at its lease release.
+    const p = buildResolvePointer("maintenanceLease_write", { extract_lease_token: "spill", fetch_http_endpoint: "http://x" }, { op: "release", token: "lease-123", api_key: "a", github_token: "g", pointer: { token: "inner" } });
+    expect(p).toEqual({ op: "release", token: "lease-123", pointer: { token: "inner" }, type: "maintenanceLease_write" });
+  });
+
+  test("CONTROL: the lease exemption is per shape: any other shape still loses `token`", () => {
+    const p = buildResolvePointer("web_search", {}, { query: "q", token: "e" });
+    expect(p).toEqual({ query: "q", type: "web_search" });
+  });
+
   test("CONTROL: ordinary fields that only resemble the patterns survive (max_tokens, token_count, urls, endpoint_count)", () => {
     const p = buildResolvePointer("llm_completion_dispatch", {}, { prompt: "p", max_tokens: 60, token_count: 3, urls: ["https://a"], endpoint_count: 2 });
     expect(p).toEqual({ prompt: "p", max_tokens: 60, token_count: 3, urls: ["https://a"], endpoint_count: 2, type: "llm_completion_dispatch" });

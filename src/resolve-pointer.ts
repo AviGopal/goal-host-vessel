@@ -80,6 +80,19 @@ export const URL_AS_DATA: ReadonlyMap<string, ReadonlySet<string>> = new Map([
 ]);
 
 /**
+ * CREDENTIAL-NAMED FIELD AS DATA. The credential strip's counterpart to URL_AS_DATA: a shape whose resolver takes a
+ * field that matches CREDENTIAL_KEY as its own contract input, which is not a node credential. Each is checked against
+ * its resolver:
+ *   maintenanceLease_write  development-vessel resolvers/maintenance-lease.ts  pointer.token is the lease handle that
+ *                           acquire returned (renew/release take it; it is validated against the lease file, so a wrong
+ *                           one is token_mismatch). Stripping it failed every trace-store reconcile at its release.
+ * Adding a shape here is a deliberate decision, as for URL_AS_DATA.
+ */
+export const CREDENTIAL_AS_DATA: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["maintenanceLease_write", new Set(["token"])],
+]);
+
+/**
  * NO WALK-BUILT POINTER CARRIES AN ENDPOINT OVERRIDE OR A CREDENTIAL.
  *
  * Several vessels attach their node key to fetch URLs that a resolve pointer field can override
@@ -98,6 +111,7 @@ export const URL_AS_DATA: ReadonlyMap<string, ReadonlySet<string>> = new Map([
  */
 export function stripEndpointOverrides<T extends Record<string, unknown>>(shape: string, obj: T): T {
   const dataFields = URL_AS_DATA.get(shape);
+  const credDataFields = CREDENTIAL_AS_DATA.get(shape);
   const dropped: string[] = [];
   const isPlain = (v: unknown): v is Record<string, unknown> => {
     if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
@@ -107,8 +121,10 @@ export function stripEndpointOverrides<T extends Record<string, unknown>>(shape:
   const strip = (o: Record<string, unknown>, path: string, nestLeft: number, top: boolean): Record<string, unknown> => {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(o)) {
-      const urlAsData = dataFields?.has(k) === true && (top || path === "impulse.pointer." || path === "pointer.");
-      if ((ENDPOINT_OVERRIDE_KEY.test(k) && !urlAsData) || CREDENTIAL_KEY.test(k)) { dropped.push(path + k); continue; }
+      const atPointer = top || path === "impulse.pointer." || path === "pointer.";
+      const urlAsData = dataFields?.has(k) === true && atPointer;
+      const credAsData = credDataFields?.has(k) === true && atPointer;
+      if ((ENDPOINT_OVERRIDE_KEY.test(k) && !urlAsData) || (CREDENTIAL_KEY.test(k) && !credAsData)) { dropped.push(path + k); continue; }
       out[k] = nestLeft > 0 && (k === "pointer" || k === "impulse") && isPlain(v) ? strip(v, `${path}${k}.`, nestLeft - 1, false) : v;
     }
     return out;
