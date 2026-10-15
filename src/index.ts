@@ -1595,11 +1595,25 @@ async function verifyNamedArtifactCarries(
   }
 }
 
+// THE CLASS AGAIN: AN ORACLE CLAIMING A GOAL WHOSE SCOPE ITS PARSE DOES NOT REPRESENT (see the registry oracle above,
+// 4th and 5th instances, and its warning that a guard must not encode the symptom). This parse represents one thing,
+// the status (open/closed). "How many open gaps were filed by goal deficiency recognition?" was claimed as a plain open
+// total and graded against it. So the guard is the scope itself, not the observed phrase: once the words this parse
+// represents (count phrasing, status, gaps, filler) are removed, any remaining content word is scope it cannot grade,
+// and it abstains. Abstaining costs one LLM judgement; claiming wrongly credits a wrong answer.
+const GAP_TOTAL_REPRESENTED = new Set([
+  "how", "many", "much", "count", "counts", "number", "numbers", "of", "total", "totals", "open", "closed", "gap", "gaps",
+  "substrate", "substrategap", "substrategaps", "are", "is", "there", "currently", "current", "right", "now", "in", "the",
+  "store", "what", "s", "do", "does", "we", "you", "have", "has", "exist", "exists", "a", "an", "all", "at", "moment",
+  "presently", "please", "tell", "me", "report", "give", "show", "it", "this", "that's", "whats",
+]);
 function parseGapTotalCount(goal: string): { status: "open" | "closed" } | null {
   if (!/\b(?:gaps?|substrate\s?gaps?)\b/i.test(goal)) return null;
   if (!/\b(?:how many|count|number of|total)\b/i.test(goal)) return null;
   if (parseGapCategoryAggregate(goal)) return null;
   if (parseGapRatio(goal)) return null;
+  const residual = goal.toLowerCase().replace(/[^a-z0-9\s']/g, " ").split(/\s+/).filter((w) => w && !GAP_TOTAL_REPRESENTED.has(w));
+  if (residual.length > 0) return null;
   return { status: /\bclosed\b/i.test(goal) ? "closed" : "open" };
 }
 
