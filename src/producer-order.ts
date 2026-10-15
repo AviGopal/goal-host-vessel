@@ -58,10 +58,29 @@ export function producerClass(row: ProducerRow): 0 | 1 | 2 {
   return isLoopbackEndpoint(row.endpoint) ? 0 : 2;
 }
 
-/** Returns a new array: local rows, then overlay/peer rows, then the rest; input untouched. */
-export function orderProducers<T extends ProducerRow>(rows: readonly T[]): T[] {
+/** The origin (scheme://host:port, lowercased) of a URL; null when it is missing or unparseable. */
+export function urlOrigin(url: string | undefined): string | null {
+  if (typeof url !== "string" || !url) return null;
+  try { return new URL(url).origin.toLowerCase(); } catch { return null; }
+}
+
+/**
+ * Returns a new array: local rows, then overlay/peer rows, then the rest; input untouched.
+ *
+ * OWN SUBSTRATE FIRST among remote rows: when `ownPeers` is given (the discovery origins of this substrate's
+ * nodes, from the substrateNodes pool record), a peer row reached through one of them comes before a peer row
+ * reached through any other peer. A shape this substrate serves on a sibling node resolves there, with a key
+ * the sibling accepts, instead of at a federation peer that validates against its own identity (measured
+ * 2026-10-15: a compose node's walk resolves of its landing shapes went to the hub first in discovery order and
+ * were refused with 401). Without `ownPeers` the order is unchanged.
+ */
+export function orderProducers<T extends ProducerRow>(rows: readonly T[], ownPeers?: ReadonlySet<string>): T[] {
   const buckets: [T[], T[], T[]] = [[], [], []];
   for (const row of rows) buckets[producerClass(row)].push(row);
+  if (ownPeers && ownPeers.size > 0) {
+    const own = (r: T): boolean => { const o = urlOrigin(r.peerEndpoint); return o !== null && ownPeers.has(o); };
+    buckets[1] = [...buckets[1].filter(own), ...buckets[1].filter((r) => !own(r))];
+  }
   return [...buckets[0], ...buckets[1], ...buckets[2]];
 }
 
@@ -82,14 +101,14 @@ export function dialsOwnEndpoint(row: ProducerRow): boolean {
 /**
  * Per-shape producer cache from a discovery vesselRegistry dump: every row with a
  * non-empty endpoint, listed under each string shape it advertises, ordered by
- * orderProducers. Rows are kept whole (origin, protocol, multiaddr), so the walk
+ * orderProducers (with this substrate's own peers when given). Rows are kept whole (origin, protocol, multiaddr), so the walk
  * routes a cached row exactly as it routes a discovery row.
  *
  * Failure mode this guards: the cache kept ONE endpoint per shape, last registry
  * row winning, and the walk returned it before consulting discovery — so a local
  * producer lost to an overlay row listed after it.
  */
-export function buildShapeProducerCache<T extends ProducerRow & { shapes?: unknown }>(rows: readonly T[]): Map<string, T[]> {
+export function buildShapeProducerCache<T extends ProducerRow & { shapes?: unknown }>(rows: readonly T[], ownPeers?: ReadonlySet<string>): Map<string, T[]> {
   const byShape = new Map<string, T[]>();
   for (const row of rows) {
     if (typeof row.endpoint !== "string" || !row.endpoint) continue;
@@ -100,7 +119,7 @@ export function buildShapeProducerCache<T extends ProducerRow & { shapes?: unkno
       if (list) { if (!list.includes(row)) list.push(row); } else byShape.set(s, [row]);
     }
   }
-  for (const [s, list] of byShape) byShape.set(s, orderProducers(list));
+  for (const [s, list] of byShape) byShape.set(s, orderProducers(list, ownPeers));
   return byShape;
 }
 

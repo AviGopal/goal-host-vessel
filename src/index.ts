@@ -323,7 +323,7 @@ import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
-import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, type ProducerRow } from "./producer-order";
+import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
   Impulse,
@@ -6260,6 +6260,32 @@ function canonicalizeShapeName(raw: string, known: string[]): string | null {
   return raw;
 }
 
+/** THIS SUBSTRATE'S NODES, as the discovery origins listed in the substrateNodes pool record (the trust-root record
+ *  development-vessel's own-substrate reads use), read through the same dev-vessel resolve as goalDeficiencyMinRuns.
+ *  The walk orders a peer row reached through one of these before one reached through any other peer
+ *  (producer-order.ts orderProducers). Cached 60 s. Unreadable or empty: undefined, and the order is unchanged. */
+let _ownPeersCache: { at: number; peers: ReadonlySet<string> | undefined } | null = null;
+async function ownSubstratePeers(): Promise<ReadonlySet<string> | undefined> {
+  if (_ownPeersCache && Date.now() - _ownPeersCache.at <= 60_000) return _ownPeersCache.peers;
+  let peers: ReadonlySet<string> | undefined;
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "poolImpulse", shape: "substrateNodes", status: "open", limit: 1 } } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    const j = (await r.json()) as { body?: { impulses?: Array<{ body?: { discovery_endpoints?: unknown } }> } };
+    const eps = j?.body?.impulses?.[0]?.body?.discovery_endpoints;
+    const set = new Set<string>();
+    if (Array.isArray(eps)) for (const e of eps) { const o = urlOrigin(typeof e === "string" ? e : undefined); if (o) set.add(o); }
+    peers = set.size > 0 ? set : undefined;
+  } catch { peers = undefined; }
+  if (!peers) console.log("[goal-host-vessel] walk producer order: substrateNodes unreadable or empty — peer rows keep discovery order");
+  _ownPeersCache = { at: Date.now(), peers };
+  return peers;
+}
+
 /** R2's min_runs (goalDeficiencyPolicy, the pool record R2 reads), through the same dev-vessel resolve fileCapabilityGap uses for its
  *  prior row. Default 3 (R2's default) when unreadable or out of R2's own range (2..1000). */
 async function goalDeficiencyMinRuns(): Promise<number> {
@@ -8757,7 +8783,9 @@ async function runGoalAsPoolWalkBody(
       // Walk locality: local producers (origin "local" or a loopback host) first,
       // then overlay/peer rows, then the rest, discovery order kept within each
       // class (producer-order.ts). The target_vessel_id match, when given, stays pinned first.
-      const ordered = target ? [target, ...orderProducers(vessels.filter((x) => x !== target))] : orderProducers(vessels);
+      // Among remote rows, this substrate's own nodes come first (substrateNodes; producer-order.ts orderProducers).
+      const own = await ownSubstratePeers();
+      const ordered = target ? [target, ...orderProducers(vessels.filter((x) => x !== target), own)] : orderProducers(vessels, own);
       // Loopback local candidates are probed and fall through when dead; any other
       // candidate (a non-loopback local host, overlay, peer) is accepted unprobed —
       // its reachability is mediated by relay/gateway. All dead: the first candidate.
@@ -16876,8 +16904,9 @@ async function registerDiscoveryProxies(): Promise<string[]> {
         if (typeof s === "string" && s) all.add(s);
       }
     }
-    // Every producer row per shape, ordered local-first (never last-writer-wins).
-    for (const [s, rows] of buildShapeProducerCache(vessels)) {
+    // Every producer row per shape, ordered local-first (never last-writer-wins), then this substrate's own
+    // nodes before other peers (substrateNodes; producer-order.ts orderProducers).
+    for (const [s, rows] of buildShapeProducerCache(vessels, await ownSubstratePeers())) {
       const head = rows[0]!;
       shapeEndpointMap.set(s, {
         endpoint: String(head.endpoint).replace(/\/+$/, ""),
