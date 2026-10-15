@@ -3245,18 +3245,23 @@ function buildGapAggregateCommand(goal: string): string | null {
   return `curl -s -X POST ${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve -H 'Content-Type: application/json' -d '{"impulse":{"pointer":{"type":"substrateGap","status":"${p.status}","limit":2000}}}' | jq -r '.body.gaps | group_by(.category) | map({c:.[0].category,n:length}) | ${sort} | .[0:${p.n}][] | "\\(.c): \\(.n)"'`;
 }
 
+const GAP_COUNT_READ_LIMIT = 2000;
 async function fetchGapCategoryCounts(status: "open" | "closed"): Promise<Map<string, number> | null> {
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status, limit: 2000 } } }),
+      body: JSON.stringify({ impulse: { pointer: { type: "substrateGap", status, limit: GAP_COUNT_READ_LIMIT } } }),
       signal: AbortSignal.timeout(8_000),
     });
     if (!r.ok) return null;
     const j: any = await r.json();
     const gaps: any[] = j?.body?.gaps ?? [];
     if (!Array.isArray(gaps) || gaps.length === 0) return null;   // empty/absent store -> fail open
+    // A FULL PAGE IS A TRUNCATED READ, NOT A COUNT. The store holds far more than one page (8,667 gaps in one store-wide count
+    // against this 2000 limit), so a full page made every gap oracle grade against the page size: a subset question was
+    // "verified" because the answer contained 2000. Same fail-open path as an unreachable store: the judge grades.
+    if (gaps.length >= GAP_COUNT_READ_LIMIT) return null;
     const m = new Map<string, number>();
     for (const g of gaps) { const c = String(g?.category ?? "?"); m.set(c, (m.get(c) ?? 0) + 1); }
     return m;
