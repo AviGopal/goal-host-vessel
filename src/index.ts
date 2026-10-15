@@ -4295,9 +4295,17 @@ async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary
 /** Field overrides for a label that is evidence ABOUT an oracle rather than its verdict (e.g. a
  *  shadow-judge disagreement): it must not read as ground truth to the corpus's tallies. */
 interface LabelOverride { verdict: "achieved" | "not_achieved" | "partial"; labeler: "automated" | "deterministic"; confidence: number; source: string; notes: string }
+// ONE DEFINITION OF A DETERMINISTIC VERDICT. About a dozen verdict builders name themselves "deterministic:" in the reason
+// without setting the flag (error-envelope, no-output, placeholder, wrong-registry-count, edit-intent-no-landed-edit, ...).
+// The label reader honoured the prefix since 07-30; the β credit decision read the flag only, so a deterministic
+// disconfirmation was treated as non-deterministic and its β withheld as "α structurally unreachable" (112 of 143 such
+// withholds in one probe window), and selection never learned from the producers that fail most.
+function isDeterministicVerdict(v: { deterministic?: boolean; reason?: string | null } | null | undefined): boolean {
+  return !!v && (v.deterministic === true || /^deterministic:/.test(v.reason ?? ""));
+}
 function recordDeterministicLabel(goal: string, executionId: string | undefined, activityId: string | undefined, verdict: GoalReachVerdict, override?: LabelOverride): void {
   if (!executionId) return;
-  const det = verdict.deterministic === true || /^deterministic:/.test(verdict.reason ?? "");
+  const det = isDeterministicVerdict(verdict);
   if (!det) return;
   if (override) {
     fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
@@ -12206,7 +12214,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // chain that actually formed an edge. It removes an asymmetry; it does not soften
         // grading.
         // The decision itself is the closed judge entry creditOnHollow (src/judge/credit-decision.ts).
-        const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput({ templateClass: String(lastPick ?? ""), deterministic: verdict.deterministic === true, noOracle: _noOracle, consumedInChain: consumedInChain.size, lastPickProducedJudgedArtifact: _culpability.culpable }));
+        const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput({ templateClass: String(lastPick ?? ""), deterministic: isDeterministicVerdict(verdict), noOracle: _noOracle, consumedInChain: consumedInChain.size, lastPickProducedJudgedArtifact: _culpability.culpable }));
         const _alphaWasReachable = _creditOnHollow.alpha_reachable;
         const _betaWithheldForSymmetry = _creditOnHollow.withheld === "alpha-unreachable-non-deterministic-no-edge";
         const _betaWithheldForCulpability = !_noOracle && !_betaWithheldForSymmetry && !_culpability.culpable;
@@ -12221,7 +12229,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // CAPTURE (closed, src/judge/capture.ts): the β decision's inputs and its outcome, after the decision.
         judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput({
           templateId: String(lastPick),
-          verdict: { deterministic: verdict.deterministic === true, reason: verdict.reason ?? null },
+          verdict: { deterministic: isDeterministicVerdict(verdict), reason: verdict.reason ?? null },
           consumedInChain: consumedInChain.size,
           editEffectReach: null,
           lastPickProducedJudgedArtifact: _culpability.culpable,
@@ -19459,6 +19467,7 @@ export {
   rememberGoalFailure,
   recallGoalFailures,
   runGroundedToolLoop,
+  isDeterministicVerdict,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 

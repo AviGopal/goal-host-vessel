@@ -80,7 +80,9 @@ describe("credit gate — β is held to the same evidence standard as α", () =>
     // rather than the same rule applied symmetrically. The decision lives in the closed judge entry
     // creditOnHollow (src/judge/credit-decision.ts); the β block takes both values from it.
     expect(b).toContain("judge.creditOnHollow(");
-    expect(b).toContain("deterministic: verdict.deterministic === true");
+    // The determinism the entry reads is the ONE shared definition (flag OR "deterministic:" reason prefix), the same
+    // one the label reader uses; a flag-only read treated prefix-only deterministic verdicts as LLM verdicts.
+    expect(b).toContain("deterministic: isDeterministicVerdict(verdict)");
     expect(b).toContain("consumedInChain: consumedInChain.size");
     expect(b).toMatch(/const _alphaWasReachable = _creditOnHollow\.alpha_reachable;/);
     // The symmetry withhold is the entry's own verdict, taken verbatim: removing or inverting it here is red.
@@ -114,6 +116,22 @@ describe("credit gate — β is held to the same evidence standard as α", () =>
     expect(await decisionSource()).toMatch(/i\.verdict\.deterministic === true \|\|/);
     const d = creditOnHollow(creditInput({ templateClass: "t", deterministic: true, noOracle: false, consumedInChain: 0, lastPickProducedJudgedArtifact: true }));
     expect(d).toEqual({ alpha_reachable: true, charge: true, withheld: null, retire_candidate: false });
+  });
+
+  it("[MUST-FAIL on base] a verdict that is deterministic only by its reason prefix still penalises", async () => {
+    // About a dozen verdict builders (error-envelope, no-output, placeholder, wrong-registry-count, ...) name themselves
+    // "deterministic:" without setting the flag. In one probe window 112 of 143 symmetry withholds were such verdicts.
+    const src = await source();
+    expect(src).toMatch(/function isDeterministicVerdict\(v: [^)]*\): boolean \{\s*return !!v && \(v\.deterministic === true \|\| \/\^deterministic:\/\.test\(v\.reason \?\? ""\)\);\s*\}/);
+    // the label reader and the β block's capture use the same definition
+    expect(src).toContain("const det = isDeterministicVerdict(verdict);");
+    expect(await betaBlock()).toContain("verdict: { deterministic: isDeterministicVerdict(verdict), reason: verdict.reason ?? null }");
+    // the mirror of that definition, driven through the closed entry: a prefix-only deterministic miss is charged
+    const isDet = (v: { deterministic?: boolean; reason?: string | null }) => v.deterministic === true || /^deterministic:/.test(v.reason ?? "");
+    const at = (v: { deterministic?: boolean; reason?: string | null }) => creditOnHollow(creditInput({ templateClass: "t", deterministic: isDet(v), noOracle: false, consumedInChain: 0, lastPickProducedJudgedArtifact: true }));
+    expect(at({ reason: "deterministic:error-envelope — output is an error/failure envelope" })).toEqual({ alpha_reachable: true, charge: true, withheld: null, retire_candidate: false });
+    // an LLM verdict on a satisfier chain is still withheld (the abstention itself is unchanged)
+    expect(at({ deterministic: false, reason: "The output does not provide the count" }).withheld).toBe("alpha-unreachable-non-deterministic-no-edge");
   });
 
   it("NEGATIVE CONTROL: the predicate distinguishes reachable from unreachable", () => {
