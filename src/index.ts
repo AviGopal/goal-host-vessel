@@ -5360,6 +5360,34 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   return { reached: false, reason: `deterministic:independent-recompute-disagrees — ${provenance}; the walk reported ${JSON.stringify(emitted.slice(0, 8))} instead`, deterministic: true, completion_shapes: [] };
 }
 
+// SERVER-SIDE EXECUTED TOOLS ARE GROUNDING TOO (B3b). The llmTextCompletion a dispatch returns may carry
+// body.executed_tool_calls: [{iteration, tool_name, tool_input, tool_output | {error}, duration_ms}], the calls the
+// llm-resolver EXECUTED itself before answering. The floor counted only the tool_calls it executed client-side, so an
+// answer grounded on server-executed reads arrived as tools 0/0 and was judged zero-tool (the ZERO tools digest
+// prefix, the floor:zero-tool credit class, the fabricated-transcript and zero-tool-write refusals). Absent means none.
+/** The calls the dispatch's resolver executed server-side (absent or malformed: none). */
+export function executedToolCallsOf(j: unknown): Array<Record<string, unknown>> {
+  const o = (j ?? {}) as any;
+  const raw = o?.body?.executed_tool_calls ?? o?.content?.body?.executed_tool_calls ?? o?.executed_tool_calls;
+  return Array.isArray(raw) ? raw.filter((c: unknown): c is Record<string, unknown> => !!c && typeof c === "object") : [];
+}
+/** A server-executed call's error, or null when its tool_output carries no error. A call with no output gathered nothing. */
+export function executedToolCallError(c: Record<string, unknown>): string | null {
+  const out = c.tool_output as unknown;
+  const errOf = (v: unknown): string | null => (v === undefined || v === null || v === false || (typeof v === "string" && !v.trim())) ? null : (typeof v === "string" ? v : JSON.stringify(v));
+  const top = errOf(c.error);
+  if (top) return top.slice(0, 400);
+  if (out === undefined || out === null) return "no tool_output";
+  if (typeof out === "object" && !Array.isArray(out)) { const e = errOf((out as Record<string, unknown>).error); if (e) return e.slice(0, 400); }
+  return null;
+}
+/** The floor's judge digest: states the absence of retrieval when NO tool ran, client-side or server-side. */
+export function floorGroundingDigest(toolsExecuted: number, groundedOk: number, digestBase: string): string {
+  return (toolsExecuted === 0 && groundedOk === 0)
+    ? `[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED. If this goal asked for a current, live or measured value from outside this repository, an unretrieved answer does not fulfil it however plausible the number looks.]\n\n${digestBase}`
+    : digestBase;
+}
+
 // Module-level grounded tool->observe loop, extracted from universalToolFallback so the
 // a.5 investigation fallback REUSES the same EXECUTING loop instead of fabricating an answer.
 // Dispatches llm_completion_dispatch WITH tools, EXECUTES returned tool_calls via ufExecuteTool,
@@ -5432,7 +5460,7 @@ async function runGroundedToolLoop(
     const iterPrompt = observations.length
       ? `${basePrompt}\n\nTOOL OBSERVATIONS SO FAR (real results you MUST reason over — do not contradict or invent beyond them):\n${observations.join("\n\n").slice(0, 12000)}\n\nUsing ONLY these real results, either call MORE tools to gather what is still missing, or give your FINAL answer grounded strictly in them.`
       : basePrompt;
-    let text = ""; let toolCalls: any[] = [];
+    let text = ""; let toolCalls: any[] = []; let serverExecuted: Array<Record<string, unknown>> = [];
     // Never let one iteration's timeout outlive the wall clock: the for-condition only checks the
     // deadline BETWEEN turns, so an un-clamped per-iteration signal could overshoot it by a whole
     // ITER_TIMEOUT_MS and blow the caller's proxy timeout.
@@ -5464,7 +5492,7 @@ async function runGroundedToolLoop(
         observations.push(`[dispatch error] the model endpoint returned HTTP ${r.status} on turn ${iter + 1}. This is a server-side failure, not a result. Do not treat it as evidence about the goal; retry the step or choose a different tool.`);
         continue;
       }
-      const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? [];
+      const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? []; serverExecuted = executedToolCallsOf(j);
     } catch (e) {
       // This was a bare `catch { break; }`. A per-iteration TIMEOUT killed the floor with ZERO log
       // and ZERO observations, the caller returned null, and the walk proceeded as though no floor
@@ -5487,6 +5515,26 @@ async function runGroundedToolLoop(
       }
       console.log(`[goal-host-vessel] floor: dispatch ERROR iter=${iter} class=${cls} msg=${msg.slice(0, 160)} — channel fault, loop ends with ${observations.length} observation(s)`);
       break;
+    }
+    // Server-executed calls arrive WITH this turn's answer, so they are counted before the final-answer exit below:
+    // the same accounting as a client-executed call (reads ground, writes are side effects), marked server-side.
+    for (const c of serverExecuted) {
+      const nm = nameOf(c); if (!nm) continue;
+      const a = argsOf(c);
+      const err = executedToolCallError(c);
+      executed.push({ tool: nm, ok: err === null });
+      const execCmd = execFieldOf(a);
+      if (execCmd) commandLines.push(`- ${nm} was RUN (server-side) as: \`${execCmd.slice(0, 400)}\``);
+      if (err !== null) { observations.push(`TOOL ${nm} ERROR (executed server-side): ${err}`); continue; }
+      executedOk++; doneKeys.add(`${nm}:${JSON.stringify(a)}`);
+      let out: string; try { out = typeof c.tool_output === "string" ? c.tool_output : JSON.stringify(c.tool_output); } catch { out = String(c.tool_output); }
+      if (writeShapeList.includes(nm)) {
+        calledWriteShapes.add(nm);               // side EFFECT — recorded, NOT grounding
+        observations.push(`TOOL ${nm} (write, executed server-side) => ${String(out).slice(0, 400)}`);
+      } else {
+        groundedOk++;                             // real gathered DATA — the grounding
+        observations.push(`TOOL ${nm}(${JSON.stringify(a).slice(0, 300)}) [executed server-side] =>\n${String(out).slice(0, 4000)}`);
+      }
     }
     if (Array.isArray(toolCalls) && toolCalls.length > 0) {
       let progressed = false;
@@ -5718,9 +5766,8 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // boolean would re-kill that path. Stating the absence of retrieval in the text the judge grades
   // leaves the honest wrapper answers untouched and denies the fabricated ones their false
   // authority — the judge can still reach, but it must do so knowing the numbers are unsourced.
-  const digest = (executed.length === 0 && groundedOk === 0)
-    ? `[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED. If this goal asked for a current, live or measured value from outside this repository, an unretrieved answer does not fulfil it however plausible the number looks.]\n\n${_digestBase}`
-    : _digestBase;
+  // `executed` and `groundedOk` count server-executed calls with client-executed ones (runGroundedToolLoop).
+  const digest = floorGroundingDigest(executed.length, groundedOk, _digestBase);
   // The floor's write evidence is its own successful write-tool calls (side effects the vessel accepted);
   // the requested targets in `produced` above are what the judge is told to look for, never evidence.
   const floorWrites = [...calledWriteShapes];
@@ -19392,6 +19439,7 @@ export {
   runGoalWithRecovery,
   rememberGoalFailure,
   recallGoalFailures,
+  runGroundedToolLoop,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 
