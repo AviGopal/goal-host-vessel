@@ -5860,6 +5860,9 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
     zero_tool_write_claim: _zeroToolWriteClaim,
     fabricated_transcript: _fabricatedTranscript,
   });
+  // SAY WHY THE FLOOR DECIDED. The verdict line logs reached= only and the dispatch recorded the walk's earlier
+  // reason, so why a grounded floor answer failed was observable nowhere. Placed after the capture (its pin).
+  console.log(`[goal-host-vessel] floor: decision goalHash=${goalHashOf(goal)} reached=${floorReached} rule=${_floorV.reason_code} judge=${verdict === null ? "null (verifier gave no verdict)" : JSON.stringify(String(verdict.reason ?? "").slice(0, 300))} tools=${groundedOk}/${executed.length}`);
   if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
     await persistSatisfierTrace({
       id: floorExecId,
