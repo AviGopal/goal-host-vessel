@@ -311,6 +311,7 @@ import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "
 import { judgeReach } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
+import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
@@ -4279,6 +4280,48 @@ function recordGroundedComparison(goal: string, key: string, o: { reached: boole
       confidence: 0.5,
       source,
       notes: `agree=${agree} oracle=${o.reached ? "reached" : "fail"} judge=${j.reached ? "reached" : "hollow"} | oracle: ${o.reason.slice(0, 240)} | judge: ${String(j.reason ?? "").slice(0, 240)}`,
+    },
+  );
+}
+
+/**
+ * AGGREGATE-REPORT FAITHFULNESS, OBSERVED (aggregate-report-verifier.ts). An early reach the judge
+ * passed, on a target that has an open report-class row in the pool, is re-checked section by
+ * section against the authoritative store, and the comparison with the judge is recorded the way the
+ * grounded-report oracle records its own (a non-binary automated label — the promotion evidence).
+ * It NEVER changes the verdict: deciding needs a class row the system cannot write for itself.
+ * Called off the walk's path; the caller logs a failure in its catch.
+ */
+async function observeAggregateReport(goal: string, targetShapes: string[], poolImps: Parameters<typeof poolEvidenceOf>[0], judge: GoalReachVerdict, key: string): Promise<void> {
+  const rows = await ufExecuteTool("poolImpulse", { shape: REPORT_CLASS_SHAPE, status: "open" }, new Set(["poolImpulse"]));
+  if (!rows.ok) return; // no row store answered: nothing is observed, and the judge's verdict stands as it does today
+  const listed = parseMaybeJson(rows.result) as { impulses?: Array<{ body?: unknown }> } | null;
+  const cls = reportClassForTargets((listed?.impulses ?? []).map((i) => i?.body), targetShapes);
+  if (!cls) return;
+  const v = await verifyAggregateReport({
+    cls,
+    // The observer converts the pool itself: the reach CALLS are the only sites handed poolEvidenceOf(...) (pinned).
+    produced: producedContentOf(poolEvidenceOf(poolImps), cls.target_shape),
+    fetchSource: async (shape, pointer) => {
+      const r = await ufExecuteTool(shape, pointer, new Set([shape]));
+      return r.ok ? parseMaybeJson(r.result) : null;
+    },
+    onAbstain: (why) => console.log(`[report-faithfulness] ABSTAINED for goal_hash=${goalHashOf(goal)} — ${why.slice(0, 240)}; the judge's verdict stands`),
+  });
+  if (!v) return;
+  const agree = v.reached === judge.reached;
+  console.log(`[report-faithfulness] OBSERVE reached=${v.reached} judge=${judge.reached} agree=${agree} (the judge decides) — ${v.reason.slice(0, 300)}`);
+  recordDeterministicLabel(
+    goal,
+    `report-faithfulness-observe:${key}:${Date.now()}`,
+    "report-faithfulness-oracle",
+    { reached: v.reached, reason: "deterministic:report-faithfulness-observe", completion_shapes: [], deterministic: true },
+    {
+      verdict: "partial",
+      labeler: "automated",
+      confidence: 0.5,
+      source: "report-faithfulness-observe",
+      notes: `agree=${agree} oracle=${v.reached ? "reached" : "fail"} judge=${judge.reached ? "reached" : "hollow"} | oracle: ${v.reason.slice(0, 240)} | judge: ${String(judge.reason ?? "").slice(0, 240)}`,
     },
   );
 }
@@ -12012,6 +12055,15 @@ If one of those sibling shapes is the action that would create what the goal ask
       for (let _r = 0; verdict == null && _r < 2; _r++) {
         await new Promise((res) => setTimeout(res, 400 * (_r + 1)));
         verdict = await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target], poolEvidenceOf(poolImpulses), walkWriteEvidence());
+      }
+      // AN EARLY REACH THE JUDGE PASSED IS RE-CHECKED, OBSERVED ONLY. The early verdict is reused above
+      // and was graded without the pool, so no pool-reading oracle ever saw it; a report whose target has
+      // a report-class row is checked against its authoritative store here and the comparison recorded
+      // (observeAggregateReport). The verdict is not touched, and the walk does not wait for the check.
+      if (verdict && verdict === earlyReachVerdict && verdict.deterministic !== true) {
+        const _rfKey = dispatchContext.getStore()?.dispatchId ?? goalHashOf(goal);
+        void observeAggregateReport(goal, [...terminalShapes, ...target], poolImpulses, verdict, _rfKey)
+          .catch((e) => console.warn(`[report-faithfulness] observe failed for goal_hash=${goalHashOf(goal)} (non-fatal; the judge's verdict stands): ${String((e as Error)?.message ?? e).slice(0, 200)}`));
       }
       // COMPLETION SHAPES ARE CHOSEN IN CODE inside verifyGoalReached (every site, not only this
       // one), before /reach, recordGoalPath, gap filing and the seed-only flip read them.
