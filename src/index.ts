@@ -10589,6 +10589,9 @@ If one of those sibling shapes is the action that would create what the goal ask
   const recordStepEdge = (inputShapes: string[], outputShapes: string[]): void => {
     stepEdges.set(chain.length - 1, stepEdgeOf(poolImpulses, inputShapes, outputShapes));
   };
+  /** For β only: a receipt-only step is exempt from blame ONLY as a write satellite (every output a write shape). A step
+   *  that claims a read deliverable and returns only a receipt is the hollow producer, so it is culpable. α keeps stepIsStub. */
+  const stepIsReceiptOnlySatellite = (i: number): boolean => stepIsStub(i) && (stepEdges.get(i)?.outputShapes ?? []).every((s) => isWriteShape(s));
   const ledgerStep = (inputShapes: string[] | undefined, newOutputs: string[]): void => {
   // Normalize satisfier shapes: treat "foo" and "satisfier:foo" as equivalent for
   // producer->consumer matching. Without this, steps that declare inputShapes without the
@@ -12176,7 +12179,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // itself. A last pick that only recorded or followed the answer (a memoryNote_write / substrateGap_write /
         // activity_metrics satellite) is not charged: 180 of 208 last-pick β in 24h were exactly that. The real
         // producer is charged through the failed composite's consumed provenance below — not a second grader.
-        const _culpability = lastStepCulpability(chain.map((_, i) => stepEdges.get(i)), new Set([...(verdict.completion_shapes ?? []), ...judgeView.deliverableShapes]), lastTrace.status === "failed", stepIsStub);
+        const _culpability = lastStepCulpability(chain.map((_, i) => stepEdges.get(i)), new Set([...(verdict.completion_shapes ?? []), ...judgeView.deliverableShapes]), lastTrace.status === "failed", stepIsReceiptOnlySatellite);
         const _producerIds = _culpability.producers.map((i) => chain[i]).filter(Boolean).join(",") || "none identifiable";
         // NO BETA FOR OUR OWN MISSING ORACLE. `no-oracle-for-goal-class` means the gate
         // withheld a verdict because nothing can verify this goal SHAPE — not that the

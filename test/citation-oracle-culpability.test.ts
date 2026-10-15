@@ -197,12 +197,34 @@ describe("(a3) MUST-FAIL — culpability: a not-reached verdict about the answer
     expect(wp.lastStepCulpability(EDGES, new Set(["summary"]), false)).toEqual({ culpable: false, producers: [] });
   });
 
+  test("[MUST-FAIL on base] a step that claims a READ deliverable and returns only a receipt is culpable; a receipt-only WRITE satellite is not", async () => {
+    // The walk passed stepIsStub (α's "a receipt is not work") into β culpability, so a composition whose shellResult was
+    // only {producedBy, executionId} was "not a producer" and every hollow on that chain withheld β with "producer: none
+    // identifiable". For β a receipt-only step is exempt only as a write satellite. The predicate is mirrored here and
+    // pinned in the source below.
+    const wp = await import("../src/walk-pool");
+    const { isWriteShape } = wp as unknown as { isWriteShape: (s: string) => boolean };
+    const receiptChain = [{ inputShapes: [], inputImpulseIds: [], outputShapes: ["shellResult", "llm_completion", "memoryNote_write"], outputImpulseIds: ["r1", "r2", "r3"] }];
+    const allStub = (_i: number) => true; // every output is bookkeeping-only (a receipt)
+    const satelliteOnly = (edges: Array<{ outputShapes: string[] }>) => (i: number) => allStub(i) && (edges[i]?.outputShapes ?? []).every((s) => isWriteShape(s));
+    // α's stub rule applied to β (the base wiring): the receipt producer escapes blame
+    expect(wp.lastStepCulpability(receiptChain, new Set(["shellResult"]), false, allStub)).toEqual({ culpable: false, producers: [] });
+    // the β predicate: it is the culpable producer
+    expect(wp.lastStepCulpability(receiptChain, new Set(["shellResult"]), false, satelliteOnly(receiptChain))).toEqual({ culpable: true, producers: [0] });
+    // a receipt-only write satellite with no upstream keeps its exemption
+    const satellite = [{ inputShapes: [], inputImpulseIds: [], outputShapes: ["memoryNote_write"], outputImpulseIds: ["w1"] }];
+    expect(wp.lastStepCulpability(satellite, new Set(["memoryNote_write"]), false, satelliteOnly(satellite)).culpable).toBe(false);
+    // and the source defines the β predicate exactly so
+    const SRC = readFileSync(join(import.meta.dir, "../src/index.ts"), "utf8");
+    expect(SRC).toContain("const stepIsReceiptOnlySatellite = (i: number): boolean => stepIsStub(i) && (stepEdges.get(i)?.outputShapes ?? []).every((s) => isWriteShape(s));");
+  });
+
   const SRC = readFileSync(join(import.meta.dir, "../src/index.ts"), "utf8");
   const start = SRC.indexOf("} else if (verdict && verdict.reached === false) {");
   const end = SRC.indexOf("} else if (verdict && verdict.reached === true) {", start);
   const branch = start >= 0 && end > start ? SRC.slice(start, end) : "";
   test("wiring: the walk decides culpability from the judge view's deliverable shapes and the last step's own status", () => {
-    expect(branch).toContain("lastStepCulpability(chain.map((_, i) => stepEdges.get(i)), new Set([...(verdict.completion_shapes ?? []), ...judgeView.deliverableShapes]), lastTrace.status === \"failed\", stepIsStub)");
+    expect(branch).toContain("lastStepCulpability(chain.map((_, i) => stepEdges.get(i)), new Set([...(verdict.completion_shapes ?? []), ...judgeView.deliverableShapes]), lastTrace.status === \"failed\", stepIsReceiptOnlySatellite)");
     expect(branch).toContain("const _betaWithheldForCulpability = !_noOracle && !_betaWithheldForSymmetry && !_culpability.culpable;");
   });
   test("wiring: a non-culpable last pick is withheld (no reached:false on its durable trace) and gets no /feedback negative", () => {
