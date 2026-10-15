@@ -26,6 +26,7 @@ export interface ProducerRow {
   origin?: string;
   protocol?: string;
   discoveredVia?: string;
+  peerEndpoint?: string;
 }
 
 /** Loopback hostnames: localhost, ::1 (bare or bracketed, as URL.hostname keeps it), 127.0.0.0/8. */
@@ -62,6 +63,20 @@ export function orderProducers<T extends ProducerRow>(rows: readonly T[]): T[] {
   const buckets: [T[], T[], T[]] = [[], [], []];
   for (const row of rows) buckets[producerClass(row)].push(row);
   return [...buckets[0], ...buckets[1], ...buckets[2]];
+}
+
+/**
+ * A peer row resolved at its OWN endpoint. Discovery re-homes a peer's loopback rows onto the peer host, so a
+ * peer row whose endpoint is a non-loopback http(s) URL names the producer itself. Its peerEndpoint is the
+ * peer's DISCOVERY, which serves no impulse resolve route: resolving there answered 404 (a sibling node's
+ * discovery) or 401 (a federation front validating the caller's key against its own identity), measured
+ * 2026-10-15. A libp2p row keeps the transport egress; a peer row whose endpoint is loopback or unparseable
+ * keeps the caller's other branches.
+ */
+export function dialsOwnEndpoint(row: ProducerRow): boolean {
+  if (row.discoveredVia !== "peer" || row.protocol === "libp2p") return false;
+  if (typeof row.endpoint !== "string" || !row.endpoint || isLoopbackEndpoint(row.endpoint)) return false;
+  try { const u = new URL(row.endpoint); return u.protocol === "http:" || u.protocol === "https:"; } catch { return false; }
 }
 
 /**

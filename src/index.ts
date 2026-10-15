@@ -323,7 +323,7 @@ import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
-import { orderProducers, buildShapeProducerCache, pickProducerRoute, type ProducerRow } from "./producer-order";
+import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
   Impulse,
@@ -8701,6 +8701,11 @@ async function runGoalAsPoolWalkBody(
           // candidate advertising a multiaddr, regardless of discoveredVia. Flag OFF = no change.
           return { endpoint: FED_TRANSPORT_EGRESS, resolvePath: "/egress/resolve?target=" + encodeURIComponent(v.libp2p_multiaddr[0]) + (v.id ? "&vessel=" + encodeURIComponent(v.id) : ""), resolvedByVesselId: v.id };
         }
+        // A peer row whose endpoint discovery re-homed onto the peer host names the producer itself: resolve there
+        // (producer-order.ts dialsOwnEndpoint). Its peerEndpoint is the peer's discovery, which has no resolve route.
+        if (dialsOwnEndpoint(v)) {
+          return { endpoint: (v.endpoint as string).replace(/\/+$/, ""), resolvePath: asResolvePath(v.resolve_endpoint), resolvedByVesselId: v.id };
+        }
         // Cross-substrate: when discovery returns a peer-advertised vessel, prefer
         // routing the resolve through the peer's gateway endpoint and tag the
         // peer vessel id as resolved_by_vessel_id for execution-trace provenance.
@@ -16676,6 +16681,10 @@ function buildDiscoveryProxyResolver(shape: string) {
             // also use libp2p transport and must route via the egress regardless of discovery origin.
             endpoint = FED_TRANSPORT_EGRESS.replace(/\/+$/, "");
             resolvePath = `/egress/resolve?target=${encodeURIComponent(v.libp2p_multiaddr[0])}${(v as { id?: string }).id ? `&vessel=${encodeURIComponent((v as { id?: string }).id as string)}` : ""}`;
+          } else if (dialsOwnEndpoint(v)) {
+            // Same rule as the walk's routeFor (producer-order.ts dialsOwnEndpoint): a re-homed peer row resolves at its own endpoint.
+            endpoint = v.endpoint.replace(/\/+$/, "");
+            resolvePath = asResolvePath(v.resolve_endpoint);
           } else if (v.discoveredVia === "peer" && v.peerEndpoint) {
             endpoint = v.peerEndpoint.replace(/\/+$/, "");
             resolvePath = asResolvePath(v.resolve_endpoint);
