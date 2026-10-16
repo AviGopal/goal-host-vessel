@@ -124,27 +124,44 @@ export function buildShapeProducerCache<T extends ProducerRow & { shapes?: unkno
 }
 
 /**
- * The walk's pick over an ordered producer list. Rows without an endpoint are
- * skipped. A local loopback row is probed (probe false or throwing = dead) and,
- * when dead, the pick falls through to the next row; any other row (a local row
- * on a non-loopback host, an overlay or peer row) is accepted unprobed, since its
- * reachability is mediated by the relay/gateway. When every candidate was a dead
- * local row, the first one is returned — never below the status quo. Empty: null.
+ * The walk's pick over an ordered producer list. Rows without an endpoint are skipped, and so is a row discovery stamped
+ * `egress_unreachable` (this node's federation egress is not live, discovery index.ts localEgressLiveness): a dead
+ * candidate. A route whose ENDPOINT is loopback is probed (probe false or throwing = dead) and, when dead, the pick falls
+ * through to the next row. That covers a local row AND a libp2p row: routeFor maps a libp2p row to this node's own
+ * egress, a loopback dial exactly as probeable as a local row (REACHABILITY b; the rule "relay rows are accepted unprobed"
+ * dates from 3df384a, 07-02, and assumed the relay hop could not be checked from here). A route to a non-loopback host
+ * (a re-homed peer row, dialsOwnEndpoint) is accepted unprobed, as before. One probe per distinct endpoint per pick.
+ * When every candidate was dead, the first one is returned: never below the status quo, so a local row whose only fault
+ * was one missed probe never loses to an egress that also failed. `exclude` (route keys, `keyOf`) skips routes this walk
+ * already saw fail for the shape (REACHABILITY c). Empty: null.
  */
 export async function pickProducerRoute<T extends ProducerRow, R>(
   rows: readonly T[],
   routeFor: (row: T) => R,
   probe: (endpoint: string) => Promise<boolean>,
+  opts: { endpointOf?: (route: R) => string | undefined; keyOf?: (route: R) => string; exclude?: ReadonlySet<string> } = {},
 ): Promise<R | null> {
   let first: R | null = null;
+  const probed = new Map<string, boolean>();
   for (const row of rows) {
     if (typeof row?.endpoint !== "string" || !row.endpoint) continue;
+    if ((row as { egress_unreachable?: unknown }).egress_unreachable === true) continue;
     const route = routeFor(row);
-    if (!(producerClass(row) === 0 && isLoopbackEndpoint(row.endpoint))) return route;
+    if (opts.exclude && opts.keyOf && opts.exclude.has(opts.keyOf(route))) continue;
+    // With the caller's endpointOf, the decision is the ROUTE's: a libp2p route dials this node's egress (loopback,
+    // probed); a peer row routed through its gateway does not (unprobed). Without it, the row rule stands: only a local
+    // loopback row is probed (a remote row's loopback endpoint names the PEER's loopback, not ours).
+    const routeEp = opts.endpointOf ? opts.endpointOf(route) : undefined;
+    const probeable = routeEp !== undefined ? isLoopbackEndpoint(routeEp) : (producerClass(row) === 0 && isLoopbackEndpoint(row.endpoint));
+    const ep = routeEp ?? row.endpoint;
+    if (!probeable) return route;
     if (first === null) first = route;
-    try {
-      if (await probe(row.endpoint)) return route;
-    } catch { /* dead candidate — try the next producer of this shape */ }
+    let ok = probed.get(ep);
+    if (ok === undefined) {
+      try { ok = await probe(ep); } catch { ok = false; /* dead candidate — try the next producer of this shape */ }
+      probed.set(ep, ok);
+    }
+    if (ok) return route;
   }
   return first;
 }
