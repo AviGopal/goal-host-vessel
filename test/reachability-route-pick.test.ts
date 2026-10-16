@@ -8,7 +8,9 @@
 // failed, and an auth refusal (401/403: an enforcing hub answering a node-issued credential) poisons THAT route for the
 // walk, not the shape (c, qa amendment after the user's transport-unmask ruling).
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
 import { pickProducerRoute } from "../src/producer-order";
+import { authRefusalCode } from "../src/auth-refusal";
 
 type Row = { vesselId: string; endpoint: string; protocol?: string; origin?: string; discoveredVia?: string; libp2p_multiaddr?: string[]; egress_unreachable?: boolean };
 type Route = { endpoint: string; resolvePath: string };
@@ -79,4 +81,39 @@ describe("(c) the retry re-picks excluding the failed route; an auth refusal poi
     expect(got?.resolvePath).toContain("spoke");
   });
 
+  it("[MUST-FAIL] an auth refusal carried as CONTENT (200 + {error:\"unauthorized\"}) is classified as an auth refusal", () => {
+    // Measured (dispatch c02fcc77): the enforcing hub's answer, which the walk pooled as a hollow llm_completion_dispatch.
+    expect(authRefusalCode({ content: { error: "unauthorized", shape: "llm_completion_dispatch", reason: "absent", note: "this shape requires a caller credential identity validates" } })).toBe("unauthorized");
+    expect(authRefusalCode({ error: { code: "INVALID_API_KEY" } })).toBe("INVALID_API_KEY");
+    expect(authRefusalCode({ body: { failure_mode: "caller_credential_required" } })).toBe("caller_credential_required");
+  });
+
+  it("[CONTROL] real content, other errors, and prose that merely says 'unauthorized' are not auth refusals", () => {
+    expect(authRefusalCode({ content: { text: "the user was unauthorized to see the report" } })).toBeNull();
+    expect(authRefusalCode({ error: "pointer.decompose_gap_id is required" })).toBeNull();
+    expect(authRefusalCode({ content: { ok: true, children: ["a"] } })).toBeNull();
+    expect(authRefusalCode("unauthorized")).toBeNull();
+  });
+
+  it("[WIRING] rawResolve never pools an auth-refusal envelope: it notes a 401-equivalent failure and poisons the route", () => {
+    const src = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+    const at = src.indexOf("const _authCode = authRefusalCode(parsed);");
+    expect(at).toBeGreaterThan(0);
+    const block = src.slice(at, at + 900);
+    expect(block).toContain("noteRawResolveFailure(shape, `auth refusal (${_authCode}) from ${endpoint}`, 401);");
+    expect(block).toContain("_failed.add(routeKey({ endpoint, resolvePath }));");
+    expect(block).toContain("return null;");
+    // the check runs before the body is accepted as content
+    expect(at).toBeLessThan(src.indexOf("EXTERNAL-EVIDENCE / HTTP FAILURE ENVELOPE"));
+  });
+
+  it("[WIRING] the walk's satisfier retry re-picks with the walk's failed routes, poisons an auth refusal, and passes the route rule to both picks", () => {
+    const src = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+    expect(src).toContain("const _authRefused = direct === null && (lastRawResolveStatus === 401 || lastRawResolveStatus === 403);");
+    expect(src).toContain("const pickExclude = failedRoutesByShape.get(shape);");
+    expect(src).toContain("const _repick = await endpointForShape(shape);");
+    expect(src).toContain("poisoned for this walk (cross-authority evidence)");
+    expect(src.match(/pickProducerRoute\([^)]*routePickOpts\(pickExclude\)\)/g)?.length).toBe(2);
+    expect(src).toContain("lastRawResolveStatus = status;");
+  });
 });

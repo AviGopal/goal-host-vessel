@@ -26,6 +26,7 @@ import { quoteUrlsWithAmpersands, COMMAND_KEYS } from './command-repair';
 import { Config } from './config';
 import { landedShaForGoal } from './landed-sha';
 import { quiesceRefusal } from './quiesce';
+import { authRefusalCode } from "./auth-refusal";
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
 
@@ -8873,7 +8874,15 @@ async function runGoalAsPoolWalkBody(
   const FAVORABLE = "FAVORABLE";
   };
   // Look up a shape's vessel endpoint (registry map first, then discovery).
+  // REACHABILITY (b, c): the pick decides probing by the ROUTE's endpoint (a libp2p route dials this node's own egress,
+  // loopback, so it is probed like a local row) and skips routes this walk already saw fail for the shape.
+  const routeKey = (r: { endpoint: string; resolvePath: string }): string => `${r.endpoint}|${r.resolvePath}`;
+  const routePickOpts = (exclude?: ReadonlySet<string>) => ({ endpointOf: (r: { endpoint: string }) => r.endpoint, keyOf: routeKey, ...(exclude ? { exclude } : {}) });
+  /** Per shape, the routes this walk saw fail (REACHABILITY c): a transient failure or an auth refusal of THAT route. */
+  const failedRoutesByShape = new Map<string, Set<string>>();
   const endpointForShape = async (shape: string): Promise<{ endpoint: string; resolvePath: string; resolvedByVesselId?: string } | null> => {
+    // REACHABILITY (c): every pick in this walk skips the routes the walk saw fail for this shape (poisoned for the walk).
+    const pickExclude = failedRoutesByShape.get(shape);
     // routeFor turns one producer row (discovery or cached registry row) into a
     // resolve route: absolute resolve_endpoint, libp2p egress, peer gateway, or plain.
       const routeFor = (v: { id?: string; vesselId?: string; endpoint?: string; resolve_endpoint?: string; discoveredVia?: string; peerEndpoint?: string; protocol?: string; libp2p_multiaddr?: string[]; origin?: string }) => {
@@ -8928,7 +8937,11 @@ async function runGoalAsPoolWalkBody(
     // Skipped (discovery decides) under target_vessel_id or PREFER_LIBP2P_ROUTE, as before.
     const mapped = shapeEndpointMap.get(shape);
     if (mapped?.endpoint && !(opts.variables as Record<string, unknown> | undefined)?.target_vessel_id && process.env.PREFER_LIBP2P_ROUTE !== "1") {
-      return (await pickProducerRoute(mapped.rows, routeFor, probeHealth)) ?? { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
+      const pickedCached = await pickProducerRoute(mapped.rows, routeFor, probeHealth, routePickOpts(pickExclude));
+      if (pickedCached) return pickedCached;
+      // Every cached route is excluded this walk (REACHABILITY c): no fallback onto a route that just failed.
+      if (pickExclude?.size) return null;
+      return { endpoint: mapped.endpoint, resolvePath: mapped.resolvePath };
     }
     try {
       const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
@@ -8960,7 +8973,7 @@ async function runGoalAsPoolWalkBody(
       // Loopback local candidates are probed and fall through when dead; any other
       // candidate (a non-loopback local host, overlay, peer) is accepted unprobed —
       // its reachability is mediated by relay/gateway. All dead: the first candidate.
-      return await pickProducerRoute(ordered, routeFor, probeHealth);
+      return await pickProducerRoute(ordered, routeFor, probeHealth, routePickOpts(pickExclude));
     } catch { return null; }
   };
   // Raw resolve call to a vessel for one shape; returns non-empty content or null.
@@ -8968,12 +8981,15 @@ async function runGoalAsPoolWalkBody(
   /** Whether the LAST rawResolve failed transiently (transient-failure.ts): set at the failure,
    *  where the HTTP status is still known, never re-derived from a reason a later step rewrote. */
   let lastRawResolveTransient = false;
+  /** The HTTP status of the LAST rawResolve failure, when there was one (an auth refusal is 401/403). */
+  let lastRawResolveStatus: number | undefined;
   /** Per shape, the first TRANSIENT failure this walk saw, recorded when it happened. The
    *  last-chance un-poison reads this rather than lastRawResolveReason, which the executor's
    *  self-correction has overwritten by then ("the command produced no result"). */
   const transientFailureByShape = new Map<string, string>();
   const noteRawResolveFailure = (shape: string, reason: string, status?: number): void => {
     lastRawResolveReason = reason;
+    lastRawResolveStatus = status;
     lastRawResolveTransient = isTransientFailure(reason, status);
     if (lastRawResolveTransient && !transientFailureByShape.has(shape)) {
       transientFailureByShape.set(shape, typeof status === "number" ? `HTTP ${status}: ${reason}` : reason);
@@ -9214,6 +9230,18 @@ async function runGoalAsPoolWalkBody(
     try { parsed = JSON.parse(bodyText); } catch { parsed = bodyText; }
     let content: unknown = parsed;
     const pObj = (typeof parsed === "object" && parsed !== null) ? parsed as Record<string, unknown> : null;
+    // REACHABILITY (c): an AUTH REFUSAL carried as content (an enforcing peer answering this node's credential with a
+    // 200 error envelope) is a refusal of THIS ROUTE, never produced content: it is not pooled, the route is poisoned for
+    // the walk (every later pick of the shape skips it), and it is logged as cross-authority evidence.
+    const _authCode = authRefusalCode(parsed);
+    if (_authCode) {
+      noteRawResolveFailure(shape, `auth refusal (${_authCode}) from ${endpoint}`, 401);
+      const _failed = failedRoutesByShape.get(shape) ?? new Set<string>();
+      _failed.add(routeKey({ endpoint, resolvePath }));
+      failedRoutesByShape.set(shape, _failed);
+      console.warn(`[goal-host-vessel] walk rawResolve ${shape}: route ${endpoint}${resolvePath} answered an AUTH REFUSAL as content (${_authCode}); not pooled, poisoned for this walk (cross-authority evidence)`);
+      return null;
+    }
     if (pObj) {
       if (pObj["success"] === false) { noteRawResolveFailure(shape, String(pObj["error"] ?? "").slice(0, 200)); console.log(`[goal-host-vessel] walk rawResolve ${shape}: success=false ${String(pObj["error"] ?? "").slice(0, 140)}`); return null; }
       // A resolver that rejected the pointer returns { error: "..." } (e.g.
@@ -10009,10 +10037,27 @@ If one of those sibling shapes is the action that would create what the goal ask
     // the walk then ends at 0 steps. The floor's shellResult call used to be the de-facto retry
     // here, and the floor no longer offers a shell (floor-tools.ts). One bounded retry of the
     // SAME command; model-synthesized commands never take this branch.
-    if (direct === null && deterministicCommand && lastRawResolveTransient) {
+    // REACHABILITY (c): the retry RE-PICKS, excluding every route this walk saw fail for the shape, so a dead egress or
+    // a peer that refuses this node's credential is not dialled twice. An auth refusal (401/403) is NOT transient for that
+    // route: the route is poisoned for the walk (not the shape) and logged as cross-authority evidence; the walk then
+    // falls to another producer (a local one, when it exists). With no other route, a transient failure retries the SAME
+    // route once, as before; an auth refusal is not retried.
+    const _authRefused = direct === null && (lastRawResolveStatus === 401 || lastRawResolveStatus === 403);
+    if (direct === null && deterministicCommand && (lastRawResolveTransient || _authRefused)) {
       tap(`[goal-host-vessel] walk(${opts.surface}): DETERMINISTIC ${deterministicCommand} command for "${shape}" failed TRANSIENTLY (${String(transientFailureByShape.get(shape) ?? lastRawResolveReason).slice(0, 120)}) — retrying the same command once`);
-      await new Promise((r) => setTimeout(r, DETERMINISTIC_RETRY_DELAY_MS));
-      direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs, "satisfier-transient-retry");
+      const _failed = failedRoutesByShape.get(shape) ?? new Set<string>();
+      _failed.add(routeKey(ep));
+      failedRoutesByShape.set(shape, _failed);
+      if (_authRefused) console.warn(`[goal-host-vessel] walk(${opts.surface}): route ${ep.endpoint}${ep.resolvePath} for "${shape}" REFUSED this node's credential (HTTP ${String(lastRawResolveStatus)}); poisoned for this walk (cross-authority evidence)`);
+      const _repick = await endpointForShape(shape);
+      if (_repick && routeKey(_repick) !== routeKey(ep)) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): re-picked "${shape}" -> ${_repick.endpoint} after the failed route`);
+        await new Promise((r) => setTimeout(r, DETERMINISTIC_RETRY_DELAY_MS));
+        direct = await rawResolve(shape, _repick.endpoint, _repick.resolvePath, directArgs, "satisfier-transient-retry");
+      } else if (!_authRefused) {
+        await new Promise((r) => setTimeout(r, DETERMINISTIC_RETRY_DELAY_MS));
+        direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs, "satisfier-transient-retry");
+      }
     }
     if (_isExecShape && !terminalShapes.has(shape)) {
       let _tries = 0;
