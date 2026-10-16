@@ -323,7 +323,7 @@ import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
-import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, type ProducerRow } from "./producer-order";
+import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, pickConceptDbRow, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
   Impulse,
@@ -1229,9 +1229,10 @@ async function conceptDbUrl(): Promise<string | null> {
     if (!vr.ok) return null;
     const vj = await vr.json() as { content?: { vessels?: Array<Record<string, unknown>> } };
     const vessels = Array.isArray(vj?.content?.vessels) ? vj.content!.vessels! : [];
-    const named = vessels.filter((x) => /concept-db/i.test(String(x?.["id"] ?? x?.["vesselId"] ?? "")));
-    const http = named.find((x) => x?.["protocol"] !== "libp2p" && x?.["endpoint"]);
-    const relay = named.find((x) => Array.isArray(x?.["libp2p_multiaddr"]) && (x["libp2p_multiaddr"] as string[])[0]);
+    // Local, then this substrate's own nodes, then the federation relay, then a foreign peer (producer-order.ts).
+    const pick = pickConceptDbRow(vessels as Array<ProducerRow & Record<string, unknown>>, await ownSubstratePeers());
+    const http = pick?.via === "http" ? pick.row : null;
+    const relay = pick?.via === "relay" ? pick.row : null;
     if (http) {
       const re = String(http["resolve_endpoint"] ?? "/resolve");
       _conceptDbUrl = (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(http["endpoint"]).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
@@ -1413,7 +1414,7 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
       // refuting query killed it: the retry demonstrably rescues real recalls. Changing the
       // retry policy on statistics this incomplete would be tuning against an artifact.
       // Measure first, then decide.
-      console.log(`[walk-concepts] recall SUCCEEDED on attempt ${i + 1}/${RECALL_ATTEMPTS} (rows=${rows.length})${i > 0 ? " — the retry rescued this one; the relay leg is intermittent, not down" : ""}`);
+      console.log(`[walk-concepts] recall SUCCEEDED on attempt ${i + 1}/${RECALL_ATTEMPTS} (rows=${rows.length}) url=${String(_conceptDbUrl ?? "").slice(0, 120)}${i > 0 ? " — the retry rescued this one; the relay leg is intermittent, not down" : ""}`);
       return rows;
     }
     if (i + 1 < RECALL_ATTEMPTS) console.log(`[walk-concepts] recall attempt ${i + 1}/${RECALL_ATTEMPTS} could not ask — retrying`);

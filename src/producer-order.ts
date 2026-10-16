@@ -148,3 +148,29 @@ export async function pickProducerRoute<T extends ProducerRow, R>(
   }
   return first;
 }
+
+/**
+ * WHICH concept-db THE WALK RECALLS FROM. Same rule as the walk's producer pick (orderProducers, dialsOwnEndpoint):
+ * a local row, then a row reached through this substrate's own nodes, then the federation relay (libp2p), and a
+ * foreign peer's http row only when nothing else exists. Measured 2026-10-16: goal-host took the FIRST non-libp2p
+ * concept-db row in discovery order; on the compose and spoke nodes that was a federation peer's concept-db re-homed
+ * onto a port its firewall drops, so every lesson recall timed out (3,220 timeouts/24 h on one node, no success at all on
+ * another since 10-10) while the sibling node's own concept-db answered in milliseconds.
+ */
+export function pickConceptDbRow<T extends ProducerRow & { id?: unknown; vesselId?: unknown; libp2p_multiaddr?: unknown }>(
+  rows: readonly T[],
+  ownPeers?: ReadonlySet<string>,
+): { via: 'http' | 'relay'; row: T } | null {
+  const named = rows.filter((x) => /concept-db/i.test(String(x?.id ?? x?.vesselId ?? '')));
+  const isRelay = (x: T) => Array.isArray(x.libp2p_multiaddr) && typeof (x.libp2p_multiaddr as unknown[])[0] === 'string';
+  const isHttp = (x: T) => x.protocol !== 'libp2p' && typeof x.endpoint === 'string' && x.endpoint.length > 0;
+  const own = (x: T) => { const o = urlOrigin(x.peerEndpoint); return o !== null && !!ownPeers?.has(o); };
+  const local = named.find((x) => isHttp(x) && producerClass(x) === 0);
+  if (local) return { via: 'http', row: local };
+  const ownPeer = named.find((x) => isHttp(x) && x.discoveredVia === 'peer' && own(x));
+  if (ownPeer) return { via: 'http', row: ownPeer };
+  const relay = named.find(isRelay);
+  if (relay) return { via: 'relay', row: relay };
+  const other = named.find(isHttp);
+  return other ? { via: 'http', row: other } : null;
+}
