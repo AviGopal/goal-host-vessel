@@ -28,6 +28,7 @@ import { landedShaForGoal } from './landed-sha';
 import { quiesceRefusal } from './quiesce';
 import { authRefusalCode } from "./auth-refusal";
 import { c6StateShapeFields } from "./recommend-state-shapes";
+import { reframeCandidates } from "./reframe-candidates";
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
 
@@ -14866,16 +14867,16 @@ async function runGoalWithRecoveryInner(
         walk = retryWalk.attempts > 0 ? retryWalk : walk;
       }
 
-      // ALTERNATIVE-FRAMING retry — guard: at most once per dispatch
+      // ALTERNATIVE-FRAMING retry. J3 (user ruling 2026-10-16T22:56:41Z): EVERY alternative, in the decision's own order
+      // (A2b-proper's posterior draw order; inference's order when cold), each through the same acceptance (reframeAccept
+      // and the punt / raw-input / skipped-retrieval guards), stopping at the first accepted reach or an abstain, bounded by
+      // the dispatch's own maxAttempts. It used to try only the FIRST differing alternative, once (b416bf0, 07-14), so a
+      // goal whose second framing would reach (RUN 1R: web_search) never got to try it.
       if (walk.reached === false && goalTargetDecision !== null && Array.isArray(goalTargetDecision.alternatives) && goalTargetDecision.alternatives.length > 0) {
         const currentShapes: string[] = seededOutputShapes ?? [];
-        const altShapes = goalTargetDecision.alternatives.find(
-          (alt: string[]) =>
-            Array.isArray(alt) &&
-            alt.length > 0 &&
-            !(alt.length === currentShapes.length && alt.every((s, i) => s === currentShapes[i]))
-        ) ?? null;
-        if (altShapes !== null) {
+        const altCandidates: string[][] = reframeCandidates(goalTargetDecision.alternatives, currentShapes, opts.maxAttempts);
+        if (altCandidates.length > 0) tap(`[goal-host-vessel] ${opts.surface}: walk: reframe candidates in order ${JSON.stringify(altCandidates)} (budget ${Math.max(1, opts.maxAttempts)})`);
+        for (const altShapes of altCandidates) {
           tap(`[goal-host-vessel] ${opts.surface}: walk: re-framing to alternative target shapes ${JSON.stringify(altShapes)} after no-pick/hollow termination`);
           noteRouteTaken(walk.routeAround, "reframe");
           const altWalkResult = await runGoalAsPoolWalk(goal, {
@@ -14978,6 +14979,7 @@ async function runGoalWithRecoveryInner(
             return altWalkResult; // ABSTAIN (§9.2): the re-frame's deliverable was ungraded, not hollow
           } else if (_reframe.accept) {
             walk = altWalkResult;
+            break; // J3: the first accepted reach ends the reframe
           } else if (altWalkResult.reached) {
             const why = altSkippedPlannedRetrieval
               ? `answered WITHOUT retrieving anything though the walk planned ${JSON.stringify(plannedRetrieval)} — an authored value is not a fetched one`
