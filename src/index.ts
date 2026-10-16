@@ -27,6 +27,7 @@ import { Config } from './config';
 import { landedShaForGoal } from './landed-sha';
 import { quiesceRefusal } from './quiesce';
 import { authRefusalCode } from "./auth-refusal";
+import { c6StateShapeFields } from "./recommend-state-shapes";
 
 const FED_SUBSTRATE_ID = process.env.FED_SUBSTRATE_ID ?? 'local';
 
@@ -7629,13 +7630,15 @@ type RecommendPick = { id: string; correlationId: string | null };
  *
  * Callers that do not pass `outcome` are unaffected.
  */
-async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null, outcome?: { lookupFailed: boolean }): Promise<RecommendPick | null> {
+async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null, outcome?: { lookupFailed: boolean }, stateShapes?: { impulse?: readonly string[]; completion?: readonly string[] | null }): Promise<RecommendPick | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}), ...(repairSig ? { repair_signature: repairSig } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, targetShapes) }),
+      // C6 RESTORED (recommend-state-shapes.ts): the pool as impulse_shapes, the goal's direction as completion_shapes.
+      body: JSON.stringify({ task_description: goalText, goal: goalText, exclude_activities: exclude, limit: 6, min_success_rate: 0, ...(targetShapes && targetShapes.length ? { expected_output_shapes: targetShapes } : {}),
+        ...c6StateShapeFields(stateShapes), ...(repairSig ? { repair_signature: repairSig } : {}), ...psiInputs((await getCachedStateSignature())?.signature_hash, targetShapes) }),
       signal: AbortSignal.timeout(20_000),
     });
     if (!r.ok) {
@@ -15867,12 +15870,12 @@ async function runGoalWithRecoveryInner(
     // Track whether ANY producer lookup failed outright. Without this, a flaky recommend
     // endpoint is read as "this shape has no producer at all" — see recommendExcluding.
     const lookupOutcome = { lookupFailed: false };
-    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome);
+    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes });
     nextTarget = firstPick?.id ?? undefined;
     pickCorrelationId = firstPick?.correlationId ?? null;
     if (!nextTarget && goalTargetDecision) {
       for (const alt of goalTargetDecision.alternatives) {
-        const altPick = await recommendExcluding(goal, [], null, alt, lookupOutcome);
+        const altPick = await recommendExcluding(goal, [], null, alt, lookupOutcome, { completion: alt });
         if (altPick) {
           console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
           seededOutputShapes = alt;
@@ -15912,6 +15915,9 @@ async function runGoalWithRecoveryInner(
   let result: Awaited<ReturnType<typeof host.runGoal>> | null = null;
   let status: "failed" | "completed" = "failed";
   let completionShapes: string[] | null = null;
+  // C6: the input-shape pool observed across attempts, so each in-flight recovery pick is selected under the updated
+  // state-space signature rather than state-blind.
+  const c6SeekPool = new Set<string>();
   let goalReachReason: string | undefined;
   let reached = false;
   // The last attempt's oracle abstain (OP-1): ungraded, so it is returned as an abstain, never as reached:false.
@@ -16040,6 +16046,7 @@ async function runGoalWithRecoveryInner(
     // expected_output_shapes — silently un-reconcilable, and indistinguishable from a
     // walk that genuinely planned and produced nothing.
     if (opts.learningMode !== "observe" && goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId), producedShapes, seededOutputShapes ?? []);
+    for (const s of producedShapes) c6SeekPool.add(s); // C6: this attempt's produced shapes join the pool
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
       { // cap retries if this dispatch already landed a commit
         const _capDid = dispatchContext.getStore()?.dispatchId;
@@ -16061,7 +16068,7 @@ async function runGoalWithRecoveryInner(
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
       const repairKey = await repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
-        const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null);
+        const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null });
       if (altPickRetry && 'status' in altPickRetry && (altPickRetry.status === 401 || altPickRetry.status === 403)) {
         tap(`[goal-host-vessel] ${opts.surface}: auth failure (${altPickRetry.status}) - refusing to use as evidence`);
         break;
