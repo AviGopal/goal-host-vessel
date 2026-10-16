@@ -317,6 +317,7 @@ import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains,
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
+import { isShapeName } from "./shape-name";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
@@ -6137,7 +6138,10 @@ async function fetchLearnedDeliverableShapes(): Promise<string[]> {
       return learnedDeliverableCache?.shapes ?? [];
     }
     const j: any = await r.json();
-    const shapes = (Array.isArray(j?.shapes) ? j.shapes : []).map((x: unknown) => String(x)).filter(Boolean);
+    // CHANGE-35: only shape NAMES enter the vocabulary (shape-name.ts); a prose string is refused and counted.
+    const rawShapes = (Array.isArray(j?.shapes) ? j.shapes : []).map((x: unknown) => String(x)).filter(Boolean);
+    const shapes = rawShapes.filter(isShapeName);
+    if (shapes.length < rawShapes.length) console.warn(`[deliverable-shapes] refused ${rawShapes.length - shapes.length} non-shape name(s): ${JSON.stringify(rawShapes.filter((x: string) => !isShapeName(x)).slice(0, 3))}`);
     if (shapes.length === 0) {
       if (learnedDeliverableCache && learnedDeliverableCache.shapes.length > 0) {
         console.log(`[deliverable-shapes] lookup answered an EMPTY set — keeping last known-good vocabulary of ${learnedDeliverableCache.shapes.length} shapes`);
@@ -6156,6 +6160,8 @@ async function fetchLearnedDeliverableShapes(): Promise<string[]> {
     return learnedDeliverableCache?.shapes ?? [];
   }
 }
+/** Non-shape names refused from the vocabulary (logged once each). */
+const refusedVocabularyNames = new Set<string>();
 async function fetchKnownShapes(): Promise<string[]> {
   const now = Date.now();
   if (knownShapesCache && now - knownShapesCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
@@ -6182,7 +6188,14 @@ async function fetchKnownShapes(): Promise<string[]> {
       // inference vocabulary, so goal->target inference can never AIM a goal at it and the
       // learned pathway is unreachable (the reuse ceiling stays dark).
       ...(await fetchLearnedDeliverableShapes()),
-    ])];
+    ])].filter((s) => {
+      // CHANGE-35: only shape NAMES enter the vocabulary, whichever feed supplied them (shape-name.ts). The registry
+      // itself advertised a prose "shape" (development-vessel config.ts, a 07-01 substrate-authored resolver) that
+      // inference then chose as a goal target (RUN 0 pos 5).
+      if (isShapeName(s)) return true;
+      if (!refusedVocabularyNames.has(s)) { refusedVocabularyNames.add(s); console.warn(`[known-shapes] refused a non-shape name from the vocabulary: ${JSON.stringify(s.slice(0, 80))}`); }
+      return false;
+    });
     if (shapes.length > 0) knownShapesCache = { shapes, fetchedAt: now };
     return shapes;
   } catch {
@@ -17683,8 +17696,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
     body.learning_mode === "observe" || body.learning_mode === "learn"
       ? (body.learning_mode as "observe" | "learn")
       : undefined;
+  // CHANGE-35: a caller's targets must be shape NAMES (shape-name.ts); prose is refused, not walked to.
   const expectedOutputShapes = Array.isArray(body.expected_output_shapes)
-    ? (body.expected_output_shapes as string[]).filter((s) => typeof s === "string")
+    ? (body.expected_output_shapes as unknown[]).filter((s): s is string => { const ok = isShapeName(s); if (!ok && typeof s === "string") console.warn(`[run-goal] refused a non-shape expected_output_shapes entry: ${JSON.stringify((s as string).slice(0, 80))}`); return ok; })
     : undefined;
   const parentExecutionId = typeof body.parent_execution_id === "string"
     ? body.parent_execution_id

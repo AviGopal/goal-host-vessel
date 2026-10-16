@@ -1,5 +1,8 @@
 import { registryFieldFor, registryRatioFor } from "./registry-field";
 import { verbatimReadTarget } from "./verbatim-read";
+import { isMutationShape } from "./judge/shapes";
+import { isReadQuestionGoal } from "./read-goal";
+import { isShapeName } from "./shape-name";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -521,7 +524,33 @@ export function extractInvestigationSymbols(goal: string): string[] {
   return spans;
 }
 
+/**
+ * Goal-target inference, with the READ RULE applied to every route's answer (CHANGE-35): a read goal
+ * (read-goal.ts isReadQuestionGoal, the closed copy of the reach gate's question rule) never gets a MUTATION-shaped target. Measured
+ * in RUN 0 (2026-10-16): 8 of 17 read and question goals had write targets inferred (fileEditResult,
+ * activityTemplate_write, an http write, …) and hollowed as write-goal-no-artifact.
+ */
 export async function inferGoalTargetDecision(
+  goal: string,
+  knownShapes: string[],
+  opts: InferGoalTargetShapesOpts = {},
+): Promise<GoalTargetDecision> {
+  // Only shape NAMES can be targets, whatever vocabulary the caller passes (shape-name.ts): a prose entry is never chosen.
+  const vocabulary = knownShapes.filter(isShapeName);
+  return withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts));
+}
+
+/** A read goal's decision without its mutation-shaped targets (primary and alternatives); any other goal's unchanged. */
+export function withoutMutationTargetsForReadGoal(goal: string, d: GoalTargetDecision): GoalTargetDecision {
+  if (!isReadQuestionGoal(goal)) return d;
+  const dropped = d.shapes.filter(isMutationShape);
+  const altDropped = d.alternatives.some((a) => a.some(isMutationShape));
+  if (dropped.length === 0 && !altDropped) return d;
+  console.log(`[goal-target-inference] read goal: mutation target(s) dropped [${dropped.join(", ")}]${altDropped ? " (and from alternatives)" : ""}`);
+  return { ...d, shapes: d.shapes.filter((s) => !isMutationShape(s)), alternatives: d.alternatives.map((a) => a.filter((s) => !isMutationShape(s))).filter((a) => a.length > 0) };
+}
+
+async function inferGoalTargetDecisionRoutes(
   goal: string,
   knownShapes: string[],
   opts: InferGoalTargetShapesOpts = {},
