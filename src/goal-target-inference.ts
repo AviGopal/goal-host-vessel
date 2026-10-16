@@ -361,6 +361,17 @@ function deterministicRegistryRoute(goal: string, knownShapes: string[]): GoalTa
  * it declines — a target no producer serves would only file a capability gap. Read scope stays
  * the producer's own containment; this route only names the path the goal already names.
  */
+/**
+ * A GAP INVESTIGATION'S PRODUCT IS ITS DECOMPOSITION (CHANGE-35). The FALLBACK for a text-only goal (a human typing
+ * "investigate gap X", a replay): the builders that KNOW the gap send expected_output_shapes ["gapDecomposition"] with
+ * the gap id bound, and caller-supplied targets skip inference entirely. Uses the existing isGapInvestigationGoal;
+ * the gap id is bound at the walk's resolve (gapIdOfGoalText), not here.
+ */
+function deterministicGapDecompositionRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  if (!isGapInvestigationGoal(goal) || !knownShapes.includes("gapDecomposition")) return null;
+  return { shapes: ["gapDecomposition"], confidence: 0.85, alternatives: [] };
+}
+
 function deterministicVerbatimReadRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
   if (!goal || verbatimReadTarget(goal) === null) return null;
   // A read-then-persist ask ("... and save it as a memory note") is a composition; this route
@@ -581,8 +592,9 @@ async function inferGoalTargetDecisionRoutes(
     return { shapes: ["web_search"], confidence: 0.66, alternatives: [] };
   }
   }
+  const gapDecomposition = deterministicGapDecompositionRoute(goal, knownShapes);
   const verbatimRead = deterministicVerbatimReadRoute(goal, knownShapes);
-  const empty: GoalTargetDecision = verbatimRead ?? deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? namedAdvertisedShape(goal, knownShapes) ?? ((!/\b(write|record|save|store|create|log|append)\b/i.test(goal) && /\b(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))\b/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
+  const empty: GoalTargetDecision = gapDecomposition ?? verbatimRead ?? deterministicCompositionAsk(goal, knownShapes) ?? deterministicEnvGateRoute(goal, knownShapes) ?? deterministicRegistryRoute(goal, knownShapes) ?? namedAdvertisedShape(goal, knownShapes) ?? ((!/\b(write|record|save|store|create|log|append)\b/i.test(goal) && /\b(compute|calculate|multiply|divide|sum|count|how many|number of|sort|reverse|sha-?256|hash|digest|list|report (only )?the (number|count|result|digest))\b/i.test(goal) && knownShapes.includes("shellResult")) ? { shapes: ["shellResult"], confidence: 0.4, alternatives: [] } : { shapes: [], confidence: 0, alternatives: [] });
   const llmEndpoint = opts.llmEndpoint;
   if (!goal || knownShapes.length === 0) return empty;
   if (!opts.complete && !llmEndpoint) return empty;
@@ -624,6 +636,7 @@ async function inferGoalTargetDecisionRoutes(
   // A verbatim read of one named absolute path is decided by the shared parse, not by the LLM:
   // the oracle that grades it and the walk that binds its path use the same rule, so an LLM
   // answer here could only disagree with both.
+  if (gapDecomposition) return remember(gapDecomposition);
   if (verbatimRead) return remember(verbatimRead);
 
   // COMPOSITION GUARD for every deterministic pre-LLM shortcut below.

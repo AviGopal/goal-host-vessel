@@ -244,7 +244,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
 import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
-import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId } from "./compose-gap-id";
+import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText } from "./compose-gap-id";
+import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
@@ -3590,11 +3591,24 @@ export function citedLocations(digest: string): Array<{ path: string; line: numb
 function oracleAbstainVerdict(family: string, why: string): GoalReachVerdict {
   return { reached: false, reason: `abstain:${family} — ${why}; no judge of measured adequacy for this class, so it is not graded`, completion_shapes: [], abstain: { kind: "oracle-abstain", cuts: [], family } };
 }
+/** One gap by id from development-vessel's gap store, for the gap-investigation oracle (throws when unreadable). */
+async function readGapByIdForOracle(id: string): Promise<{ id?: string; classification_metadata?: Record<string, unknown> } | null> {
+  const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+    body: JSON.stringify({ impulse: { type: "substrateGap", pointer: { type: "substrateGap", id } } }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!r.ok) throw new Error(`gap store answered ${r.status}`);
+  const j = (await r.json()) as { body?: { gaps?: Array<{ id?: string; classification_metadata?: Record<string, unknown> }> } };
+  return (j?.body?.gaps ?? []).find((g) => g.id === id) ?? null;
+}
+
 export async function verifyCodeInvestigationCitation(goal: string, digest: string): Promise<GoalReachVerdict | null> {
   const fam = CODE_INVESTIGATION_ORACLE;
   const applicability = citationOracleApplicability(goal);
   if (applicability === "not-applicable") {
-    const why = "the goal does not ask for a code-cited investigation (e.g. a gap investigation), so there is no citation to observe";
+    const why = "the goal does not ask for a code-cited investigation, so there is no citation to observe (a gap investigation is graded by its product on the gap, verifyGapInvestigationOutcome)";
     await noteOracleDecision(fam, "not-applicable", goal, `${why}; ungraded`);
     return oracleAbstainVerdict(fam, why);
   }
@@ -4171,6 +4185,16 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
     const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
     if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
+  }
+
+  // A GAP INVESTIGATION IS GRADED BY ITS PRODUCT ON THE GAP (CHANGE-35, gap-investigation-outcome.ts): reached iff the
+  // run's decomposition of gap X names child steps the gap store confirms; nothing written is NOT reached. Placed
+  // ABOVE the hollow-walklog cap, which would otherwise answer first, and above the citation branch (not applicable
+  // to gap investigations since f031f26, so they used to end ungraded).
+  if (isGapInvestigationGoal(goal)) {
+    const gid = gapIdOfGoalText(goal);
+    const gi = await verifyGapInvestigationOutcome(gid.startsWith("route-edit-") ? null : gid, poolEvidence, { readGap: readGapByIdForOracle });
+    if (gi) return gi;
   }
 
   // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
@@ -9380,6 +9404,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       directArgsRaw = { command: registryCountCommandFor(goal, DISCOVERY_ENDPOINT)! };
       deterministicCommand = "registry-count";
       tap(`[goal-host-vessel] walk: DETERMINISTIC registry-count command for "${shape}" (field=${registryFieldFor(goal)}, chosen by the same rule the verifier applies)`);
+    } else if (shape === "gapDecomposition" && (typeof opts.variables?.["decompose_gap_id"] === "string" || !gapIdOfGoalText(goal).startsWith("route-edit-"))) {
+      // CHANGE-35: GAP BINDING for a gap investigation's decomposition. The builders that know the gap send it
+      // STRUCTURED (variables.decompose_gap_id); a text-only goal falls back to the existing gapIdOfGoalText parse. It is
+      // bound here so LLM arg synthesis can neither invent nor override it.
+      const gid = typeof opts.variables?.["decompose_gap_id"] === "string" ? String(opts.variables["decompose_gap_id"]) : gapIdOfGoalText(goal);
+      directArgsRaw = { decompose_gap_id: gid };
+      deterministicCommand = "gap-decompose";
+      tap(`[goal-host-vessel] walk: DETERMINISTIC gap binding for "${shape}" (decompose_gap_id=${gid}, ${typeof opts.variables?.["decompose_gap_id"] === "string" ? "structured" : "from the goal text"}) — SKIPPED pointer_arg synthesis`);
     } else if (shape === "fileContent" && verbatimReadTarget(goal) !== null) {
       // PATH BINDING for a verbatim read, from the same parse the target route and the verbatim
       // oracle use. Without it the path came from llmExtractPointerArgs, and on a node whose LLM
