@@ -92,6 +92,17 @@ export function buildRouteAround(a: {
   };
 }
 
+/**
+ * A PRODUCER THAT WAS FOUND BUT COULD NOT BE REACHED IS NOT AN ABSENT ONE (CHANGE-36b; RUN 1 pos 13). The first failed
+ * producer, over this dispatch's route-around records, for one of `shapes` whose failure was TRANSIENT (transport, a
+ * 5xx, a timeout). The caller then abstains instead of claiming "no template produces" and filing a capability gap.
+ */
+export function transientProducerFailure(records: readonly RouteAroundRecord[] | undefined, shapes: readonly string[], isTransient: (reason: string) => boolean): FailedProducer | null {
+  const want = new Set(shapes);
+  for (const r of records ?? []) for (const f of r.failed_producers ?? []) if (want.has(f.shape) && isTransient(f.reason)) return f;
+  return null;
+}
+
 /** The caller that acts on a stalled walk names its route on that walk's record (same object the
  *  dispatch record holds). A walk that did not stall has no record and nothing is written. */
 export function noteRouteTaken(rec: RouteAroundRecord | undefined, route: RouteTaken): void {

@@ -314,7 +314,7 @@ import { judgeReach } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
-import { buildRouteAround, noteRouteTaken, type RouteAroundRecord } from "./route-around";
+import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
@@ -15848,6 +15848,16 @@ async function runGoalWithRecoveryInner(
       if (lookupOutcome.lookupFailed) {
         console.log(`[goal-host-vessel] ${opts.surface}: ABSTAIN on target shapes [${seededOutputShapes.join(",")}] — producer lookup could not be completed; NOT claiming absence and NOT filing a capability gap`);
         return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `producer lookup unavailable for target shapes [${seededOutputShapes.join(", ")}] — could not ask, so absence is unproven; no capability gap filed`, reached: false };
+      }
+      // A FOUND producer that failed on transport is not an absent one (CHANGE-36b, RUN 1 pos 13): the walk resolved
+      // the target's producer and the call failed transiently, then this TEMPLATE lookup found none (a resolver is not a
+      // template). Claiming absence filed a false "missing producer" gap. Abstain, as for a failed lookup above.
+      const _transientProducer = transientProducerFailure(
+        (executionStore.get(String(opts.variables?.dispatch_id ?? "")) as { routeArounds?: RouteAroundRecord[] } | undefined)?.routeArounds,
+        seededOutputShapes, (r) => isTransientFailure(r));
+      if (_transientProducer) {
+        console.log(`[goal-host-vessel] ${opts.surface}: ABSTAIN on target shapes [${seededOutputShapes.join(",")}] — producer ${_transientProducer.producer} for ${_transientProducer.shape} was found and failed on transport (${_transientProducer.reason.slice(0, 160)}); NOT claiming absence and NOT filing a capability gap`);
+        return { result: null, status: "failed", selectedTemplateId: undefined, completionShapes: null, attempts: 0, goalReachReason: `producer for target shape ${_transientProducer.shape} was found but failed on transport — absence is unproven; no capability gap filed`, reached: false };
       }
       console.log(`[goal-host-vessel] ${opts.surface}: no candidate produces target shapes [${seededOutputShapes.join(",")}] — honest no-producer failure`);
             escalateNoProducerToInvestigation(goal, goalTargetDecision ? goalTargetDecision.confidence : null);
