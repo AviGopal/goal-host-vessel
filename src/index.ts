@@ -4199,20 +4199,23 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // floor's successful write calls, the engine's produced shapes), never the digest's prose.
   // Only a caller that passes its write record is gated (every production site does: the walk's
   // interim and end checks, the floor, the engine path); a bare call has no evidence to judge.
-  if (writeEvidence) {
-    const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
-    const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
-    if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
-  }
-
   // A GAP INVESTIGATION IS GRADED BY ITS PRODUCT ON THE GAP (CHANGE-35, gap-investigation-outcome.ts): reached iff the
   // run's decomposition of gap X names child steps the gap store confirms; nothing written is NOT reached. Placed
   // ABOVE the hollow-walklog cap, which would otherwise answer first, and above the citation branch (not applicable
-  // to gap investigations since f031f26, so they used to end ungraded).
+  // to gap investigations since f031f26, so they used to end ungraded). And ABOVE THE WRITE GATE (CHANGE-36a): a gap
+  // goal's text carries the gap's first sentence, so an imperative there ("…: add the resolver") reads as a change
+  // instruction and the write gate graded write-goal-no-artifact BEFORE the product was looked at, although the
+  // goal's only target, gapDecomposition, is not a mutation shape (RUN 1 pos 11 and 17). Its product decides it.
   if (isGapInvestigationGoal(goal)) {
     const gid = gapIdOfGoalText(goal);
     const gi = await verifyGapInvestigationOutcome(gid.startsWith("route-edit-") ? null : gid, poolEvidence, { readGap: readGapByIdForOracle });
     if (gi) return gi;
+  }
+
+  if (writeEvidence) {
+    const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
+    const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
+    if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
   }
 
   // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
