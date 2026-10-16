@@ -5006,6 +5006,11 @@ const __dispatchRateTimes = new Map<string, number[]>();
 let __dispatchRateGlobal: number[] = [];
 const DISPATCH_RATE_DEFAULTS = { window_s: 3600, per_hash_max: 6, global_max: 240 };
 async function dispatchRateRefusal(goal: string): Promise<string | null> {
+  return (await dispatchRateDecision(goal))?.reason ?? null;
+}
+/** The spend-rate breaker's decision, with WHEN its own window frees (retry_after_s), so a refused sender can wait
+ *  exactly that long instead of re-deriving the window from a copy of DISPATCH_RATE_DEFAULTS (CHANGE-30). */
+async function dispatchRateDecision(goal: string): Promise<{ reason: string; retry_after_s: number } | null> {
   let pol = DISPATCH_RATE_DEFAULTS;
   try {
     const sp = await resolveShapedPolicy("dispatchRatePolicy");
@@ -5019,12 +5024,13 @@ async function dispatchRateRefusal(goal: string): Promise<string | null> {
   const h = goalHashOf(goal);
   const times = (__dispatchRateTimes.get(h) ?? []).filter((t) => t > cutoff);
   __dispatchRateGlobal = __dispatchRateGlobal.filter((t) => t > cutoff);
+  const freesIn = (ts: number[]): number => Math.max(1, Math.ceil((Math.min(...ts) + pol.window_s * 1000 - now) / 1000));
   if (times.length >= pol.per_hash_max) {
     __dispatchRateTimes.set(h, times);
-    return `${times.length} dispatches of goal ${h} in the last ${pol.window_s} s (per_hash_max ${pol.per_hash_max}, dispatchRatePolicy)`;
+    return { reason: `${times.length} dispatches of goal ${h} in the last ${pol.window_s} s (per_hash_max ${pol.per_hash_max}, dispatchRatePolicy)`, retry_after_s: freesIn(times) };
   }
   if (__dispatchRateGlobal.length >= pol.global_max) {
-    return `${__dispatchRateGlobal.length} dispatches in the last ${pol.window_s} s (global_max ${pol.global_max}, dispatchRatePolicy)`;
+    return { reason: `${__dispatchRateGlobal.length} dispatches in the last ${pol.window_s} s (global_max ${pol.global_max}, dispatchRatePolicy)`, retry_after_s: freesIn(__dispatchRateGlobal) };
   }
   times.push(now);
   __dispatchRateTimes.set(h, times);
@@ -7960,6 +7966,17 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
   } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${trace?.id}: ${(e as Error).message}`); }
 }
 
+type DispatchOutcome = { kind: "non_attempt" | "refused"; failure_kind?: string; refuse_class?: string; retry_after_s?: number };
+/** A feature_compose report that is NOT an attempt: the compose lane's capacity verdicts (BUSY / DRAINING / CAPACITY,
+ *  the same test as the RETRYABLE CAPACITY branch) or an environment failure_kind (a deferred landing). The same
+ *  definition as development-vessel's isNonAttemptComposeResult, read here from the report. */
+function composeNonAttemptOutcome(body: Record<string, unknown> | null | undefined): DispatchOutcome | undefined {
+  if (!body) return undefined;
+  const verdict = String(body["verdict"] ?? "");
+  const fk = typeof body["failure_kind"] === "string" ? (body["failure_kind"] as string) : "";
+  if (!/^(BUSY|DRAINING|CAPACITY)/i.test(verdict) && fk !== "environment") return undefined;
+  return { kind: "non_attempt", failure_kind: fk || "capacity", ...(typeof body["refuse_class"] === "string" ? { refuse_class: body["refuse_class"] as string } : {}) };
+}
 interface GoalSeekResult {
   result: Awaited<ReturnType<typeof host.runGoal>> | null;
   status: "failed" | "completed";
@@ -7972,6 +7989,11 @@ interface GoalSeekResult {
   /** A named refusal stage (e.g. check_supply_goal_missed_edit_route), carried onto the dispatch record and served by
    *  GET /executions/:id so refusals of one kind can be counted. Absent on ordinary results. */
   stage?: string;
+  /** A NON-SUCCESS that is not a failed attempt, named structurally (CHANGE-30): "non_attempt" (the receiver will
+   *  take it later: capacity, a deferred landing) or "refused" (the receiver declined it: the spend-rate breaker).
+   *  Carried onto the dispatch record and served by GET /executions/:id so a caller can classify an outcome
+   *  without parsing goalReachReason. Absent on ordinary results. */
+  outcome?: DispatchOutcome;
   reached: boolean;
   grounded?: boolean;
   /**
@@ -14318,6 +14340,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
+                outcome: composeNonAttemptOutcome(earlyBody as Record<string, unknown>),
                 goalReachReason: `RETRYABLE CAPACITY: edit-intent routed to feature_compose but the compose lane is at capacity (verdict=${earlyVerdict}). This is a transient capacity condition, not a capability gap: retry when the lane is free. The walk is deliberately NOT consulted — it cannot serve an edit goal and would mint a phantom capability gap for an unproducible shape.`,
                 reached: false,
               };
@@ -14350,6 +14373,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
+                ...(composeNonAttemptOutcome(earlyBody as Record<string, unknown>) ? { outcome: composeNonAttemptOutcome(earlyBody as Record<string, unknown>) } : {}),
                 goalReachReason: `early edit-intent routed to feature_compose; check_supply compose refused at ${_stage} (verdict=${earlyVerdict || "(none)"}): ${composeReportReason(earlyBody)} - a check-supply compose is final, so it is neither walked nor escalated`,
                 reached: false,
               };
@@ -15280,6 +15304,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: null,
                 attempts: 1,
+                ...(composeNonAttemptOutcome(body as Record<string, unknown>) ? { outcome: composeNonAttemptOutcome(body as Record<string, unknown>) } : {}),
                 goalReachReason: `routed edit-intent to feature_compose; check_supply compose refused at ${_stage} (verdict=${verdict || "unknown"}; ${failWhy}) - a check-supply compose is final, so it is not escalated to patch_with_tools`,
                 reached: false,
                 executionId: `feature_compose:check-supply-refused:${goalHashOf(goal as string)}`,
@@ -17510,14 +17535,16 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // SPEND-RATE BREAKER (4.4) on the raw goal, before any LLM call. 429 (not 200) so a caller such
   // as gap-to-feature records a failed hand-off instead of a successful one.
   if (typeof rawGoal === "string" && rawGoal.trim().length > 0) {
-    const rateRefusal = await dispatchRateRefusal(rawGoal);
+    const rateDecision = await dispatchRateDecision(rawGoal);
+    const rateRefusal = rateDecision?.reason ?? null;
     if (rateRefusal) {
       const dispatchId = crypto.randomUUID();
       const reason = "deterministic:spend-rate-refused - " + rateRefusal;
-      const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal: rawGoal, selectedTemplateId: "spend-rate-refused", goalReachReason: reason };
+      const outcome: DispatchOutcome = { kind: "refused", refuse_class: "spend_rate", retry_after_s: rateDecision!.retry_after_s };
+      const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal: rawGoal, selectedTemplateId: "spend-rate-refused", goalReachReason: reason, outcome };
       executionStore.set(dispatchId, refusalRec);
       console.warn(`[goal-host-vessel] /run-goal: SPEND-RATE REFUSED at handler entry (no LLM call) goal_hash=${goalHashOf(rawGoal)}: ${rateRefusal}`);
-      return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason }, { status: 429 });
+      return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason, outcome, retry_after_s: outcome.retry_after_s }, { status: 429, headers: { "Retry-After": String(outcome.retry_after_s) } });
     }
   }
   // RESOLVE THE FILE THE OPERATOR DID NOT NAME (2026-08-09).
@@ -18339,6 +18366,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { completionShapes?: string[] | null }).completionShapes = seek.completionShapes;
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
       if (seek.stage) record.stage = seek.stage;
+      if (seek.outcome) record.outcome = seek.outcome;
       // Thread the reach verdict onto the DURABLE trace. POST /reach sets `reached` +
       // `completion_shapes` and grades the verdict into the Thompson posteriors on
       // arrival, so delivery IS credit: a dropped patch is an arm that never learns from
@@ -19047,6 +19075,8 @@ interface DispatchRecord {
   endedAt?: number;
   /** The result's named refusal stage (GoalSeekResult.stage), when it has one. */
   stage?: string;
+  /** The result's structured non-success kind (GoalSeekResult.outcome), when it has one. */
+  outcome?: DispatchOutcome;
   dispatchId: string;
   startedAt: number;
   status: "running" | "completed" | "failed";
@@ -19546,6 +19576,7 @@ server = Bun.serve({
         reached: record.reached ?? null,
         goalReachReason: record.goalReachReason ?? null,
         stage: record.stage ?? null,
+        outcome: record.outcome ?? null,
         operator: record.operator ?? null,
         trigger: record.trigger ?? null,
         goal: record.goal,
