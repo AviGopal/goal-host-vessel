@@ -242,6 +242,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
+import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText } from "./compose-gap-id";
@@ -4648,6 +4649,30 @@ function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; nea
 /** The targets a retry of this goal must not choose again: every target of the unbroken run of LATEST "no artifact on
  *  the target" (write-goal-no-artifact) failures since its last reach (src/failed-targets.ts targetsToAvoid). Any other
  *  latest verdict, or a reach since, excludes nothing (CHANGE-35 / A2b-minimal; reuses the failure memory, no second store). */
+/** This goal class's recorded paths (activity-api GET /v2/goal-paths?goal_text=, keyed by its own hashGoal): the target
+ *  set each path ran under and its reach counters, for target inference's selection (A2b-proper). FAIL-OPEN: an
+ *  unreadable store is no posterior, i.e. today's choice. The read is ordered best-first, so a class with more rows than
+ *  the limit loses its WORST rows: that truncation is logged, never silent. */
+const TARGET_POSTERIOR_LIMIT = 500;
+async function fetchTargetPosterior(goalText: string): Promise<TargetPathRow[]> {
+  if (!goalText) return [];
+  try {
+    const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths?goal_text=${encodeURIComponent(goalText)}&limit=${TARGET_POSTERIOR_LIMIT}`, {
+      method: "GET",
+      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!r.ok) { console.log(`[goal-host-vessel] target posterior: goal-paths read HTTP ${r.status}; no posterior (today's choice)`); return []; }
+    const j: any = await r.json();
+    const raw: Record<string, unknown>[] = Array.isArray(j?.paths) ? j.paths : [];
+    if (typeof j?.total === "number" && j.total > raw.length) console.log(`[goal-host-vessel] target posterior: TRUNCATED, read ${raw.length} of ${j.total} paths for this goal class (the worst rows are the ones missing)`);
+    // The GET returns only this caller's org's rows (activity-api migration 224); only their ORG-SCOPED counters count.
+    return orgScopedPathRows(raw);
+  } catch (err) {
+    console.log(`[goal-host-vessel] target posterior: goal-paths read failed (${(err as Error)?.message ?? String(err)}); no posterior (today's choice)`);
+    return [];
+  }
+}
 function failedTargetsToAvoid(goalText: string): string[] {
   const { exact } = recallGoalFailures(goalText);
   return targetsToAvoid(exact);
@@ -13836,7 +13861,10 @@ async function runGoalWithRecoveryInner(
     // return something, so the measurement stays composable either way.
     const _avoidTargets = failedTargetsToAvoid(goal);
     if (_avoidTargets.length > 0) tap(`[goal-host-vessel] ${opts.surface}: target inference told to avoid the last failed target(s) [${_avoidTargets.join(", ")}] (write-goal-no-artifact)`);
+    // A2b-proper: the goal class's recorded paths, so inference SELECTS among its proposed target sets by their reach.
+    const _targetPosterior = await fetchTargetPosterior(goal);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
+        targetPosterior: _targetPosterior,
         excludeTargets: _avoidTargets,
         decisionCache: inferredTargetRoutesMemo,
         finalDecisionCache: inferredTargetDecisionCache,

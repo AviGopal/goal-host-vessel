@@ -605,6 +605,21 @@ export function withoutFailedTargets(d: GoalTargetDecision, exclude: readonly st
 
 /** One recorded path of a goal class: the target set it ran under and its reach counters (goal_execution_paths). */
 export interface TargetPathRow { expected_output_shapes?: readonly string[] | null; successful_executions?: number | null; failed_executions?: number | null }
+/**
+ * The rows selection may count (activity-api migration 224): ONLY a path's ORG-SCOPED counters, which count the runs
+ * recorded under the per-org key. A legacy row whose counters may mix orgs, and that has had no per-org run since, has
+ * none and is left out: each org's selection starts cold and accrues its own record.
+ */
+export function orgScopedPathRows(rows: readonly Record<string, unknown>[]): TargetPathRow[] {
+  const out: TargetPathRow[] = [];
+  for (const r of rows) {
+    const s = r["org_successful_executions"];
+    const f = r["org_failed_executions"];
+    if (typeof s !== "number" || typeof f !== "number") continue;
+    out.push({ expected_output_shapes: Array.isArray(r["expected_output_shapes"]) ? (r["expected_output_shapes"] as string[]) : null, successful_executions: s, failed_executions: f });
+  }
+  return out;
+}
 export interface TargetCandidateScore { shapes: string[]; s: number; f: number; draw: number }
 export interface TargetSelection { decision: GoalTargetDecision; candidates: TargetCandidateScore[]; changed: boolean }
 

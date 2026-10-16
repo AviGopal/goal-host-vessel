@@ -72,3 +72,32 @@ describe("target inference selects over the posterior", () => {
     }
   });
 });
+
+// Part 2 (index.ts): the goal class's paths are read before inference and passed as the posterior, fail-open.
+import { readFileSync } from "node:fs";
+describe("index.ts reads the goal class's paths for the selection", () => {
+  const SRC = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+  it("[WIRING] the paths are read by goal text before inference and passed as targetPosterior; truncation is logged", () => {
+    expect(SRC).toContain("/v2/goal-paths?goal_text=${encodeURIComponent(goalText)}&limit=${TARGET_POSTERIOR_LIMIT}");
+    expect(SRC).toContain("const _targetPosterior = await fetchTargetPosterior(goal);");
+    expect(SRC).toContain("targetPosterior: _targetPosterior,");
+    expect(SRC).toContain("target posterior: TRUNCATED");
+    expect(SRC).toMatch(/signal: AbortSignal\.timeout\(2_000\),\n    \}\);\n    if \(!r\.ok\) \{ console\.log\(`\[goal-host-vessel\] target posterior: goal-paths read HTTP/);
+  });
+});
+
+// Part 2 (index.ts + activity-api migration 224): selection counts only a path's ORG-SCOPED counters.
+describe("selection reads only org-scoped path counters", () => {
+  it("[MUST-FAIL] a legacy row (mixed-org counters, no org-scoped ones) is left out; org-scoped counters are what count", () => {
+    expect(typeof G["orgScopedPathRows"]).toBe("function");
+    const rows = G.orgScopedPathRows([
+      { expected_output_shapes: ["gitCommitResult"], successful_executions: 40, failed_executions: 0 },
+      { expected_output_shapes: ["gitStatusResult"], successful_executions: 1, failed_executions: 9, org_successful_executions: 2, org_failed_executions: 0 },
+    ]);
+    expect(rows).toEqual([{ expected_output_shapes: ["gitStatusResult"], successful_executions: 2, failed_executions: 0 }]);
+  });
+  it("[WIRING] the read maps through orgScopedPathRows", () => {
+    const SRC2 = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+    expect(SRC2).toContain("return orgScopedPathRows(raw);");
+  });
+});
