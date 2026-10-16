@@ -242,7 +242,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
-import { inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
+import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText } from "./compose-gap-id";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
@@ -320,13 +320,14 @@ import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { targetsToAvoid } from "./failed-targets";
+import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
-import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, pickConceptDbRow, type ProducerRow } from "./producer-order";
+import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, pickConceptDbRow, isOwnSubstrateRow, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
   Impulse,
@@ -4939,10 +4940,11 @@ function escalateNoProducerToInvestigation(goal: string, confidence: number | nu
 // read tools plus the goal's own target write shapes — then re-verify. Robust reach
 // floor for cold arbitrary goals. Additive, guarded, fail-open.
 // UNIVERSAL_READ_TOOLS lives in floor-tools.ts (no shell: see there).
-async function ufResolveUrl(shape: string): Promise<string | null> {
+/** Discovery's producer rows for a shape: the request ufResolveUrl has always made, with its v2 fallback. */
+async function ufDiscoverRows(shape: string): Promise<any[]> {
   try {
     const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return null;
+    if (!r.ok) return [];
     const j = await r.json() as any; let vessels: any[] = Array.isArray(j?.content?.vessels) ? j.content.vessels : [];
     if (vessels.length === 0) {
       // Fallback: retry via the v2 impulses endpoint which some vessels register under
@@ -4950,8 +4952,14 @@ async function ufResolveUrl(shape: string): Promise<string | null> {
         const r2 = await fetch(`${DISCOVERY_ENDPOINT}/v2/impulses/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
         if (r2.ok) { const j2 = await r2.json() as any; vessels = Array.isArray(j2?.content?.vessels) ? j2.content.vessels : []; }
       } catch { /* fall through to return null */ }
-      if (vessels.length === 0) return null;
     }
+    return vessels;
+  } catch { return []; }
+}
+async function ufResolveUrl(shape: string): Promise<string | null> {
+  try {
+    const vessels = await ufDiscoverRows(shape);
+    if (vessels.length === 0) return null;
     // Mirror endpointForShape routeFor: prefer a plain-HTTP local row (protocol !== "libp2p"),
     // else fall back to a libp2p row (or PREFER_LIBP2P_ROUTE) via the local federation egress.
     const localHttp = vessels.find((x) => x && x.protocol !== "libp2p" && x.endpoint);
@@ -4967,8 +4975,22 @@ async function ufResolveUrl(shape: string): Promise<string | null> {
     return null;
   } catch { return null; }
 }
-async function ufBuildWriteTool(shape: string): Promise<any | null> {
-  const url = await ufResolveUrl(shape); if (!url) return null;
+/** THE OWN-SUBSTRATE PRODUCER of a shape (CHANGE-29), or null: a row served on this node, or a peer row reached
+ *  through one of THIS substrate's nodes (substrateNodes, CHANGE-15's ordering) that dials its own endpoint. A
+ *  foreign peer's row is never returned, so a floor tool built from it is neither offered nor answered by it. */
+async function ufOwnProducerUrl(shape: string): Promise<string | null> {
+  const rows = await ufDiscoverRows(shape);
+  if (rows.length === 0) return null;
+  const peers = await ownSubstratePeers();
+  const own = orderProducers(rows as ProducerRow[], peers).find((r) => isOwnSubstrateRow(r, peers)) as any;
+  if (!own) return null;
+  const re = String(own.resolve_endpoint ?? "/resolve");
+  return (re.startsWith("http://") || re.startsWith("https://")) ? re : `${String(own.endpoint).replace(/\/$/, "")}${re.startsWith("/") ? re : "/" + re}`;
+}
+/** ONE tool builder (CHANGE-29): a write shape's tool, or ("resolve") a target shape's read-or-execute tool, whose
+ *  schema is probed at the producer `resolveUrl` names. */
+async function ufBuildWriteTool(shape: string, mode: "write" | "resolve" = "write", resolveUrl: (s: string) => Promise<string | null> = ufResolveUrl): Promise<any | null> {
+  const url = await resolveUrl(shape); if (!url) return null;
   let envelope = ""; let fields: string[] = []; let required: string[] = [];
   try {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }), signal: AbortSignal.timeout(4000) });
@@ -4986,7 +5008,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
   const names = fields.length ? fields : ["content"];
   const req = required.length ? required : ["content"];
   const inner = { type: "object", properties: Object.fromEntries(names.map((f) => [f, { type: "string" }])), required: req };
-  return { name: shape, description: `Perform the '${shape}' write/create action. ${envelope ? `Pass a single '${envelope}' object with fields ${names.join(", ")} (required: ${req.join(", ")}).` : `Fields: ${names.join(", ")}.`} Build the payload FAITHFULLY from the goal and what you read; never invent unrelated content.`, input_schema: envelope ? { type: "object", properties: { [envelope]: inner }, required: [envelope] } : inner };
+  return { name: shape, description: `${mode === "write" ? `Perform the '${shape}' write/create action.` : `Resolve the '${shape}' shape on this substrate (it reads or executes what the shape names) and use what it returns.`} ${envelope ? `Pass a single '${envelope}' object with fields ${names.join(", ")} (required: ${req.join(", ")}).` : `Fields: ${names.join(", ")}.`} Build the payload FAITHFULLY from the goal and what you read; never invent unrelated content.`, input_schema: envelope ? { type: "object", properties: { [envelope]: inner }, required: [envelope] } : inner };
 }
 // Execute ONE model-requested tool by resolving its shape against the owning vessel
 // (reusing ufResolveUrl — the module-level endpointForShape analogue) and POSTing the
@@ -5050,9 +5072,12 @@ async function dispatchRateDecision(goal: string): Promise<{ reason: string; ret
   __dispatchRateGlobal.push(now);
   return null;
 }
-async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
+async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>, ownOnly?: ReadonlySet<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
-  const turl = await ufResolveUrl(name); if (!turl) return { ok: false, error: "no resolver for shape" };
+  // ORIGIN AT EXECUTION TOO (CHANGE-29): a tool the floor offered because THIS substrate serves it is answered only
+  // by this substrate's producer; a foreign row discovery may also list is refused here, not just at the offer.
+  const turl = ownOnly?.has(name) ? await ufOwnProducerUrl(name) : await ufResolveUrl(name);
+  if (!turl) return { ok: false, error: ownOnly?.has(name) ? "no own-substrate resolver for shape (foreign producers refused)" : "no resolver for shape" };
   if (!dispatchContext.getStore()?.dispatchId) console.warn(`[uf] tool call WITHOUT dispatch id: tool=${name} (the resolver will receive no execution_id)`);
   try {
     const r = await walkEgressFetch(name, turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: toolPointer(name, args, dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}, name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}) } }), signal: AbortSignal.timeout(60_000) });
@@ -5544,6 +5569,7 @@ async function runGroundedToolLoop(
   basePrompt: string,
   tools: any[],
   writeShapeList: string[],
+  ownOnly?: ReadonlySet<string>,
 ): Promise<{ finalText: string; groundedOk: number; executedOk: number; executed: Array<{ tool: string; ok: boolean }>; observations: string[]; calledWriteShapes: Set<string>; commandEvidence: string } | null> {
   const url = await ufResolveUrl("llm_completion_dispatch"); if (!url) return null;
   const allowlist = new Set<string>(tools.map((t: any) => String(t?.name)).filter(Boolean));
@@ -5687,7 +5713,7 @@ async function runGroundedToolLoop(
         const a = argsOf(c);
         const key = `${nm}:${JSON.stringify(a)}`;
         if (doneKeys.has(key)) continue;         // already ran this exact call — skip re-exec (anti-spin)
-        const res = await ufExecuteTool(nm, a, allowlist);
+        const res = await ufExecuteTool(nm, a, allowlist, ownOnly);
         executed.push({ tool: nm, ok: res.ok });
         const execCmd = execFieldOf(a);
         if (execCmd) commandLines.push(`- ${nm} was RUN as: \`${execCmd.slice(0, 400)}\``);
@@ -5817,18 +5843,28 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   }
 
   const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
-  const tools: any[] = [...UNIVERSAL_READ_TOOLS];
+  // THE OFFER FOLLOWS DISCOVERY (CHANGE-29, user ruling 06:06:38Z): the hand read tools discovery still advertises,
+  // plus each target shape this substrate serves (not a shell, not a non-shape token), plus the write shapes as before.
+  const knownForFloor = new Set(await fetchKnownShapes());
+  const handNames = new Set(floorHandToolNames(knownForFloor));
+  const tools: any[] = UNIVERSAL_READ_TOOLS.filter((t) => handNames.has(t.name));
+  const floorOwnOnly = new Set<string>();
+  for (const ts of floorTargetCandidates(targetShapes, knownForFloor, NAMED_SHAPE_EXCLUDE)) {
+    const t = await ufBuildWriteTool(ts, "resolve", ufOwnProducerUrl);
+    if (t) { tools.push(t); floorOwnOnly.add(ts); }
+  }
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
+  console.log(`[goal-host-vessel] floor: TOOLS [${tools.map((t: any) => `${t.name}(${floorOwnOnly.has(t.name) ? "target" : writeShapes.includes(t.name) ? "write" : "hand"})`).join(", ")}] source=${floorOwnOnly.size > 0 ? "hand+target" : "hand"}`);
   const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
   // A goal naming two paths, answered from one, is the measured floor failure: the producer
   // was right and its ARGUMENT was incomplete, and the retry then walked away from that
   // producer entirely. Supplying the computed fact costs one line and cannot compose wrongly.
   const _mqNote = multiQuantityNote(goal);
-  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. You have NO shell and NO internet tool: for anything about the world outside this repository — live prices, current measurements, external facts — say plainly that you cannot retrieve it rather than supplying a remembered number; stating such a value from your own knowledge is an INVALID answer. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with source_code/fs_read/codeSearchResult; to find WHERE something is defined or used across the repositories, search every vessel's source with fs_grep and cite its results[].url (repos/<vessel>/...) and line verbatim; query substrate data (e.g. gaps) with the matching read tool. You have NO shell tool: commands cannot be run, and nothing may be written except through a write tool offered below. A file's LINE COUNT is the line_count field of a codeSearchResult call on that file (exact, identical to wc -l) — use it verbatim, never count lines yourself. Other EXACT COMPUTATIONS (hashes, checksums, byte-precise transforms) cannot be measured with these tools: say so plainly rather than writing a value from generation (measured wrong self-computed values include lettercounts off by one and a hallucinated sha256).${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. You have NO shell and NO internet tool: for anything about the world outside this repository — live prices, current measurements, external facts — say plainly that you cannot retrieve it rather than supplying a remembered number; stating such a value from your own knowledge is an INVALID answer. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with fs_read/codeSearchResult; to find WHERE something is defined or used across the repositories, search every vessel's source with fs_grep and cite its results[].url (repos/<vessel>/...) and line verbatim; query substrate data (e.g. gaps) with the matching read tool. You have NO shell tool: commands cannot be run, and nothing may be written except through a write tool offered below. A file's LINE COUNT is the line_count field of a codeSearchResult call on that file (exact, identical to wc -l) — use it verbatim, never count lines yourself. Other EXACT COMPUTATIONS (hashes, checksums, byte-precise transforms) cannot be measured with these tools: say so plainly rather than writing a value from generation (measured wrong self-computed values include lettercounts off by one and a hallucinated sha256).${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
   // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
-  const loop = await runGroundedToolLoop(prompt, tools, writeShapes);
+  const loop = await runGroundedToolLoop(prompt, tools, writeShapes, floorOwnOnly);
   if (!loop) { console.log(`[goal-host-vessel] floor: exit=no_dispatch_url goalHash=${goalHashOf(goal)}`); return null; }
   const { groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence } = loop;
   let finalText = loop.finalText;
@@ -10545,7 +10581,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // and the shell resolver already runs with cwd=/workspace, so find/grep from
         // there work today and always did.
         const invLayout = `\n\nWHERE THE CODE IS. This substrate runs a fleet of vessels. Each vessel's RUNNING source is at /vessels/<vessel>/src (schemas and migrations at /vessels/<vessel>/sql), and its git checkout is at /workspace/git/vessels/<vessel>. Vessel names are directory names, e.g. activity-api, goal-host-vessel, development-vessel, analysis-vessel, local-tools-vessel. There is no shell tool.\n\nHOW TO FIND A FILE. Never guess a filename: take paths from the goal, from the layout above, or from a file you have already read (imports name their modules), then fs_read the ABSOLUTE path and codeSearchResult it for the symbol. A filename you did not obtain from a tool result is a guess, and an answer built on one is INVALID even if it sounds right. If your searches genuinely find nothing, say so plainly rather than inventing a path.`;
-        const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (source_code, fs_read, codeSearchResult) to FIND and READ the relevant source/files yourself BEFORE answering — do not ask for them, and never answer from memory; an answer not grounded in what your tools actually returned is INVALID.${invLayout}\n\nGoal:\n${goal}\n\nWhen finished, respond with ONLY the concrete content (file contents, analysis, or answer) grounded in your tool results — no preamble, no code fences.`;
+        const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (fs_read, codeSearchResult) to FIND and READ the relevant source/files yourself BEFORE answering — do not ask for them, and never answer from memory; an answer not grounded in what your tools actually returned is INVALID.${invLayout}\n\nGoal:\n${goal}\n\nWhen finished, respond with ONLY the concrete content (file contents, analysis, or answer) grounded in your tool results — no preamble, no code fences.`;
         const inv = await runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, []);
         if (inv && inv.groundedOk >= 1) {
           const invContent = inv.finalText.trim() || inv.observations.join("\n\n").slice(0, 6000);

@@ -17,7 +17,9 @@ describe("the floor's offered tools", () => {
   });
 
   it("keep a read path that can count a file's lines exactly (the floor's positive control)", () => {
-    expect(names).toEqual(expect.arrayContaining(["source_code", "fs_read", "codeSearchResult"]));
+    // Pin changed under the user ruling of 2026-10-16T06:06:38Z (CHANGE-29): the dead source_code is dropped.
+    expect(names).toEqual(expect.arrayContaining(["fs_read", "codeSearchResult"]));
+    expect(names).not.toContain("source_code");
     const cs = UNIVERSAL_READ_TOOLS.find((t) => t.name === "codeSearchResult")!;
     expect(cs.description).toContain("line_count");
   });
@@ -27,7 +29,9 @@ describe("the floor's offered tools", () => {
     expect(src).toContain('import { UNIVERSAL_READ_TOOLS } from "./floor-tools"');
     expect(src).not.toMatch(/const\s+UNIVERSAL_READ_TOOLS\s*=/);
     // Both model-driven loops take their tools from the shared list.
-    expect(src).toContain("const tools: any[] = [...UNIVERSAL_READ_TOOLS];");
+    // Pin changed under the user ruling of 2026-10-16T06:06:38Z (CHANGE-29): the floor's tools are the hand list
+    // filtered by what discovery advertises, plus the own-substrate target tools; still only from this list.
+    expect(src).toContain("const tools: any[] = UNIVERSAL_READ_TOOLS.filter((t) => handNames.has(t.name));");
     expect(src).toContain("runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, [])");
     // The floor's and the investigation's prompts no longer steer the model to a shell tool.
     const floorPrompt = src.slice(src.indexOf("You are the substrate's universal executor."), src.indexOf("When finished, respond with the final answer/result"));

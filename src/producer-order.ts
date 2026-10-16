@@ -174,3 +174,16 @@ export function pickConceptDbRow<T extends ProducerRow & { id?: unknown; vesselI
   const other = named.find(isHttp);
   return other ? { via: 'http', row: other } : null;
 }
+
+/**
+ * A row THIS SUBSTRATE serves (CHANGE-29): a local row, or a peer row reached through one of this substrate's own nodes
+ * (`ownPeers`, the substrateNodes discovery origins) that dials its own endpoint. A libp2p row, a row with no
+ * endpoint, and a peer row reached through any other peer (a foreign substrate's) are not. With no `ownPeers`, only
+ * local rows are.
+ */
+export function isOwnSubstrateRow(row: ProducerRow, ownPeers?: ReadonlySet<string>): boolean {
+  if (!row || !row.endpoint || row.protocol === "libp2p") return false;
+  if (producerClass(row) === 0) return true;
+  const o = urlOrigin(row.peerEndpoint);
+  return !!ownPeers && o !== null && ownPeers.has(o) && dialsOwnEndpoint(row);
+}
