@@ -17,3 +17,15 @@ export function targetsToAvoid(exact: readonly FailedTargetRecord[]): string[] {
   }
   return out;
 }
+
+/**
+ * J4: A RETRY AFTER A JUDGE-GRADED MISS ADAPTS. Target selection (A2b-proper, selectTargetSet) reads the goal class's
+ * recorded paths, but a probe runs with learningMode "observe", where no path is recorded: attempt 2 re-ran attempt 1's
+ * inference and chose the same targets. The failure memory is kept in every mode, so its records since the goal's last
+ * reach are offered to the selection as rows of the targets each failed under ({targets} failed once). The caller passes
+ * them ONLY when paths are not being recorded (observe): with learning on, the posterior already holds every attempt's
+ * row, and adding these would count the same miss twice. No new constant: Beta(1+s, 1+f) does the down-weighting.
+ */
+export function failureRowsFrom(exact: readonly FailedTargetRecord[]): Array<{ expected_output_shapes: string[]; successful_executions: number; failed_executions: number }> {
+  return exact.filter((r) => Array.isArray(r.targets) && r.targets.length > 0).map((r) => ({ expected_output_shapes: [...r.targets!], successful_executions: 0, failed_executions: 1 }));
+}

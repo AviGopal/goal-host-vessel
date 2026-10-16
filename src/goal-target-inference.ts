@@ -85,6 +85,8 @@ export interface InferGoalTargetShapesOpts {
   /** This goal class's recorded paths (activity-api GET /v2/goal-paths?goal_text=): each row's target set and its
    *  reach counters. When given, the proposed target sets are RE-RANKED by a Thompson draw over them (A2b-proper). */
   targetPosterior?: readonly TargetPathRow[];
+  /** J4: this goal's failure-memory rows since its last reach, supplied only when paths are not recorded (observe). */
+  failureRows?: readonly TargetPathRow[];
   /** Shapes the caller expects the goal to produce; when undefined, infer from goal. */
   expectedOutputShapes?: string[];
   /** A pre-pinned target template id; when provided, skip inference. */
@@ -562,7 +564,9 @@ export async function inferGoalTargetDecision(
   // afterwards would empty the primary set). Then A2b-proper's learned SELECTION among the sets left, then the retry
   // exclusion, which still applies to whatever it picks.
   const routed = withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts));
-  const selected = opts.targetPosterior && opts.targetPosterior.length > 0 ? selectTargetSet(routed, opts.targetPosterior) : null;
+  // J4: the posterior's rows plus, when the caller supplies them (observe mode only), the goal's failure rows.
+  const rows = [...(opts.targetPosterior ?? []), ...(opts.failureRows ?? [])];
+  const selected = rows.length > 0 ? selectTargetSet(routed, rows) : null;
   if (selected && selected.candidates.some((c) => c.s + c.f > 0)) {
     console.log(`[goal-target-inference] target selection ${JSON.stringify({ goal_hash: goalHashOf(goal), changed: selected.changed, candidates: selected.candidates.map((c) => ({ shapes: c.shapes, s: c.s, f: c.f, draw: Number(c.draw.toFixed(4)) })), chosen: selected.decision.shapes })}`);
   }

@@ -323,7 +323,7 @@ import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
-import { targetsToAvoid } from "./failed-targets";
+import { targetsToAvoid, failureRowsFrom } from "./failed-targets";
 import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
@@ -13931,6 +13931,8 @@ async function runGoalWithRecoveryInner(
     const _targetPosterior = await fetchTargetPosterior(goal);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         targetPosterior: _targetPosterior,
+        // J4: in observe mode no path is recorded, so the goal's failure memory is the selection's evidence of a miss.
+        ...(opts.learningMode === "observe" ? { failureRows: failureRowsFrom(recallGoalFailures(goal).exact) } : {}),
         excludeTargets: _avoidTargets,
         decisionCache: inferredTargetRoutesMemo,
         finalDecisionCache: inferredTargetDecisionCache,
