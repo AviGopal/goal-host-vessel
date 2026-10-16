@@ -19,6 +19,7 @@
 // takes the floor.
 import { resolvePathlessCodeChangeGoal, isPathlessCodeChangeGoal, extractSearchTerms, type FileSearch } from "../goal-file-resolution";
 import { isEditIntentGoal } from "../goal-intent";
+import { isGapInvestigationGoal } from "../goal-target-inference";
 import { decideDoor, decideHandoff } from "../routing-rules/edit-intent";
 import { floorDoor, floorHandoff } from "./floor";
 import { validLocalizationRecord } from "./localization";
@@ -100,6 +101,11 @@ export function handoffRoute(input: HandoffInput): HandoffDecision {
  * feature_compose with the gap's own context.
  */
 export function goalForRoutingOf(goal: string, hydration: Hydration | null): string {
+  // An INVESTIGATION ask ("investigate and decompose gap X", "investigate gap X before composing") is not a repair:
+  // boredom emits it on purpose when a gap has no edit site. Hydrating it with "fix per gap record" put an edit verb
+  // into it and routed diagnosis asks to feature_compose, where they cannot reach (measured 2026-10-16: 10 distinct
+  // goals on one node in 24 h, refused at admission). Repair goals ("close gap X", "address … gap X") still hydrate.
+  if (isGapInvestigationGoal(goal)) return goal;
   if (hydration && hydration.cited_file && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
     return `${goal} (gap cites file: ${hydration.cited_file}; fix per gap record: ${hydration.summary.slice(0, 300)})`;
   }
