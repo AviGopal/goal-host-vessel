@@ -320,6 +320,7 @@ import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
+import { confirmComposeLanding } from "./compose-landing-evidence";
 import { targetsToAvoid } from "./failed-targets";
 import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
@@ -3862,7 +3863,21 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     const favorableCompose = dig.split("\n").some((l) =>
       /featureComposeReport/.test(l) && /"verdict"\s*:\s*"?FAVORABLE/i.test(l)
     ) && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
+    // D2 step 1: the report's own word is not landing evidence. A named new_git_sha must be ON origin/dev in that
+    // vessel's clone (compose-landing-evidence.ts), and the goal's edit, when it names one, must not be refuted on it
+    // (verifyEditPostState false). Unconfirmed: fall THROUGH to landedEditOf and the reach gate, which refuse a write
+    // goal with no landing. Never a reach on the producer's report alone.
+    let _composeLanding: { vessel: string; sha: string } | null = null;
     if (favorableCompose) {
+      _composeLanding = await confirmComposeLanding(dig);
+      const _fm = _composeLanding ? String(goal ?? "").match(/repos\/([\w.-]+)\/[\w./-]+\.\w+/) : null;
+      const _post = _composeLanding && _fm && _fm[1] === _composeLanding.vessel ? await verifyEditPostState(goal, _fm[0], _composeLanding.sha) : null;
+      if (!_composeLanding || _post === false) {
+        console.log(`[goal-host-vessel] favorable-compose: NOT CONFIRMED (${_composeLanding ? `post-state refutes ${_composeLanding.sha.slice(0, 12)}` : "no named sha is on origin/dev"}); falling through to the reach gate`);
+        _composeLanding = null;
+      }
+    }
+    if (favorableCompose && _composeLanding) {
       // STRONG credit (deterministic:true → isSubstanceHonestReach → creditReachedTemplate)
       // is gated on VERIFIED SUBSTANCE, not the producer's self-declared FAVORABLE.
       // feature_compose's semantic gate FAILS OPEN on an LLM-judge outage
@@ -3884,8 +3899,8 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       return {
         reached: true,
         reason: verifiedSubstance
-          ? "deterministic:favorable-compose — semantic gate consulted (verified) + reachable-symbol substance, applied by feature_compose AND landed on origin/dev"
-          : "favorable-compose — landed on origin/dev but semantic gate was fail-open/unverified (no reachable-symbol substance); strong credit withheld, deferring to downstream-use ledger",
+          ? `deterministic:favorable-compose — semantic gate consulted (verified) + reachable-symbol substance, applied by feature_compose AND ${_composeLanding.sha.slice(0, 12)} confirmed on ${_composeLanding.vessel} origin/dev`
+          : `favorable-compose — ${_composeLanding.sha.slice(0, 12)} confirmed on ${_composeLanding.vessel} origin/dev but semantic gate was fail-open/unverified (no reachable-symbol substance); strong credit withheld, deferring to downstream-use ledger`,
         completion_shapes: ["featureComposeReport"],
         deterministic: verifiedSubstance ?? false,
       };
