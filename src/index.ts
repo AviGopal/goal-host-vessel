@@ -526,6 +526,12 @@ async function gracefulShutdown(sig: string): Promise<void> {
     if (Date.now() >= deadline) { console.log(`[goal-host-vessel] ${sig}: drain deadline with ${inFlight} in-flight`); break; }
     await new Promise((r) => setTimeout(r, 500));
   }
+  // CHANGE DB1: send the counted lifecycle-subscriber runs before exiting, so a restart loses none. Optional: a dist
+  // that predates the counter has no such method.
+  try {
+    const sc = await (host as unknown as { flushSubscriberCounts?: () => Promise<Readonly<Record<string, number>> | null> }).flushSubscriberCounts?.();
+    if (sc) console.log(`[goal-host-vessel] ${sig}: subscriber counts flushed ${JSON.stringify(sc)}`);
+  } catch { /* the counter logs and counts its own failures */ }
   try { server?.stop(true); } catch { /* best-effort */ }
   console.log("[goal-host-vessel] stopped");
   process.exit(0);
