@@ -77,6 +77,10 @@ export interface InferGoalTargetShapesOpts {
    */
   complete?: (prompt: string) => Promise<string | null>;
   decisionCache?: Map<string, GoalTargetDecision>;
+  /** The FINAL decision (after the read rule and the retry exclusion), keyed by goal_hash: what the caller dispatches
+   *  and what its readers (failure memory, path record, reach gate fallback) must see. `decisionCache` is the routes'
+   *  memo of the UNFILTERED decision and is not that (CHANGE-35 A2b-min repair). */
+  finalDecisionCache?: Map<string, GoalTargetDecision>;
   /** Shapes the caller expects the goal to produce; when undefined, infer from goal. */
   expectedOutputShapes?: string[];
   /** A pre-pinned target template id; when provided, skip inference. */
@@ -550,7 +554,15 @@ export async function inferGoalTargetDecision(
 ): Promise<GoalTargetDecision> {
   // Only shape NAMES can be targets, whatever vocabulary the caller passes (shape-name.ts): a prose entry is never chosen.
   const vocabulary = knownShapes.filter(isShapeName);
-  return withoutFailedTargets(withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts)), opts.excludeTargets);
+  const final = withoutFailedTargets(withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts)), opts.excludeTargets);
+  // The routes memoise their UNFILTERED answer (decisionCache), so a retry re-filters it against the new exclusions.
+  // What a reader must see is the decision actually returned: kept under its own key (CHANGE-35 A2b-min repair).
+  if (opts.finalDecisionCache && (final.shapes.length > 0 || final.alternatives.length > 0)) {
+    const fc = opts.finalDecisionCache;
+    if (fc.size >= INFER_CACHE_MAX) { const first = fc.keys().next().value; if (first !== undefined) fc.delete(first); }
+    fc.set(goalHashOf(goal), final);
+  }
+  return final;
 }
 
 /**

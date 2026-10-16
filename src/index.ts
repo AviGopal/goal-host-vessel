@@ -319,6 +319,7 @@ import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
+import { targetsToAvoid } from "./failed-targets";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
@@ -4424,7 +4425,20 @@ function recordDeterministicLabel(goal: string, executionId: string | undefined,
 // goal_hash cache and the known-shape vocabulary fetch (which use this module's
 // DISCOVERY_ENDPOINT / API_KEY and so stay here).
 const inferredTargetShapeCache = new Map<string, string[]>();
+// The FINAL target decision per goal hash (after the read rule and the retry exclusion): what every reader below sees.
+// The routes' own memo of their UNFILTERED answer is inferredTargetRoutesMemo; reading that as "the decision" recorded
+// a retry's excluded target as the one it tried (CHANGE-35 A2b-min repair).
 const inferredTargetDecisionCache = new Map<string, GoalTargetDecision>();
+const inferredTargetRoutesMemo = new Map<string, GoalTargetDecision>();
+// The target set the walk actually DISPATCHED for a goal: the final decision after the walk's own adjustments (the
+// countable union, the shell net, named-shape binding, the derivation split, an OR-alternative commit). The failure
+// memory records THIS as the targets an attempt chose.
+const dispatchedTargetsByGoal = new Map<string, string[]>();
+function noteDispatchedTargets(goal: string, shapes: string[] | undefined | null): void {
+  if (!goal || !shapes || shapes.length === 0) return;
+  if (dispatchedTargetsByGoal.size >= 512) { const first = dispatchedTargetsByGoal.keys().next().value; if (first !== undefined) dispatchedTargetsByGoal.delete(first); }
+  dispatchedTargetsByGoal.set(goalHashOf(goal), [...shapes]);
+}
 const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; strikes?: number }>();
 // PERSISTENCE (2026-07-25): reachedCommandCache is the "known command" library — a verified command
 // that a NEW similar goal reuses (Tier-1 exact replay + Tier-2/multi-slot rebind). In-process it
@@ -4537,9 +4551,10 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   if (/^abstain:/i.test(r) || /no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
   const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
   const list = goalFailureMemory.get(rec.hash) ?? [];
-  // The targets this attempt chose (the inference cache's decision for the goal): a retry must not choose them again
-  // when this failure was "no artifact on the target" (CHANGE-35 / A2b-minimal, failedTargetsToAvoid).
-  const triedTargets = inferredTargetDecisionCache.get(rec.hash)?.shapes;
+  // The targets this attempt chose: the set the walk DISPATCHED, else the FINAL inference decision (never the routes'
+  // unfiltered memo). A retry must not choose them again when this failure was "no artifact on the target"
+  // (CHANGE-35 / A2b-minimal, failedTargetsToAvoid).
+  const triedTargets = dispatchedTargetsByGoal.get(rec.hash) ?? inferredTargetDecisionCache.get(rec.hash)?.shapes;
   if (triedTargets && triedTargets.length > 0) rec.targets = triedTargets.slice(0, 8);
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
   goalFailureMemory.set(rec.hash, list);
@@ -4629,14 +4644,12 @@ function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; nea
   near.sort((a, b) => b.at.localeCompare(a.at));
   return { exact, near: near.slice(0, 3) };
 }
-/** The targets a retry of this goal must not choose again: those of its LATEST recorded failure since its last reach,
- *  when that failure was "no artifact on the target" (write-goal-no-artifact). Any other latest verdict, or a reach since,
- *  excludes nothing (CHANGE-35 / A2b-minimal; reuses the failure memory, no second store). */
+/** The targets a retry of this goal must not choose again: every target of the unbroken run of LATEST "no artifact on
+ *  the target" (write-goal-no-artifact) failures since its last reach (src/failed-targets.ts targetsToAvoid). Any other
+ *  latest verdict, or a reach since, excludes nothing (CHANGE-35 / A2b-minimal; reuses the failure memory, no second store). */
 function failedTargetsToAvoid(goalText: string): string[] {
   const { exact } = recallGoalFailures(goalText);
-  const latest = [...exact].sort((a, b) => b.at.localeCompare(a.at))[0];
-  if (!latest || !/^deterministic:write-goal-no-artifact\b/.test(latest.reason)) return [];
-  return latest.targets ?? [];
+  return targetsToAvoid(exact);
 }
 function priorFailureFeedbackFor(goalText: string): string {
   const { exact, near } = recallGoalFailures(goalText);
@@ -13789,7 +13802,8 @@ async function runGoalWithRecoveryInner(
     if (_avoidTargets.length > 0) tap(`[goal-host-vessel] ${opts.surface}: target inference told to avoid the last failed target(s) [${_avoidTargets.join(", ")}] (write-goal-no-artifact)`);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         excludeTargets: _avoidTargets,
-        decisionCache: inferredTargetDecisionCache,
+        decisionCache: inferredTargetRoutesMemo,
+        finalDecisionCache: inferredTargetDecisionCache,
         maxTargetShapes: 6,
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
@@ -14093,6 +14107,7 @@ async function runGoalWithRecoveryInner(
       seededOutputShapes = opts.expectedOutputShapes;
       terminalOutputShapes = undefined;
     }
+    noteDispatchedTargets(goal, seededOutputShapes);
     try {
       // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
@@ -15734,6 +15749,7 @@ async function runGoalWithRecoveryInner(
         if (altPick) {
           console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
           seededOutputShapes = alt;
+          noteDispatchedTargets(goal, alt);
           nextTarget = altPick.id;
           pickCorrelationId = altPick.correlationId;
           break;

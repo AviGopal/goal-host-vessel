@@ -42,9 +42,10 @@ describe("a retry avoids the target it just failed on", () => {
   });
 
   it("[CONTROL] wiring: targets recorded, only a latest no-artifact failure since the last reach is avoided, and passed", () => {
-    expect(SRC).toContain("const triedTargets = inferredTargetDecisionCache.get(rec.hash)?.shapes;");
+    expect(SRC).toContain("const triedTargets = dispatchedTargetsByGoal.get(rec.hash) ?? inferredTargetDecisionCache.get(rec.hash)?.shapes;");
     expect(SRC).toMatch(/function failedTargetsToAvoid\(goalText: string\): string\[\] \{\n  const \{ exact \} = recallGoalFailures\(goalText\);/);
-    expect(SRC).toContain("if (!latest || !/^deterministic:write-goal-no-artifact\\b/.test(latest.reason)) return [];");
+    // the rule is the shared one (src/failed-targets.ts targetsToAvoid: the unbroken run of latest no-artifact failures)
+    expect(SRC).toContain("return targetsToAvoid(exact);");
     expect(SRC).toContain("excludeTargets: _avoidTargets,");
   });
 });
