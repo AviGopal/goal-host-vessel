@@ -3,6 +3,7 @@ import { verbatimReadTarget } from "./verbatim-read";
 import { isMutationShape } from "./judge/shapes";
 import { isReadQuestionGoal } from "./read-goal";
 import { isShapeName } from "./shape-name";
+import { betaSample } from "./beta-sample";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -81,6 +82,9 @@ export interface InferGoalTargetShapesOpts {
    *  and what its readers (failure memory, path record, reach gate fallback) must see. `decisionCache` is the routes'
    *  memo of the UNFILTERED decision and is not that (CHANGE-35 A2b-min repair). */
   finalDecisionCache?: Map<string, GoalTargetDecision>;
+  /** This goal class's recorded paths (activity-api GET /v2/goal-paths?goal_text=): each row's target set and its
+   *  reach counters. When given, the proposed target sets are RE-RANKED by a Thompson draw over them (A2b-proper). */
+  targetPosterior?: readonly TargetPathRow[];
   /** Shapes the caller expects the goal to produce; when undefined, infer from goal. */
   expectedOutputShapes?: string[];
   /** A pre-pinned target template id; when provided, skip inference. */
@@ -554,7 +558,15 @@ export async function inferGoalTargetDecision(
 ): Promise<GoalTargetDecision> {
   // Only shape NAMES can be targets, whatever vocabulary the caller passes (shape-name.ts): a prose entry is never chosen.
   const vocabulary = knownShapes.filter(isShapeName);
-  const final = withoutFailedTargets(withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts)), opts.excludeTargets);
+  // The read rule first: a mutation-shaped set is never a candidate on a read goal (selecting one and dropping it
+  // afterwards would empty the primary set). Then A2b-proper's learned SELECTION among the sets left, then the retry
+  // exclusion, which still applies to whatever it picks.
+  const routed = withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts));
+  const selected = opts.targetPosterior && opts.targetPosterior.length > 0 ? selectTargetSet(routed, opts.targetPosterior) : null;
+  if (selected && selected.candidates.some((c) => c.s + c.f > 0)) {
+    console.log(`[goal-target-inference] target selection ${JSON.stringify({ goal_hash: goalHashOf(goal), changed: selected.changed, candidates: selected.candidates.map((c) => ({ shapes: c.shapes, s: c.s, f: c.f, draw: Number(c.draw.toFixed(4)) })), chosen: selected.decision.shapes })}`);
+  }
+  const final = withoutFailedTargets(selected ? selected.decision : routed, opts.excludeTargets);
   // The routes memoise their UNFILTERED answer (decisionCache), so a retry re-filters it against the new exclusions.
   // What a reader must see is the decision actually returned: kept under its own key (CHANGE-35 A2b-min repair).
   if (opts.finalDecisionCache && (final.shapes.length > 0 || final.alternatives.length > 0)) {
@@ -589,6 +601,51 @@ export function withoutFailedTargets(d: GoalTargetDecision, exclude: readonly st
   }
   console.log(`[goal-target-inference] retry: the last failed target(s) [${[...bad].join(", ")}] have no alternative — keeping [${d.shapes.join(", ")}]`);
   return d;
+}
+
+/** One recorded path of a goal class: the target set it ran under and its reach counters (goal_execution_paths). */
+export interface TargetPathRow { expected_output_shapes?: readonly string[] | null; successful_executions?: number | null; failed_executions?: number | null }
+export interface TargetCandidateScore { shapes: string[]; s: number; f: number; draw: number }
+export interface TargetSelection { decision: GoalTargetDecision; candidates: TargetCandidateScore[]; changed: boolean }
+
+/**
+ * TARGET INFERENCE AS A SELECTION OVER THE POSTERIOR (A2b-proper, design approved by qa 2026-10-16 ~12:00Z).
+ * Inference never learned: the routes and the LLM proposed a target set and it was dispatched whatever its record.
+ * goal_execution_paths already holds, per goal class (activity-api hashGoal), each path's target set
+ * (expected_output_shapes) and its reach counters, credited by recordGoalPath from the reach verdict.
+ *   - Candidates: ONLY the sets the routes proposed (primary + alternatives). This re-ranks, it never introduces a set
+ *     (limits effect-as-cause: a posterior over target sets favours sets that are easy to grade).
+ *   - Score: a Beta(1 + s, 1 + f) draw, s/f summed over the rows whose recorded set CONTAINS the candidate (the walk only
+ *     appends to or rewrites the inferred set). Stored thompson_alpha/beta are NOT summed: every row starts at (1,1).
+ *   - Cold start: no candidate has a row -> the decision is returned UNCHANGED (the same object): today's choice.
+ *   - The highest draw wins; the others become the alternatives in draw order. Every candidate's (s, f, draw) is
+ *     returned for the decision-time log (the counterfactual law 12 asks for).
+ */
+export function selectTargetSet(d: GoalTargetDecision, rows: readonly TargetPathRow[], draw: (a: number, b: number) => number = betaSample): TargetSelection {
+  const seen = new Set<string>();
+  const sets: string[][] = [];
+  for (const c of [d.shapes, ...d.alternatives]) {
+    if (!c || c.length === 0) continue;
+    const k = [...c].sort().join("|");
+    if (seen.has(k)) continue;
+    seen.add(k);
+    sets.push(c);
+  }
+  const counted = sets.map((shapes) => {
+    let s = 0;
+    let f = 0;
+    for (const r of rows) {
+      const rec = new Set(r.expected_output_shapes ?? []);
+      if (shapes.every((x) => rec.has(x))) { s += Math.max(0, Number(r.successful_executions) || 0); f += Math.max(0, Number(r.failed_executions) || 0); }
+    }
+    return { shapes, s, f, draw: 0 };
+  });
+  if (counted.length === 0 || counted.every((c) => c.s + c.f === 0)) return { decision: d, candidates: counted, changed: false };
+  for (const c of counted) c.draw = draw(1 + c.s, 1 + c.f);
+  const ranked = [...counted].sort((a, b) => b.draw - a.draw);
+  const winner = ranked[0]!;
+  if (winner.shapes === d.shapes) return { decision: d, candidates: counted, changed: false };
+  return { decision: { shapes: winner.shapes, confidence: d.confidence, alternatives: ranked.slice(1).map((c) => c.shapes) }, candidates: counted, changed: true };
 }
 
 /** A read goal's decision without its mutation-shaped targets (primary and alternatives); any other goal's unchanged. */
