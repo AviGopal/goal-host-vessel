@@ -4507,7 +4507,7 @@ async function loadReachedCommandCache(): Promise<void> {
 // A later verified reach does not erase the history; it supersedes it (records older than the last
 // reach are not fed back), so a goal that now reaches gets its reuse back and a goal that goes
 // hollow again after a counterfeit reach is steered again. Fail-open throughout, like the caches.
-type GoalFailureRecord = { hash: string; classToken: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean };
+type GoalFailureRecord = { hash: string; classToken: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean; /** the attempt's inferred targets (CHANGE-35 / A2b-min) */ targets?: string[] };
 const goalFailureMemory = new Map<string, GoalFailureRecord[]>();
 const goalLastReachedAt = new Map<string, string>();
 // Every failure stamp per goal (uncapped by GOAL_FAILURE_PER_HASH, bounded below), for counting distinct failed RUNS since the last reach
@@ -4537,6 +4537,10 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   if (/^abstain:/i.test(r) || /no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
   const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
   const list = goalFailureMemory.get(rec.hash) ?? [];
+  // The targets this attempt chose (the inference cache's decision for the goal): a retry must not choose them again
+  // when this failure was "no artifact on the target" (CHANGE-35 / A2b-minimal, failedTargetsToAvoid).
+  const triedTargets = inferredTargetDecisionCache.get(rec.hash)?.shapes;
+  if (triedTargets && triedTargets.length > 0) rec.targets = triedTargets.slice(0, 8);
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
   goalFailureMemory.set(rec.hash, list);
   noteGoalFailureStamp(rec.hash, rec.at);
@@ -4624,6 +4628,15 @@ function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; nea
   if (cls) for (const [h, list] of goalFailureMemory) { if (h === hash) continue; for (const r of list) if (r.classToken === cls && r.at > since(h)) near.push(r); }
   near.sort((a, b) => b.at.localeCompare(a.at));
   return { exact, near: near.slice(0, 3) };
+}
+/** The targets a retry of this goal must not choose again: those of its LATEST recorded failure since its last reach,
+ *  when that failure was "no artifact on the target" (write-goal-no-artifact). Any other latest verdict, or a reach since,
+ *  excludes nothing (CHANGE-35 / A2b-minimal; reuses the failure memory, no second store). */
+function failedTargetsToAvoid(goalText: string): string[] {
+  const { exact } = recallGoalFailures(goalText);
+  const latest = [...exact].sort((a, b) => b.at.localeCompare(a.at))[0];
+  if (!latest || !/^deterministic:write-goal-no-artifact\b/.test(latest.reason)) return [];
+  return latest.targets ?? [];
 }
 function priorFailureFeedbackFor(goalText: string): string {
   const { exact, near } = recallGoalFailures(goalText);
@@ -13750,7 +13763,10 @@ async function runGoalWithRecoveryInner(
     // catches the case it was written for (inference returns nothing → seed shellResult),
     // and the countable-goal UNION below still appends shellResult when inference DOES
     // return something, so the measurement stays composable either way.
+    const _avoidTargets = failedTargetsToAvoid(goal);
+    if (_avoidTargets.length > 0) tap(`[goal-host-vessel] ${opts.surface}: target inference told to avoid the last failed target(s) [${_avoidTargets.join(", ")}] (write-goal-no-artifact)`);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
+        excludeTargets: _avoidTargets,
         decisionCache: inferredTargetDecisionCache,
         maxTargetShapes: 6,
         llmEndpoint: LLM_VESSEL_ENDPOINT,

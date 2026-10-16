@@ -59,6 +59,8 @@ export interface GoalTargetDecision {
 }
 
 export interface InferGoalTargetShapesOpts {
+  /** Targets the goal's LATEST attempt failed on with no artifact (CHANGE-35 / A2b-minimal): not chosen again. */
+  excludeTargets?: readonly string[];
   llmEndpoint?: string;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: FetchLike;
@@ -548,7 +550,33 @@ export async function inferGoalTargetDecision(
 ): Promise<GoalTargetDecision> {
   // Only shape NAMES can be targets, whatever vocabulary the caller passes (shape-name.ts): a prose entry is never chosen.
   const vocabulary = knownShapes.filter(isShapeName);
-  return withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts));
+  return withoutFailedTargets(withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts)), opts.excludeTargets);
+}
+
+/**
+ * A RETRIED GOAL DOES NOT CHOOSE AGAIN THE TARGET IT JUST FAILED ON (CHANGE-35 / A2b-minimal; user ruling 2026-10-16
+ * ~09:51Z). RUN 0: with learning on, both attempts of the same goals chose the same targets and failed the same way
+ * ("no artifact on target X"). The caller passes the targets of the goal's latest such failure (goal-host's failure
+ * memory); they are removed from the decision AFTER every route and the vocabulary filter, falling back to the best
+ * alternative. If nothing would be left, today's choice stands ("no alternative"): an empty target set is worse.
+ */
+export function withoutFailedTargets(d: GoalTargetDecision, exclude: readonly string[] | undefined): GoalTargetDecision {
+  if (!exclude || exclude.length === 0) return d;
+  const bad = new Set(exclude);
+  if (!d.shapes.some((s) => bad.has(s))) return d;
+  const keep = (a: string[]) => a.filter((s) => !bad.has(s));
+  const alternatives = d.alternatives.map(keep).filter((a) => a.length > 0);
+  const shapes = keep(d.shapes);
+  if (shapes.length > 0) {
+    console.log(`[goal-target-inference] retry: excluded the last failed target(s) [${[...bad].join(", ")}] -> [${shapes.join(", ")}]`);
+    return { ...d, shapes, alternatives };
+  }
+  if (alternatives.length > 0) {
+    console.log(`[goal-target-inference] retry: excluded the last failed target(s) [${[...bad].join(", ")}] -> alternative [${alternatives[0]!.join(", ")}]`);
+    return { ...d, shapes: alternatives[0]!, alternatives: alternatives.slice(1), confidence: Math.min(d.confidence, 0.5) };
+  }
+  console.log(`[goal-target-inference] retry: the last failed target(s) [${[...bad].join(", ")}] have no alternative — keeping [${d.shapes.join(", ")}]`);
+  return d;
 }
 
 /** A read goal's decision without its mutation-shaped targets (primary and alternatives); any other goal's unchanged. */
