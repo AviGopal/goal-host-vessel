@@ -306,7 +306,7 @@ import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, re
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
-import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal } from "./goal-intent";
+import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText } from "./goal-intent";
 import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
@@ -17695,7 +17695,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
     return Response.json({ error: (err as Error).message }, { status: 400 });
   }
 
-  const rawGoal = typeof body.goal === "string" ? body.goal : undefined;
+  // ONE canonical goal text from ingress on (goal-intent.ts canonicalGoalText): every goal-text predicate downstream
+  // reads the same typography-folded string, so "don’t" and "don't" route alike.
+  const rawGoal = typeof body.goal === "string" ? canonicalGoalText(body.goal) : undefined;
   // SPEND-RATE BREAKER (4.4) on the raw goal, before any LLM call. 429 (not 200) so a caller such
   // as gap-to-feature records a failed hand-off instead of a successful one.
   if (typeof rawGoal === "string" && rawGoal.trim().length > 0) {

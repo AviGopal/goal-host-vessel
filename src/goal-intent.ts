@@ -27,7 +27,8 @@ import { isPathlessCodeChangeGoal } from "./goal-file-resolution";
  * Observed live (dispatch cb45905c): floor reused, reached with 6/7 tools, verdict
  * delivered — and the note the goal named was never created at all.
  */
-export function goalRequestsDurableArtifact(goal: string): boolean {
+export function goalRequestsDurableArtifact(rawGoal: string): boolean {
+  const goal = canonicalGoalText(rawGoal);
   // `writ` was in this list as a bare alternative inside \b(...)\b, which requires a word
   // boundary right after the T — so it matched only the standalone noun "writ" and never
   // "write", "writes", "writing" or "written". The most natural phrasing for asking for a
@@ -38,14 +39,30 @@ export function goalRequestsDurableArtifact(goal: string): boolean {
   return verb && noun;
 }
 
-function prohibitsAnyMutation(goal: string): boolean {
+/**
+ * THE ONE GOAL-TEXT CANONICALIZATION (user ruling 2026-10-17T00:00:17Z "Include canonicalization"). Every goal-text
+ * predicate reads the goal through this, and /run-goal applies it once at ingress, so a predicate's wording can never be
+ * defeated by typography: "don’t" (U+2019) did not match prohibitsAnyMutation's "don't", and an edit-intent goal
+ * typed with smart quotes routed differently from the same goal typed plainly. NFKC folds compatibility forms
+ * (full-width letters, ligatures, non-breaking spaces); the quote map folds the typographic quotes NFKC leaves alone.
+ * Idempotent: canonicalGoalText(canonicalGoalText(g)) === canonicalGoalText(g).
+ */
+export function canonicalGoalText(goal: string): string {
+  return goal.normalize("NFKC").replace(/[\u2018\u2019\u201A\u201B\u2032\u02BC]/g, "'").replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"');
+}
+
+/** A goal that forbids every change ("Do not change anything", "don't edit or update any file", ...). Exported so the
+ *  routing hand-off reads the SAME predicate as isEditIntentGoal (a-negated-edit-instruction-is-routed-to-a-landing-compose). */
+export function prohibitsAnyMutation(rawGoal: string): boolean {
+  const goal = canonicalGoalText(rawGoal);
   const negatedVerbClause = /\b(?:do not|don't|never|please do not|you must not|do NOT)\b\s+(?:just\s+)?(?:change|edit|modify|update|delete|rename|refactor|fix|touch|add|remove|write(?:\s+to)?|create|implement|extend|apply(?:\s+edits\s+to)?)[\s\S]{0,80}\b(?:anything|any file|the source|a single line of it|the file)\b/i;
   const withoutGerund = /\bwithout\s+(?:writing|creating|generating|authoring|scaffolding)\b[\s\S]{0,80}\b(?:anything|any file|files?)\b/i;
   const readOnlyNo = /\bread-?only\b[\s\S]{0,80}\bno\s+(?:writing|creating|scaffolding)\b/i;
   return negatedVerbClause.test(goal) || withoutGerund.test(goal) || readOnlyNo.test(goal);
 }
 
-export function isEditIntentGoal(goal: string): boolean {
+export function isEditIntentGoal(rawGoal: string): boolean {
+  const goal = canonicalGoalText(rawGoal);
   return (
     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) &&
     /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose|create|creates|creating|author|authors|authoring|write|writes|writing|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal) && !prohibitsAnyMutation(goal)
@@ -65,8 +82,9 @@ export function isEditIntentGoal(goal: string): boolean {
  * requirement was bound to a ROUTE (edit-intent) rather than to the GOAL, so any route
  * that bypassed edit-intent bypassed the guard.
  */
-export function goalDemandsLandedEdit(goal: string | undefined): boolean {
-  if (!goal) return false;
+export function goalDemandsLandedEdit(rawGoal: string | undefined): boolean {
+  if (!rawGoal) return false;
+  const goal = canonicalGoalText(rawGoal);
   const asksForCodeChange =
     /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal) || isPathlessCodeChangeGoal(goal);
   if (!asksForCodeChange) return false;
@@ -109,6 +127,7 @@ export function goalDemandsLandedEdit(goal: string | undefined): boolean {
  * dispatch that DOES land a real commit is unaffected; only narration-only false
  * positives on this exact phrasing are newly caught.
  */
-export function isGapRepairGoal(goal: string | undefined): boolean {
+export function isGapRepairGoal(rawGoal: string | undefined): boolean {
+  const goal = rawGoal ? canonicalGoalText(rawGoal) : rawGoal;
   return !!goal && /\bclose\b[^.]{0,30}\b(substrate\s+)?gap\b/i.test(goal);
 }

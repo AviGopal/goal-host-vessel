@@ -17,6 +17,7 @@
 // corpus and behave differently live.
 
 import type { DoorDecision, DoorInput, HandoffDecision, HandoffInput } from "../routing-core/types";
+import { canonicalGoalText, prohibitsAnyMutation } from "../goal-intent";
 
 /** The door: v1 accepts the resolver's restatement whenever it made one (today's behaviour). */
 export function decideDoor(input: DoorInput): DoorDecision {
@@ -45,7 +46,11 @@ const FILE_PATH_ALL = /repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g;
  * also an edit intent (the late detector's file-path-only test), but a read-only goal is never hijacked into an edit.
  */
 export function decideHandoff(input: HandoffInput): HandoffDecision {
-  const g = input.goal_for_routing;
+  // One canonical goal text (canonicalGoalText), and a goal that forbids every change is never handed to a landing compose:
+  // the same prohibitsAnyMutation that isEditIntentGoal reads (a-negated-edit-instruction-is-routed-to-a-landing-compose,
+  // user ruling 2026-10-17T00:00:17Z). Its edit verb sits INSIDE the clause that forbids it.
+  const g = canonicalGoalText(input.goal_for_routing);
+  if (prohibitsAnyMutation(g)) return { route: "walk", target: null };
   const enabled = input.route_enabled;
   const fileMatch = enabled ? g.match(FILE_PATH) : null;
   const editVerb = fileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|create|register|scaffold)\b/i.test(g) : false;
