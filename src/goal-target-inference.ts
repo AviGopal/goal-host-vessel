@@ -101,6 +101,10 @@ export interface InferGoalTargetShapesOpts {
   shapeCatalog?: ShapeCatalog;
   /** I-T (i): shapes present in the pool at choice time (binds a producer's pool-sourced required input). */
   poolShapes?: readonly string[];
+  /** I-T structural (piece 3): the BOUNDED candidate names the LLM chooser is shown (recalled ∪ goal-path), in place of
+   *  the whole advertised vocabulary, so the prompt does not grow with the shape count. The vocabulary itself still
+   *  bounds what may be chosen and what the deterministic routes consult. */
+  promptVocabulary?: readonly string[];
 }
 
 /**
@@ -1057,7 +1061,7 @@ async function inferGoalTargetDecisionRoutes(
 GOAL: ${goal}
 
 KNOWN producible output shapes (you MUST choose ONLY from this list):
-${JSON.stringify(knownShapes)}
+${JSON.stringify(opts.promptVocabulary && opts.promptVocabulary.length > 0 ? opts.promptVocabulary : knownShapes)}
 
 Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}${describedBlockFor(goal, knownShapes, opts)}
 
@@ -1359,7 +1363,8 @@ function describedBlockFor(goal: string, knownShapes: string[], opts: InferGoalT
   const catalog = opts.shapeCatalog;
   if (!catalog) return "";
   const known = new Set(knownShapes);
-  const valid = knownShapes.filter((s) => validity(s, known, catalog, goal, opts.poolShapes ?? []).valid);
+  // The candidates are the catalog's (recalled, bounded), never the whole vocabulary.
+  const valid = Object.keys(catalog).filter((s) => validity(s, known, catalog, goal, opts.poolShapes ?? []).valid);
   return describedCandidatesBlock(valid, catalog);
 }
 
@@ -1376,8 +1381,10 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
   const max = opts.maxTargetShapes ?? MAX_TARGET_SHAPES;
   const judged = new Map<string, Candidate>();
   const judge = (s: string) => { if (!judged.has(s)) judged.set(s, validity(s, known, catalog, goal, pool)); return judged.get(s)!; };
-  for (const s of [...routed.shapes, ...routed.alternatives.flat(), ...Object.keys(catalog), ...knownShapes]) judge(s);
-  const valid = knownShapes.filter((s) => judge(s).valid);
+  for (const s of [...routed.shapes, ...routed.alternatives.flat(), ...Object.keys(catalog)]) judge(s);
+  // The candidate universe is the catalog: with recall it is the bounded recalled set, independent of the shape count.
+  // A routed proposal outside it is still judged (and kept when valid), so a deterministic route is never silently lost.
+  const valid = Object.keys(catalog).filter((s) => judge(s).valid);
   let shapes = routed.shapes.filter((s) => judge(s).valid);
   let tier: ChooserTier = asked.some((t) => t != null) ? "llm" : "deterministic";
   let confidence = routed.confidence;

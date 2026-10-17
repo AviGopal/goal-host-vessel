@@ -319,6 +319,7 @@ import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type Po
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { floorObservationsBlock, type FloorWalkContext } from "./floor-walk-context";
+import { recalledCandidates } from "./shape-recall";
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
@@ -1337,7 +1338,7 @@ async function lessonVerbatimAllowed(): Promise<boolean> {
   _lepCache = { at: Date.now(), on };
   return on;
 }
-async function recallConceptRows(query: string, limit: number, timeoutMs = 10_000): Promise<Array<{ summary?: string; content?: string }> | null> {
+async function recallConceptRows(query: string, limit: number, timeoutMs = 10_000, filters: { shape?: string; include_global?: boolean } = {}): Promise<Array<{ summary?: string; content?: string; pointer?: { name?: unknown } | null }> | null> {
   // A SUCCESSFUL RECALL IS WORTH KEEPING, BECAUSE THE ROUTE TO IT IS UNRELIABLE.
   //
   // With concept-db owned by the hub, a spoke reaches it over the libp2p relay. Measured today that
@@ -1350,7 +1351,7 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
   // Caching the SUCCESSES makes an intermittent route usable: pay the relay once, reuse for a few
   // minutes. Only successful, non-empty results are cached — a null (could-not-ask) is never
   // cached, so an outage still reads as an outage and never masquerades as an empty store.
-  const _cacheKey = `${query}::${limit}`;
+  const _cacheKey = `${query}::${limit}::${JSON.stringify(filters)}`;
   const _hit = _recallCache.get(_cacheKey);
   const _ttl = await shapedBudget("recall_cache_ttl_ms", 600_000, 30_000, 3_600_000);
   if (_hit && Date.now() - _hit.at < _ttl) return _hit.rows;
@@ -1384,7 +1385,7 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
     const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { pointer: { type: "concept", query, limit } } }),
+      body: JSON.stringify({ impulse: { pointer: { type: "concept", query, limit, ...filters } } }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r.ok) {
@@ -13964,7 +13965,16 @@ async function runGoalWithRecoveryInner(
     if (_avoidTargets.length > 0) tap(`[goal-host-vessel] ${opts.surface}: target inference told to avoid the last failed target(s) [${_avoidTargets.join(", ")}] (write-goal-no-artifact)`);
     // A2b-proper: the goal class's recorded paths, so inference SELECTS among its proposed target sets by their reach.
     const _targetPosterior = await fetchTargetPosterior(goal);
+    // I-T structural (piece 3): the target candidates are RECALLED BY MEANING from concept-db's shape index (k shaped,
+    // read at use time), unioned with this goal class's recorded target shapes. Bounded by k, whatever the shape count.
+    // Recall unavailable means the named DEGRADED tier (today's names-only path), recorded here and on the decision.
+    const _recallK = await shapedBudget("shape_recall_k", 12, 3, 40);
+    const _recallRows = await recallConceptRows(goal, _recallK, 10_000, { shape: "shape_description", include_global: true });
+    const _goalPathShapes = [...new Set((_targetPosterior ?? []).flatMap((r) => [...(r.expected_output_shapes ?? [])]))];
+    const _cands = recalledCandidates(_recallRows, _goalPathShapes, new Set(knownShapes));
+    tap(`[goal-host-vessel] ${opts.surface}: shape recall tier=${_cands.tier} k=${_recallK} recalled=${_cands.recalled.length} from_goal_paths=${_cands.fromGoalPaths.length}${_cands.reason ? ` reason="${_cands.reason}"` : ""} candidates=${JSON.stringify(_cands.shapes.slice(0, 20))}`);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
+        ...(_cands.tier === "recall" ? { shapeCatalog: _cands.catalog, promptVocabulary: _cands.shapes } : {}),
         targetPosterior: _targetPosterior,
         // J4: in observe mode no path is recorded, so the goal's failure memory is the selection's evidence of a miss.
         ...(opts.learningMode === "observe" ? { failureRows: failureRowsFrom(recallGoalFailures(goal).exact) } : {}),
@@ -13981,7 +13991,7 @@ async function runGoalWithRecoveryInner(
       });
       tap(
         `[goal-host-vessel] ${opts.surface}: goal-target inference ` +
-          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: decision.shapes, confidence: decision.confidence, alternatives: decision.alternatives }),
+          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: decision.shapes, confidence: decision.confidence, alternatives: decision.alternatives, recall_tier: _cands.tier, chooser_tier: decision.chooser_tier ?? null }),
       );
       goalTargetDecision = decision;
       if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
