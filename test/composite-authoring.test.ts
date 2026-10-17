@@ -1,7 +1,7 @@
 // B2 + A2: the walk builds a producer for a novel target from existing resolvers (composite-authoring.ts), and describes
 // what it produced. Must-fail at the parent (bac8742): the module does not exist and the walk has no compose step.
 import { describe, expect, test } from "bun:test";
-import { authorComposite, composeTrigger, describeMintedShape } from "../src/composite-authoring";
+import { ComposedLedger, authorComposite, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "../src/composite-authoring";
 
 const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
 
@@ -117,5 +117,49 @@ describe("walk wiring (source pins; the walk is a closure that cannot run withou
     expect(real).toBeGreaterThan(0);
     expect(a2).toBeLessThan(stub);
     expect(src.slice(real, a2)).toContain("walkComposed.residual && walkComposed.outputShapes.includes(shape)");
+  });
+});
+
+describe("earned by doing: a minted composite whose first run does not reach is not left selectable", () => {
+  const minted = { id: "composed-cap-new", outputShapes: ["s"], reusedExisting: false };
+  const reused = { id: "composed-cap-old", outputShapes: ["s"], reusedExisting: true };
+  test("a definite miss retires the NEW mint, never a reused composite (it has its own history)", () => {
+    expect(compositesToRetire([minted, reused, minted], false)).toEqual(["composed-cap-new"]);
+  });
+  test("must-fail controls: a reached first run keeps it (earned); an unknown verdict retires nothing", () => {
+    expect(compositesToRetire([minted], true)).toEqual([]);
+    expect(compositesToRetire([minted], null)).toEqual([]);
+    expect(compositesToRetire([minted], undefined)).toEqual([]);
+  });
+  test("the ledger hands each dispatch's composites back once, and is bounded", () => {
+    const l = new ComposedLedger(2);
+    l.note("d1", minted); l.note("d1", reused); l.note("", minted);
+    expect(l.take("d1")).toEqual([minted, reused]);
+    expect(l.take("d1")).toEqual([]);
+    l.note("a", minted); l.note("b", minted); l.note("c", minted);
+    expect(l.take("a")).toEqual([]);
+    expect(l.take("c")).toEqual([minted]);
+  });
+  test("retiring goes through discovery to activityTemplate_deprecate (the flag selection filters on)", async () => {
+    const { f, calls } = fakeFetch(() => ({ status: 200, json: { success: true } }));
+    const r = await retireComposite("composed-cap-new", "first run did not reach", { resolveUrl: async (s) => (s === "activityTemplate_deprecate" ? "http://aa/v2/impulses/resolve" : null), fetchImpl: f, timeoutMs: 1000 });
+    expect(r.ok).toBe(true);
+    expect(calls[0]!.url).toBe("http://aa/v2/impulses/resolve");
+    expect(calls[0]!.body).toEqual({ pointer: { type: "activityTemplate_deprecate", templateId: "composed-cap-new", reason: "first run did not reach" } });
+  });
+  test("a refused retirement is reported with its reason (e.g. the global-scope evidence gate)", async () => {
+    const { f } = fakeFetch(() => ({ status: 422, json: { error: "insufficient_evidence: non-admin callers must supply Thompson evidence" } }));
+    const r = await retireComposite("c", "r", { resolveUrl: async () => "http://aa", fetchImpl: f, timeoutMs: 1000 });
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe(422);
+    expect(r.reason).toMatch(/insufficient_evidence/);
+  });
+  test("wiring: the walk records each composite for its dispatch, and the verdict write retires on a miss AFTER reached is set", () => {
+    expect(src).toContain("composedByDispatch.note(String(opts.variables?.dispatch_id ?? \"\"), _c.pick);");
+    const set = src.indexOf("record.reached = seek.reached;");
+    const ret = src.indexOf("compositesToRetire(composedByDispatch.take(");
+    expect(set).toBeGreaterThan(0);
+    expect(ret).toBeGreaterThan(set);
+    expect(src.slice(ret, ret + 400)).toContain("record.reached)");
   });
 });

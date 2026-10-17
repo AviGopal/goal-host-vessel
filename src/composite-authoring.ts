@@ -87,3 +87,54 @@ export async function describeMintedShape(discoveryEndpoint: string, shape: stri
     return { ok: false, status: null, reason: (e as Error).message };
   }
 }
+
+/**
+ * EARNED BY DOING (law 3/4; qa condition on B2): author_composed_capability mints on VALIDATION, before the composite
+ * has ever reached. A composite this walk MINTED (not one it reused, which carries its own history) whose dispatch then
+ * does NOT reach is retired (activityTemplate_deprecate sets the `retired` flag every selection path filters on; it is
+ * reversible through activityTemplate_update), so a wrong mint does not stay an ordinary Thompson arm. A reached first
+ * run leaves it a normal activity. An UNKNOWN verdict (reached null: the judge did not answer) retires nothing.
+ */
+export class ComposedLedger {
+  private byDispatch = new Map<string, ComposedPick[]>();
+  constructor(private readonly cap = 256) {}
+  note(dispatchId: string, pick: ComposedPick): void {
+    if (!dispatchId) return;
+    if (!this.byDispatch.has(dispatchId) && this.byDispatch.size >= this.cap) {
+      const oldest = this.byDispatch.keys().next().value;
+      if (oldest !== undefined) this.byDispatch.delete(oldest);
+    }
+    this.byDispatch.set(dispatchId, [...(this.byDispatch.get(dispatchId) ?? []), pick]);
+  }
+  take(dispatchId: string): ComposedPick[] {
+    const v = this.byDispatch.get(dispatchId) ?? [];
+    this.byDispatch.delete(dispatchId);
+    return v;
+  }
+}
+
+/** The composites to retire once the dispatch's verdict is known: newly minted ones, and only on a definite miss. */
+export function compositesToRetire(composed: readonly ComposedPick[], reached: boolean | null | undefined): string[] {
+  if (reached !== false) return [];
+  return [...new Set(composed.filter((c) => !c.reusedExisting).map((c) => c.id))];
+}
+
+export async function retireComposite(templateId: string, reason: string, deps: ComposeDeps): Promise<{ ok: boolean; status: number | null; reason: string }> {
+  const url = await deps.resolveUrl("activityTemplate_deprecate");
+  if (!url) return { ok: false, status: null, reason: "no vessel serves activityTemplate_deprecate" };
+  const f = deps.fetchImpl ?? fetch;
+  try {
+    const r = await f(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(deps.apiKey ? { Authorization: `ApiKey ${deps.apiKey}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "activityTemplate_deprecate", templateId, reason } }),
+      signal: AbortSignal.timeout(deps.timeoutMs),
+    });
+    if (r.ok) return { ok: true, status: r.status, reason: "retired" };
+    let why = "";
+    try { why = String(((await r.json()) as { error?: unknown })?.error ?? ""); } catch { /* body unreadable */ }
+    return { ok: false, status: r.status, reason: (why || `HTTP ${r.status}`).slice(0, 200) };
+  } catch (e) {
+    return { ok: false, status: null, reason: (e as Error).message };
+  }
+}

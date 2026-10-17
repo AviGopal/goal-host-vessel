@@ -321,7 +321,9 @@ import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseM
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { floorObservationsBlock, type FloorWalkContext } from "./floor-walk-context";
 import { recalledCandidates } from "./shape-recall";
-import { authorComposite, composeTrigger, describeMintedShape } from "./composite-authoring";
+import { ComposedLedger, authorComposite, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
+// B2: composites a dispatch's walks minted, read back at its verdict (a non-reached first run retires a NEW mint).
+const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
@@ -12027,6 +12029,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           pickSource = "improvise";
           pick = { id: _c.pick.id, inputShapes: [], outputShapes: _c.pick.outputShapes };
           walkComposed = { id: _c.pick.id, outputShapes: _c.pick.outputShapes, residual: _why === "novel_target" ? _novelC?.residual ?? null : null };
+          composedByDispatch.note(String(opts.variables?.dispatch_id ?? ""), _c.pick);
           // a NOVEL walk had no target: the composite's deliverable becomes it, so the walk knows when it is met
           if (target.size === 0) for (const s of _c.pick.outputShapes) target.add(s);
           tap(`[goal-host-vessel] walk(${opts.surface}): COMPOSED ${_c.pick.reusedExisting ? "existing" : "new"} capability ${_c.pick.id} from existing resolvers (${_why}; outputs=[${_c.pick.outputShapes.join(",")}]) — executing it`);
@@ -18677,6 +18680,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
           console.log(`[goal-host-vessel] dispatch needs information (${_ni.reason}): ${_ni.reason === "novel_target" ? (_ni.residual?.residual ?? "").slice(0, 160) : _ni.missing.map((m) => `${m.shape}.${m.field} (tried ${m.tried.join("+")})`).join(", ")}`);
         }
         unboundByDispatch.delete(String(variables?.dispatch_id ?? record.dispatchId ?? ""));
+      }
+      // B2 earned-by-doing: a composite this dispatch MINTED whose run did not reach is retired, not left selectable.
+      for (const _cid of compositesToRetire(composedByDispatch.take(String(variables?.dispatch_id ?? record.dispatchId ?? "")), record.reached)) {
+        void retireComposite(_cid, `minted by the walk and its first run did not reach (dispatch ${String(variables?.dispatch_id ?? record.dispatchId ?? "")})`, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 8_000 })
+          .then((r) => console.log(`[goal-host-vessel] composite ${_cid} ${r.ok ? "RETIRED (first run not reached)" : `NOT retired (${r.status ?? "no status"}: ${r.reason})`}`));
       }
       // Thread the reach verdict onto the DURABLE trace. POST /reach sets `reached` +
       // `completion_shapes` and grades the verdict into the Thompson posteriors on
