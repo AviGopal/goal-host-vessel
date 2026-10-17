@@ -30,9 +30,21 @@ export interface RecalledCandidates {
   fromGoalPaths: string[];
 }
 
+/** The shape name an indexed row's content carries: concept-db writes it as "<name>: <description>" (its indexedContent,
+ *  read back there by indexedName with this same rule). The name is read from the CONTENT, not from pointer.name: concept
+ *  is SCHEMAFULL and `pointer` is a plain object, so SurrealDB drops pointer.name on write and no live row carries it
+ *  (every recall on node1 since 2026-10-16 ran degraded, and the chooser, which runs only on the recall tier, never ran). */
+export function contentShapeName(content: string | null | undefined): string | null {
+  if (typeof content !== "string") return null;
+  const i = content.indexOf(": ");
+  if (i <= 0) return null;
+  const name = content.slice(0, i);
+  return /^[A-Za-z0-9_.:@-]+$/.test(name) ? name : null;
+}
+
 /** The described entry a recalled row carries: its indexed content is "<name>: <description>". */
 function entryOf(row: RecalledRow): { name: string; entry: CatalogEntry } | null {
-  const name = typeof row.pointer?.name === "string" ? row.pointer.name : "";
+  const name = contentShapeName(row.content) ?? (typeof row.pointer?.name === "string" ? row.pointer.name : "");
   if (!name) return null;
   const content = String(row.content ?? "");
   const description = content.startsWith(`${name}: `) ? content.slice(name.length + 2) : content;
