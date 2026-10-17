@@ -14037,6 +14037,12 @@ async function runGoalWithRecoveryInner(
       );
       goalTargetDecision = decision;
       if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
+      // J2b: the chooser found no candidate whose production satisfies the goal. Recorded for the dispatch (classified at
+      // its record write only if it then does not reach); the fallbacks below still run (ReAct parity).
+      if (decision.novel) {
+        unboundFor(opts.variables?.dispatch_id)?.noteNovel(decision.novel);
+        tap(`[goal-host-vessel] ${opts.surface}: target chooser answered NOVEL ${JSON.stringify({ goal_hash: goalHashOf(goal), residual: decision.novel.residual.slice(0, 160), closest: decision.novel.closest?.shape ?? null })}`);
+      }
       // KEEP THE MEASURABLE SHAPE IN REACH (law 8: the load-bearing fact, available at the
       // moment of use).
       //
@@ -18629,7 +18635,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         const _ni = needsInformationOutcome(unboundByDispatch.get(String(variables?.dispatch_id ?? record.dispatchId ?? "")), seek.reached === true);
         if (_ni && !record.outcome) {
           record.outcome = _ni;
-          console.log(`[goal-host-vessel] dispatch needs information: ${_ni.missing.map((m) => `${m.shape}.${m.field} (tried ${m.tried.join("+")})`).join(", ")}`);
+          console.log(`[goal-host-vessel] dispatch needs information (${_ni.reason}): ${_ni.reason === "novel_target" ? (_ni.residual?.residual ?? "").slice(0, 160) : _ni.missing.map((m) => `${m.shape}.${m.field} (tried ${m.tried.join("+")})`).join(", ")}`);
         }
         unboundByDispatch.delete(String(variables?.dispatch_id ?? record.dispatchId ?? ""));
       }

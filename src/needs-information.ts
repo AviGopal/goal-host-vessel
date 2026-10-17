@@ -15,15 +15,23 @@
  * goal's wording. GRADING (pre-stated): needs_information is NOT reached; it is its own outcome class, and the reach
  * judge's exemption only stops it being graded as a wrong answer.
  */
+import type { NovelTarget } from "./novel-target";
+
 export type Derivation = "pool_bind" | "investigation";
 const ALL_DERIVATIONS: readonly Derivation[] = ["pool_bind", "investigation"];
 
 export interface MissingInput { shape: string; field: string; tried: Derivation[] }
-export interface NeedsInformationOutcome { kind: "needs_information"; reason: "unbound_input"; missing: MissingInput[] }
+/** unbound_input: a required input no derivation found (J2a). novel_target: no existing shape's production satisfies
+ *  the goal, with the chooser's described residual (J2b, novel-target.ts). */
+export interface NeedsInformationOutcome { kind: "needs_information"; reason: "unbound_input" | "novel_target"; missing: MissingInput[]; residual?: NovelTarget }
 
 /** Per-dispatch record of required inputs the walk could not derive. */
 export class UnboundInputs {
   private readonly byShape = new Map<string, Map<string, Set<Derivation>>>();
+  /** J2b: the target chooser's NOVEL answer for this dispatch (no candidate produces what the goal needs). */
+  novel: NovelTarget | null = null;
+
+  noteNovel(n: NovelTarget): void { this.novel = n; }
 
   /** The resolver for `shape` refused for `fields`; `derivation` ran for each and bound nothing. */
   noteUnderived(shape: string, fields: readonly string[], derivation: Derivation): void {
@@ -57,11 +65,16 @@ export class UnboundInputs {
 export function needsInformationOutcome(rec: UnboundInputs | undefined, reached: boolean): NeedsInformationOutcome | undefined {
   if (reached || !rec) return undefined;
   const missing = rec.missing();
-  return missing.length === 0 ? undefined : { kind: "needs_information", reason: "unbound_input", missing };
+  if (missing.length > 0) return { kind: "needs_information", reason: "unbound_input", missing };
+  return rec.novel ? { kind: "needs_information", reason: "novel_target", missing: [], residual: rec.novel } : undefined;
 }
 
 /** The question a present human is shown: built from the missing field names and what was tried, not the goal's wording. */
 export function questionFor(outcome: NeedsInformationOutcome): string {
+  if (outcome.reason === "novel_target" && outcome.residual) {
+    const c = outcome.residual.closest;
+    return `No existing capability produces what this goal needs: ${outcome.residual.residual}${c ? `\n(nearest: \`${c.shape}\`, which does not satisfy it because ${c.why_not})` : ""}`;
+  }
   const lines = outcome.missing.map((m) => `- \`${m.field}\` (needed by \`${m.shape}\`; tried: ${m.tried.join(", ")}; nothing found)`);
   return `The walk needs a value it could not derive from the environment:\n${lines.join("\n")}`;
 }

@@ -5,6 +5,7 @@ import { isReadQuestionGoal } from "./read-goal";
 import { isShapeName } from "./shape-name";
 import { betaSample } from "./beta-sample";
 import { describedCandidatesBlock, lexicalChoice, restoreUncoveredNeeds, validity, type Candidate, type ChooserTier, type ShapeCatalog } from "./described-producers";
+import { NOVEL_OPTION, parseNovel, type NovelTarget } from "./novel-target";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -62,6 +63,8 @@ export interface GoalTargetDecision {
   candidates?: Candidate[];
   /** I-T (i): who chose among the valid candidates. */
   chooser_tier?: ChooserTier;
+  /** J2b: the chooser found NO candidate whose production satisfies the goal, and described what is needed (novel-target.ts). */
+  novel?: NovelTarget;
 }
 
 export interface InferGoalTargetShapesOpts {
@@ -591,7 +594,9 @@ export async function inferGoalTargetDecision(
   if (selected && selected.candidates.some((c) => c.s + c.f > 0)) {
     console.log(`[goal-target-inference] target selection ${JSON.stringify({ goal_hash: goalHashOf(goal), changed: selected.changed, candidates: selected.candidates.map((c) => ({ shapes: c.shapes, s: c.s, f: c.f, draw: Number(c.draw.toFixed(4)) })), chosen: selected.decision.shapes })}`);
   }
-  const final = withoutFailedTargets(selected ? selected.decision : routed, opts.excludeTargets);
+  const filtered = withoutFailedTargets(selected ? selected.decision : routed, opts.excludeTargets);
+  // J2b: NOVEL survives only while nothing was chosen (a recorded reaching path the posterior selects is not novel).
+  const final = routed.novel && filtered.shapes.length === 0 && !filtered.novel ? { ...filtered, novel: routed.novel } : filtered;
   // The routes memoise their UNFILTERED answer (decisionCache), so a retry re-filters it against the new exclusions.
   // What a reader must see is the decision actually returned: kept under its own key (CHANGE-35 A2b-min repair).
   if (opts.finalDecisionCache && (final.shapes.length > 0 || final.alternatives.length > 0)) {
@@ -1065,7 +1070,7 @@ ${JSON.stringify(opts.promptVocabulary && opts.promptVocabulary.length > 0 ? opt
 
 Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}${describedBlockFor(goal, knownShapes, opts)}
 
-COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. When the goal names MORE THAN ONE destination, return EVERY matching write/emit shape, not just one: a goal that asks to record a concept AND persist a memory note must return BOTH "concept_write" AND "memoryNote_write". Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}. Example with two destinations: goal "produce a health report, record a concept capturing it, and persist a memory note stating it" -> {"target_shapes":["vessel_health_report","concept_write","memoryNote_write"]}.
+COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. When the goal names MORE THAN ONE destination, return EVERY matching write/emit shape, not just one: a goal that asks to record a concept AND persist a memory note must return BOTH "concept_write" AND "memoryNote_write". Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}. Example with two destinations: goal "produce a health report, record a concept capturing it, and persist a memory note stating it" -> {"target_shapes":["vessel_health_report","concept_write","memoryNote_write"]}.${NOVEL_OPTION}
 
 Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternatives": [[...], [...]]}`;
 
@@ -1183,7 +1188,9 @@ if (!m) return empty;
         outShapes = [...outShapes.filter((s) => !FETCH_ONLY.has(s) && s !== "shellResult"), "shellResult"];
       }
     }
-    return remember({ shapes: outShapes, confidence, alternatives });
+    // J2b: no listed shape chosen, and the chooser said why (NOVEL with a described residual): carried, never replaced.
+    const novel = outShapes.length === 0 ? parseNovel(parsed, known) : null;
+    return remember({ shapes: outShapes, confidence, alternatives, ...(novel ? { novel } : {}) });
   } catch {
     return empty;
   }
@@ -1388,19 +1395,24 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
   let shapes = routed.shapes.filter((s) => judge(s).valid);
   let tier: ChooserTier = asked.some((t) => t != null) ? "llm" : "deterministic";
   let confidence = routed.confidence;
-  if (shapes.length === 0 && !asked.some((t) => t != null) && opts.complete) {
+  let novel: NovelTarget | null = shapes.length === 0 ? (routed.novel ?? null) : null;
+  if (shapes.length === 0 && !novel && !asked.some((t) => t != null) && opts.complete) {
     // A shortcut proposed only invalid targets and the chooser has not been asked: ask it, among the valid candidates.
-    const prompt = `You route a substrate GOAL to the output shape(s) whose PRODUCTION would satisfy it.\n\nGOAL: ${goal}${describedCandidatesBlock(valid, catalog)}\n\nReturn 1-${max} shapes from the VALID CANDIDATES. Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0}`;
+    const prompt = `You route a substrate GOAL to the output shape(s) whose PRODUCTION would satisfy it.\n\nGOAL: ${goal}${describedCandidatesBlock(valid, catalog)}\n\nReturn 1-${max} shapes from the VALID CANDIDATES.${NOVEL_OPTION}\n\nRespond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0}`;
     const t = await opts.complete(prompt);
     asked.push(t);
     const m = t ? String(t).match(/\{[\s\S]*\}/) : null;
     let proposed: string[] = [];
-    try { const j = m ? JSON.parse(m[0]) as { target_shapes?: unknown; confidence?: unknown } : null; proposed = Array.isArray(j?.target_shapes) ? (j!.target_shapes as unknown[]).map(String) : []; if (typeof j?.confidence === "number") confidence = j.confidence; } catch { proposed = []; }
+    let j: Record<string, unknown> | null = null;
+    try { j = m ? JSON.parse(m[0]) as Record<string, unknown> : null; proposed = Array.isArray(j?.["target_shapes"]) ? (j!["target_shapes"] as unknown[]).map(String) : []; if (typeof j?.["confidence"] === "number") confidence = j["confidence"] as number; } catch { proposed = []; j = null; }
     for (const p of proposed) judge(p);
     shapes = proposed.filter((p) => judge(p).valid).slice(0, max);
     if (shapes.length > 0) tier = "llm";
+    else novel = parseNovel(j, new Set(valid));
+    if (novel) tier = "llm";
   }
-  if (shapes.length === 0) {
+  // J2b: a chooser's NOVEL answer is final: the lexical fallback never fills the target it declined.
+  if (shapes.length === 0 && !novel) {
     const pick = lexicalChoice(goal, valid, catalog);
     shapes = pick ? [pick] : [];
     tier = "fallback";
@@ -1415,5 +1427,6 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
     alternatives: routed.alternatives.map((a) => a.filter((s) => judge(s).valid)).filter((a) => a.length > 0),
     candidates: [...judged.values()],
     chooser_tier: tier,
+    ...(novel && shapes.length === 0 ? { novel } : {}),
   };
 }
