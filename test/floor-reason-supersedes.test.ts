@@ -11,8 +11,8 @@ const at = (needle: string): number => { const i = INDEX.indexOf(needle); expect
 
 describe("floor reason supersedes the walk's", () => {
   test("[MUST-FAIL on base] the floor hands its not-reached reason out, through the dispatch-context re-entry too", () => {
-    expect(INDEX).toContain("async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string })");
-    expect(INDEX).toContain("() => universalToolFallback(goal, targetShapes, dispatchId, out))");
+    expect(INDEX).toContain("async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }, walkContext?: FloorWalkContext)");
+    expect(INDEX).toContain("() => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext))");
   });
 
   test("the reason is set after the decision, on exactly the floor's not-reached condition, and a null verdict says so", () => {
@@ -26,7 +26,8 @@ describe("floor reason supersedes the walk's", () => {
   });
 
   test("[MUST-FAIL on base] the walk caller passes the out object and supersedes the record's reason, keeping the walk's inside", () => {
-    const call = at("const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === \"string\" ? opts.variables.dispatch_id : undefined, _ufOut);");
+    // the out object is the 4th argument; the walk context (fd9c272) follows it
+    const call = at("const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === \"string\" ? opts.variables.dispatch_id : undefined, _ufOut, ");
     const sup = at("if (!uf?.reached && walk.reached !== true && _ufOut.reason) {");
     expect(sup).toBeGreaterThan(call);
     const block = INDEX.slice(sup, sup + 600);
