@@ -9139,9 +9139,13 @@ async function runGoalAsPoolWalkBody(
       const byTitle = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { title_prefix: id }).catch(() => null);
       if (confirms(byTitle)) return { persisted: true, content: byTitle };
       if (readResult != null) {
-        // concept-db REST fallback
+        // concept-db REST fallback. It carries this vessel's credential: concept-db scopes id reads to the caller's
+        // org, so an uncredentialed read finds this vessel's own concept "not found". Logged, so how often the shaped
+        // reads miss and this runs is measurable.
         try {
+          console.log(`[goal-host-vessel] persistence readback: shaped reads did not confirm ${writeShape}; trying the concept-db id read`);
           const fbResp = await fetch(`${ep.endpoint}/concepts/${id}`, {
+            headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {},
             signal: AbortSignal.timeout(8_000),
           });
           if (fbResp.ok) {
