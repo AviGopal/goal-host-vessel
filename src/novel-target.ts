@@ -41,3 +41,17 @@ export function parseNovel(parsed: Record<string, unknown> | null | undefined, c
 /** The option every chooser prompt offers, so it never has to force a wrong shape. */
 export const NOVEL_OPTION =
   `\n\nIf NO listed shape's production would satisfy the goal, do not force one. Return {"target_shapes": [], "novel": {"residual": "<one sentence: the output this goal needs that no listed shape produces>", "closest": "<the listed shape that comes nearest>", "why_not": "<why producing that shape would not satisfy the goal>"}}.`;
+
+/**
+ * THE RESIDUAL (piece 5, recall-based NEEDS; SUBSTRATE_AS_SOFTWARE step 0: the goal minus what the chosen production
+ * explains). With shapes chosen, the chooser states in its own words what part of the goal the chosen set does NOT
+ * satisfy ("" when it satisfies all of it). A non-empty residual is recalled by meaning once more (bounded at one extra
+ * recall), so a second need whose producer the whole-goal recall left out can still be chosen. No clause segmentation,
+ * no similarity threshold: the residual is the chooser's judgement, and the extra candidates face the same validity layer.
+ */
+export const RESIDUAL_OPTION =
+  `\n\nWhen you choose shapes, also return "residual": one sentence naming the part of the goal the chosen shapes' production would NOT satisfy, or "" if they satisfy all of it.`;
+export function parseResidual(parsed: Record<string, unknown> | null | undefined): string {
+  const r = parsed?.["residual"];
+  return typeof r === "string" ? r.trim().slice(0, MAX_TEXT) : "";
+}

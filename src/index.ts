@@ -14017,6 +14017,12 @@ async function runGoalWithRecoveryInner(
     tap(`[goal-host-vessel] ${opts.surface}: shape recall tier=${_cands.tier} k=${_recallK} recalled=${_cands.recalled.length} from_goal_paths=${_cands.fromGoalPaths.length}${_cands.reason ? ` reason="${_cands.reason}"` : ""} candidates=${JSON.stringify(_cands.shapes.slice(0, 20))}`);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         ...(_cands.tier === "recall" ? { shapeCatalog: _cands.catalog, promptVocabulary: _cands.shapes } : {}),
+        // Piece 5: the chooser's residual is recalled by meaning ONCE, with the same shaped k and the same index.
+        ...(_cands.tier === "recall" ? { recallResidual: async (text: string) => {
+          const rows = await recallConceptRows(text, _recallK, 10_000, { shape: "shape_description", include_global: true });
+          const c = recalledCandidates(rows, [], new Set(knownShapes));
+          return c.tier === "recall" ? c.catalog : null;
+        } } : {}),
         targetPosterior: _targetPosterior,
         // J4: in observe mode no path is recorded, so the goal's failure memory is the selection's evidence of a miss.
         ...(opts.learningMode === "observe" ? { failureRows: failureRowsFrom(recallGoalFailures(goal).exact) } : {}),

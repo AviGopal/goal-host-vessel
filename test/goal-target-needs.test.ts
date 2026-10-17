@@ -250,24 +250,40 @@ for (const cat of CATALOGS) {
   });
 
   describe(`${L} (iii) a compound request keeps every need`, () => {
-    it(`${L} MUST-FAIL (iii): LLM unavailable — both the lookup and the post are targets`, async () => {
-      const d = await decide(cat.goals.compound, cat, stub(null).complete);
-      expect(d.shapes).toContain(cat.lookup);
-      expect(d.shapes).toContain(cat.post);
-    });
+    // REWRITTEN (piece 5, qa ruling 2026-10-17: declared pin change, pre-landing). The second need is no longer restored
+    // from description WORDS: the chooser states the part of the goal its set leaves unsatisfied (the residual), and that
+    // residual is recalled by meaning once (recallResidual) and chosen once more.
+    const withResidual = (shapes: string[], residual: string, second: string[]) => {
+      const prompts: string[] = [];
+      const complete = async (p: string): Promise<string | null> => { prompts.push(p); return JSON.stringify(p.includes("ALREADY CHOSEN") ? { target_shapes: second } : { target_shapes: shapes, confidence: 0.8, residual }); };
+      return { complete, prompts };
+    };
+    const decideR = async (complete: InferOpts["complete"], recallServes: string) => (await inferGoalTargetDecision(cat.goals.compound, Object.keys(cat.shapes), {
+      complete, shapeCatalog: cat.shapes, poolShapes: [], maxTargetShapes: 6,
+      recallResidual: async () => ({ [recallServes]: cat.shapes[recallServes]! }),
+    } as InferOpts)) as Decision;
 
-    it(`${L} MUST-FAIL (iii): LLM keeps only the first need — the second is restored`, async () => {
-      const d = await decide(cat.goals.compound, cat, stub([cat.lookup], 0.8).complete);
+    it(`${L} MUST-FAIL (iii): the chooser keeps only the first need and names the rest as its residual — the second is recalled and chosen`, async () => {
+      const d = await decideR(withResidual([cat.lookup], "the other part of the request", [cat.post]).complete, cat.post);
       expect(d.shapes).toContain(cat.lookup);
       expect(d.shapes).toContain(cat.post);
     });
 
     // Both directions: a stage that matches the WHOLE goal to one shape can cover the other
     // need by accident in one direction, never in both.
-    it(`${L} MUST-FAIL (iii): LLM keeps only the second need — the first is restored`, async () => {
-      const d = await decide(cat.goals.compound, cat, stub([cat.post], 0.8).complete);
+    it(`${L} MUST-FAIL (iii): the chooser keeps only the second need and names the rest — the first is recalled and chosen`, async () => {
+      const d = await decideR(withResidual([cat.post], "the other part of the request", [cat.lookup]).complete, cat.lookup);
       expect(d.shapes).toContain(cat.lookup);
       expect(d.shapes).toContain(cat.post);
+    });
+
+    // WEAKER BY DESIGN (qa ruling): with no chooser there is no residual, so no need is restored by words. ONE target (the
+    // fallback tier's pick), and the decision SAYS the residual is unknown, so the dropped need is never silent.
+    it(`${L} (iii) LLM unavailable: one target, and the decision records the residual as unknown (no chooser)`, async () => {
+      const d = await decide(cat.goals.compound, cat, stub(null).complete);
+      expect(d.shapes.length).toBe(1);
+      expect((d as unknown as { residual?: { unknown?: boolean; text?: string } }).residual).toEqual({ text: "residual unknown (no chooser)", recalled: [], added: [], unknown: true });
+      expect(d.chooser_tier).toBe("fallback");
     });
   });
 

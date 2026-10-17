@@ -4,8 +4,8 @@ import { isMutationShape } from "./judge/shapes";
 import { isReadQuestionGoal } from "./read-goal";
 import { isShapeName } from "./shape-name";
 import { betaSample } from "./beta-sample";
-import { describedCandidatesBlock, lexicalChoice, restoreUncoveredNeeds, validity, type Candidate, type ChooserTier, type ShapeCatalog } from "./described-producers";
-import { NOVEL_OPTION, parseNovel, type NovelTarget } from "./novel-target";
+import { describedCandidatesBlock, lexicalChoice, validity, type Candidate, type ChooserTier, type ShapeCatalog } from "./described-producers";
+import { NOVEL_OPTION, RESIDUAL_OPTION, parseNovel, parseResidual, type NovelTarget } from "./novel-target";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -65,6 +65,8 @@ export interface GoalTargetDecision {
   chooser_tier?: ChooserTier;
   /** J2b: the chooser found NO candidate whose production satisfies the goal, and described what is needed (novel-target.ts). */
   novel?: NovelTarget;
+  /** Piece 5: what the chosen set leaves unsatisfied, in the chooser's words, and what the one residual recall added. */
+  residual?: { text: string; recalled: string[]; added: string[]; unknown?: true };
 }
 
 export interface InferGoalTargetShapesOpts {
@@ -108,6 +110,9 @@ export interface InferGoalTargetShapesOpts {
    *  the whole advertised vocabulary, so the prompt does not grow with the shape count. The vocabulary itself still
    *  bounds what may be chosen and what the deterministic routes consult. */
   promptVocabulary?: readonly string[];
+  /** Piece 5: recall by meaning for a RESIDUAL (the unsatisfied part of the goal); the caller's own shape recall, bounded
+   *  by the same shaped k. Returns a described catalog of recalled, advertised shapes, or null when recall can't be asked. */
+  recallResidual?: (text: string) => Promise<ShapeCatalog | null>;
 }
 
 /**
@@ -1070,9 +1075,9 @@ ${JSON.stringify(opts.promptVocabulary && opts.promptVocabulary.length > 0 ? opt
 
 Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}${describedBlockFor(goal, knownShapes, opts)}
 
-COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. When the goal names MORE THAN ONE destination, return EVERY matching write/emit shape, not just one: a goal that asks to record a concept AND persist a memory note must return BOTH "concept_write" AND "memoryNote_write". Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}. Example with two destinations: goal "produce a health report, record a concept capturing it, and persist a memory note stating it" -> {"target_shapes":["vessel_health_report","concept_write","memoryNote_write"]}.${NOVEL_OPTION}
+COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. When the goal names MORE THAN ONE destination, return EVERY matching write/emit shape, not just one: a goal that asks to record a concept AND persist a memory note must return BOTH "concept_write" AND "memoryNote_write". Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}. Example with two destinations: goal "produce a health report, record a concept capturing it, and persist a memory note stating it" -> {"target_shapes":["vessel_health_report","concept_write","memoryNote_write"]}.${NOVEL_OPTION}${RESIDUAL_OPTION}
 
-Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternatives": [[...], [...]]}`;
+Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternatives": [[...], [...]], "residual": ""}`;
 
   try {
     let text: string;
@@ -1190,7 +1195,8 @@ if (!m) return empty;
     }
     // J2b: no listed shape chosen, and the chooser said why (NOVEL with a described residual): carried, never replaced.
     const novel = outShapes.length === 0 ? parseNovel(parsed, known) : null;
-    return remember({ shapes: outShapes, confidence, alternatives, ...(novel ? { novel } : {}) });
+    const residualText = outShapes.length > 0 ? parseResidual(parsed) : "";
+    return remember({ shapes: outShapes, confidence, alternatives, ...(novel ? { novel } : {}), ...(residualText ? { residual: { text: residualText, recalled: [], added: [] } } : {}) });
   } catch {
     return empty;
   }
@@ -1396,9 +1402,10 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
   let tier: ChooserTier = asked.some((t) => t != null) ? "llm" : "deterministic";
   let confidence = routed.confidence;
   let novel: NovelTarget | null = shapes.length === 0 ? (routed.novel ?? null) : null;
+  let stageResidual = shapes.length > 0 ? (routed.residual?.text ?? "") : "";
   if (shapes.length === 0 && !novel && !asked.some((t) => t != null) && opts.complete) {
     // A shortcut proposed only invalid targets and the chooser has not been asked: ask it, among the valid candidates.
-    const prompt = `You route a substrate GOAL to the output shape(s) whose PRODUCTION would satisfy it.\n\nGOAL: ${goal}${describedCandidatesBlock(valid, catalog)}\n\nReturn 1-${max} shapes from the VALID CANDIDATES.${NOVEL_OPTION}\n\nRespond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0}`;
+    const prompt = `You route a substrate GOAL to the output shape(s) whose PRODUCTION would satisfy it.\n\nGOAL: ${goal}${describedCandidatesBlock(valid, catalog)}\n\nReturn 1-${max} shapes from the VALID CANDIDATES.${NOVEL_OPTION}${RESIDUAL_OPTION}\n\nRespond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "residual": ""}`;
     const t = await opts.complete(prompt);
     asked.push(t);
     const m = t ? String(t).match(/\{[\s\S]*\}/) : null;
@@ -1407,7 +1414,7 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
     try { j = m ? JSON.parse(m[0]) as Record<string, unknown> : null; proposed = Array.isArray(j?.["target_shapes"]) ? (j!["target_shapes"] as unknown[]).map(String) : []; if (typeof j?.["confidence"] === "number") confidence = j["confidence"] as number; } catch { proposed = []; j = null; }
     for (const p of proposed) judge(p);
     shapes = proposed.filter((p) => judge(p).valid).slice(0, max);
-    if (shapes.length > 0) tier = "llm";
+    if (shapes.length > 0) { tier = "llm"; stageResidual = parseResidual(j); }
     else novel = parseNovel(j, new Set(valid));
     if (novel) tier = "llm";
   }
@@ -1417,8 +1424,13 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
     shapes = pick ? [pick] : [];
     tier = "fallback";
   }
-  const restored = shapes.length > 0 ? restoreUncoveredNeeds(goal, shapes, valid, catalog, max) : [];
-  if (restored.length > 0) console.log(`[goal-target-inference] restored uncovered need(s) [${restored.join(", ")}] beside [${shapes.join(", ")}] (described producers)`);
+  // Piece 5: a need the chosen set leaves unsatisfied is recalled BY MEANING on the chooser's residual (one extra recall,
+  // validity-filtered, one more choice). The lexical restore (restoreUncoveredNeeds, named debt) is retired here.
+  const res = shapes.length > 0 && stageResidual && opts.recallResidual && opts.complete
+    ? await residualChoice(goal, shapes, stageResidual, known, pool, max, opts)
+    : null;
+  const restored = res?.added ?? [];
+  if (restored.length > 0) console.log(`[goal-target-inference] residual recall added [${restored.join(", ")}] beside [${shapes.join(", ")}] for: ${stageResidual.slice(0, 120)}`);
   const invalid = [...judged.values()].filter((c) => !c.valid && (routed.shapes.includes(c.shape) || routed.alternatives.flat().includes(c.shape)));
   if (invalid.length > 0) console.log(`[goal-target-inference] invalid target(s) dropped: ${invalid.map((c) => `${c.shape} (${c.reason})`).join("; ")}`);
   return {
@@ -1428,5 +1440,23 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
     candidates: [...judged.values()],
     chooser_tier: tier,
     ...(novel && shapes.length === 0 ? { novel } : {}),
+    ...(stageResidual ? { residual: { text: stageResidual, recalled: res?.recalled ?? [], added: restored } }
+      // No chooser answered (the degraded tier picked by fallback): whether a need was dropped is UNKNOWN, and says so.
+      : tier === "fallback" && shapes.length > 0 ? { residual: { text: "residual unknown (no chooser)", recalled: [], added: [], unknown: true as const } } : {}),
   };
+}
+
+/** One recall on the residual text, then one choice among its VALID candidates not already chosen. */
+async function residualChoice(goal: string, chosen: readonly string[], residual: string, known: ReadonlySet<string>, pool: readonly string[], max: number, opts: InferGoalTargetShapesOpts): Promise<{ recalled: string[]; added: string[] }> {
+  const cat = await opts.recallResidual!(residual).catch(() => null);
+  if (!cat) return { recalled: [], added: [] };
+  const recalled = Object.keys(cat);
+  const cands = recalled.filter((s) => !chosen.includes(s) && validity(s, known, cat, goal, pool).valid);
+  if (cands.length === 0 || chosen.length >= max) return { recalled, added: [] };
+  const prompt = `You route a substrate GOAL to the output shape(s) whose PRODUCTION would satisfy it.\n\nGOAL: ${goal}\n\nALREADY CHOSEN: ${chosen.join(", ")}\nTHE PART OF THE GOAL THEY DO NOT SATISFY: ${residual}${describedCandidatesBlock(cands, cat)}\n\nReturn the shape(s) from the VALID CANDIDATES that produce the unsatisfied part, or [] if none does. Respond with ONLY JSON: {"target_shapes": [...]}`;
+  const t = await opts.complete!(prompt);
+  const m = t ? String(t).match(/\{[\s\S]*\}/) : null;
+  let proposed: string[] = [];
+  try { const j = m ? JSON.parse(m[0]) as { target_shapes?: unknown } : null; proposed = Array.isArray(j?.target_shapes) ? (j!.target_shapes as unknown[]).map(String) : []; } catch { proposed = []; }
+  return { recalled, added: proposed.filter((p) => cands.includes(p)).slice(0, Math.max(0, max - chosen.length)) };
 }
