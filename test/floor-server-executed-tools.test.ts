@@ -83,7 +83,8 @@ describe("the floor counts the tools the dispatch executed server-side", () => {
   test("no executed_tool_calls: today's behaviour exactly (0/0, ZERO tools prefix, floor:zero-tool)", async () => {
     const { loop, dispatches } = await driveLoop(textCompletion("It has 42 lines."));
     expect(dispatches).toBe(1);
-    expect(loop).toEqual({ finalText: "It has 42 lines.", groundedOk: 0, executedOk: 0, executed: [], observations: [], calledWriteShapes: new Set<string>(), commandEvidence: "" });
+    // decisions: the controller's one decision (the final answer), recorded for the floor trace (floor-controller-steps.test.ts).
+    expect(loop).toEqual({ finalText: "It has 42 lines.", groundedOk: 0, executedOk: 0, executed: [], observations: [], calledWriteShapes: new Set<string>(), commandEvidence: "", decisions: [{ iter: 0, kind: "final", tools: [] }] });
     expect(m.floorGroundingDigest(0, 0, "base").startsWith(ZERO)).toBe(true);
     expect(m.floorGroundingDigest(0, 0, "base").endsWith("\n\nbase")).toBe(true);
     expect(classesOf(loop)).toContain("floor:zero-tool");

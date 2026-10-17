@@ -5634,6 +5634,42 @@ export function executedToolCallError(c: Record<string, unknown>): string | null
   return null;
 }
 /** The floor's judge digest: states the absence of retrieval when NO tool ran, client-side or server-side. */
+/** One controller decision of the floor's ReAct loop: the model chose tools to call, or gave its final answer. */
+export interface FloorControllerDecision { iter: number; kind: "tool_calls" | "final"; tools: string[] }
+/**
+ * THE FLOOR TRACE'S TASKS: its tool calls AND its controller's decisions (user ruling 2026-10-17T10:22:59Z, F1).
+ * The tool calls are deterministic resolvers and keep their "deterministic" stamp exactly as before. The MODEL
+ * CONTROLLER (which tool next, when to answer) is the stochastic cell, and it was recorded nowhere: every floor trace
+ * classified all_deterministic and activity-api's M4 tier-restricted skip kept the floor's own posterior from ever
+ * moving. Each decision is now its own llm-tier step (resolver llm_completion_dispatch, the call that made it), with
+ * outcome = the walk's reach verdict, so the leaf update that M4 gates on reads a stochastic task and the credit has
+ * a cell to land on. Chain credit is not the path: it flows to ancestor EXECUTIONS in composition_chain, and the floor
+ * trace has none; the leaf posterior of universal-tool-fallback is the cell.
+ */
+export function floorTraceTasks(executed: ReadonlyArray<{ tool: string; ok: boolean }>, decisions: ReadonlyArray<FloorControllerDecision>, reached: boolean) {
+  const tools = executed.map((e, i) => ({
+    taskId: `floor-tool-${i}`,
+    description: `${e.tool}${e.ok ? "" : " (failed)"}`,
+    resolverId: e.tool,
+    resolverTier: "deterministic" as const,
+    inputImpulseIds: [] as string[],
+    outputImpulseIds: [] as string[],
+    outputShapes: [] as string[],
+    success: e.ok,
+  }));
+  const steps = decisions.map((d, i) => ({
+    taskId: `floor-decision-${i}`,
+    description: d.kind === "final" ? `controller: final answer (turn ${d.iter + 1})` : `controller: call ${d.tools.join(", ") || "(none named)"} (turn ${d.iter + 1})`,
+    resolverId: "llm_completion_dispatch",
+    resolverTier: "llm" as const,
+    inputImpulseIds: [] as string[],
+    outputImpulseIds: [] as string[],
+    outputShapes: [] as string[],
+    success: reached,
+  }));
+  return [...tools, ...steps];
+}
+
 export function floorGroundingDigest(toolsExecuted: number, groundedOk: number, digestBase: string): string {
   return (toolsExecuted === 0 && groundedOk === 0)
     ? `[GROUNDING: ZERO tools were executed for this goal and no external data was retrieved. Every specific fact, figure, price, measurement or date below came from model memory and is UNVERIFIED. If this goal asked for a current, live or measured value from outside this repository, an unretrieved answer does not fulfil it however plausible the number looks.]\n\n${digestBase}`
@@ -5655,7 +5691,7 @@ async function runGroundedToolLoop(
   tools: any[],
   writeShapeList: string[],
   ownOnly?: ReadonlySet<string>,
-): Promise<{ finalText: string; groundedOk: number; executedOk: number; executed: Array<{ tool: string; ok: boolean }>; observations: string[]; calledWriteShapes: Set<string>; commandEvidence: string } | null> {
+): Promise<{ finalText: string; groundedOk: number; executedOk: number; executed: Array<{ tool: string; ok: boolean }>; observations: string[]; calledWriteShapes: Set<string>; commandEvidence: string; decisions: FloorControllerDecision[] } | null> {
   const url = await ufResolveUrl("llm_completion_dispatch"); if (!url) return null;
   const allowlist = new Set<string>(tools.map((t: any) => String(t?.name)).filter(Boolean));
   // (law 1) The four numbers that govern ReAct DEPTH used to be in-process constants: invisible to
@@ -5699,6 +5735,9 @@ async function runGroundedToolLoop(
   let groundedOk = 0;                          // real DATA gathered (read/shell tools) — the ONLY grounding
   let executedOk = 0;                          // any successful tool incl. writes — for the honest summary
   let finalText = "";
+  // THE CONTROLLER'S DECISIONS: one per model response (call these tools / give the final answer). A turn that
+  // failed or timed out made no decision. Recorded for the floor trace's llm-tier steps (floorTraceTasks).
+  const decisions: FloorControllerDecision[] = [];
   const nameOf = (c: any): string => String(c?.tool_name ?? c?.name ?? c?.function?.name ?? "");
   const argsOf = (c: any): Record<string, unknown> => {
     let a: any = c?.tool_input ?? c?.input ?? c?.arguments ?? c?.args ?? c?.function?.arguments;
@@ -5746,6 +5785,7 @@ async function runGroundedToolLoop(
         continue;
       }
       const j = await r.json() as any; text = unwrapLlmContent(j); toolCalls = j?.body?.tool_calls ?? j?.tool_calls ?? []; serverExecuted = executedToolCallsOf(j);
+      decisions.push({ iter, kind: Array.isArray(toolCalls) && toolCalls.length > 0 ? "tool_calls" : "final", tools: Array.isArray(toolCalls) ? toolCalls.map(nameOf).filter(Boolean) : [] });
     } catch (e) {
       // This was a bare `catch { break; }`. A per-iteration TIMEOUT killed the floor with ZERO log
       // and ZERO observations, the caller returned null, and the walk proceeded as though no floor
@@ -5830,7 +5870,7 @@ async function runGroundedToolLoop(
     finalText = (text || "").trim();
     break;
   }
-  return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
+  return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n"), decisions };
 }
 async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }, walkContext?: FloorWalkContext): Promise<GoalSeekResult | null> {
   // CARRY THE DISPATCH ID EXPLICITLY. ufExecuteTool reads it from dispatchContext, which was
@@ -5952,7 +5992,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
   const loop = await runGroundedToolLoop(prompt, tools, writeShapes, floorOwnOnly);
   if (!loop) { console.log(`[goal-host-vessel] floor: exit=no_dispatch_url goalHash=${goalHashOf(goal)}`); return null; }
-  const { groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence } = loop;
+  const { groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence, decisions } = loop;
   let finalText = loop.finalText;
   // GROUNDING GATE — a reach must rest on real gathered DATA (read/shell), never on a
   // write side-effect or LLM memory. 0 grounded reads => ungrounded => return null so the
@@ -6141,16 +6181,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
       compositionChain: [],
       inputImpulseIds: [],
       outputImpulseIds: [],
-      tasks: executed.map((e, i) => ({
-        taskId: `floor-tool-${i}`,
-        description: `${e.tool}${e.ok ? "" : " (failed)"}`,
-        resolverId: e.tool,
-        resolverTier: "deterministic",
-        inputImpulseIds: [],
-        outputImpulseIds: [],
-        outputShapes: [],
-        success: e.ok,
-      })),
+      tasks: floorTraceTasks(executed, decisions, floorReached),
       costUsd: 0,
       durationMs: 0,
       // dispatcher_used:goal-host keeps the row consistent with every other walk trace;
