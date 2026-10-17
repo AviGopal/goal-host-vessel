@@ -4,6 +4,7 @@ import { isMutationShape } from "./judge/shapes";
 import { isReadQuestionGoal } from "./read-goal";
 import { isShapeName } from "./shape-name";
 import { betaSample } from "./beta-sample";
+import { describedCandidatesBlock, lexicalChoice, restoreUncoveredNeeds, validity, type Candidate, type ChooserTier, type ShapeCatalog } from "./described-producers";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -57,6 +58,10 @@ export interface GoalTargetDecision {
   shapes: string[];
   confidence: number;
   alternatives: string[][];
+  /** I-T (i): with a shape catalog, every shape proposed or considered, with its validity and (if invalid) why. */
+  candidates?: Candidate[];
+  /** I-T (i): who chose among the valid candidates. */
+  chooser_tier?: ChooserTier;
 }
 
 export interface InferGoalTargetShapesOpts {
@@ -91,6 +96,11 @@ export interface InferGoalTargetShapesOpts {
   expectedOutputShapes?: string[];
   /** A pre-pinned target template id; when provided, skip inference. */
   firstTarget?: string;
+  /** I-T (i): what each advertised shape produces (discovery's shape descriptions) and, where known, what it requires.
+   *  When given, targets are VALID described producers (described-producers.ts). */
+  shapeCatalog?: ShapeCatalog;
+  /** I-T (i): shapes present in the pool at choice time (binds a producer's pool-sourced required input). */
+  poolShapes?: readonly string[];
 }
 
 /**
@@ -563,7 +573,14 @@ export async function inferGoalTargetDecision(
   // The read rule first: a mutation-shaped set is never a candidate on a read goal (selecting one and dropping it
   // afterwards would empty the primary set). Then A2b-proper's learned SELECTION among the sets left, then the retry
   // exclusion, which still applies to whatever it picks.
-  const routed = withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, opts));
+  // I-T (i): with a catalog, the routes' LLM call is recorded (a chooser that already answered is not asked again) and
+  // the routes' answer passes the validity layer before selection.
+  const asked: Array<string | null> = [];
+  const routeOpts: InferGoalTargetShapesOpts = opts.shapeCatalog && opts.complete
+    ? { ...opts, complete: async (p: string) => { const t = await opts.complete!(p); asked.push(t); return t; } }
+    : opts;
+  const routedRaw = withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, routeOpts));
+  const routed = opts.shapeCatalog ? await describedProducerStage(goal, vocabulary, routedRaw, opts, asked) : routedRaw;
   // J4: the posterior's rows plus, when the caller supplies them (observe mode only), the goal's failure rows.
   const rows = [...(opts.targetPosterior ?? []), ...(opts.failureRows ?? [])];
   const selected = rows.length > 0 ? selectTargetSet(routed, rows) : null;
@@ -1042,7 +1059,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list):
 ${JSON.stringify(knownShapes)}
 
-Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}
+Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}${describedBlockFor(goal, knownShapes, opts)}
 
 COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. When the goal names MORE THAN ONE destination, return EVERY matching write/emit shape, not just one: a goal that asks to record a concept AND persist a memory note must return BOTH "concept_write" AND "memoryNote_write". Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}. Example with two destinations: goal "produce a health report, record a concept capturing it, and persist a memory note stating it" -> {"target_shapes":["vessel_health_report","concept_write","memoryNote_write"]}.
 
@@ -1334,4 +1351,62 @@ Respond with ONLY JSON: {"intermediate": ["..."], "terminal": ["..."]}`;
   } catch {
     return noSplit;
   }
+}
+
+
+/** I-T (i): the VALID candidates' descriptions, appended to every chooser prompt when the caller supplies a catalog. */
+function describedBlockFor(goal: string, knownShapes: string[], opts: InferGoalTargetShapesOpts): string {
+  const catalog = opts.shapeCatalog;
+  if (!catalog) return "";
+  const known = new Set(knownShapes);
+  const valid = knownShapes.filter((s) => validity(s, known, catalog, goal, opts.poolShapes ?? []).valid);
+  return describedCandidatesBlock(valid, catalog);
+}
+
+/**
+ * I-T (i)+(iii): the validity layer over whatever the routes proposed (described-producers.ts). An invalid proposal is
+ * dropped and recorded with its reason. When nothing valid is left: the chooser (the LLM) is asked, shown the valid
+ * candidates' descriptions, unless it already answered during the routes; when no chooser answers, the lexical
+ * fallback tier picks. Then a need the chosen set left uncovered is restored.
+ */
+async function describedProducerStage(goal: string, knownShapes: string[], routed: GoalTargetDecision, opts: InferGoalTargetShapesOpts, asked: Array<string | null>): Promise<GoalTargetDecision> {
+  const catalog = opts.shapeCatalog!;
+  const known = new Set(knownShapes);
+  const pool = opts.poolShapes ?? [];
+  const max = opts.maxTargetShapes ?? MAX_TARGET_SHAPES;
+  const judged = new Map<string, Candidate>();
+  const judge = (s: string) => { if (!judged.has(s)) judged.set(s, validity(s, known, catalog, goal, pool)); return judged.get(s)!; };
+  for (const s of [...routed.shapes, ...routed.alternatives.flat(), ...Object.keys(catalog), ...knownShapes]) judge(s);
+  const valid = knownShapes.filter((s) => judge(s).valid);
+  let shapes = routed.shapes.filter((s) => judge(s).valid);
+  let tier: ChooserTier = asked.some((t) => t != null) ? "llm" : "deterministic";
+  let confidence = routed.confidence;
+  if (shapes.length === 0 && !asked.some((t) => t != null) && opts.complete) {
+    // A shortcut proposed only invalid targets and the chooser has not been asked: ask it, among the valid candidates.
+    const prompt = `You route a substrate GOAL to the output shape(s) whose PRODUCTION would satisfy it.\n\nGOAL: ${goal}${describedCandidatesBlock(valid, catalog)}\n\nReturn 1-${max} shapes from the VALID CANDIDATES. Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0}`;
+    const t = await opts.complete(prompt);
+    asked.push(t);
+    const m = t ? String(t).match(/\{[\s\S]*\}/) : null;
+    let proposed: string[] = [];
+    try { const j = m ? JSON.parse(m[0]) as { target_shapes?: unknown; confidence?: unknown } : null; proposed = Array.isArray(j?.target_shapes) ? (j!.target_shapes as unknown[]).map(String) : []; if (typeof j?.confidence === "number") confidence = j.confidence; } catch { proposed = []; }
+    for (const p of proposed) judge(p);
+    shapes = proposed.filter((p) => judge(p).valid).slice(0, max);
+    if (shapes.length > 0) tier = "llm";
+  }
+  if (shapes.length === 0) {
+    const pick = lexicalChoice(goal, valid, catalog);
+    shapes = pick ? [pick] : [];
+    tier = "fallback";
+  }
+  const restored = shapes.length > 0 ? restoreUncoveredNeeds(goal, shapes, valid, catalog, max) : [];
+  if (restored.length > 0) console.log(`[goal-target-inference] restored uncovered need(s) [${restored.join(", ")}] beside [${shapes.join(", ")}] (described producers)`);
+  const invalid = [...judged.values()].filter((c) => !c.valid && (routed.shapes.includes(c.shape) || routed.alternatives.flat().includes(c.shape)));
+  if (invalid.length > 0) console.log(`[goal-target-inference] invalid target(s) dropped: ${invalid.map((c) => `${c.shape} (${c.reason})`).join("; ")}`);
+  return {
+    shapes: [...shapes, ...restored],
+    confidence,
+    alternatives: routed.alternatives.map((a) => a.filter((s) => judge(s).valid)).filter((a) => a.length > 0),
+    candidates: [...judged.values()],
+    chooser_tier: tier,
+  };
 }
