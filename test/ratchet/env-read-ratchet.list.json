@@ -90,6 +90,11 @@
     "reason": "toggle: disable bus subscribers (read in src/index.ts)"
   },
   {
+    "name": "GOAL_HOST_DISPATCH_STORE_PATH",
+    "class": "bootstrap",
+    "reason": "filesystem root/path: goal-host dispatch store (read in src/index.ts)"
+  },
+  {
     "name": "GOAL_HOST_DRAIN_FRESH_MS",
     "class": "behaviour",
     "reason": "drain freshness window (read in src/index.ts)"

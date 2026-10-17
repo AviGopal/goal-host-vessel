@@ -12,6 +12,8 @@
 // index.ts cannot be imported without its module-load bootstrap, so the scenarios run in a
 // child process with every fetch stubbed (the same seam as transport-hop-credential.test.ts).
 import { beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 interface Gap { substrate: string; id: string; category: string; status: string; summary: string; [k: string]: unknown }
@@ -20,6 +22,9 @@ interface Call { url: string; method: string; pointerType: string | null; shape:
 let probe: { empty: Feed; rows: Feed; calls: Call[] };
 
 beforeAll(async () => {
+  // The probe child loads index.ts, which hydrates (and 15 s later persists) the dispatch store: point it at an absent
+  // file in scratch, so the child never reads or rewrites the live store (in-container that file holds real dispatches).
+  const store = join(mkdtempSync(join(tmpdir(), "fleet-feed-store-")), "goal-host-dispatches.json");
   const p = Bun.spawn(["bun", join(import.meta.dir, "fixtures", "fleet-feed-provenance-probe.ts")], {
     env: {
       PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", PORT: "0",
@@ -28,7 +33,7 @@ beforeAll(async () => {
       DISCOVERY_VESSEL_ENDPOINT: "http://127.0.0.1:18100", PRODUCER_DISCOVERY_ENDPOINT: "http://127.0.0.1:18080",
       ACTIVITY_API_ENDPOINT: "http://127.0.0.1:18080", LLM_VESSEL_ENDPOINT: "http://127.0.0.1:18220",
       DEVELOPMENT_VESSEL_ENDPOINT: "http://127.0.0.1:18090",
-      GOAL_HOST_DISABLE_SUBSCRIBERS: "1", GOAL_HOST_WS_SUBSCRIBER: "0",
+      GOAL_HOST_DISABLE_SUBSCRIBERS: "1", GOAL_HOST_WS_SUBSCRIBER: "0", GOAL_HOST_DISPATCH_STORE_PATH: store,
     },
     stdout: "pipe", stderr: "ignore",
   });

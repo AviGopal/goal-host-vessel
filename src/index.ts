@@ -19732,7 +19732,11 @@ interface PendingSolicitation {
 const pendingSolicitations = new Map<string, PendingSolicitation>();
 const SOLICITATION_HEARTBEAT_EXTENSION_MS = 90_000;
 const SOLICITATION_MAX_WAIT_MS = 30 * 60 * 1000;
-const DISPATCH_STORE_PATH = "/workspace/goal-host-dispatches.json";
+// A learned-state path with a /workspace default, read at load like every other (the form pull-sync's scrubbed env and
+// the test-child env redirect under a scratch root). A literal path made every test child that imports index.ts read
+// the LIVE dispatches (fleetActivityFeed served their URLs) and rewrite the live file 15 s after load (the requeue
+// drain persists the store). The default is unchanged, so the live vessel keeps the same file.
+const DISPATCH_STORE_PATH = process.env["GOAL_HOST_DISPATCH_STORE_PATH"] ?? "/workspace/goal-host-dispatches.json";
 const interruptedRequeue: DispatchRecord[] = [];
 async function drainInterruptedRequeue(): Promise<void> {
   for (const r of interruptedRequeue) {
