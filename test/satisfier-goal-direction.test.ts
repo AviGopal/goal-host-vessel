@@ -20,3 +20,25 @@ describe("satisfier traces carry the goal direction", () => {
     expect(SRC).not.toMatch(/metadata: \{ satisfier: true, shape: [A-Za-z]+ \},/);
   });
 });
+
+describe("the proven-bad verdict is read per goal direction, with no global fallback, and inert", () => {
+  test("[MUST-FAIL] the reader asks for the goal-direction partition and refuses any other answer", () => {
+    expect(SRC).toContain("...(direction ? { goal_target_shapes: direction } : {})");
+    expect(SRC).toContain('if (direction && (typeof bucket !== "string" || body["signature_version"] !== GOAL_DIRECTION_SIGNATURE_VERSION)) return null;');
+    expect(SRC).toContain("const GOAL_DIRECTION_SIGNATURE_VERSION = 3;");
+  });
+  test("[MUST-FAIL] the walk reads it for EVERY missing shape with the walk's target set", () => {
+    const start = SRC.indexOf("// (c1) THE GOAL-DIRECTION READER, INERT");
+    const block = SRC.slice(start, SRC.indexOf("const _provenBadSingle", start));
+    expect(start).toBeGreaterThan(0);
+    expect(block).toContain("missingForSatisfier.map(async (s) => ({ shape: String(s), rel: await fetchSatisfierReliability(String(s), _dirTargets) }))");
+    expect(block).toContain("satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)");
+    expect(block).not.toContain("_provenBadShapes.add(");
+  });
+  test("[MUST-FAIL] the env interlock is gone (law 1)", () => {
+    expect(SRC).not.toMatch(/process\.env\[\s*["']SATISFIER_PROVEN_BAD_ARMED["']\s*\]/);
+    expect(SRC).not.toContain("SATISFIER_SUPPRESSION_ARMED");
+    const list = JSON.parse(readFileSync(join(import.meta.dir, "ratchet", "env-read-ratchet.list.json"), "utf8")) as Array<{ name: string }>;
+    expect(list.some((e) => e.name === "SATISFIER_PROVEN_BAD_ARMED")).toBe(false);
+  });
+});

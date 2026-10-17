@@ -315,11 +315,6 @@
     "reason": "toggle: route edit-intent goals to feature_compose (read in src/index.ts)"
   },
   {
-    "name": "SATISFIER_PROVEN_BAD_ARMED",
-    "class": "behaviour",
-    "reason": "toggle: arm proven-bad satisfier suppression (read in src/index.ts)"
-  },
-  {
     "name": "SCAFFOLD_ENDPOINT",
     "class": "bootstrap",
     "reason": "peer endpoint URL: scaffold resolver (read in src/activities/loopC-vessel-designer.ts)"

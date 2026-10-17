@@ -6840,13 +6840,22 @@ async function penaliseHollowTemplate(activityId: string, reason: string, goalTe
  * reports "untried"/"unknown" instead of a fabricated Beta(1,1), which as a
  * reliability signal would have read as a maximally-explorable arm.
  */
-async function fetchSatisfierReliability(shape: string): Promise<{ alpha: number; beta: number; samples: number } | null> {
+/** The goal-direction partition's signature_version in activity-api (goal-direction-signature.ts there). */
+const GOAL_DIRECTION_SIGNATURE_VERSION = 3;
+/**
+ * A satisfier's reliability. With `goalTargetShapes` it is the satisfier's GOAL-DIRECTION posterior ((c1), user ruling
+ * 2026-10-17T08:34:28Z): activity-api derives the bucket from the target set with the same function its trace writer uses,
+ * at its own signature_version. NO global fallback: an answer not keyed by that bucket and version (an activity-api that
+ * does not know the partition answers with the aggregate row) is no measurement, so null.
+ */
+async function fetchSatisfierReliability(shape: string, goalTargetShapes?: readonly string[]): Promise<{ alpha: number; beta: number; samples: number; bucket?: string } | null> {
   try {
     const id = shape.startsWith("satisfier:") ? shape : `satisfier:${shape}`;
+    const direction = goalTargetShapes && goalTargetShapes.length > 0 ? [...goalTargetShapes].sort() : null;
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { pointer: { type: "thompson_posterior", activity_id: id } } }),
+      body: JSON.stringify({ impulse: { pointer: { type: "thompson_posterior", activity_id: id, ...(direction ? { goal_target_shapes: direction } : {}) } } }),
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return null;
@@ -6854,13 +6863,15 @@ async function fetchSatisfierReliability(shape: string): Promise<{ alpha: number
     const parsed = typeof j?.content === "string" ? JSON.parse(j.content) : j?.content;
     const body = (parsed as { content?: Record<string, unknown> } | undefined)?.content;
     if (!body) return null;
+    const bucket = (parsed as { metadata?: { context_bucket?: unknown } } | undefined)?.metadata?.context_bucket;
+    if (direction && (typeof bucket !== "string" || body["signature_version"] !== GOAL_DIRECTION_SIGNATURE_VERSION)) return null;
     // A PRIOR IS NOT A MEASUREMENT. Without this check a never-graded satisfier
     // returns Beta(1,1), and any reliability floor computed from it is a verdict
     // on a fabrication.
     if (body["posterior_source"] !== undefined && body["posterior_source"] !== "stored") return null;
     const alpha = body["alpha"], beta = body["beta"], n = body["sample_count"];
     if (typeof alpha !== "number" || typeof beta !== "number") return null;
-    return { alpha, beta, samples: typeof n === "number" ? n : alpha + beta };
+    return { alpha, beta, samples: typeof n === "number" ? n : alpha + beta, ...(direction && typeof bucket === "string" ? { bucket } : {}) };
   } catch { return null; }
 }
 // A reach is SUBSTANCE-HONEST iff the CODE-authored `deterministic` flag is set
@@ -11203,43 +11214,26 @@ If one of those sibling shapes is the action that would create what the goal ask
       // => proven-bad=false => the satisfier fires exactly as before (inert-by-default; the reach
       // floor is untouched, and a covering producer must EXIST for the swap, so reach cannot break).
       // ─────────────────────────────────────────────────────────────────────────
-      // TEMPORARY INTERLOCK — and it is a real one, not caution theatre.
+      // (c1) THE GOAL-DIRECTION READER, INERT (user ruling 2026-10-17T08:34:28Z, "Build the key now, read post-run").
       //
-      // This gate has been DEAD since it was written: fetchSatisfierReliability read
-      // /variant-scores, which returns [] for every satisfier id, so proven-bad never
-      // fired. Repairing that read (same commit) makes it fire for the first time —
-      // against posteriors that the satellite mis-grading bug spent months poisoning.
-      //
-      // Measured on the live hub at the moment of this change:
-      //   satisfier:shellResult      α 52.5 / β 506.8, 3,625 exec -> reliability 0.094
-      //   satisfier:webSearchResult  α  2.1 / β 185.2,   189 exec -> reliability 0.011
-      //                              ...of which 167 SUCCEEDED.
-      // Both sit far under the 0.3 floor, so switching the read on would suppress the
-      // walk's workhorse satisfiers on evidence that is an artifact of the defect
-      // fixed in this same change.
-      //
-      // Fixing the stamp stops NEW poisoning; it does not heal accumulated β, and the
-      // 3-day decay half-life will not clear a 10:1 deficit on any useful timescale.
-      // So the honest state is: read repaired, suppression held until the satisfier
-      // posteriors are re-baselined. That is a precondition, not a preference —
-      // gap-mt0skq5k's sibling gap tracks the re-baseline.
-      //
-      // This is deliberately NOT law-1 shaped: it is an interlock with a defined
-      // removal condition, not a behaviour knob the system should learn to steer. It
-      // should be DELETED, not tuned, once the re-baseline lands. Until then the gate
-      // is explicitly disabled rather than accidentally dead — which is the whole
-      // difference between "declared" and "running".
-      const SATISFIER_SUPPRESSION_ARMED = process.env["SATISFIER_PROVEN_BAD_ARMED"] === "1";
+      // Proven-bad was judged on the satisfier's GLOBAL row, and its only context row was one constant bucket per
+      // satisfier (the pool signature of a no-input trace producing X), so an F1-class and an H3-class goal using the
+      // same satisfier shared one verdict. The global verdict was also built on months of mis-graded β, so it was held
+      // behind an env interlock (SATISFIER_PROVEN_BAD_ARMED, b5e4b56, disarmed by the user, with no lift condition). That interlock is
+      // DELETED here (law 1; env-read ratchet updated in the same act): the verdict is now read per GOAL DIRECTION (the
+      // walk's target set, its own partition in activity-api at signature_version 3), per missing shape, with NO global
+      // fallback (fewer than 10 samples, or no partition answer: not proven-bad; satisfierProvenBad(0.3, 10)).
+      // INERT TONIGHT: the verdict is recorded (tap -> console + step trace) as what the reader WOULD do, and nothing is
+      // excluded, so walk behaviour is exactly the disarmed interlock's. Acting on it (excluding only when another live
+      // producer of the shape exists, per missing shape) is the post-run reading's separate commit.
       const _provenBadShapes = new Set<string>();
-      if (missingForSatisfier.length === 1) {
-        const _s0 = String(missingForSatisfier[0]);
-        const _rel = await fetchSatisfierReliability(_s0);
-        if (_rel && !SATISFIER_SUPPRESSION_ARMED && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
-          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" would be PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) but suppression is HELD pending satisfier re-baseline — the read now works and the verdict is observable; the action is not armed goal_hash=${goalHashOf(goal)}`);
-        }
-        if (_rel && SATISFIER_SUPPRESSION_ARMED && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
-          _provenBadShapes.add(_s0);
-          tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" PROVEN-BAD (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec) — probing for an earned producer to prefer over the penalised satisfier (step 3)`);
+      const _dirTargets = [...target].sort();
+      if (_dirTargets.length > 0 && missingForSatisfier.length > 0) {
+        const _dirRels = await Promise.all(missingForSatisfier.map(async (s) => ({ shape: String(s), rel: await fetchSatisfierReliability(String(s), _dirTargets) })));
+        for (const { shape: _s0, rel: _rel } of _dirRels) {
+          if (_rel && satisfierProvenBad(_rel.alpha, _rel.beta, _rel.samples)) {
+            tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${_s0}" would be PROVEN-BAD in its goal direction (α=${_rel.alpha.toFixed(1)}/β=${_rel.beta.toFixed(1)}, ${_rel.samples} exec, bucket ${_rel.bucket ?? "?"} for targets ${_dirTargets.join(",")}) — (c1) reader INERT until the post-run reading: recorded, not acted on goal_hash=${goalHashOf(goal)}`);
+          }
         }
       }
       const _provenBadSingle = _provenBadShapes.size > 0;
