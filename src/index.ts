@@ -11488,7 +11488,9 @@ If one of those sibling shapes is the action that would create what the goal ask
             // on the walk execution; if it reaches, the credit belongs there, not to an
             // individual satisfier hop.
             tags: [...(opts.tags ?? []), "satellite:non_terminal", `satisfier_shape:${satisfiableNow}`],
-            metadata: { satisfier: true, shape: satisfiableNow },
+            // goal_target_shapes: the walk's target set when this step ran, so activity-api keys this satisfier's outcome by
+            // the GOAL DIRECTION ((c1); goal-direction-signature.ts), not only by its one constant pool bucket.
+            metadata: { satisfier: true, shape: satisfiableNow, ...(target.size > 0 ? { goal_target_shapes: [...target].sort() } : {}) },
           };
           satisfierTraces.push(synthTrace);
           chain.push(satId);
@@ -12119,7 +12121,8 @@ If one of those sibling shapes is the action that would create what the goal ask
                     // one of two is worse than none, because the family then looks handled
                     // while half of it is still being β-penalised for existing.
                     tags: [...(opts.tags ?? []), "satellite:non_terminal", `satisfier_shape:${missingShape}`],
-                    metadata: { satisfier: true, shape: missingShape },
+                    // Same goal-direction key as the satisfier site above ((c1)).
+                    metadata: { satisfier: true, shape: missingShape, ...(target.size > 0 ? { goal_target_shapes: [...target].sort() } : {}) },
                   };
                   satisfierTraces.push(_vrSynthTrace);
                   chain.push(_vrSatId);
