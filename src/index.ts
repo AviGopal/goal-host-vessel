@@ -321,6 +321,7 @@ import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseM
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { floorObservationsBlock, type FloorWalkContext } from "./floor-walk-context";
 import { recalledCandidates } from "./shape-recall";
+import { authorComposite, composeTrigger, describeMintedShape } from "./composite-authoring";
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
@@ -8492,6 +8493,9 @@ async function runGoalAsPoolWalkBody(
     return liveResolverShapes;
   };
   const minted = new Set<string>(); // shapes we've already minted a producer for this walk
+  // B2: one composite-authoring attempt per walk (composite-authoring.ts); A2 describes what it produced.
+  let walkComposeTried = false;
+  let walkComposed: { id: string; outputShapes: string[]; residual: string | null } | null = null;
 
   // ── 1. Seed the POOL ───────────────────────────────────────────────────────
   // producedShapes is the set of shapes currently available to consume; poolImpulses
@@ -12010,6 +12014,28 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     }
 
+    // (c.3) COMPOSE FROM EXISTING RESOLVERS (B2, composite-authoring.ts): a missing target nothing produces, or a NOVEL
+    //       chooser answer with no target yet. Once per walk; a refusal falls through to the capability gap below.
+    {
+      const _missingC = [...target].filter((s) => !producedShapes.has(s));
+      const _novelC = unboundByDispatch.get(String(opts.variables?.dispatch_id ?? ""))?.novel ?? null;
+      const _why = composeTrigger({ tried: walkComposeTried, goal, hasPick: !!pick, missing: _missingC, targetSize: target.size, novel: !!_novelC, steps: chain.length });
+      if (_why) {
+        walkComposeTried = true;
+        const _c = await authorComposite(goal, _missingC, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 180_000 });
+        if (_c.ok) {
+          pickSource = "improvise";
+          pick = { id: _c.pick.id, inputShapes: [], outputShapes: _c.pick.outputShapes };
+          walkComposed = { id: _c.pick.id, outputShapes: _c.pick.outputShapes, residual: _why === "novel_target" ? _novelC?.residual ?? null : null };
+          // a NOVEL walk had no target: the composite's deliverable becomes it, so the walk knows when it is met
+          if (target.size === 0) for (const s of _c.pick.outputShapes) target.add(s);
+          tap(`[goal-host-vessel] walk(${opts.surface}): COMPOSED ${_c.pick.reusedExisting ? "existing" : "new"} capability ${_c.pick.id} from existing resolvers (${_why}; outputs=[${_c.pick.outputShapes.join(",")}]) — executing it`);
+        } else {
+          tap(`[goal-host-vessel] walk(${opts.surface}): composite authoring (${_why}) found no chain: ${_c.reason}`);
+        }
+      }
+    }
+
     if (!pick) {
       // LEAF→AUTHORING ESCALATION: a target shape has no producer and no live
       // resolver to bridge (true capability gap). File a scope-narrowed
@@ -12207,6 +12233,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (!shape || shape === "activityExecutionSummary") continue;
         if (imp.content === undefined || imp.content === null) continue;
         addToPool(shape, imp.content, `produced by ${pick.id}`, { producedBy: pick.id, producerExecutionId: trace.id, consumedIds: _pickConsumedIds });
+        // A2: the composite produced REAL content of its deliverable: describe the shape's meaning, claimed by it
+        if (walkComposed && pick.id === walkComposed.id && walkComposed.residual && walkComposed.outputShapes.includes(shape)) {
+          const _desc = { shape, residual: walkComposed.residual, by: walkComposed.id };
+          walkComposed = { ...walkComposed, outputShapes: walkComposed.outputShapes.filter((x) => x !== shape) };
+          void describeMintedShape(DISCOVERY_ENDPOINT, _desc.shape, _desc.residual, _desc.by, { apiKey: API_KEY, timeoutMs: 8_000 })
+            .then((d) => tap(`[goal-host-vessel] walk(${opts.surface}): learned description for ${_desc.shape} ${d.ok ? "written" : `NOT written (${d.status ?? "no status"}: ${d.reason})`}`));
+        }
       }
       // Fallback: declared output shapes whose content we could not recover
       // still advance reachability (keep the walk progressing) as a stub.
