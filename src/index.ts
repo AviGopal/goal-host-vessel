@@ -16,6 +16,7 @@
  *   - Otherwise: InProcessLLMPort wrapping the Anthropic SDK (requires ANTHROPIC_API_KEY).
  */
 
+import { dirname } from "node:path";
 import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args.js";
 import { UnboundInputs, needsInformationOutcome, type NeedsInformationOutcome } from "./needs-information.js";
 import { buildResolvePointer } from "./resolve-pointer";
@@ -311,6 +312,7 @@ import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, i
 import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
+import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
@@ -1201,7 +1203,7 @@ export function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "verdictCorpusRun"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "verdictCorpusRun", "verdictConsistency"] as const;
 const VERSION = "0.1.0";
 const _dupOwnerFiled = new Set<string>();
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
@@ -3739,12 +3741,43 @@ function landedEditOf(meaningfulShapes: readonly string[], dig: string): boolean
   return meaningfulShapes.some((s) => ["fileEditResult","fileWriteResult","codeReplaceResult","codeInsertResult","gitCommitResult"].includes(String(s)))
     && (/"push_status"\s*:\s*"?pushed/i.test(dig) || /"new_git_sha"\s*:\s*"?[0-9a-f]{7,40}/i.test(dig));
 }
+/**
+ * JUDGE CONSISTENCY (src/judge/verdict-consistency.ts) for the reach gate: a NON-deterministic verdict is checked against
+ * this node's earlier verdict for the same goal + answer; on disagreement a k-sample majority decides (and is kept for the
+ * key), recorded by the module and seeded as a gap. Mutates `v` only when the majority overrides it. Never fails the gate.
+ */
+async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<void> {
+  try {
+    const _t = await resolveSelectionTuning();
+    const _answer = (contentDigest ?? "").trim() || taskSummary;
+    const _gh = goalHashOf(goal);
+    const _dir = verdictConsistency.consistencyDir();
+    if (!_dir) return; // no store on this process (only the service boot sets one): consistency is not checked here
+    const _r = await verdictConsistency.reconcileVerdict({ goalHash: _gh, digest: verdictConsistency.answerDigest(_answer, producedShapes), goal, answer: _answer, producedShapes, verdict: v, k: _t.verdictConsistencyK, ttlMs: _t.verdictConsistencyTtlMs }, {
+      dir: _dir, store: verdictConsistency.fsStore, now: () => new Date(),
+      sample: (i) => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${_gh}:consistency-${i}`),
+      recordDisagreement: async (c) => {
+        await verdictConsistency.fsStore.write(verdictConsistency.disagreementCasePath(_dir, c), JSON.stringify(c, null, 2));
+        const _u = await ufResolveUrl("substrateGap_write");
+        if (!_u) { console.warn(`[verdict-consistency] disagreement on ${c.goal_hash}/${c.digest} recorded; no producer of substrateGap_write to seed a gap`); return; }
+        await fetch(_u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { ...verdictConsistency.disagreementGapSeed(c), detected_at: new Date().toISOString() } } } }), signal: AbortSignal.timeout(10_000) });
+      },
+    });
+    if (_r.outcome === "disagree_resolved" || _r.outcome === "held_majority") {
+      console.log(`[verdict-consistency] ${_r.outcome} goalHash=${_gh} reached ${v.reached} -> ${_r.reached}`);
+      v.reached = _r.reached;
+      if (_r.reason) v.reason = _r.reason;
+    }
+  } catch (e) { console.warn(`[verdict-consistency] check skipped (non-fatal): ${String((e as Error)?.message ?? e).slice(0, 160)}`); }
+}
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
   const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables, writeEvidence);
   if (v && v.deterministic !== true) {
     const keep = new Set(deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
     v.completion_shapes = restrictCompletionShapes(v.completion_shapes, new Set(producedShapes), false, keep);
   }
+  // JUDGE CONSISTENCY (src/judge/verdict-consistency.ts), before the capture so the capture records what is returned.
+  if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence);
   // CAPTURE (closed, src/judge/capture.ts): the reach gate's inputs and its verdict, after the decision.
   judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput({
     goal,
@@ -19249,6 +19282,16 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
   }
   if (type === "fleetActivityFeed") { return Response.json({ resolved: true, shape: "fleetActivityFeed", body: await buildFleetActivityFeedBody() }); }
+  // verdictConsistency: the judge-consistency store (src/judge/verdict-consistency.ts), readable by the system: the
+  // records for one goal_hash, or one (goal_hash, digest). Read-only; the store is written only by the reach gate.
+  if (type === "verdictConsistency") {
+    const _q = { goal_hash: (pointer as Record<string, unknown>)["goal_hash"] ?? body["goal_hash"], digest: (pointer as Record<string, unknown>)["digest"] ?? body["digest"] };
+    let _r: Awaited<ReturnType<typeof verdictConsistency.readVerdictConsistency>> | { error: string };
+    const _vcDir = verdictConsistency.consistencyDir();
+    if (!_vcDir) _r = { error: "verdict-consistency store not configured on this process" };
+    else { try { _r = await verdictConsistency.readVerdictConsistency(_q, _vcDir); } catch (e) { _r = { error: String((e as Error)?.message ?? e).slice(0, 200) }; } }
+    return Response.json("error" in _r ? { resolved: false, shape: "verdictConsistency", error: _r.error } : { resolved: true, shape: "verdictConsistency", body: { ..._r, counters: verdictConsistency.consistencyCounters() } }, { status: "error" in _r ? 400 : 200 });
+  }
   // verdictCorpusRun: acknowledged AT ONCE, the replay runs asynchronously (single-flight) and reports through its
   // own trace and status (impulse-resolve aborts a resolve at its own timeout). The trigger is the pointer's.
   if (type === "verdictCorpusRun") {
@@ -19872,6 +19915,9 @@ function pruneStore(): void {
 // live substrate). Run directly (`bun src/index.ts`) import.meta.main === true -> boot unchanged.
 let server: ReturnType<typeof Bun.serve> | undefined;
 if (import.meta.main) {
+// The verdict-consistency store exists only on the running service: its root is the directory of the dispatch store
+// this service already keeps (no env read; an importer that is not the service gets no store).
+verdictConsistency.setVerdictConsistencyRoot(dirname(DISPATCH_STORE_PATH));
 server = Bun.serve({
   port: PORT,
   async fetch(req) {
@@ -19907,6 +19953,8 @@ server = Bun.serve({
         shapes: SHAPES,
         version: VERSION,
         llm: LLM_VESSEL_ENDPOINT ? `http-vessel:${LLM_VESSEL_ENDPOINT}` : "in-process",
+        // Judge consistency (src/judge/verdict-consistency.ts): lookups, agreements, disagreements, k-sample resolutions.
+        verdict_consistency: verdictConsistency.consistencyCounters(),
       });
     }
 
