@@ -30,6 +30,8 @@ export interface ReachJudgeInput {
   commandEvidence?: string;
   /** The run clock (injected in tests; the host clock otherwise). */
   now?: Date;
+  /** J2a: the dispatch has a REQUIRED input every derivation failed for (needs-information.ts), a structural fact. */
+  needsInformation?: boolean;
 }
 
 /** Structurally a GoalReachVerdict (index.ts). */
@@ -204,6 +206,14 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
   const digest = (input.contentDigest ?? "").trim();
   const answers = answerTexts(digest);
 
+  // J2a: a hedging answer from a dispatch that NEEDS INFORMATION (a required input no derivation found) is graded as
+  // that, not as a wrong answer: still NOT reached (it never flips to reached), with the shaped reason.
+  // The same structural test the current-information rule uses (hasInRunSource): a dispatch that NEEDS INFORMATION and
+  // consulted no source in-run has nothing its answer could rest on, whatever that answer says.
+  if (input.needsInformation === true && ((answers.length > 0 && answers.every(isNonAnswer)) || !hasInRunSource(producedShapes))) {
+    return notReached("needs-information", "the dispatch could not derive a required input (pool bind and investigation both found nothing), and its answer is a hedge or rests on no source consulted in-run; not reached, graded as an information request rather than a wrong answer");
+  }
+  // NAMED DEBT: the wording exemption below (gap the-non-answer-gate-exempts-clarifying-answers-by-goal-wording).
   if (!/\b(?:ask|question)/i.test(goal) && answers.length > 0 && answers.every(isNonAnswer)) {
     return notReached("non-answer", "every clause of the answer is a hedge, a request to clarify, an offer or a question; it commits to no answer");
   }

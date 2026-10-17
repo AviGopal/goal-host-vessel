@@ -17,6 +17,7 @@
  */
 
 import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args.js";
+import { UnboundInputs, needsInformationOutcome, type NeedsInformationOutcome } from "./needs-information.js";
 import { buildResolvePointer } from "./resolve-pointer";
 import { toolPointer } from "./resolve-pointer";
 import { repairSignatureOf, classifyFailure } from './repair-signature';
@@ -4393,7 +4394,7 @@ async function observeAggregateReport(goal: string, targetShapes: string[], pool
 async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, routeKey?: string): Promise<GoalReachVerdict | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
   // Prompt, parse and sanitisation live in reach-grounding.ts (moved verbatim, testable).
-  return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence }, async (prompt) => {
+  return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation() }, async (prompt) => {
     // Routed per task type (reach_verification) across the llm-resolver fleet;
     // buffered under the goal hash and rewarded by this dispatch's final verdict.
     const rr = await routedComplete(routeKey ?? goalHashOf(goal), "reach_verification", {
@@ -8098,7 +8099,25 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
   } catch (e) { console.warn(`[goal-host-vessel] reach→mint failed for ${trace?.id}: ${(e as Error).message}`); }
 }
 
-type DispatchOutcome = { kind: "non_attempt" | "refused"; failure_kind?: string; refuse_class?: string; retry_after_s?: number };
+type DispatchOutcome = { kind: "non_attempt" | "refused"; failure_kind?: string; refuse_class?: string; retry_after_s?: number } | NeedsInformationOutcome;
+/** J2a: per-dispatch record of required inputs the walk could not derive (needs-information.ts), keyed by dispatch id
+ *  (bounded like chainChargedByDispatch; taken at the dispatch's terminal record write). No dispatch id, no record. */
+const unboundByDispatch = new Map<string, UnboundInputs>();
+function unboundFor(dispatchId: unknown): UnboundInputs | undefined {
+  if (typeof dispatchId !== "string" || !dispatchId) return undefined;
+  let r = unboundByDispatch.get(dispatchId);
+  if (!r) {
+    if (unboundByDispatch.size >= 256) { const oldest = unboundByDispatch.keys().next().value; if (oldest !== undefined) unboundByDispatch.delete(oldest); }
+    r = new UnboundInputs();
+    unboundByDispatch.set(dispatchId, r);
+  }
+  return r;
+}
+/** Whether the current dispatch (async context) has a required input every derivation failed for. */
+function dispatchNeedsInformation(): boolean {
+  const id = dispatchContext.getStore()?.dispatchId;
+  return typeof id === "string" && (unboundByDispatch.get(id)?.missing().length ?? 0) > 0;
+}
 /** A feature_compose report that is NOT an attempt: the compose lane's capacity verdicts (BUSY / DRAINING / CAPACITY,
  *  the same test as the RETRYABLE CAPACITY branch) or an environment failure_kind (a deferred landing). The same
  *  definition as development-vessel's isNonAttemptComposeResult, read here from the report. */
@@ -9409,7 +9428,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     for (const sh of f.shapes) stepBound.add(sh);
     return f.text;
   };
+  // J2a: a shape the satisfier produced has nothing missing (a refusal that a later attempt repaired is not an ask).
   const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
+    const r = await vesselResolveShapeInner(shape);
+    if (r) unboundFor(opts.variables?.dispatch_id)?.noteAccepted(shape);
+    return r;
+  };
+  const vesselResolveShapeInner = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
     if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
     satisfierTried.add(shape);
     // After satisfierTried.add, so a refused shape stays tried: the producer scan's un-poison relies on
@@ -10683,8 +10708,18 @@ If one of those sibling shapes is the action that would create what the goal ask
     //       argument (e.g. filePath) cannot be bound from the goal text — the goal
     //       names a vessel/contract, not a file. Let a tool-enabled LLM investigate
     //       and produce the content itself before falling through to a hollow bridge.
+    // J2a DERIVE BEFORE ASK: the inputs the resolver named as required are tried against the pool here and by the
+    // investigation below; only an input BOTH leave unbound is recorded as missing (needs-information.ts).
+    const _niRec = lastRawResolveReason ? unboundFor(opts.variables?.dispatch_id) : undefined;
+    const _niFields = _niRec ? requiredFieldsFromCorrection(lastRawResolveReason ?? undefined) : [];
+    const _niBound = _niFields.length > 0 ? bindArgsFromPool(_niFields, poolImpulses) : {};
+    const _niUnbound = _niFields.filter((f) => !(f in _niBound));
+    for (const f of _niFields) if (f in _niBound) _niRec?.noteDerived(shape, f);
+    _niRec?.noteUnderived(shape, _niUnbound, "pool_bind");
+    let _niInvestigated = false;
     if (LLM_VESSEL_ENDPOINT && !terminalShapes.has(shape) && !shape.endsWith("_write") && lastRawResolveReason && /required|missing|must (be|provide|include)|is not (a )?(valid|provided)|no .*(path|file|arg)/i.test(lastRawResolveReason)) {
       try {
+        _niInvestigated = true;
         // GROUNDED investigation: the SAME executing loop as the ReAct fallback, with READ-and-
         // inspect tools (the _write impulse-shape boundary is preserved; no shell — floor-tools.ts).
         // It EXECUTES tools and yields content ONLY when at least one read
@@ -10728,6 +10763,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
       } catch { /* fail-open: fall through to action-then-read / bridge */ }
     }
+    // the investigation ran and produced nothing grounded: those inputs were not derivable here
+    if (_niInvestigated) _niRec?.noteUnderived(shape, _niUnbound, "investigation");
     // (b) ACTION-THEN-READ: the target didn't resolve (e.g. a read-only shape for a
     //     not-yet-existing artifact). Find a sibling live shape on the SAME vessel
     //     that PRODUCES it (LLM-mapped from the goal), invoke that action, then
@@ -18585,6 +18622,16 @@ async function handleRunGoal(req: Request): Promise<Response> {
       if (seek.goalReachReason) record.goalReachReason = seek.goalReachReason;
       if (seek.stage) record.stage = seek.stage;
       if (seek.outcome) record.outcome = seek.outcome;
+      // J2a: a dispatch that did not reach, with a required input every derivation failed for, NEEDS INFORMATION
+      // (needs-information.ts). It is not reached: its own outcome class, never a reach.
+      {
+        const _ni = needsInformationOutcome(unboundByDispatch.get(String(variables?.dispatch_id ?? record.dispatchId ?? "")), seek.reached === true);
+        if (_ni && !record.outcome) {
+          record.outcome = _ni;
+          console.log(`[goal-host-vessel] dispatch needs information: ${_ni.missing.map((m) => `${m.shape}.${m.field} (tried ${m.tried.join("+")})`).join(", ")}`);
+        }
+        unboundByDispatch.delete(String(variables?.dispatch_id ?? record.dispatchId ?? ""));
+      }
       // Thread the reach verdict onto the DURABLE trace. POST /reach sets `reached` +
       // `completion_shapes` and grades the verdict into the Thompson posteriors on
       // arrival, so delivery IS credit: a dropped patch is an arm that never learns from
