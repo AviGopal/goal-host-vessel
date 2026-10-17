@@ -318,6 +318,8 @@ import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type Jud
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
+import { floorObservationsBlock, type FloorWalkContext } from "./floor-walk-context";
+import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
@@ -5118,6 +5120,38 @@ async function dispatchRateDecision(goal: string): Promise<{ reason: string; ret
   __dispatchRateGlobal.push(now);
   return null;
 }
+/** J1: the input field names a shape's resolver_schema declares (null when none is advertised), memoised per shape for
+ *  the process: asked of the shape's own producer (ufResolveUrl), with the arg extractor's envelope rule (resolver_schema
+ *  answers under content or body). */
+const _resolverSchemaFieldMemo = new Map<string, Set<string> | null>();
+let _resolverSchemaUnreadable = 0;
+async function resolverSchemaFieldNames(shape: string): Promise<Set<string> | null> {
+  if (_resolverSchemaFieldMemo.has(shape)) return _resolverSchemaFieldMemo.get(shape)!;
+  let names: Set<string> | null = null;
+  let _schemaUnreadableWhy = "";
+  try {
+    const url = await ufResolveUrl(shape);
+    if (url) {
+      const sr = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }),
+        signal: AbortSignal.timeout(4000),
+      });
+      if (sr.ok) {
+        const sj = await sr.json() as { content?: any; body?: any };
+        const cc = sj?.content ?? sj?.body;
+        if (cc && cc.known === true && Array.isArray(cc.fields)) names = new Set(cc.fields.map((f: any) => String(f?.name ?? "")).filter(Boolean));
+      }
+    }
+  } catch (err) { _schemaUnreadableWhy = (err as Error).message.slice(0, 120); }
+  // FAIL-OPEN, VISIBLY (law 8): an unreadable schema means execution_id is stamped as before, so a leak through this
+  // shape cannot be ruled out. Each occurrence is counted and named, so the class cannot hide behind the fallback.
+  if (names === null) { _resolverSchemaUnreadable++; console.warn(`[dispatch-attribution] resolver_schema unreadable for ${shape} (#${_resolverSchemaUnreadable}): ${_schemaUnreadableWhy || "no schema advertised"} - execution_id is stamped from the dispatch (fail-open)`); }
+  _resolverSchemaFieldMemo.set(shape, names);
+  return names;
+}
+
 async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>, ownOnly?: ReadonlySet<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
   // ORIGIN AT EXECUTION TOO (CHANGE-29): a tool the floor offered because THIS substrate serves it is answered only
@@ -5126,7 +5160,7 @@ async function ufExecuteTool(name: string, args: Record<string, unknown>, allowl
   if (!turl) return { ok: false, error: ownOnly?.has(name) ? "no own-substrate resolver for shape (foreign producers refused)" : "no resolver for shape" };
   if (!dispatchContext.getStore()?.dispatchId) console.warn(`[uf] tool call WITHOUT dispatch id: tool=${name} (the resolver will receive no execution_id)`);
   try {
-    const r = await walkEgressFetch(name, turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: toolPointer(name, args, dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}, name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}) } }), signal: AbortSignal.timeout(60_000) });
+    const r = await walkEgressFetch(name, turl, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: toolPointer(name, args, dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}, { ...(name === "llm_completion_dispatch" ? { caller: "goal-host:uf_tool", task_type: "uf_tool_llm_completion" } : {}), ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) }) } }), signal: AbortSignal.timeout(60_000) });
     if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
     const j = await r.json() as any;
     let c: unknown = j;
@@ -5793,14 +5827,14 @@ async function runGroundedToolLoop(
   }
   return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n") };
 }
-async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }): Promise<GoalSeekResult | null> {
+async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }, walkContext?: FloorWalkContext): Promise<GoalSeekResult | null> {
   // CARRY THE DISPATCH ID EXPLICITLY. ufExecuteTool reads it from dispatchContext, which was
   // only ever populated by enterWith in runGoalWithRecovery; on a FEEDBACK-RETRY the floor ran
   // with an empty store and posted bare {type, command} shell pointers (run 12 item 7, commit
   // 5a0d780e unlinked). Re-enter under run() with the id the caller passed, so every tool call
   // inside the floor is attributed regardless of how the async chain reached it.
   if (dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) {
-    return await dispatchContext.run({ dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId, out));
+    return await dispatchContext.run({ dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -5906,7 +5940,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // was right and its ARGUMENT was incomplete, and the retry then walked away from that
   // producer entirely. Supplying the computed fact costs one line and cannot compose wrongly.
   const _mqNote = multiQuantityNote(goal);
-  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. You have NO shell and NO internet tool: for anything about the world outside this repository — live prices, current measurements, external facts — say plainly that you cannot retrieve it rather than supplying a remembered number; stating such a value from your own knowledge is an INVALID answer. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with fs_read/codeSearchResult; to find WHERE something is defined or used across the repositories, search every vessel's source with fs_grep and cite its results[].url (repos/<vessel>/...) and line verbatim; query substrate data (e.g. gaps) with the matching read tool. You have NO shell tool: commands cannot be run, and nothing may be written except through a write tool offered below. A file's LINE COUNT is the line_count field of a codeSearchResult call on that file (exact, identical to wc -l) — use it verbatim, never count lines yourself. Other EXACT COMPUTATIONS (hashes, checksums, byte-precise transforms) cannot be measured with these tools: say so plainly rather than writing a value from generation (measured wrong self-computed values include lettercounts off by one and a hallucinated sha256).${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  const prompt = `You are the substrate's universal executor. Accomplish this goal END-TO-END. The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. You have NO shell and NO internet tool: for anything about the world outside this repository — live prices, current measurements, external facts — say plainly that you cannot retrieve it rather than supplying a remembered number; stating such a value from your own knowledge is an INVALID answer. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with fs_read/codeSearchResult; to find WHERE something is defined or used across the repositories, search every vessel's source with fs_grep and cite its results[].url (repos/<vessel>/...) and line verbatim; query substrate data (e.g. gaps) with the matching read tool. You have NO shell tool: commands cannot be run, and nothing may be written except through a write tool offered below. A file's LINE COUNT is the line_count field of a codeSearchResult call on that file (exact, identical to wc -l) — use it verbatim, never count lines yourself. Other EXACT COMPUTATIONS (hashes, checksums, byte-precise transforms) cannot be measured with these tools: say so plainly rather than writing a value from generation (measured wrong self-computed values include lettercounts off by one and a hallucinated sha256).${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${floorObservationsBlock(walkContext, (await resolveSelectionTuning()).floorObservationsMaxChars)}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
   // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
@@ -14663,7 +14697,8 @@ async function runGoalWithRecoveryInner(
           const _floorRec = buildRouteAround({ goalHash: goalHashOf(goal), target: seededOutputShapes ?? [], produced: [], missing: [], satisfierFailures: new Map(), pickFailures: new Map(), termination: "learned pathway is the floor", kind: "floor_as_pathway" });
           noteRouteTaken(_floorRec, "universal-tool-fallback");
           appendRouteAround(opts.variables.dispatch_id, _floorRec);
-          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined);
+          // J1: a reused floor has no walk before it, but the goal's earlier failures are still its lessons.
+          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, undefined, { priorFeedback: priorFailureFeedbackFor(goal) });
           if (reused?.reached) {
             if (opts.learningMode !== "observe") {
               void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
@@ -15016,7 +15051,8 @@ async function runGoalWithRecoveryInner(
         try {
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
           const _ufOut: { reason?: string } = {};
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut);
+          // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal) });
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
@@ -16988,7 +17024,9 @@ function buildDiscoveryProxyResolver(shape: string) {
       const timer = setTimeout(() => ctrl.abort(), PROXY_TIMEOUT_MS);
       let resp: Response;
       try {
-        if (!pointer.execution_id) { const _did = dispatchContext.getStore()?.dispatchId ?? (typeof variables.dispatch_id === "string" ? variables.dispatch_id : undefined); if (_did) pointer.execution_id = _did; else if (/^(shell|shellResult|bash|bounded_shell|git_commit|gitCommitResult)$/.test(shape)) console.log(`[goal-host-vessel] discovery-proxy ${shape} call WITHOUT dispatch id`); }
+        // J1 (dispatch-attribution.ts): attribution under dispatch_id; execution_id only when the call names none and the
+        // target's resolver_schema does not take execution_id as an input.
+        if (!pointer.execution_id || pointer.dispatch_id === undefined) { const _did = dispatchContext.getStore()?.dispatchId ?? (typeof variables.dispatch_id === "string" ? variables.dispatch_id : undefined); if (_did) Object.assign(pointer, attributionFields(pointer, _did, pointer.execution_id ? null : await resolverSchemaFieldNames(shape))); else if (/^(shell|shellResult|bash|bounded_shell|git_commit|gitCommitResult)$/.test(shape)) console.log(`[goal-host-vessel] discovery-proxy ${shape} call WITHOUT dispatch id`); }
         // Single-writer pool rows are refused before egress (walk-egress-guard.ts); the refusal throws.
         resp = await walkEgressFetch(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
           method: "POST",

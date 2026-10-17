@@ -74,6 +74,9 @@ export interface SelectionTuning {
   /** How many times a spooled reach verdict that matched no row ({updated:0}) is redelivered before it is retired:
    *  the execution row may land after the verdict, so one miss is not final, but an id that never lands must go. */
   reachSpoolNoRowRetries: number;
+  /** J1: the TOTAL size (chars) of the floor's observations block (floor-walk-context.ts), so the floor prompt stays
+   *  bounded however many impulses a walk carried or how much failure history a goal has. */
+  floorObservationsMaxChars: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
@@ -84,6 +87,7 @@ export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freez
   oracleAbstainWindow: 50,
   oracleAbstainDivergenceShare: 0.5,
   reachSpoolNoRowRetries: 5,
+  floorObservationsMaxChars: 16_000,
 });
 
 /** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
@@ -99,6 +103,7 @@ const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
   oracleAbstainWindow: undefined,
   oracleAbstainDivergenceShare: undefined,
   reachSpoolNoRowRetries: undefined,
+  floorObservationsMaxChars: undefined,
 };
 
 function resolveField(key: keyof SelectionTuning, authored: unknown): number {
@@ -173,6 +178,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       oracleAbstainWindow: resolveField("oracleAbstainWindow", parsed["oracleAbstainWindow"]),
       oracleAbstainDivergenceShare: resolveField("oracleAbstainDivergenceShare", parsed["oracleAbstainDivergenceShare"]),
       reachSpoolNoRowRetries: resolveField("reachSpoolNoRowRetries", parsed["reachSpoolNoRowRetries"]),
+      floorObservationsMaxChars: resolveField("floorObservationsMaxChars", parsed["floorObservationsMaxChars"]),
     };
   } catch {
     // No policy file is the shipped state, and it must still honour the env tier — otherwise
@@ -185,6 +191,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       oracleAbstainWindow: resolveField("oracleAbstainWindow", undefined),
       oracleAbstainDivergenceShare: resolveField("oracleAbstainDivergenceShare", undefined),
       reachSpoolNoRowRetries: resolveField("reachSpoolNoRowRetries", undefined),
+      floorObservationsMaxChars: resolveField("floorObservationsMaxChars", undefined),
     };
   }
 
