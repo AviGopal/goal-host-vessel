@@ -874,7 +874,12 @@ async function inferGoalTargetDecisionRoutes(
     const NOT_PROSE_RE = /\b(count|how many|how much|number of|sum|total|bytes?|line count|lines?|digest|sha-?\d|hash|checksum|list|report the current|running|status|analy[sz]e|review|audit|problem_detection|code_quality|refactor|implement|fix|edit|patch|write (a|the)? ?(note|file|concept)|save|store|persist|fetch|download|curl|scrape|repos\/[\w.-]+\/)\b|https?:\/\//i;
     // Temporal deixis: the answer depends on WHEN it is asked, so it cannot come from weights.
     const LIVE_MEASUREMENT_RE = /\b(right now|currently|at (the|this) moment|as of (today|now)|today'?s|at present|present(ly)?|latest|current)\b|\b(distance|position|coordinates|altitude|azimuth|magnitude|velocity|temperature|price|rate)\b[\s\S]{0,60}\bin\s+(astronomical units?|au\b|km\b|kilometres?|kilometers?|miles?|degrees?|celsius|fahrenheit)/i;
-    if (EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal) && !LIVE_MEASUREMENT_RE.test(goal)) {
+    // A COMPOSITION ASK IS NOT A PROSE QUESTION (I-T a, 2026-10-17). Every shortcut below already skips a goal that also
+    // asks to persist its answer (isCompositionAsk), so the LLM inferrer's COMPOSITION RULE keeps the write; this one did
+    // not, and "explain X and record a memory note of it" returned the prose shape alone, dropping the write. Named debt:
+    // the guard reuses WRITE_CLAUSE's wording; it retires with the shortcut once targets are chosen from described
+    // producers (I-T i), when a write need is read from the write shape's description instead of a verb list.
+    if (!isCompositionAsk && EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal) && !LIVE_MEASUREMENT_RE.test(goal)) {
       return remember({ shapes: [_proseTarget], confidence: 0.7, alternatives: [] });
     }
   }
