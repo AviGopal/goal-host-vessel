@@ -1425,7 +1425,7 @@ async function describedProducerStage(goal: string, knownShapes: string[], route
     tier = "fallback";
   }
   // Piece 5: a need the chosen set leaves unsatisfied is recalled BY MEANING on the chooser's residual (one extra recall,
-  // validity-filtered, one more choice). The lexical restore (restoreUncoveredNeeds, named debt) is retired here.
+  // validity-filtered, one more choice). The lexical word-match restore that lived here is retired (deleted).
   const res = shapes.length > 0 && stageResidual && opts.recallResidual && opts.complete
     ? await residualChoice(goal, shapes, stageResidual, known, pool, max, opts)
     : null;

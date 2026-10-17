@@ -12,16 +12,12 @@
  *   CHOICE    among valid candidates only: the chooser is the LLM, shown the valid candidates' descriptions. A lexical
  *             match over descriptions is ONLY the fallback tier when no chooser answers, and it never overrides a valid
  *             chooser's answer.
- *   NEEDS     a need the chooser left uncovered is restored (iii): a valid candidate that is the ONLY described producer
- *             of goal words the chosen set does not cover is added, provided the chosen set itself exclusively covers
- *             some goal word (so a chooser that picked a shape unrelated to the goal's wording is never second-guessed).
+ *   NEEDS     a need the chooser left uncovered is recalled BY MEANING on its residual (goal-target-inference
+ *             residualChoice, piece 5); the lexical restore that lived here is retired.
  * No wording list: words are weighted by how many descriptions in the catalog carry them (an inverse frequency), so a
  * function word common to many descriptions carries little weight and no stopword list exists. Opaque shape names and
  * reworded descriptions (the test's synthetic registries) defeat any name or keyword route.
  *
- * NAMED DEBT (G1): "more than one exclusive word" is the minimal count that separates a need from one coincident word
- * in a small catalog. It retires when the chooser is a learned posterior over (goal class, target set) that restores a
- * dropped need from recorded reaches instead of from description words.
  * NAMED DEBT: `requires` (which inputs a producer needs, and from where) comes from the catalog the caller supplies.
  * Production's catalog today is descriptions only (discovery serves no per-input source), so production validity is
  * "advertised" alone until resolver schemas state where each required input comes from.
@@ -84,7 +80,6 @@ function indexOf(catalog: ShapeCatalog): Index {
   return { words, df, n: Math.max(1, words.size) };
 }
 const covered = (ix: Index, shape: string, goalWords: Set<string>): Set<string> => new Set([...goalWords].filter((t) => ix.words.get(shape)?.has(t)));
-const exclusive = (ix: Index, shape: string, goalWords: Set<string>): Set<string> => new Set([...covered(ix, shape, goalWords)].filter((t) => ix.df.get(t) === 1));
 const weight = (ix: Index, t: string) => Math.log(ix.n / (ix.df.get(t) ?? ix.n));
 
 /** The FALLBACK tier only: the valid described candidate whose description best covers the goal's words. */
@@ -98,31 +93,4 @@ export function lexicalChoice(goal: string, valid: readonly string[], catalog: S
     if (score > 0 && (!best || score > best.score)) best = { s, score };
   }
   return best?.s ?? null;
-}
-
-/** (iii) Restore the needs the chosen set left uncovered (see NEEDS above). Returns the shapes added, in order. */
-export function restoreUncoveredNeeds(goal: string, chosen: readonly string[], valid: readonly string[], catalog: ShapeCatalog, max: number): string[] {
-  const ix = indexOf(catalog);
-  const g = wordsOf(goal);
-  const set = [...chosen];
-  if (!set.some((s) => exclusive(ix, s, g).size > 0)) return [];
-  const uncovered = new Set([...g].filter((t) => !set.some((s) => ix.words.get(s)?.has(t))));
-  const added: string[] = [];
-  while (set.length < max) {
-    let best: { s: string; gain: number; score: number } | null = null;
-    for (const s of valid) {
-      if (set.includes(s) || !catalog[s]) continue;
-      const gainSet = [...exclusive(ix, s, g)].filter((t) => uncovered.has(t));
-      // A need is named by MORE THAN ONE word only this candidate describes: in a small catalog a single coincident
-      // word (a connector such as "and" that one description happens to carry) is not a need.
-      if (gainSet.length < 2) continue;
-      const score = gainSet.reduce((a, t) => a + weight(ix, t), 0);
-      if (!best || gainSet.length > best.gain || (gainSet.length === best.gain && score > best.score)) best = { s, gain: gainSet.length, score };
-    }
-    if (!best) break;
-    set.push(best.s);
-    added.push(best.s);
-    for (const t of ix.words.get(best.s) ?? []) uncovered.delete(t);
-  }
-  return added;
 }
