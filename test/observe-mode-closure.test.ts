@@ -153,3 +153,42 @@ describe("N2 transform oracle: a verified observe reach writes no expectation no
     expect(o).toContain("return { reached: false, reason: `deterministic:transform-mismatch");
   });
 });
+
+describe("N5 would-be ops: an observe dispatch's record carries them as a structured field", () => {
+  const rec = (verdict: string, body: unknown) => (om as any).observeComposeRecord?.(verdict, body);
+  test("[MUST-FAIL] observeComposeRecord keeps each op's kind, path and range, and bounds its text", () => {
+    const long = "x".repeat(1000);
+    const r = rec("FAVORABLE", { verdict: "FAVORABLE", would_be_ops: [
+      { kind: "edit", path: "repos/v/src/a.ts", old_string: "a", new_string: long },
+      { kind: "replace_lines", path: "repos/v/src/b.ts", start_line: 3, end_line: 5, new_string: "y" },
+    ] });
+    expect(r?.observe?.landed).toBe(false);
+    expect(r?.observe?.verdict).toBe("FAVORABLE");
+    expect(r?.observe?.would_be_ops_total).toBe(2);
+    expect(r?.observe?.would_be_ops[0]).toEqual({ kind: "edit", path: "repos/v/src/a.ts", old_string: "a", new_string: "x".repeat(240), new_string_chars: 1000 });
+    expect(r?.observe?.would_be_ops[1]).toEqual({ kind: "replace_lines", path: "repos/v/src/b.ts", start_line: 3, end_line: 5, new_string: "y" });
+    const many = rec("FAVORABLE", { would_be_ops: Array.from({ length: 50 }, (_, i) => ({ kind: "edit", path: `p${i}` })) });
+    expect(many?.observe?.would_be_ops.length).toBe(20);
+    expect(many?.observe?.would_be_ops_total).toBe(50);
+  });
+  test("[MUST-FAIL] a compose that answered no ops (or not OK) records an empty list, never a fabricated one", () => {
+    expect(rec("", null)?.observe).toEqual({ landed: false, verdict: "(none)", would_be_ops: [], would_be_ops_total: 0 });
+    expect(rec("UNFAVORABLE", { would_be_ops: "not-a-list" })?.observe?.would_be_ops).toEqual([]);
+  });
+  test("[MUST-FAIL] all three observe returns carry it, /run-goal puts it on the record, GET /executions/:id serves it", () => {
+    expect(src.match(/\.\.\.observeComposeOutcome\([^\n]*\), \.\.\.observeComposeRecord\(/g)?.length).toBe(3);
+    expect(src).toContain("...observeComposeRecord(earlyVerdict, earlyBody) };");
+    expect(src).toContain("...observeComposeRecord(verdict, body) };");
+    expect(src).toContain('...observeComposeRecord("(none)", null) };');
+    expect(src).toContain("if (seek.observe) record.observe = seek.observe;");
+    const get = src.indexOf('if (req.method === "GET" && url.pathname.startsWith("/executions/")) {');
+    expect(src.slice(get, get + 5000)).toContain("observe: record.observe ?? null,");
+  });
+  test("control (learn): a learn dispatch never reaches those returns, so its record has no observe field", () => {
+    // each return sits inside its `if (opts.learningMode === "observe")` block (observe-mode-wiring.test.ts pins the blocks)
+    for (const call of ["...observeComposeRecord(earlyVerdict, earlyBody) };", "...observeComposeRecord(verdict, body) };", '...observeComposeRecord("(none)", null) };']) {
+      const i = src.indexOf(call);
+      expect(i - src.lastIndexOf('if (opts.learningMode === "observe") {', i)).toBeLessThan(800);
+    }
+  });
+});

@@ -143,3 +143,33 @@ export function observeTaggingSink<T>(sink: { record(trace: T): Promise<void> },
     },
   };
 }
+
+/** What an observe dispatch's dry-run compose would have landed, as a structured record field (bounded: the record is
+ *  persisted and polled, and an op can carry a whole file body). */
+export type ObserveComposeRecord = { landed: false; verdict: string; would_be_ops: Array<Record<string, unknown>>; would_be_ops_total: number };
+const WOULD_BE_OPS_MAX = 20;
+const WOULD_BE_TEXT_MAX = 240;
+
+/**
+ * The record field for an observe dispatch's edit-intent route: the compose's verdict and the ops it would have
+ * landed (feature_compose's would_be_ops), each kept as kind, path and line range, its text fields cut to an excerpt
+ * with their full length. Spread onto the route's result beside observeComposeOutcome.
+ */
+export function observeComposeRecord(verdict: string, body: unknown): { observe: ObserveComposeRecord } {
+  const raw = asRecord(body)?.["would_be_ops"];
+  const ops = Array.isArray(raw) ? raw : [];
+  const would_be_ops = ops.slice(0, WOULD_BE_OPS_MAX).map((op) => {
+    const o = asRecord(op) ?? {};
+    const kept: Record<string, unknown> = {};
+    for (const k of ["kind", "path"]) if (typeof o[k] === "string") kept[k] = o[k];
+    for (const k of ["start_line", "end_line"]) if (typeof o[k] === "number") kept[k] = o[k];
+    for (const k of ["content", "old_string", "new_string"]) {
+      const v = o[k];
+      if (typeof v !== "string") continue;
+      kept[k] = v.slice(0, WOULD_BE_TEXT_MAX);
+      if (v.length > WOULD_BE_TEXT_MAX) kept[`${k}_chars`] = v.length;
+    }
+    return kept;
+  });
+  return { observe: { landed: false, verdict: verdict || "(none)", would_be_ops, would_be_ops_total: ops.length } };
+}

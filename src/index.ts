@@ -331,7 +331,7 @@ import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains,
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
-import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, type ObserveSideEffect } from "./observe-mode";
+import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
@@ -8413,6 +8413,8 @@ interface GoalSeekResult {
   answerBody?: string;
   /** Set when the reach gate ABSTAINED (§9.2) — the walk is neither reached nor hollow. */
   abstain?: GateAbstain;
+  /** An observe dispatch's dry-run compose: its verdict and the ops it would have landed (observe-mode.ts). */
+  observe?: ObserveComposeRecord;
   /** The route-around record a stalled walk emitted (route-around.ts); absent when it did not stall. */
   routeAround?: RouteAroundRecord;
   /** Output shapes of the steps that produced or fed the deliverable along recorded edges
@@ -14902,7 +14904,7 @@ async function runGoalWithRecoveryInner(
             if (opts.learningMode === "observe") {
               observeSkip("edit_intent_escalation");
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT observe dispatch: feature_compose verdict=${earlyVerdict || "(none)"} as a dry run; ending the dispatch (no landing, no walk, no escalation)`);
-              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(earlyVerdict, composeReportReason(earlyBody)) };
+              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(earlyVerdict, composeReportReason(earlyBody)), ...observeComposeRecord(earlyVerdict, earlyBody) };
             }
             if (earlyVerdict === "FAVORABLE") {
               const earlyCutovers = Array.isArray(earlyBody.cutovers) ? earlyBody.cutovers as Array<Record<string, unknown>> : [];
@@ -15032,7 +15034,7 @@ async function runGoalWithRecoveryInner(
         // or escalated either: the post-walk route and patch_with_tools would compose the same edit again.
         if (opts.learningMode === "observe") {
           observeSkip("edit_intent_escalation");
-          return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome("(none)", "the compose did not answer OK; not walked or escalated") };
+          return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome("(none)", "the compose did not answer OK; not walked or escalated"), ...observeComposeRecord("(none)", null) };
         }
         // A LANDING ENDS THE DISPATCH (value-per-cost-selection 3.1). Every successful compose
         // outcome above returns, so reaching this line means timeout, exception, non-favourable
@@ -15830,7 +15832,7 @@ async function runGoalWithRecoveryInner(
             if (opts.learningMode === "observe") {
               observeSkip("edit_intent_escalation");
               tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT observe dispatch: feature_compose verdict=${verdict || "(none)"} as a dry run; not escalated`);
-              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(verdict, composeReportReason(body)) };
+              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(verdict, composeReportReason(body)), ...observeComposeRecord(verdict, body) };
             }
             if (verdict === "BUSY") {
               console.log("[edit-intent] EDIT-INTENT compose BUSY — waiting 45 s before retry");
@@ -19040,6 +19042,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         record.reached = null;
         (record as { abstain?: unknown }).abstain = seek.abstain;
       }
+      // OBSERVE (observe-mode.ts): the would-be ops ride the record as a field, not only inside the bounded reason.
+      if (seek.observe) record.observe = seek.observe;
       const execution_path: WalkTier = classifyExecutionPath({
         ...seek,
         reusedPathway: (record as { reusedPathway?: boolean }).reusedPathway ?? null,
@@ -19843,6 +19847,8 @@ interface DispatchRecord {
   requeueOf?: string;
   /** The dispatch's body.learning_mode, kept so a requeue after a restart runs in the same mode (observe-mode.ts). */
   learningMode?: "observe" | "learn";
+  /** An observe dispatch's dry-run compose: verdict and would-be ops (observe-mode.ts ObserveComposeRecord). */
+  observe?: ObserveComposeRecord;
   inferenceConfidence?: number | null;
   /** The target selection's decision-time record (goal-target-inference.ts GoalTargetDecision.target_selection). */
   targetSelection?: GoalTargetDecision["target_selection"] | null;
@@ -20393,6 +20399,8 @@ server = Bun.serve({
         gapIdRecoveredFromText: record.gapIdRecoveredFromText ?? null,
         // The judge's shadow verdict when a deterministic gate decided before it (noteJudgeShadow).
         judge_verdict_before_pregate: record.judge_verdict_before_pregate ?? null,
+        // OBSERVE (observe-mode.ts): what an observe dispatch's dry-run compose would have landed; null otherwise.
+        observe: record.observe ?? null,
         // CAPTURED DECISION INPUTS (src/judge/capture.ts), only on request: they can be tens of KB, and
         // this endpoint is polled.
         ...(url.searchParams.get("include") === "metadata" ? { metadata: record.metadata ?? null } : {}),
