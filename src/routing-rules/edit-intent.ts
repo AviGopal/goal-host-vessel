@@ -17,7 +17,7 @@
 // corpus and behave differently live.
 
 import type { DoorDecision, DoorInput, HandoffDecision, HandoffInput } from "../routing-core/types";
-import { canonicalGoalText, prohibitsAnyMutation } from "../goal-intent";
+import { asksForDescriptionUnderChangeProhibition, canonicalGoalText, prohibitsAnyMutation } from "../goal-intent";
 
 /** The door: v1 accepts the resolver's restatement whenever it made one (today's behaviour). */
 export function decideDoor(input: DoorInput): DoorDecision {
@@ -51,6 +51,9 @@ export function decideHandoff(input: HandoffInput): HandoffDecision {
   // user ruling 2026-10-17T00:00:17Z). Its edit verb sits INSIDE the clause that forbids it.
   const g = canonicalGoalText(input.goal_for_routing);
   if (prohibitsAnyMutation(g)) return { route: "walk", target: null };
+  // A goal that asks for a description and forbids change in any form is not handed off either, whatever change verb its
+  // description names ("Leave the file untouched and tell me what would change in <file>", goal-intent.ts).
+  if (asksForDescriptionUnderChangeProhibition(g)) return { route: "walk", target: null };
   const enabled = input.route_enabled;
   const fileMatch = enabled ? g.match(FILE_PATH) : null;
   const editVerb = fileMatch ? /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|create|register|scaffold)\b/i.test(g) : false;

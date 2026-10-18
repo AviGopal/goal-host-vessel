@@ -308,7 +308,7 @@ import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, re
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
-import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText } from "./goal-intent";
+import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText, prohibitsAnyMutation, asksForDescriptionUnderChangeProhibition } from "./goal-intent";
 import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
@@ -329,7 +329,7 @@ const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
-import { admittedChange, noteWriteRefusal, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDoorShapes } from "./write-door";
+import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
@@ -7786,7 +7786,7 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
       if (targetShapes && targetShapes.length && recShapes.length && !recShapes.some((s) => targetShapes.includes(String(s)))) continue;
       // WRITE DOOR (recovery pick, write-door.ts): with the write target dropped the shape filter above passes everything,
       // so a producer of a write shape is refused here for a goal not admitted as a change.
-      if (writeDoor && writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id).length === 0) continue;
+      if (writeDoor && writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id, new Set(targetShapes ?? [])).length === 0) continue;
       if (id && !excludedNorm.has(norm(id))) {
         // Carry the correlation id of THE RECOMMENDATION WE ACTUALLY PICKED — not the
         // first in the list. Picking one arm and reporting another's id would attribute
@@ -8514,6 +8514,10 @@ async function runGoalAsPoolWalkBody(
   // THE WRITE DOORS (write-door.ts): admission is decided by the caller, never re-derived from the goal text here.
   const changeAdmitted = opts.changeAdmitted === true;
   const writeDoorHash = goalHashOf(goal);
+  // The goal's own product: a store write outside it is a side effect, refused on a goal not admitted (write-door.ts).
+  const writeDoorProduct = new Set<string>([...(opts.expectedOutputShapes ?? []), ...(opts.terminalOutputShapes ?? [])]);
+  // A satisfier refusal is recorded and counted once per shape per walk (the satisfier re-evaluates every step).
+  const writeDoorSatisfierNoted = new Set<string>();
 
   // REUSE BEFORE DERIVE — the proven composition for this goal, normalised to the
   // same id form the walk's candidates carry so the two are comparable.
@@ -9552,6 +9556,12 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (isFsWriteShape(shape)) { // = write-door.ts isWriteShape: unconditional, admitted or not
       noteWriteRefusal("vessel_resolve");
       tap(`[goal-host-vessel] walk: vesselResolve REFUSED filesystem-write shape ${shape} — a walk-side write has no snapshot/rollback and cannot be credited without a landed sha; edits must route through feature_compose / patch_with_tools`);
+      return null;
+    }
+    // WRITE DOOR (vesselResolve, write-door.ts): on a goal not admitted, no change shape and no store write outside the goal's product.
+    if (!changeAdmitted && refusedWrite(shape, writeDoorProduct)) {
+      noteWriteRefusal("vessel_resolve");
+      tap(writeDropLine("vessel_resolve", [shape], writeDoorHash));
       return null;
     }
     // DETERMINISTIC PRODUCER-LOOKUP: "how many/which vessels advertise|serve shape X" is
@@ -11425,8 +11435,12 @@ If one of those sibling shapes is the action that would create what the goal ask
       // is why it looked like progress; one success does not outweigh two measurements
       // of harm. A wrong mint is negative value, not zero. Re-enable only with evidence
       // that the terminal write survives the reordering.
+      // WRITE DOOR (satisfier, write-door.ts): on a goal not admitted, the rest of the class is refused here too.
+      const _doorBlocked = changeAdmitted ? [] : eligibleForSatisfier.filter((s) => !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && refusedWrite(String(s), writeDoorProduct));
+      const _doorNew = _doorBlocked.map(String).filter((s) => !writeDoorSatisfierNoted.has(s));
+      if (_doorNew.length > 0) { for (const s of _doorNew) writeDoorSatisfierNoted.add(s); noteWriteRefusal("satisfier", _doorNew.length); tap(writeDropLine("satisfier", _doorNew, writeDoorHash)); }
       const _satEligible = eligibleForSatisfier.filter((s) =>
-        !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s))
+        !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && !_doorBlocked.includes(s)
         && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s))
         && !satisfierTried.has(s) && !minted.has(s));
       // DISABLED ON EVIDENCE — see the note above. Kept resolvable (and logged) rather
@@ -11697,7 +11711,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     // WRITE DOOR (template pick, write-door.ts): a producer of a filesystem-write shape is not a candidate on a goal
     // not admitted as a change. Every single-pick tier below (reuse, genuine, scaffold, opportunistic) picks from here.
-    candidates = writeDoorFilter(candidates, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id));
+    candidates = writeDoorFilter(candidates, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
 
     // (b) SELECT BEST — goal-gap weighted. With a target, prefer candidates that
     // advance TOWARD it; do NOT grab unrelated progress-makers (that wanders into
@@ -11820,7 +11834,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
             forward = (Array.isArray(rows) ? rows : []).map((c: any) => readCandidateShapes(c, _blendK)).filter((c): c is WalkCandidate => c !== null);
             // WRITE DOOR (template pick): the OR-edge's own forward fetch never passed through `candidates`.
-            forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id));
+            forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
           }
         } catch { /* discover failed */ }
         const seen = new Set<string>();
@@ -11862,6 +11876,8 @@ If one of those sibling shapes is the action that would create what the goal ask
                 variables: bvars,
                 tags: opts.tags,
                 goalContext: { goal },
+                // WRITE DOOR (task level): the template's own tasks pass the same door in the executor.
+                ...taskWriteDoor(changeAdmitted, writeDoorProduct),
               });
             } catch (e) {
               console.warn(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL branch ${c.id} threw: ${(e as Error).message}`);
@@ -12096,7 +12112,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // Recurse: add the producer's missing inputs as sub-targets so the walk
           // produces them FIRST — mint-as-you-go builds the chain backward from
           // the goal toward what the pool already has.
-          for (const s of writeDoorShapes(authored.inputShapes, changeAdmitted, "bridge_pick", writeDoorHash, tap)) if (!producedShapes.has(s)) target.add(s);
+          for (const s of writeDoorShapes(authored.inputShapes, changeAdmitted, "bridge_pick", writeDoorHash, tap, writeDoorProduct)) if (!producedShapes.has(s)) target.add(s);
           if (authored.inputShapes.every((s) => producedShapes.has(s))) {
             pickSource = "bridge";
             pick = { id: authored.id, inputShapes: authored.inputShapes, outputShapes: [X] };
@@ -12118,7 +12134,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (_why) {
         walkComposeTried = true;
         const _c = await authorComposite(goal, _missingC, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 180_000 });
-        if (_c.ok && writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id).length === 0) {
+        if (_c.ok && writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id, writeDoorProduct).length === 0) {
           tap(`[goal-host-vessel] walk(${opts.surface}): composite ${_c.pick.id} REFUSED at the write door (outputs=[${_c.pick.outputShapes.join(",")}]) — not executing it`);
         } else if (_c.ok) {
           pickSource = "improvise";
@@ -12288,6 +12304,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         variables: bvars,
         tags: opts.tags,
         goalContext: { goal },
+        // WRITE DOOR (task level): a template's own tasks are not walk picks, so the executor checks each one.
+        ...taskWriteDoor(changeAdmitted, writeDoorProduct),
       });
     } catch (e) {
       exclude.add(normActivityId(pick.id));
@@ -15309,7 +15327,11 @@ async function runGoalWithRecoveryInner(
       // any throw falls through to the existing authorFallback/recommend path unchanged.
       if (process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0") {
         const fileMatch = goal.match(/repos\/([\w.-]+)\/[\w./-]+\.\w+/);
-        if (fileMatch) {
+        // The late route reads the same refusals as the early hand-off (goal-intent.ts): a goal that forbids every change,
+        // or asks for a description and forbids change, is never handed to a landing compose here either.
+        const lateRouteForbidden = !!fileMatch && (prohibitsAnyMutation(goal) || asksForDescriptionUnderChangeProhibition(goal));
+        if (lateRouteForbidden) tap(`[goal-host-vessel] ${opts.surface}: LATE EDIT-INTENT declined — the goal forbids change (goal_hash=${goalHashOf(goal)})`);
+        if (fileMatch && !lateRouteForbidden) {
           const editFile = fileMatch[0];
           const editVessel = fileMatch[1]!;
           // Multi-file goals: mirror of the early block's enumeration (see there).
@@ -16185,6 +16207,8 @@ async function runGoalWithRecoveryInner(
       parentExecutionId: opts.parentExecutionId,
       compositionChain: opts.compositionChain,
       expectedOutputShapes: seededOutputShapes ?? opts.expectedOutputShapes,
+      // WRITE DOOR (task level): the recovery loop's template runs carry the dispatch's admission too.
+      ...taskWriteDoor(_changeAdmitted, seededOutputShapes ?? opts.expectedOutputShapes ?? []),
     });
     status = result.trace.status === "failed" ? "failed" : "completed";
     const selId = result.selectedTemplateId;
@@ -20012,6 +20036,8 @@ server = Bun.serve({
         verdict_consistency: verdictConsistency.consistencyCounters(),
         // Write doors (src/write-door.ts): write candidates/targets dropped on goals not admitted as a change, per door.
         write_door: writeDoorCounters(),
+        // The executor's task-level drops (ias-executor-ts writeDoorTaskCounters); null on a dist that predates the door.
+        write_door_ias_task: (iasExecutor as unknown as { writeDoorTaskCounters?: () => unknown }).writeDoorTaskCounters?.() ?? null,
       });
     }
 

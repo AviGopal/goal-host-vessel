@@ -7,7 +7,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { handoffRoute } from "../src/routing-core/entries";
 import { floorHandoff } from "../src/routing-core/floor";
-import { canonicalGoalText, isEditIntentGoal, prohibitsAnyMutation } from "../src/goal-intent";
+import { canonicalGoalText, goalDemandsLandedEdit, isEditIntentGoal, prohibitsAnyMutation } from "../src/goal-intent";
 
 const READ_ONLY = [
   "Read repos/widget-vessel/src/ledger.ts and report which categories the widget ledger defines. Do not change anything.",
@@ -23,6 +23,19 @@ const EDITS = [
   "Edit repos/widget-vessel/src/ledger.ts so the “colour” field defaults to ‘none’.",
 ];
 const route = (goal: string) => handoffRoute({ goal_for_routing: goal, route_enabled: true });
+// ZERO-OVERLAP PARAPHRASES (a-goal-not-admitted-as-a-change-still-runs-non-filesystem-write-shapes-inside-composed-templates;
+// user ruling "Keep wording-based routing"): a description request under a change prohibition phrased in none of
+// prohibitsAnyMutation's forms. Measured: the first went to feature_compose and drafted a real edit.
+const DESCRIBE_UNDER_PROHIBITION = [
+  "Leave the file untouched and tell me what would change in repos/goal-host-vessel/src/edge-blend.ts to make its blend weights configurable.",
+  "read-only please: what would repos/goal-host-vessel/src/edge-blend.ts need to support a second blend mode?",
+  "without touching anything, describe how repos/goal-host-vessel/src/edge-blend.ts could expose its weights",
+];
+const EDITS_UNDER_DESCRIPTION = [
+  "Edit repos/goal-host-vessel/src/edge-blend.ts to make its blend weights configurable",
+  // CONTROL: a real edit that also asks for a report and names a constraint on change still composes.
+  "Fix the rounding in repos/parcel-vessel/src/depot.ts without changing its public API, then report what changed.",
+];
 
 describe("the early hand-off and a goal that forbids every change", () => {
   for (const g of READ_ONLY) {
@@ -35,6 +48,33 @@ describe("the early hand-off and a goal that forbids every change", () => {
     it(`[CONTROL] a genuine edit still composes onto its file — ${g.slice(0, 70)}…`, () => {
       expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });
       expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
+    });
+  }
+  for (const g of DESCRIBE_UNDER_PROHIBITION) {
+    it(`[MUST-FAIL] a description request under a change prohibition walks — ${g.slice(0, 70)}…`, () => {
+      expect(route(g)?.route ?? "walk").toBe("walk");
+      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
+    });
+  }
+  for (const g of DESCRIBE_UNDER_PROHIBITION) {
+    it(`[MUST-FAIL] the late detectors agree: not an edit intent, no landed edit demanded — ${g.slice(0, 60)}…`, () => {
+      expect(isEditIntentGoal(g)).toBe(false);
+      expect(goalDemandsLandedEdit(g)).toBe(false);
+    });
+  }
+  it("[WIRING] the late edit-intent route declines a goal that forbids change, before it composes", () => {
+    const idx = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
+    const decl = idx.indexOf("const lateRouteForbidden = !!fileMatch && (prohibitsAnyMutation(goal) || asksForDescriptionUnderChangeProhibition(goal));");
+    expect(decl).toBeGreaterThan(0);
+    const branch = idx.indexOf("if (fileMatch && !lateRouteForbidden) {", decl);
+    expect(branch).toBeGreaterThan(decl);
+    expect(branch - decl).toBeLessThan(400);
+  });
+  for (const g of EDITS_UNDER_DESCRIPTION) {
+    it(`[CONTROL] a real edit still composes onto its file — ${g.slice(0, 70)}…`, () => {
+      expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });
+      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
+      expect(isEditIntentGoal(g)).toBe(true);
     });
   }
   it("[HELD-OUT] the curly-apostrophe prohibition is recognised by the shared predicate too (not only by the router)", () => {

@@ -61,11 +61,37 @@ export function prohibitsAnyMutation(rawGoal: string): boolean {
   return negatedVerbClause.test(goal) || withoutGerund.test(goal) || readOnlyNo.test(goal);
 }
 
+/**
+ * A goal that ASKS FOR A DESCRIPTION and FORBIDS CHANGE is not an edit, whatever change verb its description names
+ * (a-goal-not-admitted-as-a-change-still-runs-non-filesystem-write-shapes-inside-composed-templates, user ruling "Keep
+ * wording-based routing"). Measured: "Leave the file untouched and tell me what would change in <file> ..." went to
+ * feature_compose and drafted a real edit; its only change verb sat inside the description it asked for. Three parts,
+ * all required, so a real edit that also asks for a report ("Fix X without changing its API, then report") still composes:
+ *   - the REQUEST is a description: a clause opens with a describe/explain/tell/report verb, or the goal is a question;
+ *   - change is FORBIDDEN in some form: prohibitsAnyMutation, a change negated by "without", an un-prefixed change
+ *     participle, or a read-only marker (negation applied to change, not a list of sentences);
+ *   - NO clause opens with an instruction to change (an imperative edit verb).
+ */
+const CLAUSE_LEAD = String.raw`(?:^|[.!?;:,]\s*|\n\s*|\b(?:and|then|just|please|only|now|so)\s+)`;
+const DESCRIPTION_REQUEST = new RegExp(String.raw`${CLAUSE_LEAD}(?:tell me|describe|explain|report|summari[sz]e|outline|list|show me)\b`, "i");
+const QUESTION = /^\s*(?:what|which|who|whose|why|how|when|where|is|are|does|do|did|can|could|would|should|will)\b|\?\s*$/i;
+const CHANGE_STEM = String.raw`(?:edit|add|insert|append|prepend|chang|modif|replac|fix|remov|delet|updat|renam|refactor|wir|guard|creat|regist|scaffold|touch|alter|writ)`;
+const NEGATED_CHANGE = new RegExp(String.raw`\bwithout\s+${CHANGE_STEM}\w*|\bun${CHANGE_STEM}\w*ed\b|\bread-?only\b`, "i");
+const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}${CHANGE_STEM}\w*\b`, "i");
+
+export function asksForDescriptionUnderChangeProhibition(rawGoal: string): boolean {
+  const goal = canonicalGoalText(rawGoal);
+  const asksForDescription = DESCRIPTION_REQUEST.test(goal) || QUESTION.test(goal);
+  const forbidsChange = prohibitsAnyMutation(goal) || NEGATED_CHANGE.test(goal);
+  return asksForDescription && forbidsChange && !CHANGE_INSTRUCTION.test(goal);
+}
+
 export function isEditIntentGoal(rawGoal: string): boolean {
   const goal = canonicalGoalText(rawGoal);
   return (
     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) &&
-    /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose|create|creates|creating|author|authors|authoring|write|writes|writing|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal) && !prohibitsAnyMutation(goal)
+    /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard|compose|create|creates|creating|author|authors|authoring|write|writes|writing|scaffold|scaffolds|scaffolding|generate|generates|generating)\b/i.test(goal) && !prohibitsAnyMutation(goal) &&
+    !asksForDescriptionUnderChangeProhibition(goal)
   );
 }
 
@@ -88,7 +114,7 @@ export function goalDemandsLandedEdit(rawGoal: string | undefined): boolean {
   const asksForCodeChange =
     /repos\/[\w.-]+\/[\w./-]+\.\w+/.test(goal) || isPathlessCodeChangeGoal(goal);
   if (!asksForCodeChange) return false;
-  if (prohibitsAnyMutation(goal)) return false;
+  if (prohibitsAnyMutation(goal) || asksForDescriptionUnderChangeProhibition(goal)) return false;
   const mutationVerb =
     /\b(edit|add|insert|change|modify|replace|fix|update|refactor|implement|extend|apply|wire|guard|remove|widen|broaden|loosen|relax|tighten|narrow|close)\b/i.test(goal);
   if (mutationVerb) return true;

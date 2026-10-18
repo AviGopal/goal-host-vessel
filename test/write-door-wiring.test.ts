@@ -52,3 +52,35 @@ describe("write doors are wired", () => {
     expect(src).toContain("write_door: writeDoorCounters(),");
   });
 });
+
+// BEYOND THE FILESYSTEM: a store write outside the goal's product and every change shape are refused at the same doors,
+// and a template's own tasks get the door in the executor (a composed learned template ran uiPanel_write, concept_write
+// and code_modification_proposal on a goal not admitted; no walk door saw its tasks).
+describe("write doors: store and change classes are wired", () => {
+  test("the goal's product is the walk's own targets and terminals", () => {
+    expect(src).toContain("const writeDoorProduct = new Set<string>([...(opts.expectedOutputShapes ?? []), ...(opts.terminalOutputShapes ?? [])]);");
+  });
+  test("template pick, the OR-edge forward fetch and the composite outputs pass the goal's product", () => {
+    expect(src).toContain('candidates = writeDoorFilter(candidates, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);');
+    expect(src).toContain('forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);');
+    expect(after("const _c = await authorComposite(", 400)).toContain('writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id, writeDoorProduct)');
+    expect(src).toContain('writeDoorShapes(authored.inputShapes, changeAdmitted, "bridge_pick", writeDoorHash, tap, writeDoorProduct)');
+  });
+  test("recovery pick: the recommendation's goal product is the target it was asked for", () => {
+    expect(src).toContain('writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id, new Set(targetShapes ?? []))');
+  });
+  test("satisfier and vesselResolve refuse the rest of the class on a goal not admitted", () => {
+    expect(after("const vesselResolveShapeInner = async (shape: string)", 2000)).toContain("if (!changeAdmitted && refusedWrite(shape, writeDoorProduct)) {");
+    expect(src).toContain("const _doorBlocked = changeAdmitted ? [] : eligibleForSatisfier.filter((s) => !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && refusedWrite(String(s), writeDoorProduct));");
+    expect(src).toContain("!SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && !_doorBlocked.includes(s)");
+    expect(src).toContain('noteWriteRefusal("satisfier", _doorNew.length); tap(writeDropLine("satisfier", _doorNew, writeDoorHash));');
+  });
+  test("task level: every template run the walk and the recovery loop make carries the door to the executor", () => {
+    expect(src.match(/host\.runTemplate\([^)]*\{[^}]*goalContext: \{ goal \},\n\s*\/\/ WRITE DOOR \(task level\)[^\n]*\n\s*\.\.\.taskWriteDoor\(changeAdmitted, writeDoorProduct\),/g)?.length).toBe(2);
+    expect(src.match(/host\.runTemplate\(/g)?.length).toBe(2);
+    expect(after("result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {", 700)).toContain("...taskWriteDoor(_changeAdmitted, seededOutputShapes ?? opts.expectedOutputShapes ?? []),");
+  });
+  test("the executor's own drop counts are on /health, null on a dist without them", () => {
+    expect(src).toContain("write_door_ias_task: (iasExecutor as unknown as { writeDoorTaskCounters?: () => unknown }).writeDoorTaskCounters?.() ?? null,");
+  });
+});
