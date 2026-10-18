@@ -4615,7 +4615,8 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   if (!goalText || !r) return;
   // Structural terminations and environment faults carry no correctable content; only a verdict
   // about PRODUCED content can teach the next attempt what to do differently.
-  // An ABSTAIN (§9.2) is not a verdict about the content either: nothing was graded. Nor is an HTTP 5xx.
+  // An ABSTAIN (§9.2) is not a verdict about the content either: nothing was graded. Nor is an HTTP 5xx a call reported
+  // (a graded verdict that only quotes one in its prose is still about the content: failed-targets.ts).
   // The abstain test is the shared predicate's too; it stays named here, at the memory's own gate.
   if (/^abstain:/i.test(r) || !failureInvalidatesTargetMemo(r)) return;
   const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };

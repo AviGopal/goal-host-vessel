@@ -16,7 +16,7 @@
 //   [CONTROL]   "update X to Y" still infers its write target and stays a write goal; "Can you update X to Y?" too.
 //   [CONTROL]   a read goal's non-mutation targets are kept; a question that asks to save a note keeps its write.
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { inferGoalTargetDecision } from "../../src/goal-target-inference";
 import * as WG from "../../src/judge-rules/write-goal";
 const SN = (await import("../../src/shape-name").catch(() => ({}))) as Record<string, any>;
@@ -108,5 +108,51 @@ describe("the closed read rule agrees with the reach gate's question rule", () =
       "Could you fix gap gap-123 in repos/demo-vessel/src/a.ts?", "Should we record the findings as a durable note?",
       "Print /workspace/docs/plan.txt verbatim", "Please add a row to the ledger. Then report it."];
     for (const g of GOALS) expect([g, RG.goalDemandsArtifact(g)]).toEqual([g, WG.goalRequiresArtifact(g, [])]);
+  });
+});
+
+// STRUCTURAL drift, not only regex drift: the closed goalDemandsArtifact against the open goalRequiresArtifact (no targets)
+// over the goals the repo already holds — every `goal` in the verdict and routing corpora, and every goal literal the
+// goal-intent sweeps and the write-goal gate's own tests pass to an intent predicate. A clause added to either side that
+// the other lacks splits them on some real goal here. Counted, so an empty read cannot pass.
+describe("the closed artifact rule agrees with the open gate over the existing goal corpora", () => {
+  const goalsIn = (o: unknown, out: Set<string>): void => {
+    if (Array.isArray(o)) { for (const v of o) goalsIn(v, out); return; }
+    if (!o || typeof o !== "object") return;
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+      if (k === "goal" && typeof v === "string") out.add(v); else goalsIn(v, out);
+    }
+  };
+  const corpusGoals = (rel: string): Set<string> => {
+    const out = new Set<string>();
+    const root = new URL(rel, import.meta.url);
+    for (const f of readdirSync(root, { recursive: true }) as string[]) {
+      if (f.endsWith(".json")) goalsIn(JSON.parse(readFileSync(new URL(`${rel}/${f}`, import.meta.url), "utf8")), out);
+    }
+    return out;
+  };
+  const PREDICATE_CALL = /\b(?:goalRequestsDurableArtifact|goalAsksForChange|goalAsksForBehaviourChange|goalRequiresArtifact|isEditIntentGoal|goalDemandsLandedEdit|isGapRepairGoal|writeGoalArtifactGate)\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
+  const literalGoals = (): Set<string> => {
+    const out = new Set<string>();
+    const src = new URL("../../src/", import.meta.url);
+    const files = [...(readdirSync(src) as string[]).filter((f) => /^goal-intent.*\.test\.ts$/.test(f)).map((f) => new URL(f, src)), new URL("../write-goal-artifact.test.ts", import.meta.url)];
+    for (const f of files) for (const m of readFileSync(f, "utf8").matchAll(PREDICATE_CALL)) out.add(m[2]!.replace(/\\(.)/g, "$1"));
+    return out;
+  };
+  it("every corpus goal and every sweep goal: goalDemandsArtifact === goalRequiresArtifact(goal, [])", () => {
+    const verdict = corpusGoals("../verdict-corpus/cases");
+    const routing = corpusGoals("../routing-corpus/cases");
+    const literal = literalGoals();
+    expect(verdict.size).toBeGreaterThanOrEqual(40);
+    expect(routing.size).toBeGreaterThanOrEqual(10);
+    expect(literal.size).toBeGreaterThanOrEqual(30);
+    const all = [...new Set([...verdict, ...routing, ...literal])];
+    const split = all.filter((g) => RG.goalDemandsArtifact(g) !== WG.goalRequiresArtifact(g, []));
+    expect(split).toEqual([]);
+    // Both answers occur, so the agreement is not one constant matching another.
+    const yes = all.filter((g) => WG.goalRequiresArtifact(g, [])).length;
+    console.log(`[agreement] ${all.length} goals (verdict ${verdict.size}, routing ${routing.size}, literal ${literal.size}); demand an artifact: ${yes}`);
+    expect(yes).toBeGreaterThan(0);
+    expect(yes).toBeLessThan(all.length);
   });
 });

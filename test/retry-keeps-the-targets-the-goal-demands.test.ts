@@ -7,6 +7,7 @@
 //
 //   [MUST-FAIL] qa's probe: concept_write stays in the retry's targets.
 //   [MUST-FAIL] a verbatim read's fileContent is not excluded and the routes are not re-asked.
+//   [MUST-FAIL] the selection record names the targets the guard KEPT (law 12's decision-time counterfactual).
 //   [MUST-FAIL] a graded verdict that QUOTES "HTTP 500" in its prose is a content failure.
 //   [CONTROL]   in qa's probe the non-demanded failed target (substrateGap) is still excluded (P4's purpose); a reported
 //               transport 5xx is still infrastructure; a structural deterministic reason stays structural.
@@ -37,6 +38,7 @@ describe("a retry never drops a target the goal's own words demand", () => {
     expect(d.shapes).toContain("concept_write");
     expect(d.shapes).not.toContain("substrateGap");
     expect(d.target_selection?.excluded).toEqual(["substrateGap"]);
+    expect(d.target_selection?.kept).toEqual(["concept_write"]);
   });
 
   it("[MUST-FAIL] a verbatim read's fileContent is not excluded and the routes are not re-asked", async () => {
@@ -48,6 +50,8 @@ describe("a retry never drops a target the goal's own words demand", () => {
     const d = await GTI.inferGoalTargetDecision(GOAL, ["fileContent", "shellResult"], { complete: llm.complete, excludeTargets: ["fileContent"] } as never);
     expect(d.shapes).toEqual(["fileContent"]);
     expect(llm.prompts.length).toBe(0);
+    expect(d.target_selection?.excluded).toEqual([]);
+    expect(d.target_selection?.kept).toEqual(["fileContent"]);
   });
 
   it("[MUST-FAIL] a graded verdict that quotes HTTP 500 in its prose is a content failure", () => {

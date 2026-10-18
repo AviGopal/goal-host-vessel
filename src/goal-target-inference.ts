@@ -68,8 +68,9 @@ export interface GoalTargetDecision {
   /** Piece 5: what the chosen set leaves unsatisfied, in the chooser's words, and what the one residual recall added. */
   residual?: { text: string; recalled: string[]; added: string[]; unknown?: true };
   /** The selection's decision-time record (on the FINAL decision only, carried to the dispatch record): every candidate
-   *  set with its (s, f), the set chosen, the targets excluded, and whether the routes were re-asked. */
-  target_selection?: { candidates: Array<{ shapes: string[]; s: number; f: number }>; chosen: string[]; excluded: string[]; reasked: boolean };
+   *  set with its (s, f), the set chosen, the targets excluded, the failed targets the guard kept because the goal's own
+   *  words demand them, and whether the routes were re-asked. */
+  target_selection?: { candidates: Array<{ shapes: string[]; s: number; f: number }>; chosen: string[]; excluded: string[]; kept: string[]; reasked: boolean };
 }
 
 export interface InferGoalTargetShapesOpts {
@@ -648,7 +649,7 @@ export async function inferGoalTargetDecision(
   const unrecorded = routed.novel && filtered.shapes.length === 0 && !filtered.novel ? { ...filtered, novel: routed.novel } : filtered;
   // The selection's decision-time record, carried to the dispatch record (law 12's counterfactual, readable per run).
   const final: GoalTargetDecision = rows.length > 0 || (opts.excludeTargets?.length ?? 0) > 0
-    ? { ...unrecorded, target_selection: { candidates: (candidates ?? [routed.shapes, ...routed.alternatives].filter((a) => a.length > 0).map((shapes) => ({ shapes, s: 0, f: 0 }))).map((c) => ({ shapes: c.shapes, s: c.s, f: c.f })), chosen: unrecorded.shapes, excluded, reasked } }
+    ? { ...unrecorded, target_selection: { candidates: (candidates ?? [routed.shapes, ...routed.alternatives].filter((a) => a.length > 0).map((shapes) => ({ shapes, s: 0, f: 0 }))).map((c) => ({ shapes: c.shapes, s: c.s, f: c.f })), chosen: unrecorded.shapes, excluded, kept, reasked } }
     : unrecorded;
   // The routes memoise their UNFILTERED answer (decisionCache), so a retry re-filters it against the new exclusions.
   // What a reader must see is the decision actually returned: kept under its own key (CHANGE-35 A2b-min repair).
