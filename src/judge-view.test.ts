@@ -67,6 +67,34 @@ describe("a targeted shape wins over the exclusion list", () => {
     const v = buildJudgeView([{ shape: "test_suite", content: { passed: 940, failed: 3 } }, { shape: "activity_template", content: { id: "t" } }], new Set(), new Set(["test_suite"]));
     expect(v.digest).toBe('- test_suite: {"passed":940,"failed":3}');
   });
+  // A report whose decisive key sits past PER_SHAPE_CAP: the goal's only target, not terminal.
+  const REPORT_JSON = JSON.stringify({ summary: "s".repeat(1600), checks: Array.from({ length: 40 }, (_, i) => ({ id: i, ok: true })), failing_invariants: ["relay-ack-before-commit"] });
+  test("a targeted non-terminal report is the deliverable, read whole (parent: clipped at 1,500 in rest, silently)", () => {
+    expect(REPORT_JSON.indexOf("failing_invariants")).toBeGreaterThan(1500);
+    const v = buildJudgeView([{ shape: "federation_verification_report", content: REPORT_JSON }], new Set(), new Set(["federation_verification_report"]));
+    expect(v.digest).toContain("failing_invariants");
+    expect(v.deliverableCut).toBe(false);
+    expect(v.cuts).toEqual([]);
+    expect(v.deliverableShapes).toEqual(["federation_verification_report"]);
+  });
+  test("a targeted report larger than the deliverable budget is a DELIVERABLE cut (parent: a silent rest cut)", () => {
+    const v = buildJudgeView([{ shape: "federation_verification_report", content: "r".repeat(DELIVERABLE_CAP + 10) }], new Set(), new Set(["federation_verification_report"]));
+    expect(v.deliverableCut).toBe(true);
+    expect(v.cuts[0]).toEqual({ shape: "federation_verification_report", shown: DELIVERABLE_CAP, produced: DELIVERABLE_CAP + 10 });
+  });
+  test("control: the same report named terminal reads the same; a non-target shape is still clipped at PER_SHAPE_CAP", () => {
+    const t = buildJudgeView([{ shape: "federation_verification_report", content: REPORT_JSON }], new Set(["federation_verification_report"]));
+    expect(t.digest).toContain("failing_invariants");
+    expect(t.deliverableCut).toBe(false);
+    const r = buildJudgeView([{ shape: "shellResult", content: "z".repeat(3000) }], new Set(), new Set(["federation_verification_report"]));
+    expect(r.cuts).toEqual([{ shape: "shellResult", shown: 1500, produced: 3000 }]);
+    expect(r.deliverableCut).toBe(false);
+  });
+  test("a target that is a deliverable only by targeting keeps its structure (the verbatim-read oracle parses fileContent's path)", () => {
+    const fc = { shape: "fileContent", path: "/workspace/x/marker.txt", content: "marker-line\n" };
+    const v = buildJudgeView([{ shape: "fileContent", content: fc }], new Set(), new Set(["fileContent"]));
+    expect(v.digest).toBe(`- fileContent: ${JSON.stringify(fc)}`);
+  });
   test("restrictCompletionShapes keeps a bookkeeping-named shape the deliverables name", () => {
     expect(restrictCompletionShapes(["test_suite", "error"], new Set(["test_suite", "error"]), false, new Set(["test_suite"]))).toEqual(["test_suite"]);
   });

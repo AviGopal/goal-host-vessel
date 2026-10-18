@@ -3574,6 +3574,7 @@ export function chargeChainCarrier(dispatchId: unknown, chainExecIds: readonly s
   return { durable: c.durable, composite: c.composite };
 }
 const CODE_INVESTIGATION_ORACLE = "code-investigation-citation";
+const JUDGE_VIEW_CUT_FAMILY = "judge-view-cut";
 const oracleAbstainTally = createOracleAbstainTally();
 /** Running per-family oracle decision counters (verdicts / abstains / not-applicable). */
 export function oracleAbstainCounts(): Record<string, OracleFamilyCounts> { return oracleAbstainTally.counts(); }
@@ -4339,6 +4340,9 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // judge is called: a deliverable the view could not hold whole is not graded HOLLOW (no β) and
   // not graded reached. It is its own explicit outcome carrying the cut — NOT null, which is the
   // "verifier unreachable" channel and would re-call the verifier and log an outage.
+  // COUNTED (oracle-abstain tally): a whole view is a graded decision, a cut one an abstain, so a run can
+  // report how many judge verdicts the deliverable budget removes.
+  if (judgeView) await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, judgeView.deliverableCut ? "abstain" : "verdict", goal, "the deliverable did not fit the judge's view; ungraded");
   if (judgeView?.deliverableCut) {
     const cuts = judgeView.cuts.map((c) => ({ ...c }));
     console.log(`[judge-view] ABSTAIN goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view; cuts=${JSON.stringify(cuts).slice(0, 300)}`);

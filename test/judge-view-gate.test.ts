@@ -24,6 +24,7 @@ function stubFetch(_input: unknown, init?: { body?: unknown }): Promise<Response
 }
 type V = { reached: boolean; reason: string } | null;
 let verifyGoalReached: (goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: unknown, judgeView?: unknown) => Promise<V>;
+let oracleAbstainCounts: () => Record<string, { decisions: number; verdicts: number; abstains: number }>;
 const prevRoot = process.env["WORKSPACE_ROOT"];
 const tmpRoot = `${require("node:os").tmpdir()}/judge-view-gate-${process.pid}`;
 beforeAll(async () => {
@@ -31,7 +32,9 @@ beforeAll(async () => {
   process.env["WORKSPACE_ROOT"] = tmpRoot;
   globalThis.fetch = stubFetch as unknown as typeof fetch;
   process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
-  verifyGoalReached = (await import("../src/index")).verifyGoalReached as unknown as typeof verifyGoalReached;
+  const mod = await import("../src/index");
+  verifyGoalReached = mod.verifyGoalReached as unknown as typeof verifyGoalReached;
+  oracleAbstainCounts = mod.oracleAbstainCounts as unknown as typeof oracleAbstainCounts;
 });
 afterAll(() => {
   globalThis.fetch = realFetch;
@@ -59,6 +62,18 @@ describe("cut view ⇒ abstain, before the judge", () => {
     const v = await verifyGoalReached(GOAL, ["goal", "llm_completion"], "walk(1 steps)", "- llm_completion: a full report", undefined, undefined, { deliverableCut: false, cuts: [] });
     expect(judgeCalls).toBeGreaterThan(0);
     expect(v?.reason).toBe("stub judge: missing a coherent report format");
+  }, 20_000);
+});
+
+describe("the cut-view abstain is COUNTED through the oracle-abstain tally", () => {
+  test("a cut view adds an abstain, a whole view a verdict, under the judge-view-cut family", async () => {
+    const before = oracleAbstainCounts()["judge-view-cut"] ?? { decisions: 0, verdicts: 0, abstains: 0 };
+    await verifyGoalReached(GOAL, ["goal", "llm_completion"], "walk(1 steps)", "- llm_completion: " + "r".repeat(1500), undefined, undefined,
+      { deliverableCut: true, cuts: [{ shape: "llm_completion", shown: 1500, produced: 4965 }] });
+    await verifyGoalReached(GOAL, ["goal", "llm_completion"], "walk(1 steps)", "- llm_completion: a full report", undefined, undefined, { deliverableCut: false, cuts: [] });
+    const after = oracleAbstainCounts()["judge-view-cut"]!;
+    expect(after.abstains).toBe(before.abstains + 1);
+    expect(after.verdicts).toBe(before.verdicts + 1);
   }, 20_000);
 });
 

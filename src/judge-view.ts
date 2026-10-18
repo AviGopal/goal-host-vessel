@@ -115,10 +115,15 @@ export function evidenceLines(c: unknown): string[] {
 
 /** `targets`: the walk's target shapes. A shape the goal TARGETS is never bookkeeping — `test_suite`
  *  for "run the test suite", `activity_template` for "draft a template" — so the exclusion list
- *  yields to it and it is read as the deliverable (qa: terminal/deliverable shapes win). */
+ *  yields to it and it is read as the deliverable (qa: terminal/deliverable shapes win). Any target,
+ *  not only an excluded-named one: a targeted report that is not also terminal was read as `rest` and
+ *  clipped at PER_SHAPE_CAP, and that cut never set `deliverableCut`, so the judge graded a report
+ *  it saw a third of and nothing abstained. As a deliverable it gets the deliverable budget, and a
+ *  cut of it is a deliverable cut. It is rendered as-is (not envelope-unwrapped), so the oracles that
+ *  parse a target's structure from the digest still can. */
 export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet<string>, targets: ReadonlySet<string> = new Set()): JudgeView {
   const wanted = (s: string) => deliverableShapes.has(s) || targets.has(s);
-  const isDeliverable = (s: string) => deliverableShapes.has(s) || ANSWER_SHAPES.has(s) || (JUDGE_EXCLUDED_SHAPES.has(s) && targets.has(s));
+  const isDeliverable = (s: string) => deliverableShapes.has(s) || ANSWER_SHAPES.has(s) || targets.has(s);
   const cuts: JudgeCut[] = [];
   const seenContent = new Set<string>();
   const deliverable: string[] = [];
@@ -137,7 +142,9 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
     const preClipped = typeof produced === "number" && produced > key.length;
     const full = preClipped ? produced! : key.length;
     if (isDeliverable(shape)) {
-      const text = deliverableText(content);
+      // A shape that is a deliverable ONLY because the goal targets it keeps its structure: unwrapping
+      // `{path, content}` to bare text erased the `path` the verbatim-read oracle identifies the read by.
+      const text = deliverableShapes.has(shape) || ANSWER_SHAPES.has(shape) ? deliverableText(content) : key;
       const shown = text.slice(0, Math.max(0, deliverableBudget));
       if (shown.length < text.length) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: text.length }); }
       else if (preClipped) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: produced! }); }
