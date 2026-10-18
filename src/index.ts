@@ -7197,6 +7197,8 @@ async function producedShapesConsumable(shapes: string[]): Promise<boolean> {
 // and composition_chain. Do not re-add a posterior write here.
 // Only ever called behind a substance gate (deterministic flag OR producedShapesConsumable).
 async function creditReachedTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> {
+  // OBSERVE (observe-mode.ts): no α — the mirror of penaliseHollowTemplate's β skip; a dry run credits no arm.
+  if (observeSkip("alpha_credit")) return { templateId: activityId, dAlpha: 0, dBeta: 0 };
   if (creditHold.heldForGoal(goalText, "reach", "creditReachedTemplate")) return { templateId: activityId, dAlpha: 0, dBeta: 0 }; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   try {
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
