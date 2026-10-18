@@ -14,6 +14,8 @@
 //
 // What observe still writes: the dispatch record and its trace (the measurement itself) and the reach patch, which
 // carries `reached` onto the trace (activity-api grades posteriors on arrival; that grading is not decidable here).
+// Every trace goal-host persists for an observe dispatch carries the tag learning_mode:observe (observeTaggingSink),
+// so activity-api's insert path records it without grading any posterior.
 
 export type LearningMode = "observe" | "learn";
 
@@ -115,4 +117,29 @@ export function observeComposeReason(verdict: string, detail: string): string {
  */
 export function observeComposeOutcome(verdict: string, detail: string): { goalReachReason: string; reached: false; abstain: { kind: "observe-dry-run"; cuts: never[] } } {
   return { goalReachReason: observeComposeReason(verdict, detail), reached: false, abstain: { kind: "observe-dry-run", cuts: [] } };
+}
+
+/** The tag an observe dispatch's traces carry: activity-api's insert path keys its no-grade skip on it. */
+export const OBSERVE_TRACE_TAG = "learning_mode:observe";
+
+/** A trace's tags for this dispatch's mode: an observe dispatch's gain the tag once; any other mode's are untouched. */
+export function observeTraceTags(tags: readonly string[] | undefined, mode: unknown): string[] | undefined {
+  if (!isObserve(mode)) return tags as string[] | undefined;
+  const t = tags ?? [];
+  return t.includes(OBSERVE_TRACE_TAG) ? [...t] : [...t, OBSERVE_TRACE_TAG];
+}
+
+/**
+ * A trace sink whose every record carries the dispatch's observe tag (read at record time from the dispatch context).
+ * One wrap at the one sink every goal-host-built trace goes through (the floor, the failed walk, satisfier steps,
+ * applied writes, the walk composites), so no persist site can forget it. A learn trace is passed through as is.
+ */
+export function observeTaggingSink<T>(sink: { record(trace: T): Promise<void> }, readMode: () => unknown): { record(trace: T): Promise<void> } {
+  return {
+    record(trace: T): Promise<void> {
+      const mode = readMode();
+      if (!isObserve(mode)) return sink.record(trace);
+      return sink.record({ ...trace, tags: observeTraceTags((trace as { tags?: string[] }).tags, mode) } as T);
+    },
+  };
 }

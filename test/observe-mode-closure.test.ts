@@ -29,3 +29,54 @@ describe("B1 alpha credit: creditReachedTemplate POSTs no α under observe", () 
     expect(src.match(/await creditReachedTemplate\(/g)?.length).toBe(2);
   });
 });
+
+describe("B2 traces: every trace goal-host persists for an observe dispatch carries learning_mode:observe", () => {
+  const tagsOf = (mode: unknown, tags?: string[]) => (om as any).observeTraceTags?.(tags, mode);
+  test("[MUST-FAIL] observeTraceTags adds the tag once under observe", () => {
+    expect(tagsOf("observe", ["dispatcher_used:goal-host"])).toEqual(["dispatcher_used:goal-host", "learning_mode:observe"]);
+    expect(tagsOf("observe", undefined)).toEqual(["learning_mode:observe"]);
+    expect(tagsOf("observe", ["learning_mode:observe", "reached:false"])).toEqual(["learning_mode:observe", "reached:false"]);
+  });
+  test("[MUST-FAIL] observeTaggingSink stamps a floor-shaped and a failed-walk-shaped trace (neither carried the tag)", async () => {
+    const seen: Array<{ id: string; tags?: string[] }> = [];
+    const sink = (om as any).observeTaggingSink?.({ record: async (t: { id: string; tags?: string[] }) => { seen.push(t); } }, () => "observe");
+    expect(sink).toBeDefined();
+    await sink.record({ id: "universal-tool-fallback-x", tags: ["dispatcher_used:goal-host", "reached:false"] });
+    await sink.record({ id: "walk-satisfier-failed-x", tags: ["dispatcher_used:goal-host"] });
+    await sink.record({ id: "no-tags" });
+    expect(seen.map((t) => t.tags)).toEqual([
+      ["dispatcher_used:goal-host", "reached:false", "learning_mode:observe"],
+      ["dispatcher_used:goal-host", "learning_mode:observe"],
+      ["learning_mode:observe"],
+    ]);
+  });
+  test("control (learn / absent): the tags and the trace object reach the sink unchanged", async () => {
+    expect(tagsOf("learn", ["a"])).toEqual(["a"]);
+    expect(tagsOf(undefined, undefined)).toBeUndefined();
+    const seen: unknown[] = [];
+    for (const mode of ["learn", undefined]) {
+      const sink = (om as any).observeTaggingSink?.({ record: async (t: unknown) => { seen.push(t); } }, () => mode);
+      const trace = { id: "t", tags: ["dispatcher_used:goal-host"] };
+      await sink.record(trace);
+      expect(seen.pop()).toBe(trace);
+    }
+  });
+  test("[MUST-FAIL] the one trace sink goal-host builds is wrapped, reading the dispatch context's mode", () => {
+    expect(src.match(/new TranslatingTraceSink\(/g)?.length).toBe(1);
+    expect(src).toContain('const satisfierTraceSink = observeTaggingSink(new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? ""), () => dispatchContext.getStore()?.learningMode);');
+  });
+  test("the floor and the failed walk persist through that sink; engine traces carry the dispatch's tags", () => {
+    // floor + failed walk -> persistSatisfierTrace -> satisfierTraceSink.record
+    expect(fnBody("async function persistSatisfierTrace(", 900)).toContain("await satisfierTraceSink.record(trace);");
+    expect(fnBody("async function persistFailedWalkTrace(", 600)).toContain("await persistSatisfierTrace({");
+    expect(src).toContain('templateId: "universal-tool-fallback",');
+    // engine (template) traces: the walk and the recovery loop pass the dispatch's tags, which /run-goal stamps
+    expect(src.match(/host\.runTemplate\([^)]*\{[\s\S]{0,260}?tags: opts\.tags,/g)?.length).toBe(2);
+    expect(src).toContain("tags: [...(opts.tags ?? []), ...correlationTag(pickCorrelationId)],");
+    const stamp = src.indexOf("if (learningMode) effectiveTags.push(`learning_mode:${learningMode}`);");
+    expect(stamp).toBeGreaterThan(0);
+    const run = src.indexOf("const seek = await runGoalWithRecovery(goal, {", stamp);
+    expect(run).toBeGreaterThan(stamp);
+    expect(src.slice(run, run + 400)).toContain("tags: effectiveTags,");
+  });
+});

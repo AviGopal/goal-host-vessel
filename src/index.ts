@@ -331,7 +331,7 @@ import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains,
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
-import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, type ObserveSideEffect } from "./observe-mode";
+import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, type ObserveSideEffect } from "./observe-mode";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
@@ -7600,7 +7600,9 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
 // swallows + logs all errors) so a satisfier trace lands EXACTLY like a template
 // trace — same body contract, same status/failure mapping. Best-effort: a record()
 // failure never throws into / slows the walk.
-const satisfierTraceSink = new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? "");
+// OBSERVE (observe-mode.ts): every trace through this sink carries the dispatch's learning_mode:observe tag, so
+// activity-api's insert path grades nothing from an observe dispatch's floor, failed-walk or step traces.
+const satisfierTraceSink = observeTaggingSink(new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? ""), () => dispatchContext.getStore()?.learningMode);
 /**
  * PRODUCER BEFORE CONSUMER (2026-10-07). A walk's satisfier step traces were kept in memory and POSTed only at walk end,
  * fire-and-forget, after the reach judge, while every later engine pick trace (which names the steps in its
