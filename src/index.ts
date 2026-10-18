@@ -4527,6 +4527,14 @@ async function ownLocalTargets(targets: readonly string[]): Promise<string[]> {
   const own = await Promise.all(candidates.map(async (t) => ((await ufOwnProducerUrl(t).catch(() => null)) ? t : null)));
   return own.filter((t): t is string => t !== null);
 }
+/** The shapes the floor's reach gate is handed: the requested targets and the writes it made, plus the READ tools it
+ *  executed successfully. A floor that ran `ls /` read this system, and the grounding rules (current information,
+ *  local state) read that from the produced shapes; without the executed reads they saw only the targets. */
+export function floorJudgedShapes(targetShapes: readonly string[], calledWriteShapes: ReadonlySet<string>, executed: ReadonlyArray<{ tool: string; ok: boolean }>): string[] {
+  const produced = [...new Set([...targetShapes, ...calledWriteShapes, ...executed.filter((e) => e.ok && !calledWriteShapes.has(e.tool)).map((e) => e.tool)])];
+  if (produced.length === 0) produced.push("universal_fallback_result");
+  return produced;
+}
 /** The judge's model call under one routing key. */
 function reachJudgeCompleteVia(routeKey: string): (prompt: string) => Promise<string | null> {
   return async (prompt) => {
@@ -6167,8 +6175,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // missing one.
   const authoredFinalAnswer = finalText.trim().length > 0;
   if (!finalText) { finalText = observations.join("\n\n").slice(0, 6000); console.log(`[goal-host-vessel] universal ReAct fallback: cap/deadline hit before a final answer — judging on ${groundedOk} grounded tool output(s)`); }
-  const produced = [...new Set([...targetShapes, ...calledWriteShapes])];
-  if (produced.length === 0) produced.push("universal_fallback_result");
+  const produced = floorJudgedShapes(targetShapes, calledWriteShapes, executed);
   const toolSummary = executed.map((e) => `${e.tool}${e.ok ? "" : "!"}`).join(", ");
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
   // GRADE THE ANSWER, NOT THE SCRATCHPAD.

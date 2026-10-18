@@ -7,6 +7,9 @@
 // when the goal's targets include a local-read shape that THIS substrate's own vessels serve (resolved
 // through discovery at use time, own-substrate rows only), whatever the goal's words.
 //
+// Also here: the floor's reach gate is handed the read tools the floor EXECUTED (floorJudgedShapes), so a
+// floor that ran a local read or a search passes the grounding rules it used to fail.
+//
 // NO LIVE SERVICES. globalThis.fetch is replaced BEFORE index.ts is imported; discovery names a local
 // shell/file vessel (this substrate's own), a peer-only producer, and an llm vessel; anything else 404s.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -41,6 +44,7 @@ function stubFetch(input: unknown, init?: { body?: unknown }): Promise<Response>
 type Verdict = { reached: boolean; reason: string; deterministic?: boolean; judge_verdict_before_pregate?: { reached: boolean | null; reason: string } };
 type Gate = (goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: unknown, judgeView?: unknown, deliverables?: string[]) => Promise<Verdict | null>;
 let verifyGoalReached: Gate;
+let floorJudgedShapes: (targets: readonly string[], writes: ReadonlySet<string>, executed: ReadonlyArray<{ tool: string; ok: boolean }>) => string[];
 let rewardBufferEntries: (key?: string) => number;
 
 const stateDir = require("node:path").join(import.meta.dir, "..", ".local-state-gate-state");
@@ -54,6 +58,7 @@ beforeAll(async () => {
   process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
   const mod = await import("../src/index");
   verifyGoalReached = mod.verifyGoalReached as unknown as Gate;
+  floorJudgedShapes = (mod as unknown as { floorJudgedShapes: typeof floorJudgedShapes }).floorJudgedShapes;
   ({ rewardBufferEntries } = await import("../src/llm-router"));
 });
 afterAll(() => {
@@ -128,5 +133,29 @@ describe("T4: a question about this system, answered from model memory, is not r
     const dig = `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- shellResult: {"stdout":"bin\\netc\\nhome","exit_code":0}`;
     const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", dig, undefined, undefined, undefined, ["shellResult"]);
     expect(v?.reason).toBe(JUDGE_REASON);
+  }, 20_000);
+});
+
+describe("T6: the floor's executed reads are evidence", () => {
+  test("a floor that EXECUTED fs_read passes the local-state gate", async () => {
+    const produced = floorJudgedShapes(["llm_completion"], new Set(), [{ tool: "fs_read", ok: true }]);
+    expect(produced).toContain("fs_read");
+    const v = await verifyGoalReached(FS_GOAL, produced, "universal ReAct fallback: 1/1 tool call(s) OK [fs_read]", `${GENERIC_TREE}\n\n--- grounded tool outputs ---\nTOOL fs_read => bin etc home`, undefined, undefined, undefined, ["shellResult"]);
+    expect(v?.reason ?? "").not.toMatch(/unsourced-local-state/);
+    expect(v?.reason).toBe(JUDGE_REASON);
+  }, 20_000);
+
+  test("a floor that EXECUTED a web search passes the current-information rule", async () => {
+    const goal = "Summarise this week's news on semiconductor supply chains.";
+    const produced = floorJudgedShapes(["llm_completion"], new Set(), [{ tool: "webSearchResult", ok: true }]);
+    const v = await verifyGoalReached(goal, produced, "universal ReAct fallback: 1/1 tool call(s) OK [webSearchResult]", "Chipmakers announced capacity expansions and several governments discussed export controls.", undefined, undefined, undefined, ["llm_completion"]);
+    expect(v?.reason ?? "").not.toMatch(/unsourced-current-information/);
+  }, 20_000);
+
+  test("control: a floor whose read FAILED made no read → still unsourced-local-state", async () => {
+    const produced = floorJudgedShapes(["llm_completion"], new Set(), [{ tool: "fs_read", ok: false }]);
+    expect(produced).not.toContain("fs_read");
+    const v = await verifyGoalReached(FS_GOAL, produced, "universal ReAct fallback: 0/1 tool call(s) OK [fs_read!]", GENERIC_TREE, undefined, undefined, undefined, ["shellResult"]);
+    expect(v?.reason).toMatch(/^deterministic:unsourced-local-state /);
   }, 20_000);
 });
