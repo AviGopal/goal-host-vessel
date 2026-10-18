@@ -66,6 +66,17 @@ describe("write doors: store and change classes are wired", () => {
     expect(after("const _c = await authorComposite(", 400)).toContain('writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id, writeDoorProduct)');
     expect(src).toContain('writeDoorShapes(authored.inputShapes, changeAdmitted, "bridge_pick", writeDoorHash, tap, writeDoorProduct)');
   });
+  test("[MUST-FAIL] template pick: the backward-chain's producer fetch passes the door before any producer is picked or recursed on", () => {
+    // Measured: a question goal not admitted as a change ran learned-composition-shellresult-to-llm-completion-to-
+    // memorynote-write, whose memoryNote_write task executed; a producer this fetch finds is picked with no other door.
+    const door = src.indexOf('const producers = writeDoorFilter(_found, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);');
+    expect(door).toBeGreaterThan(0);
+    const pick = src.indexOf("pick = producers.find((c) => !isHollowScaffold(c.id)", door);
+    expect(pick).toBeGreaterThan(door);
+    expect(pick - door).toBeLessThan(400);
+    // every pick drawn from a discover-by-shapes fetch in the walk is drawn from a list that passed the door
+    expect(src.match(/pick = producers\.find\(/g)?.length).toBe(1);
+  });
   test("recovery pick: the recommendation's goal product is the target it was asked for", () => {
     expect(src).toContain('writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id, new Set(targetShapes ?? []))');
   });

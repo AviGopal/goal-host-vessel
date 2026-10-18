@@ -68,21 +68,37 @@ export function prohibitsAnyMutation(rawGoal: string): boolean {
  * feature_compose and drafted a real edit; its only change verb sat inside the description it asked for. Three parts,
  * all required, so a real edit that also asks for a report ("Fix X without changing its API, then report") still composes:
  *   - the REQUEST is a description: a clause opens with a describe/explain/tell/report verb, or the goal is a question;
- *   - change is FORBIDDEN in some form: prohibitsAnyMutation, a change negated by "without", an un-prefixed change
- *     participle, or a read-only marker (negation applied to change, not a list of sentences);
- *   - NO clause opens with an instruction to change (an imperative edit verb).
+ *   - change is FORBIDDEN outright: prohibitsAnyMutation, or a no-change instruction on a UNIVERSAL object ("without
+ *     touching anything", "leave the file untouched", "everything stays unchanged"), or read-only as the request's MODE
+ *     ("Read-only pass: ...");
+ *   - NO clause opens with an instruction to change (an imperative edit verb, or "can/could you <edit verb>").
+ * A qualifier on a PARTICULAR object scopes an edit, it does not prohibit one: "without changing its signature",
+ * "so existing callers stay unchanged", "keeping the API unchanged", "without altering its return type", "without
+ * changing anything else", "make the field read-only". Measured on this predicate's first form (which counted any
+ * "without <change>" or "un<change>ed"): each of those real edits walked, or lost its landed-edit demand and so could
+ * reach on prose with no edit.
  */
-const CLAUSE_LEAD = String.raw`(?:^|[.!?;:,]\s*|\n\s*|\b(?:and|then|just|please|only|now|so)\s+)`;
+const CLAUSE_LEAD = String.raw`(?:^|[.!?;:,]\s*|\n\s*|\b(?:and|then|just|please|only|now|so)\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?)`;
 const DESCRIPTION_REQUEST = new RegExp(String.raw`${CLAUSE_LEAD}(?:tell me|describe|explain|report|summari[sz]e|outline|list|show me)\b`, "i");
 const QUESTION = /^\s*(?:what|which|who|whose|why|how|when|where|is|are|does|do|did|can|could|would|should|will)\b|\?\s*$/i;
 const CHANGE_STEM = String.raw`(?:edit|add|insert|append|prepend|chang|modif|replac|fix|remov|delet|updat|renam|refactor|wir|guard|creat|regist|scaffold|touch|alter|writ)`;
-const NEGATED_CHANGE = new RegExp(String.raw`\bwithout\s+${CHANGE_STEM}\w*|\bun${CHANGE_STEM}\w*ed\b|\bread-?only\b`, "i");
-const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}${CHANGE_STEM}\w*\b`, "i");
+// The whole of what the goal could change, never a part of it ("anything else", "any other file", "the file's API").
+const UNIVERSAL = String.raw`(?:anything|everything|any\s+(?:(?!other\b)\w+\s+)?files?|(?:the|this|that)\s+(?:file|files|source|code|codebase|repo|repository|tree|working tree)|files|repos\/[\w.\/-]+\.\w+)(?!['\w-]|\s+(?:else|other|outside|beyond|besides|except|but)\b)`;
+const UNCHANGED = String.raw`(?:un${CHANGE_STEM}\w*ed|as[- ]is|alone|intact)`;
+const CHANGE_PROHIBITION = new RegExp(
+  String.raw`\bwithout\s+${CHANGE_STEM}\w*\s+(?:(?:to|in|on)\s+)?${UNIVERSAL}` +
+    String.raw`|\b(?:leave|leaving|keep|keeping)\s+${UNIVERSAL}\s+${UNCHANGED}\b` +
+    String.raw`|\b${UNIVERSAL}\s+(?:(?:must|should|will)\s+)?(?:(?:stays?|remains?|is|are|be|left|kept)\s+)?un${CHANGE_STEM}\w*ed\b` +
+    String.raw`|${CLAUSE_LEAD}read-?only\s*(?:[:;,.!-]|$|(?:please|pass|mode|request|question|task|review|analysis|investigation)\b)` +
+    String.raw`|\b(?:stay|stays|remain|remains)\s+read-?only\b|\bthis is a read-?only\b`,
+  "i",
+);
+const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}(?:${CHANGE_STEM}|implement|extend)\w*\b`, "i");
 
 export function asksForDescriptionUnderChangeProhibition(rawGoal: string): boolean {
   const goal = canonicalGoalText(rawGoal);
   const asksForDescription = DESCRIPTION_REQUEST.test(goal) || QUESTION.test(goal);
-  const forbidsChange = prohibitsAnyMutation(goal) || NEGATED_CHANGE.test(goal);
+  const forbidsChange = prohibitsAnyMutation(goal) || CHANGE_PROHIBITION.test(goal);
   return asksForDescription && forbidsChange && !CHANGE_INSTRUCTION.test(goal);
 }
 

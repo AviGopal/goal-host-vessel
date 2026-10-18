@@ -1,0 +1,35 @@
+{
+  "class": "read-only-question",
+  "control": false,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": false,
+    "route": "walk",
+    "target": null
+  },
+  "id": "0021-description-under-change-prohibition",
+  "input": {
+    "entry": "editIntent",
+    "goal": "Leave the file untouched and tell me what you would add to repos/example-vessel/src/retry.ts to cap retries at five.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {},
+    "search": {},
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "class features only: a description request under a change prohibition is not handed to a compose, whatever edit verb the description names",
+    "recorded": "2026-10-18",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

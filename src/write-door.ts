@@ -15,7 +15,9 @@
 // THE CLASSES (one predicate, refusedWrite, used by every door here and handed to the executor):
 //   change — FS_WRITE_SHAPES (fs-write-shapes.ts) plus CHANGE_PRIMITIVE_SHAPES: the drafter and
 //            landing shapes (code_modification_proposal, feature_compose, patch_with_tools,
-//            apply_proposal_as_patch) and the git / GitHub / unit / database / tree primitives,
+//            apply_proposal_as_patch), the primitives that draft, mint, retire, apply or re-dispatch
+//            (gap_compose, author_*, template_repair, variant_promote, dispatch_goal, …), and the
+//            git / GitHub / unit / database / tree primitives,
 //            the set development-vessel's caller-credential gate names as MUTATING_PRIMITIVES
 //            (minus http_fetch, gated there for its fleet key, not because it writes). A change
 //            shape needs ADMISSION, at every door including the target door.
@@ -54,9 +56,18 @@
 import { isFsWriteShape } from "./fs-write-shapes";
 import { isMutationShape } from "./judge/shapes";
 
-/** Drafter / landing shapes and the mutating primitives (git, GitHub, units, database, the tree). */
+/**
+ * Drafter / landing shapes, the mutating primitives (git, GitHub, units, database, the tree), and the primitives that
+ * draft, mint, retire, apply or re-dispatch (none of them matches isMutationShape): gap_compose goes straight to
+ * development-vessel's feature compose; dispatch_goal is a child /run-goal that re-enters routing with its own
+ * admission. Classified BY NAME, the second half a copy of development-vessel's MUTATING_PRIMITIVES (named debt:
+ * write-ness belongs in declared shape metadata, not in two hand-kept lists).
+ */
 export const CHANGE_PRIMITIVE_SHAPES: ReadonlySet<string> = new Set([
   "code_modification_proposal", "code_modification_proposal_write", "feature_compose", "patch_with_tools", "apply_proposal_as_patch",
+  "gap_compose", "author_new_resolver", "author_producer", "author_composed_capability", "dispatch_goal",
+  "vessel_mitosis_start", "template_repair", "variant_promote", "activity_create_variant", "activityTemplate_deprecate",
+  "escalation_disposition_apply",
   "git_add", "git_commit", "git_push", "git_branch_create", "gh_pr_create", "gh_pr_merge", "gh_repo_create",
   "systemd_restart", "pull_cutover", "surrealdb_import", "activate_substrate_script", "vessel_mitosis_cutover",
 ]);

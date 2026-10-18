@@ -12043,12 +12043,17 @@ If one of those sibling shapes is the action that would create what the goal ask
           if (r.ok) {
             const j: any = await r.json();
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
-            const producers = (Array.isArray(rows) ? rows : [])
+            const _found = (Array.isArray(rows) ? rows : [])
               .map((c: any) => readCandidateShapes(c, _blendK))
               .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id))
               // Drop hollow scaffolds for bridge-authorable targets so the walk
               // bridge-authors a genuine producer instead of reusing a scaffold.
               .filter((c) => !(isHollowScaffold(c.id) && bridgeableTarget(c)));
+            // WRITE DOOR (template pick): the backward-chain's own producer fetch passes the door too. Measured: a question
+            // goal not admitted as a change ran learned-composition-shellresult-to-llm-completion-to-memorynote-write
+            // (outputs shellResult, llm_completion, memoryNote_write) and its memoryNote_write task executed. A producer
+            // of a missing target found here is picked below with no other door; only the candidate list above had one.
+            const producers = writeDoorFilter(_found, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
             // Prefer a GENUINE producer whose inputs are already satisfied (executable now).
             pick = producers.find((c) => !isHollowScaffold(c.id) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s))))
               ?? producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));

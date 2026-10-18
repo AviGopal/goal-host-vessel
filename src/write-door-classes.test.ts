@@ -57,6 +57,41 @@ describe("write door classes", () => {
     expect(twd!(true, []).writeDoor.admitted).toBe(true);
   });
 
+  // Each of these dispatches to a drafter, mints or retires an activity, applies a disposition, or re-enters routing
+  // (dispatch_goal: a child /run-goal), and none matches isMutationShape, so a goal not admitted could still run one
+  // (gap_compose goes straight to development-vessel's resolveFeatureCompose and drafts a real edit).
+  const MINT_DISPATCH_PRIMITIVES = [
+    "gap_compose", "author_new_resolver", "author_producer", "author_composed_capability", "dispatch_goal",
+    "vessel_mitosis_start", "template_repair", "variant_promote", "activity_create_variant", "activityTemplate_deprecate",
+    "escalation_disposition_apply",
+  ];
+  it("must-fail: a not-admitted goal never picks, targets or runs a drafter, minting or re-dispatching primitive", () => {
+    const lines: string[] = [];
+    const GAP_COMPOSER: C = { id: "producer-of-gap_compose", outputShapes: ["gap_compose"] };
+    expect(filter("template_pick", [GAP_COMPOSER, READER], notAdmitted, ["gap_compose", "resolver_pattern_report"], lines).map((c) => c.id)).toEqual([READER.id]);
+    expect(door.writeDoorShapes(["dispatch_goal", "fileContent"], notAdmitted, "target", "h", (l) => lines.push(l))).toEqual(["fileContent"]);
+    const { writeDoor } = door.taskWriteDoor(false, MINT_DISPATCH_PRIMITIVES);
+    for (const s of MINT_DISPATCH_PRIMITIVES) {
+      expect([s, door.isWriteShape(s)]).toEqual([s, true]);
+      expect([s, writeDoor.governs(s)]).toEqual([s, true]);
+    }
+    expect(door.writeDoorShapes(MINT_DISPATCH_PRIMITIVES, true, "target", "h")).toEqual(MINT_DISPATCH_PRIMITIVES);
+  });
+
+  it("control: a question goal not admitted: the learned shellResult -> llm_completion -> memoryNote_write composition is refused, and its memoryNote_write task too", () => {
+    // Measured live: "Check dispatch id ... What is this about?" ran this composition and its memoryNote_write task executed.
+    const LEARNED: C = { id: "learned-composition-shellresult-to-llm-completion-to-memorynote-write", outputShapes: ["shellResult", "llm_completion", "memoryNote_write"] };
+    const LLM: C = { id: "llm-completion", outputShapes: ["llm_completion"] };
+    const lines: string[] = [];
+    const product = ["llm_completion"]; // the question's own product: an answer, no note
+    expect(filter("template_pick", [LEARNED, LLM], notAdmitted, product, lines).map((c) => c.id)).toEqual([LLM.id]);
+    expect(lines[0]).toContain(`dropped ${LEARNED.id}: goal not admitted as a change (door=template_pick`);
+    const { writeDoor } = door.taskWriteDoor(false, product);
+    expect(writeDoor.governs("memoryNote_write")).toBe(true);
+    expect(writeDoor.governs("shellResult")).toBe(false);
+    expect(writeDoor.governs("llm_completion")).toBe(false);
+  });
+
   it("control: an admitted goal keeps every write producer", () => {
     const lines: string[] = [];
     const admitted = door.admittedChange({ admittedEditRoute: true, declaredOutputShapes: null });
