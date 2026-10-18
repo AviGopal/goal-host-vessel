@@ -32,11 +32,15 @@ const STORE: Record<string, { id: string; classification_metadata?: Record<strin
   [STEP]: { id: STEP, classification_metadata: { parent_gap_id: X } },
   [PIPE]: { id: PIPE },
 };
+// The gap store's answer mode: "ok" serves STORE; "failed" is development-vessel's failed-forward envelope (HTTP 200,
+// success:false, structuredError, no gaps); "nogaps" is a 200 with no gaps array.
+let storeMode: "ok" | "failed" | "nogaps" = "ok";
 type Verdict = { reached?: boolean; reason?: string; deterministic?: boolean; abstain?: { kind?: string; family?: string } } | null;
 type Gate = (goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: unknown, judgeView?: unknown, deliverables?: string[], poolEvidence?: unknown, writeEvidence?: unknown, captureSurface?: string) => Promise<Verdict>;
 type Ctx = { run: <T>(store: { dispatchId: string; decomposeGapId?: string }, fn: () => T) => T };
 let verifyGoalReached: Gate;
 let dispatchContext: Ctx | undefined;
+let readGapByIdForOracle: ((id: string) => Promise<unknown>) | undefined;
 let G: Record<string, any> = {};
 
 beforeAll(async () => {
@@ -47,6 +51,8 @@ beforeAll(async () => {
     const body = typeof init?.body === "string" ? init.body : "";
     if (String(url).includes("/v2/impulses/resolve") && body.includes('"substrateGap"')) {
       const id = (JSON.parse(body) as { impulse?: { pointer?: { id?: string } } }).impulse?.pointer?.id ?? "";
+      if (storeMode === "failed") return new Response(JSON.stringify({ success: false, shape: "structuredError", body: { resolver: "substrateGap", detail: "gap store unreachable" }, error: "gap store unreachable" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (storeMode === "nogaps") return new Response(JSON.stringify({ success: true, shape: "substrateGap", body: {} }), { status: 200, headers: { "Content-Type": "application/json" } });
       return new Response(JSON.stringify({ success: true, body: { gaps: STORE[id] ? [STORE[id]] : [] } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     return new Response(JSON.stringify({ error: "stub: not served" }), { status: 404, headers: { "Content-Type": "application/json" } });
@@ -54,6 +60,7 @@ beforeAll(async () => {
   const mod = (await import("../src/index")) as Record<string, unknown>;
   verifyGoalReached = mod["verifyGoalReached"] as Gate;
   dispatchContext = mod["dispatchContext"] as Ctx | undefined;
+  readGapByIdForOracle = mod["readGapByIdForOracle"] as typeof readGapByIdForOracle;
   G = (await import("../src/compose-gap-id")) as Record<string, any>;
 });
 afterAll(() => {
@@ -172,6 +179,33 @@ describe("the gap id is recovered from text once, at admission, by exact lookup"
     expect(await G["recoverGapIdAtAdmission"](`investigate and decompose gap ${X}: x`, sent, { readGap: c.readGap, observe: () => {} })).toBeNull();
     expect(sent["decompose_gap_id"]).toBe("gap-sent");
     expect(c.calls).toEqual([]);
+  });
+
+  test("[MUST-FAIL] a failed gap-store forward (200, success:false) is a failed read: admission stops and writes nothing", async () => {
+    expect(typeof readGapByIdForOracle).toBe("function");
+    for (const mode of ["failed", "nogaps"] as const) {
+      storeMode = mode;
+      try {
+        let reads = 0;
+        let unreadable = 0;
+        const vars: Record<string, unknown> = {};
+        const got = await G["recoverGapIdAtAdmission"](`investigate and decompose gap ${X}: x`, vars, { readGap: async (id: string) => { reads++; return readGapByIdForOracle!(id); }, observe: () => {}, unreadable: () => { unreadable++; } });
+        expect(got).toBeNull();
+        expect(unreadable).toBe(1);
+        expect(reads).toBe(1);
+        expect("decompose_gap_id" in vars).toBe(false);
+      } finally { storeMode = "ok"; }
+    }
+    // a miss is not a failure: success:true with an empty gaps array is "not found"
+    expect(await readGapByIdForOracle!("gap-that-is-not-in-the-store")).toBeNull();
+  });
+
+  test("[MUST-FAIL] the oracle does not grade 'unconfirmed' when the child read failed: it decides nothing", async () => {
+    storeMode = "failed";
+    let v: Verdict;
+    try { v = await grade(`Look into ${X} and break it down into steps`, { dispatchId: "d-store-down", decomposeGapId: X }); } finally { storeMode = "ok"; }
+    expect(v!?.reason ?? "").not.toContain("gap-investigation-unconfirmed");
+    expect(v!?.reason ?? "").not.toContain("gap-investigation-product");
   });
 
   test("[CONTROL] an unreadable gap store stops the scan at the first read and writes nothing", async () => {

@@ -3612,7 +3612,12 @@ export function citedLocations(digest: string): Array<{ path: string; line: numb
 function oracleAbstainVerdict(family: string, why: string): GoalReachVerdict {
   return { reached: false, reason: `abstain:${family} — ${why}; no judge of measured adequacy for this class, so it is not graded`, completion_shapes: [], abstain: { kind: "oracle-abstain", cuts: [], family } };
 }
-/** One gap by id from development-vessel's gap store, for the gap-investigation oracle (throws when unreadable). */
+/**
+ * One gap by id from development-vessel's gap store, for the gap-investigation oracle and gap-id admission (throws when
+ * unreadable). Unreadable is not only a non-2xx: development-vessel answers a failed gap-store forward with HTTP 200,
+ * success:false and a structuredError body with no gaps, and reading that as "not found" made an outage look like
+ * "no such gap" token by token. A miss is success:true with an empty gaps array.
+ */
 async function readGapByIdForOracle(id: string): Promise<{ id?: string; classification_metadata?: Record<string, unknown> } | null> {
   const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
     method: "POST",
@@ -3621,8 +3626,10 @@ async function readGapByIdForOracle(id: string): Promise<{ id?: string; classifi
     signal: AbortSignal.timeout(10_000),
   });
   if (!r.ok) throw new Error(`gap store answered ${r.status}`);
-  const j = (await r.json()) as { body?: { gaps?: Array<{ id?: string; classification_metadata?: Record<string, unknown> }> } };
-  return (j?.body?.gaps ?? []).find((g) => g.id === id) ?? null;
+  const j = (await r.json()) as { success?: boolean; error?: string; body?: { gaps?: Array<{ id?: string; classification_metadata?: Record<string, unknown> }> } };
+  const gaps = j?.body?.gaps;
+  if (j?.success === false || !Array.isArray(gaps)) throw new Error(`gap store read failed: ${String(j?.error ?? "no gaps array in the answer").slice(0, 160)}`);
+  return gaps.find((g) => g.id === id) ?? null;
 }
 
 export async function verifyCodeInvestigationCitation(goal: string, digest: string): Promise<GoalReachVerdict | null> {
@@ -20344,6 +20351,7 @@ export {
   runGroundedToolLoop,
   isDeterministicVerdict,
   dispatchContext,
+  readGapByIdForOracle,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 
