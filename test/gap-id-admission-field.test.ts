@@ -146,6 +146,14 @@ describe("the gap id is recovered from text once, at admission, by exact lookup"
     expect(SRC).toContain("gap_id_recovered_from_text #${_gapIdRecoveredFromText}");
   });
 
+  test("[MUST-FAIL] wiring: the floor carries the field through its empty-store re-entry, from both callers", () => {
+    const SRC = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
+    expect(SRC).toContain("return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}) }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));");
+    expect(SRC).toContain("|| (dispatchId && _floorGapId && !dispatchContext.getStore()?.decomposeGapId)) {");
+    const carried = 'decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined });';
+    expect(SRC.split(carried).length - 1).toBe(2);
+  });
+
   test("[CONTROL] an id-shaped token the store does not hold writes nothing", async () => {
     const vars: Record<string, unknown> = {};
     const seen: string[] = [];

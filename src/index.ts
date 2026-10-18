@@ -4270,8 +4270,14 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
 
   if (writeEvidence) {
     const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
-    const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
-    if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
+    // CHANGE-36a, kept when the gap oracle did not decide (no field, or an unreadable gap store): an investigation whose
+    // targets hold no mutation shape is not a write goal, so an imperative in the gap's first sentence does not make it
+    // write-goal-no-artifact. It goes on to the normal judge path (qa ruling, which sanctions the prose predicate here).
+    const _gapInvestigationNotAWrite = _gapGrade.investigation && !_wgTargets.some((t) => isMutationShape(t));
+    if (!_gapInvestigationNotAWrite) {
+      const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
+      if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
+    }
   }
 
   // HOLLOW-WALKLOG CAP (gap hollow-green-llm-judge-overrides-all-hollow-walklog): the LLM
@@ -5940,8 +5946,11 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // with an empty store and posted bare {type, command} shell pointers (run 12 item 7, commit
   // 5a0d780e unlinked). Re-enter under run() with the id the caller passed, so every tool call
   // inside the floor is attributed regardless of how the async chain reached it.
-  if (dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) {
-    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
+  // The dispatch's gap-id field rides along the same way: an empty store would otherwise drop it, and the floor's reach
+  // gate would grade a gap investigation as a no-field goal.
+  const _floorGapId = walkContext?.decomposeGapId;
+  if ((dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) || (dispatchId && _floorGapId && !dispatchContext.getStore()?.decomposeGapId)) {
+    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}) }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -15011,7 +15020,7 @@ async function runGoalWithRecoveryInner(
           noteRouteTaken(_floorRec, "universal-tool-fallback");
           appendRouteAround(opts.variables.dispatch_id, _floorRec);
           // J1: a reused floor has no walk before it, but the goal's earlier failures are still its lessons.
-          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, undefined, { priorFeedback: priorFailureFeedbackFor(goal) });
+          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, undefined, { priorFeedback: priorFailureFeedbackFor(goal), decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined });
           if (reused?.reached) {
             if (opts.learningMode !== "observe") {
               void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
@@ -15401,7 +15410,7 @@ async function runGoalWithRecoveryInner(
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
           const _ufOut: { reason?: string } = {};
           // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays] });
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined });
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);

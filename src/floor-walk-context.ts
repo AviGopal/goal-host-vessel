@@ -24,6 +24,9 @@ export interface FloorWalkContext {
   /** The banked/recipe commands whose replay FAILED earlier in this dispatch (reached-command-store.ts), keyed by
    *  shape + command: the floor does not seed one of them as a verified measurement. */
   skipFailedReplays?: readonly FailedReplay[];
+  /** The dispatch's structured variables.decompose_gap_id, carried explicitly like the dispatch id: the floor re-enters
+   *  the dispatch context when its store is empty, and the reach gate inside the floor reads the field from there. */
+  decomposeGapId?: string;
 }
 
 /**

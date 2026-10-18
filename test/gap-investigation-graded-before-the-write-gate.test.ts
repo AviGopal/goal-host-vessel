@@ -10,6 +10,9 @@
 //               [gapDecomposition]}, pool gapDecomposition {gap_id X, created [X-step-1]}, the store holds X-step-1 as X's
 //               child -> REACHED by gap-investigation-product (on the parent: write-goal-no-artifact:change).
 //   [CONTROL]   the same goal with no product in the pool -> NOT reached, gap-investigation-no-product (deterministic).
+//   [MUST-FAIL] NO FIELD (the original, unwrapped call: no dispatch context, e.g. /resolve without a dispatch id, an
+//               unreadable gap store at admission, a lost store): still not write-goal-no-artifact. Graded on the normal
+//               judge path, with no abstain. (It cannot be graded against X: with no field, X exists only in the prose.)
 //   [WIRING]    the gap gate sits above the write gate in index.ts.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -62,6 +65,20 @@ describe("a gap investigation is graded by its product before the write gate", (
     const v = await grade([]);
     expect(v?.reached).toBe(false);
     expect(v?.reason ?? "").toContain("gap-investigation-no-product");
+  });
+
+  test("[MUST-FAIL] with no field, an imperative in the gap's text still does not make it a write goal", async () => {
+    for (const created of [[STEP], []]) {
+      const v = await verifyGoalReached(GOAL, ["gapDecomposition"], "walk(1 steps): decomposeGap", "- gapDecomposition: {...}", undefined, undefined, undefined, undefined, pool(created), { persistedWrites: [], targets: ["gapDecomposition"] }, "walk");
+      expect(v?.reason ?? "").not.toContain("write-goal-no-artifact");
+      expect(v?.reason ?? "").not.toContain("gap-investigation");
+      expect((v as { abstain?: unknown } | null)?.abstain).toBeUndefined();
+    }
+  });
+
+  test("[CONTROL] a goal that is not an investigation, asking for a change, still meets the write gate", async () => {
+    const v = await verifyGoalReached("Add the resolver check before the pick to the lane", ["llm_completion"], "walk(1 steps)", "- llm_completion: done", undefined, undefined, undefined, undefined, [], { persistedWrites: [], targets: ["llm_completion"] }, "walk");
+    expect(v?.reason ?? "").toContain("write-goal-no-artifact");
   });
 
   test("[WIRING] the gap gate sits above the write gate", () => {
