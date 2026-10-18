@@ -25,3 +25,23 @@ export function isReadQuestionGoal(goal: string): boolean {
   if (isEditIntentGoal(goal) || goalDemandsLandedEdit(goal) || isGapRepairGoal(goal)) return false;
   return !goalRequestsDurableArtifact(goal);
 }
+
+/** The open rules' IMPERATIVE_CHANGE_LEAD and IMPERATIVE_WRITE_LEAD (src/judge-rules/write-goal.ts), copied; the agreement
+ *  test compares them. */
+export const IMPERATIVE_CHANGE_LEAD =
+  /(?:^|[.!;:]\s+|\n\s*)(?:(?:please|now|then|and|so)\s+)*(make|repair|stop|fix|change|add|remove|delete|update|modify|implement|land|patch|teach)\b/i;
+export const IMPERATIVE_WRITE_LEAD =
+  /(?:^|[.!;:]\s+|\n\s*)(?:(?:please|now|then|and|so)\s+)*(?:write|create|file|record)\s+(?:(?:a|an|the|one|new|its|their|\d+)\s+)?(?:[a-z-]+\s+){0,2}?(?:gaps?|files?|tests?|entry|entries|records?|rows?|notes?|concepts?|commits?|activity|activities|templates?|variants?|polic(?:y|ies)|labels?|issues?|tickets?|branch|scripts?|modules?|resolvers?|functions?|migrations?)\b/i;
+
+/**
+ * THE GOAL'S OWN WORDS DEMAND AN ARTIFACT: the open goalAsksForChange(goal) || goalRequestsDurableArtifact(goal) (the reach
+ * gate's goalRequiresArtifact with no targets), restated from the closed predicates. For such a goal only a landed sha or a
+ * persisted mutation write on one of its targets reaches, so goal-target inference must never take its mutation targets
+ * away (a retry that drops them is structurally unreachable). Pinned equal to the open rule by the agreement test.
+ */
+export function goalDemandsArtifact(goal: string): boolean {
+  if (!goal) return false;
+  if (isEditIntentGoal(goal) || goalDemandsLandedEdit(goal) || isGapRepairGoal(goal) || goalRequestsDurableArtifact(goal)) return true;
+  if (isQuestionGoal(goal)) return false;
+  return IMPERATIVE_CHANGE_LEAD.test(goal) || IMPERATIVE_WRITE_LEAD.test(goal);
+}

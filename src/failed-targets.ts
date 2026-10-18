@@ -33,6 +33,10 @@ export function failureRowsFrom(exact: readonly FailedTargetRecord[]): Array<{ e
   return exact.filter((r) => Array.isArray(r.targets) && r.targets.length > 0).map((r) => ({ expected_output_shapes: [...r.targets!], successful_executions: 0, failed_executions: 1 }));
 }
 
+/** A graded verdict's reason: it opens with its verdict class (`deterministic:<class>`), bare or behind the floor's
+ *  wrapper (`floor <reason_code>: `, index.ts). Anchored like NO_ARTIFACT_REASON. */
+export const GRADED_VERDICT_REASON = /^(?:floor [\w:-]+: )?deterministic:[\w-]+/;
+
 /**
  * WHETHER A FAILURE IS ABOUT THE PRODUCED CONTENT. Structural terminations and environment faults (no producer, a
  * capacity or transport fault, an HTTP 5xx from a vessel, an abstain) carry no correctable content: they are not kept in
@@ -44,5 +48,10 @@ export function failureInvalidatesTargetMemo(reason: string | null | undefined):
   const r = String(reason ?? "").trim();
   if (!r) return false;
   if (/^abstain:/i.test(r)) return false;
-  return !/no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out|\bHTTP 5\d\d\b/i.test(r);
+  if (/no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return false;
+  // An HTTP 5xx is a transport outcome only where a call reported it. A graded verdict (GRADED_VERDICT_REASON) is about the
+  // content whatever its prose quotes ("the answer says fs_edit returned HTTP 500"), as transient-failure.ts lets a known
+  // status, not the text, decide: the 5xx test reads only a reason that is not a verdict.
+  return GRADED_VERDICT_REASON.test(r) || !/\bHTTP 5\d\d\b/i.test(r);
 }
+

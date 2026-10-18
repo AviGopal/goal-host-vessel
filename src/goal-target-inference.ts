@@ -1,7 +1,7 @@
 import { registryFieldFor, registryRatioFor } from "./registry-field";
 import { verbatimReadTarget } from "./verbatim-read";
 import { isMutationShape } from "./judge/shapes";
-import { isReadQuestionGoal } from "./read-goal";
+import { goalDemandsArtifact, isReadQuestionGoal } from "./read-goal";
 import { isShapeName } from "./shape-name";
 import { betaSample } from "./beta-sample";
 import { describedCandidatesBlock, lexicalChoice, validity, type Candidate, type ChooserTier, type ShapeCatalog } from "./described-producers";
@@ -605,7 +605,19 @@ export async function inferGoalTargetDecision(
   if (selected && selected.candidates.some((c) => c.s + c.f > 0)) {
     console.log(`[goal-target-inference] target selection ${JSON.stringify({ goal_hash: goalHashOf(goal), changed: selected.changed, candidates: selected.candidates.map((c) => ({ shapes: c.shapes, s: c.s, f: c.f, draw: Number(c.draw.toFixed(4)) })), chosen: selected.decision.shapes })}`);
   }
-  const excluded = [...(opts.excludeTargets ?? [])];
+  // GUARD: A RETRY NEVER DROPS A TARGET THE GOAL'S OWN WORDS DEMAND. A miss on such a target means its producer failed, not
+  // that the target is wrong, so it is never excluded (and never the reason the routes are re-asked):
+  //   - a gap investigation's only oracle-graded product, its decomposition (deterministicGapDecompositionRoute);
+  //   - a verbatim read's fileContent (deterministicVerbatimReadRoute): the oracle and the walk read the same parse, so
+  //     any other target could only disagree with both;
+  //   - a mutation target of a goal that demands an artifact (goalDemandsArtifact): the reach gate counts only a write on
+  //     one of the goal's own targets (artifactWrites), so a retry without it can never reach.
+  const fixedRoutes = [deterministicGapDecompositionRoute(goal, vocabulary), deterministicVerbatimReadRoute(goal, vocabulary)];
+  const demandsArtifact = goalDemandsArtifact(goal);
+  const demanded = (t: string): boolean => fixedRoutes.some((r) => !!r && r.shapes.includes(t)) || (demandsArtifact && isMutationShape(t));
+  const kept = (opts.excludeTargets ?? []).filter(demanded);
+  if (kept.length > 0) console.log(`[goal-target-inference] retry: guard held — [${kept.join(", ")}] the goal's own words demand; not excluded`);
+  const excluded = (opts.excludeTargets ?? []).filter((t) => !demanded(t));
   let picked = selected ? selected.decision : routed;
   let candidates = selected ? selected.candidates : null;
   let filtered = withoutFailedTargets(picked, excluded);
@@ -613,13 +625,8 @@ export async function inferGoalTargetDecision(
   // NO ALTERNATIVE SURVIVED THE EXCLUSION (withoutFailedTargets kept today's choice, the same object): the routes had
   // proposed one set and the retry had nothing to change course to. Ask them ONCE more, told not to propose the excluded
   // targets (the memo and the fixed shortcuts bypassed), and offer what they propose as candidates.
-  // GUARD: a gap investigation's only oracle-graded product is its decomposition (deterministicGapDecompositionRoute);
-  // a miss there means its producer failed, not that the target is wrong, so it is kept and the routes are not re-asked.
   if (excluded.length > 0 && filtered === picked && picked.shapes.some((x) => excluded.includes(x))) {
-    const sole = deterministicGapDecompositionRoute(goal, vocabulary);
-    if (sole && picked.shapes.every((x) => sole.shapes.includes(x))) {
-      console.log(`[goal-target-inference] retry: guard held — [${sole.shapes.join(", ")}] is the goal's only oracle-graded target; not excluded, routes not re-asked`);
-    } else if (opts.complete || opts.llmEndpoint) {
+    if (opts.complete || opts.llmEndpoint) {
       reasked = true;
       const reAsked: Array<string | null> = [];
       const reOpts: InferGoalTargetShapesOpts = { ...routeOpts, doNotPropose: excluded, ...(opts.shapeCatalog && opts.complete ? { complete: async (p: string) => { const t = await opts.complete!(p); reAsked.push(t); return t; } } : {}) };
@@ -640,7 +647,7 @@ export async function inferGoalTargetDecision(
   // J2b: NOVEL survives only while nothing was chosen (a recorded reaching path the posterior selects is not novel).
   const unrecorded = routed.novel && filtered.shapes.length === 0 && !filtered.novel ? { ...filtered, novel: routed.novel } : filtered;
   // The selection's decision-time record, carried to the dispatch record (law 12's counterfactual, readable per run).
-  const final: GoalTargetDecision = rows.length > 0 || excluded.length > 0
+  const final: GoalTargetDecision = rows.length > 0 || (opts.excludeTargets?.length ?? 0) > 0
     ? { ...unrecorded, target_selection: { candidates: (candidates ?? [routed.shapes, ...routed.alternatives].filter((a) => a.length > 0).map((shapes) => ({ shapes, s: 0, f: 0 }))).map((c) => ({ shapes: c.shapes, s: c.s, f: c.f })), chosen: unrecorded.shapes, excluded, reasked } }
     : unrecorded;
   // The routes memoise their UNFILTERED answer (decisionCache), so a retry re-filters it against the new exclusions.

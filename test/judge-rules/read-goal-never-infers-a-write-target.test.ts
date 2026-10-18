@@ -92,4 +92,21 @@ describe("the closed read rule agrees with the reach gate's question rule", () =
       expect([g, RG.isReadQuestionGoal(g)]).toEqual([g, openRead]);
     }
   });
+  it("the imperative leads are the same expressions in both files", () => {
+    expect(RG.IMPERATIVE_CHANGE_LEAD?.source).toBe(WG.IMPERATIVE_CHANGE_LEAD.source);
+    expect(RG.IMPERATIVE_CHANGE_LEAD?.flags).toBe(WG.IMPERATIVE_CHANGE_LEAD.flags);
+    expect(RG.IMPERATIVE_WRITE_LEAD?.source).toBe(WG.IMPERATIVE_WRITE_LEAD.source);
+    expect(RG.IMPERATIVE_WRITE_LEAD?.flags).toBe(WG.IMPERATIVE_WRITE_LEAD.flags);
+  });
+  it("for every goal, the closed goalDemandsArtifact is exactly the open goalRequiresArtifact with no targets", () => {
+    expect(typeof RG.goalDemandsArtifact).toBe("function");
+    const GOALS = [WEATHER, "Is the build green", "investigate gap X before composing", "list the vessels", "",
+      "Summarise the three oldest open substrate gaps and record a concept capturing the summary",
+      "File a gap about the retry dropping its write target", "Write ONE failing test for the floor wrapper",
+      "Write a summary of the registry", "Make the system notice a stale memo", "why does the gate stop it",
+      "Can you update repos/demo-vessel/src/x.ts to export y?", "update the README in repos/demo-vessel to describe the new flag",
+      "Could you fix gap gap-123 in repos/demo-vessel/src/a.ts?", "Should we record the findings as a durable note?",
+      "Print /workspace/docs/plan.txt verbatim", "Please add a row to the ledger. Then report it."];
+    for (const g of GOALS) expect([g, RG.goalDemandsArtifact(g)]).toEqual([g, WG.goalRequiresArtifact(g, [])]);
+  });
 });
