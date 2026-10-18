@@ -144,20 +144,35 @@ describe("T4: a question about this system, answered from model memory, is not r
   }, 20_000);
 });
 
-describe("local reads are a POSITIVE role set (files, code, shell), not 'anything else'", () => {
-  test("a web_resource or memoryNote step in the chain is not a local read of this host → still unsourced-local-state", async () => {
-    for (const extra of ["web_resource", "memoryNote"]) {
+describe("evidence: any READ-role shape is a local read unless it fetched the world (qa review of 1930811)", () => {
+  // MUST-FAIL at 1930811: its 8-name list convicted these real reads as unsourced-local-state.
+  for (const read of ["directoryListing", "sourceCodeAnalysis", "fs_list", "git_log", "codeSearch", "source_code", "gitDiff", "substrateGap"]) {
+    test(`a chain that read ${read} (target shellResult) is not convicted → the judge decides`, async () => {
+      const shapes = ["goal", "dispatch_id", read, "llm_completion_dispatch"];
+      const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- ${read}: {"entries":["bin","etc","home"]}`, undefined, undefined, undefined, ["shellResult"]);
+      expect(v?.reason ?? "").not.toMatch(/unsourced-local-state/);
+      expect(v?.reason).toBe(JUDGE_REASON);
+    }, 20_000);
+  }
+
+  test("a web_resource or http_response that fetched an external origin, as the only evidence, is not a local read → unsourced-local-state", async () => {
+    for (const extra of ["web_resource", "http_response"]) {
       const shapes = ["goal", "dispatch_id", extra, "llm_completion_dispatch"];
-      const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- ${extra}: {"content":"..."}`, undefined, undefined, undefined, ["shellResult"]);
+      const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- ${extra}: {"url":"https://www.example.org/linux-fhs","status":200,"body":"The Filesystem Hierarchy Standard..."}`, undefined, undefined, undefined, ["shellResult"]);
       expect(v?.reason).toMatch(/^deterministic:unsourced-local-state /);
     }
   }, 20_000);
 
-  test("a goal whose own-served target is memoryNote or web_resource is not a local-state question → the judge decides", async () => {
-    for (const target of ["memoryNote", "web_resource"]) {
-      const v = await verifyGoalReached("Summarise what the notes say about release planning.", LLM_ONLY, "1 step", llmOnly("Summarise what the notes say about release planning.", "They say to plan releases weekly."), undefined, undefined, undefined, [target]);
-      expect(v?.reason).toBe(JUDGE_REASON);
-    }
+  test("control: a read whose content names only loopback origins is still a local read → the judge decides", async () => {
+    const shapes = ["goal", "dispatch_id", "http_response", "llm_completion_dispatch"];
+    const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- http_response: {"url":"http://127.0.0.1:18100/registry","status":200}`, undefined, undefined, undefined, ["shellResult"]);
+    expect(v?.reason).toBe(JUDGE_REASON);
+  }, 20_000);
+
+  test("a chain that produced its own-served target is not convicted, whatever that target fetched", async () => {
+    const shapes = ["goal", "dispatch_id", "web_resource", "llm_completion_dispatch"];
+    const v = await verifyGoalReached("Summarise the page at https://www.example.org/notes.", shapes, "2 steps", `${llmOnly("Summarise the page.", "It is about notes.")}\n- web_resource: {"url":"https://www.example.org/notes","body":"notes"}`, undefined, undefined, undefined, ["web_resource"]);
+    expect(v?.reason ?? "").not.toMatch(/unsourced-local-state/);
   }, 20_000);
 
   test("discovery unreachable for a local target → the rule is off for the call, and says so", async () => {

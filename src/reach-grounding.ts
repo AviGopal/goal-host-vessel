@@ -22,6 +22,8 @@
  */
 import { ANSWER_SHAPES, assertedDatesInText, digestSegments, isStaleDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { SEARCH_RESULT_SHAPES } from "./grounded-report";
+import { isFsWriteShape } from "./fs-write-shapes";
+import { CHANGE_PRIMITIVE_SHAPES } from "./write-door";
 
 export interface ReachJudgeInput {
   goal: string;
@@ -33,7 +35,7 @@ export interface ReachJudgeInput {
   now?: Date;
   /** J2a: the dispatch has a REQUIRED input every derivation failed for (needs-information.ts), a structural fact. */
   needsInformation?: boolean;
-  /** The goal's target shapes that THIS substrate's own vessels serve and that read local state (isLocalReadShape),
+  /** The goal's target shapes that THIS substrate's own vessels serve and in the read role (isReadRoleShape),
    *  resolved by the caller through discovery at use time (index.ts ownLocalTargets). Non-empty makes the goal a
    *  question about this system's own state, whatever its words (rule 5). */
   localTargets?: string[];
@@ -213,21 +215,35 @@ export function hasInRunSource(producedShapes: string[]): boolean {
   return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s));
 }
 
-/** The shapes that read THIS host's files, code or shell: the floor's read tools (floor-tools.ts) and the walk's shell
- *  and file readers. A POSITIVE role set: by exclusion, web_resource, http_response, problem_detection and memoryNote
- *  counted as local reads, both as a goal's local target and as evidence of a local read. */
-export const LOCAL_READ_SHAPES: ReadonlySet<string> = new Set([
-  "fs_read", "fs_grep", "fileContent", "codeSearchResult", "shellResult", "shell", "bash", "bounded_shell",
-]);
-/** A shape that reads this host's files, code or shell (LOCAL_READ_SHAPES). */
-export function isLocalReadShape(s: string): boolean {
-  return LOCAL_READ_SHAPES.has(s);
+/** A shape in the READ role: not an LLM writer, a seed, a search, or a write (a `_write` shape, a filesystem write,
+ *  FS_WRITE_SHAPES, or a change primitive, write-door.ts CHANGE_PRIMITIVE_SHAPES). Derived from the existing role sets;
+ *  no shape is named here. A write a resolver performs under an undeclared name still reads as a read (the
+ *  declared-write-metadata gap: writes are not declared in resolver metadata, so no set can be complete). */
+export function isReadRoleShape(s: string): boolean {
+  return !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !SEARCH_RESULT_SHAPES.has(s)
+    && !/_write$/.test(s) && !isFsWriteShape(s) && !CHANGE_PRIMITIVE_SHAPES.has(s);
 }
 
-/** Did the chain read THIS system in-run? A produced local-read shape (isLocalReadShape) — on the floor, the read tools
- *  it EXECUTED, which index.ts floorJudgedShapes puts in the produced shapes — or a command that read the registry. */
-export function hasLocalRead(producedShapes: string[], commandEvidence?: string): boolean {
-  return producedShapes.some(isLocalReadShape) || REGISTRY_READ_RE.test(commandEvidence ?? "");
+/** The external origins a content blob names: the same canonicalisation as the effect tuple's externals (index.ts
+ *  effectTupleOf), less loopback, which is this host. */
+export function externalOriginsOf(content: string): string[] {
+  const canon = (u: string): string => {
+    const m = /^https?:\/\/([^/\s"']+)(\/[A-Za-z0-9_.\-]*)?/.exec(u);
+    if (!m) return "";
+    const seg = (m[2] ?? "").replace(/^\//, "").split(/[.?#]/)[0] ?? "";
+    return `${m[1]}${seg ? "/" + seg : ""}`;
+  };
+  const isLoopback = (o: string) => /^(?:127\.\d+\.\d+\.\d+|localhost|\[::1\])(?::\d+)?(?:\/|$)/i.test(o);
+  return [...new Set((content.match(/https?:\/\/[^\s"'\\)]+/g) ?? []).map(canon).filter((o) => o && !isLoopback(o)))].sort();
+}
+
+/** Did the chain read THIS system in-run? A produced read-role shape (isReadRoleShape) that is not a WORLD FETCH (its
+ *  digest content names an external origin, externalOriginsOf), on the floor including the read tools it EXECUTED
+ *  (index.ts floorJudgedShapes), or a command that read the registry. */
+export function hasLocalRead(producedShapes: string[], commandEvidence?: string, contentDigest?: string): boolean {
+  const external = new Set<string>();
+  for (const seg of digestSegments(contentDigest ?? "")) if (seg.shape && externalOriginsOf(seg.text).length > 0) external.add(seg.shape);
+  return producedShapes.some((s) => isReadRoleShape(s) && !external.has(s)) || REGISTRY_READ_RE.test(commandEvidence ?? "");
 }
 
 const DAY_MS = 86_400_000;
@@ -287,7 +303,9 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
   }
 
   const localTargets = input.localTargets ?? [];
-  if (localTargets.length > 0 && !hasLocalRead(producedShapes, input.commandEvidence)) {
+  // Fires only when the chain produced none of the local targets and made no local read: a walk that produced its
+  // target (whatever that target's content) has answered from it.
+  if (localTargets.length > 0 && !localTargets.some((t) => producedShapes.includes(t)) && !hasLocalRead(producedShapes, input.commandEvidence, input.contentDigest)) {
     return notReached(LOCAL_STATE_CODE, `the goal targets ${localTargets.slice(0, 4).join(", ")}, served by this substrate's own vessels, and the chain made no local read (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory describes some other system`);
   }
   return null;

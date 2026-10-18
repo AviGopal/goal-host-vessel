@@ -316,7 +316,7 @@ import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { hasLocalRead, isLocalReadShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
+import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
@@ -4515,17 +4515,17 @@ async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary
   // LOCAL STATE IS STRUCTURAL (reach-grounding.ts rule 5): the goal's targets (the caller's, else the inferred ones) that
   // read local state and are served by THIS substrate's own vessels, resolved through discovery now.
   // Skipped when the chain already made a local read: the rule cannot fire then, and the lookup is a discovery call per target.
-  const localTargets = hasLocalRead(producedShapes, commandEvidence) ? [] : await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
+  const localTargets = hasLocalRead(producedShapes, commandEvidence, contentDigest) ? [] : await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
   // Prompt, parse and sanitisation live in reach-grounding.ts (moved verbatim, testable).
   // Routed per task type (reach_verification) across the llm-resolver fleet; buffered under the goal hash and rewarded
   // by this dispatch's final verdict. A shadow consultation inside the judge is routed under SHADOW_ROUTE_PREFIX.
   return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation(), localTargets },
     reachJudgeCompleteVia(routeKey ?? goalHashOf(goal)), reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`));
 }
-/** The target shapes that read local state (isLocalReadShape) and that THIS substrate's own vessels serve (discovery at
+/** The target shapes in the read role (isReadRoleShape) that THIS substrate's own vessels serve (discovery at
  *  use time, own-substrate rows only, as the floor offers own-only tools). A target only a peer serves is not this system. */
 async function ownLocalTargets(targets: readonly string[]): Promise<string[]> {
-  const candidates = [...new Set(targets.map(String))].filter(isLocalReadShape);
+  const candidates = [...new Set(targets.map(String))].filter(isReadRoleShape);
   // FAIL-OPEN, VISIBLY: discovery unreachable means no target is known to be local, so the rule is off for this call.
   const failOpen = (why: string) => console.warn(`[local-state] discovery unreachable (${why.slice(0, 160)}): the local-state rule is OFF for this judge call (fail-open)`);
   const own = await Promise.all(candidates.map(async (t) => ((await ufOwnProducerUrl(t, failOpen).catch(() => null)) ? t : null)));
