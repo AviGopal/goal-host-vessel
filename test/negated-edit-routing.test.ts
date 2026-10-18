@@ -8,7 +8,8 @@ import { readFileSync } from "node:fs";
 import { handoffRoute } from "../src/routing-core/entries";
 import { floorHandoff } from "../src/routing-core/floor";
 import { canonicalGoalText, goalDemandsLandedEdit, isEditIntentGoal, prohibitsAnyMutation } from "../src/goal-intent";
-import { goalAsksForChange } from "../src/judge-rules/write-goal";
+import * as judge from "../src/judge/entries";
+import { reachInput } from "../src/judge/inputs";
 
 const READ_ONLY = [
   "Read repos/widget-vessel/src/ledger.ts and report which categories the widget ledger defines. Do not change anything.",
@@ -24,6 +25,13 @@ const EDITS = [
   "Edit repos/widget-vessel/src/ledger.ts so the “colour” field defaults to ‘none’.",
 ];
 const route = (goal: string) => handoffRoute({ goal_for_routing: goal, route_enabled: true });
+// The reach gate asks the open rules' goalAsksForChange through its one closed entry (src/judge/entries.ts): a goal
+// that asks for a change, judged with no write and nothing landed, is hollow as a CHANGE goal (":change" is only
+// returned when the goal asks for a change in behaviour), so prose can never reach it.
+const reachHollowsAsChange = (goal: string) => {
+  const v = judge.reachGate(reachInput({ goal, writeEvidence: { persistedWrites: [] }, targets: [], landed: false }));
+  return v.fell_back === false && v.hollow && v.reason_code === "write-goal-no-artifact:change";
+};
 // ZERO-OVERLAP PARAPHRASES (a-goal-not-admitted-as-a-change-still-runs-non-filesystem-write-shapes-inside-composed-templates;
 // user ruling "Keep wording-based routing"): a description request under a change prohibition phrased in none of
 // prohibitsAnyMutation's forms, each carrying an edit verb the hand-off reads (so each composes on the parent).
@@ -141,7 +149,7 @@ describe("the early hand-off and a goal that forbids every change", () => {
   for (const { goal: g, compose } of SCOPED_EDITS) {
     it(`[CONTROL] a scoping qualifier is not a prohibition: the edit routes and demands a landed edit — ${g.slice(0, 60)}…`, () => {
       expect(goalDemandsLandedEdit(g)).toBe(true);
-      expect(goalAsksForChange(g)).toBe(true);
+      expect(reachHollowsAsChange(g)).toBe(true);
       if (compose) {
         expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });
         expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
@@ -155,7 +163,7 @@ describe("the early hand-off and a goal that forbids every change", () => {
       expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
       expect(isEditIntentGoal(g)).toBe(true);
       expect(goalDemandsLandedEdit(g)).toBe(true);
-      expect(goalAsksForChange(g)).toBe(true);
+      expect(reachHollowsAsChange(g)).toBe(true);
     });
   }
   for (const g of PROHIBITED_ON_EVERYTHING) {
