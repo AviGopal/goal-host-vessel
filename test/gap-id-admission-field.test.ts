@@ -96,7 +96,8 @@ describe("a gap investigation is graded only from the structured field", () => {
       expect(v?.reason ?? "").not.toContain("gap_id_field_missing");
       expect(v?.reason ?? "").not.toContain("gap-investigation");
       expect(v?.reason ?? "").not.toContain("route-edit-");
-      expect(v?.abstain?.family ?? "").not.toBe("gap-investigation");
+      // the normal path: no abstain at all (no gap-investigation abstain, and no citation abstain by a text predicate)
+      expect(v?.abstain).toBeUndefined();
     }
   });
 

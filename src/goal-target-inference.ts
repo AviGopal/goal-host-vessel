@@ -515,8 +515,9 @@ export function isCodeInvestigationGoal(goal: string): boolean {
 // so none of the 2026-08-27 grounding fixes applied to it -- observed live reaching HOLLOW
 // (groundedOk=0, tools=0/0, finalTextLen=7812) through the un-discriminating LLM judge (measured
 // 29% correct on this class of shape). Deliberately narrow and ADDITIVE-ONLY: this predicate
-// gates the investigation seed in index.ts, and NOTHING else (the citation oracle reaches it only to
-// count an abstain: citationOracleApplicability says such a goal asks for no citation). It must NOT be
+// gates the investigation seed in index.ts, the gap-id recovery at admission, and the reach gate's
+// counted gap_id_field_missing observation; it never selects a grader (the gap-investigation oracle
+// is selected by the structured decompose_gap_id, and the citation oracle is not asked). It must NOT be
 // wired into routing or satisfier-suppression -- these goals target problem_detection/
 // code_quality, which the gap-lifecycle loop consumes downstream, and that autonomous loop is
 // already confirmed working; rerouting its target shapes risks breaking it.

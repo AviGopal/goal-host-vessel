@@ -80,18 +80,18 @@ const CODE_GOAL_DEMANDING = `Find where ${SYMBOL} is defined in the codebase and
 const UNCITED = "- llm_completion: The failure comes from the fallback tier giving up after its retry budget; decompose it into a budget gap and a retry gap.";
 
 describe("(a1) MUST-FAIL — false fail: a goal that asked for no citation is never failed for lacking one", () => {
-  test("a gap-investigation goal with an uncited answer gets no citation verdict: an UNGRADED abstain, counted, never the judge", async () => {
+  test("a gap-investigation goal with an uncited answer gets no citation verdict: with no gap-id field it takes the normal judge path", async () => {
     const judgedBefore = judgeCalls;
     const countedBefore = mod.oracleAbstainCounts()["code-investigation-citation"]?.notApplicable ?? 0;
     const v = await verifyGoalReached(GAP_GOAL, ["goal", "llm_completion"], "walk(3 steps)", UNCITED);
     expect(v?.reason ?? "").not.toMatch(/code-investigation-uncited/);
     expect(v?.deterministic === true && v?.reached === false).toBe(false);
-    // Ungraded for posterior purposes: an abstain (the walk withholds β and the dispatch delivers no reach verdict),
-    // and NOT handed to the LLM judge — no judge of measured adequacy exists for this class.
-    expect(v?.abstain?.kind).toBe("oracle-abstain");
-    expect(v?.reason ?? "").toMatch(/^abstain:/);
-    expect(judgeCalls).toBe(judgedBefore);
-    expect(mod.oracleAbstainCounts()["code-investigation-citation"].notApplicable).toBe(countedBefore + 1);
+    // qa ruling: the gap-investigation oracle is selected by the structured decompose_gap_id alone, and a goal that
+    // only READS as a gap investigation takes the normal judge path. It is not an abstain by a text predicate, and the
+    // citation oracle (which such a goal asks nothing of) is not consulted.
+    expect(v?.abstain).toBeUndefined();
+    expect(judgeCalls).toBe(judgedBefore + 1);
+    expect(mod.oracleAbstainCounts()["code-investigation-citation"]?.notApplicable ?? 0).toBe(countedBefore);
   });
 
   test("an abstained dispatch posts no reach verdict: the record's reached is null, and deliverReachVerdict sends nothing for it", async () => {
@@ -244,7 +244,9 @@ describe("(a3) MUST-FAIL — culpability: a not-reached verdict about the answer
 describe("(a4) abstains are counted per family, with a divergence counterweight", () => {
   test("a not-applicable goal is counted (and logged) as a not-applicable decision of the citation family", async () => {
     const before = mod.oracleAbstainCounts()["code-investigation-citation"]?.notApplicable ?? 0;
-    await verifyGoalReached(GAP_GOAL, ["goal", "llm_completion"], "walk", UNCITED);
+    // The reach gate asks the citation oracle only about code investigations now; its not-applicable branch is still
+    // the oracle's own answer to any other caller, and is counted.
+    await mod.verifyCodeInvestigationCitation(GAP_GOAL, UNCITED);
     expect(mod.oracleAbstainCounts()["code-investigation-citation"].notApplicable).toBe(before + 1);
   });
 

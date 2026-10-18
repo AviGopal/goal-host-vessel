@@ -4325,7 +4325,10 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // no per-domain calibration, so restricting it to `repos/` trees would rebuild the coverage
   // hole. Registry goals scored 0/15 with no `repos/` path — never routed, and never refused
   // either, so nothing observed the failure at all.
-  if (isCodeInvestigationGoal(goal) || isGapInvestigationGoal(goal)) {
+  // A gap investigation asks for no citation (citationOracleApplicability: not applicable), and its own oracle is
+  // selected above by the structured decompose_gap_id alone; so the citation oracle is asked only about code
+  // investigations. Routing gap-looking prose here made every no-field one an abstain by a text predicate (qa ruling).
+  if (isCodeInvestigationGoal(goal)) {
     const ci = await verifyCodeInvestigationCitation(goal, dig);
     if (ci) return ci;
   }
