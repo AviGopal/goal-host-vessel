@@ -165,6 +165,21 @@ describe("write door classes", () => {
     expect(door.callerDeclaresWrite(["apply_proposal_as_patch"])).toBe(true);
   });
 
+  it("a declared activityTemplate_write is the dispatch's product: its task runs, and it stays a store write that admits no change", () => {
+    // ribosome-vessel's extraction dispatch pins ribosome-extract and declares expected_output_shapes
+    // ["activityTemplate_write"]: task 5 (impulse-resolve -> activityTemplate_write) is the write the run exists to
+    // make. It must stay a STORE write: as a change shape (activityTemplate_deprecate is one) it would admit a change.
+    const declared = ["activityTemplate_write"];
+    const admitted = door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared });
+    expect(admitted).toBe(false);
+    expect(door.isWriteShape("activityTemplate_write")).toBe(false);
+    expect(door.isStoreWrite("activityTemplate_write")).toBe(true);
+    expect(door.taskWriteDoor(admitted, declared).writeDoor.governs("activityTemplate_write")).toBe(false);
+    // Controls: undeclared, or another product declared, the same write is refused.
+    expect(door.taskWriteDoor(admitted, []).writeDoor.governs("activityTemplate_write")).toBe(true);
+    expect(door.taskWriteDoor(admitted, ["learningSummary"]).writeDoor.governs("activityTemplate_write")).toBe(true);
+  });
+
   it("control: read shapes are unaffected", () => {
     const lines: string[] = [];
     expect(filter("template_pick", [READER], notAdmitted, [], lines)).toEqual([READER]);
