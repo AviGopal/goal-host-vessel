@@ -68,37 +68,55 @@ export function prohibitsAnyMutation(rawGoal: string): boolean {
  * feature_compose and drafted a real edit; its only change verb sat inside the description it asked for. Three parts,
  * all required, so a real edit that also asks for a report ("Fix X without changing its API, then report") still composes:
  *   - the REQUEST is a description: a clause opens with a describe/explain/tell/report verb, or the goal is a question;
- *   - change is FORBIDDEN outright: prohibitsAnyMutation, or a no-change instruction on a UNIVERSAL object ("without
- *     touching anything", "leave the file untouched", "everything stays unchanged"), or read-only as the request's MODE
- *     ("Read-only pass: ...");
- *   - NO clause opens with an instruction to change (an imperative edit verb, or "can/could you <edit verb>").
+ *   - change is FORBIDDEN outright: prohibitsAnyMutation, or a no-change instruction on everything the goal could
+ *     change ("without touching anything", "leave the file untouched", "everything stays unchanged", or the goal's
+ *     ONLY named file), or read-only as the request's MODE ("Read-only pass: ...");
+ *   - NO clause opens with an instruction to change (an imperative edit verb, make/ensure, or "can/could you <verb>").
  * A qualifier on a PARTICULAR object scopes an edit, it does not prohibit one: "without changing its signature",
  * "so existing callers stay unchanged", "keeping the API unchanged", "without altering its return type", "without
- * changing anything else", "make the field read-only". Measured on this predicate's first form (which counted any
- * "without <change>" or "un<change>ed"): each of those real edits walked, or lost its landed-edit demand and so could
- * reach on prose with no edit.
+ * changing anything else", "without touching any test files", "without changing the file layout", "without changing
+ * <another file>", "make the field read-only". Measured on this predicate's earlier forms (any "without <change>" or
+ * "un<change>ed"; then an object that let an adjective in, a noun after, or a different file stand for everything):
+ * each of those real edits walked, or lost its landed-edit demand and so could reach on prose with no edit.
  */
-const CLAUSE_LEAD = String.raw`(?:^|[.!?;:,]\s*|\n\s*|\b(?:and|then|just|please|only|now|so)\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?)`;
+const CLAUSE_JOINER = String.raw`(?:and|then|just|please|only|now|so)`;
+const CLAUSE_LEAD = String.raw`(?:^|[.!?;:,]\s*|\n\s*|\b${CLAUSE_JOINER}\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?)`;
+// The object ENDS its clause: nothing after it narrows it ("the file layout", "the code style").
+const CLAUSE_END = String.raw`(?=\s*(?:[.!?;:,]|$)|\s+${CLAUSE_JOINER}\b)`;
 const DESCRIPTION_REQUEST = new RegExp(String.raw`${CLAUSE_LEAD}(?:tell me|describe|explain|report|summari[sz]e|outline|list|show me)\b`, "i");
 const QUESTION = /^\s*(?:what|which|who|whose|why|how|when|where|is|are|does|do|did|can|could|would|should|will)\b|\?\s*$/i;
 const CHANGE_STEM = String.raw`(?:edit|add|insert|append|prepend|chang|modif|replac|fix|remov|delet|updat|renam|refactor|wir|guard|creat|regist|scaffold|touch|alter|writ)`;
-// The whole of what the goal could change, never a part of it ("anything else", "any other file", "the file's API").
-const UNIVERSAL = String.raw`(?:anything|everything|any\s+(?:(?!other\b)\w+\s+)?files?|(?:the|this|that)\s+(?:file|files|source|code|codebase|repo|repository|tree|working tree)|files|repos\/[\w.\/-]+\.\w+)(?!['\w-]|\s+(?:else|other|outside|beyond|besides|except|but)\b)`;
+// The whole of what the goal could change, never a part of it: no word inside it ("any test files"), nothing that
+// excludes ("anything else", "any other file", "the file's API").
+const UNIVERSAL = String.raw`(?:anything|everything|any\s+files?|(?:the|this|that)\s+(?:file|files|source|code|codebase|repo|repository|tree|working tree)|files)(?!['\w-]|\s+(?:else|other|outside|beyond|besides|except|but)\b)`;
+const FILE_PATH = String.raw`repos\/[\w.\/-]+\.\w+`;
 const UNCHANGED = String.raw`(?:un${CHANGE_STEM}\w*ed|as[- ]is|alone|intact)`;
+/** The three no-change forms on `obj`: "without <change> obj", "leave obj unchanged", "obj stays unchanged". */
+const noChangeOn = (obj: string): string =>
+  String.raw`\bwithout\s+${CHANGE_STEM}\w*\s+(?:(?:to|in|on)\s+)?${obj}${CLAUSE_END}` +
+  String.raw`|\b(?:leave|leaving|keep|keeping)\s+${obj}\s+${UNCHANGED}\b` +
+  String.raw`|\b${obj}\s+(?:(?:must|should|will)\s+)?(?:(?:stays?|remains?|is|are|be|left|kept)\s+)?un${CHANGE_STEM}\w*ed\b`;
 const CHANGE_PROHIBITION = new RegExp(
-  String.raw`\bwithout\s+${CHANGE_STEM}\w*\s+(?:(?:to|in|on)\s+)?${UNIVERSAL}` +
-    String.raw`|\b(?:leave|leaving|keep|keeping)\s+${UNIVERSAL}\s+${UNCHANGED}\b` +
-    String.raw`|\b${UNIVERSAL}\s+(?:(?:must|should|will)\s+)?(?:(?:stays?|remains?|is|are|be|left|kept)\s+)?un${CHANGE_STEM}\w*ed\b` +
+  noChangeOn(UNIVERSAL) +
     String.raw`|${CLAUSE_LEAD}read-?only\s*(?:[:;,.!-]|$|(?:please|pass|mode|request|question|task|review|analysis|investigation)\b)` +
     String.raw`|\b(?:stay|stays|remain|remains)\s+read-?only\b|\bthis is a read-?only\b`,
   "i",
 );
-const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}(?:${CHANGE_STEM}|implement|extend)\w*\b`, "i");
+// A named file is everything the goal could change only when it is the ONLY file the goal names.
+const NO_CHANGE_ON_FILE = new RegExp(noChangeOn(`(${FILE_PATH})`), "gi");
+const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}(?:${CHANGE_STEM}|implement|extend|make|ensure)\w*\b`, "i");
+
+function forbidsChangeToItsOnlyFile(goal: string): boolean {
+  const named = new Set(goal.match(new RegExp(FILE_PATH, "g")) ?? []);
+  if (named.size !== 1) return false;
+  for (const m of goal.matchAll(NO_CHANGE_ON_FILE)) if (named.has(m[1] ?? m[2] ?? m[3] ?? "")) return true;
+  return false;
+}
 
 export function asksForDescriptionUnderChangeProhibition(rawGoal: string): boolean {
   const goal = canonicalGoalText(rawGoal);
   const asksForDescription = DESCRIPTION_REQUEST.test(goal) || QUESTION.test(goal);
-  const forbidsChange = prohibitsAnyMutation(goal) || CHANGE_PROHIBITION.test(goal);
+  const forbidsChange = prohibitsAnyMutation(goal) || CHANGE_PROHIBITION.test(goal) || forbidsChangeToItsOnlyFile(goal);
   return asksForDescription && forbidsChange && !CHANGE_INSTRUCTION.test(goal);
 }
 

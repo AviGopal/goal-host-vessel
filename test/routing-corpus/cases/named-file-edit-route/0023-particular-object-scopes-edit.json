@@ -1,0 +1,35 @@
+{
+  "class": "named-file-edit-route",
+  "control": true,
+  "credit_class": null,
+  "edit_site": "repos/goal-host-vessel/src/routing-rules/edit-intent.ts",
+  "entry": "editIntent",
+  "expect": {
+    "needs_localization": false,
+    "route": "feature_compose",
+    "target": "repos/example-vessel/src/retry.ts"
+  },
+  "id": "0023-particular-object-scopes-edit",
+  "input": {
+    "entry": "editIntent",
+    "goal": "Make repos/example-vessel/src/retry.ts stop after five attempts without changing the file layout; explain the change.",
+    "hydration": null,
+    "localization": null,
+    "route_enabled": true,
+    "schema": 1
+  },
+  "licenses": null,
+  "llm": null,
+  "ports": {
+    "read_file": {},
+    "search": {},
+    "symbol_search": {}
+  },
+  "provenance": {
+    "note": "control: a no-change qualifier on a particular object (a noun after 'the file') scopes the edit, it does not prohibit it",
+    "recorded": "2026-10-18",
+    "source": "class-paraphrase"
+  },
+  "schema": 1,
+  "status_at_append": "green"
+}

@@ -60,6 +60,31 @@ const EDITS_UNDER_DESCRIPTION = [
   "Fix the rounding in repos/parcel-vessel/src/depot.ts without changing its public API, then report what changed.",
 ];
 
+// A QUALIFIER IS UNIVERSAL ONLY WHEN IT COVERS EVERYTHING THE GOAL COULD CHANGE: not "any TEST files" (a word inside
+// the object), not "the file LAYOUT" / "the code STYLE" (a noun after it), not ANOTHER file than the goal's own. Each
+// composed on c55348a and walked as a prohibition on the predicate's second form; two phrasings each, and three with
+// no make/ensure lead, so the object rule is pinned apart from the change-instruction rule.
+const Y = "repos/goal-host-vessel/src/beta-sample.ts";
+const SCOPED_BY_A_PARTICULAR_OBJECT = [
+  "Ensure repos/goal-host-vessel/src/edge-blend.ts rejects negative weights without touching any test files; explain the change.",
+  "Make sure repos/goal-host-vessel/src/edge-blend.ts rejects negative weights without modifying any test file, then describe the change.",
+  "Make repos/goal-host-vessel/src/edge-blend.ts reject empty input without changing any test file, and explain the change.",
+  "Ensure repos/goal-host-vessel/src/edge-blend.ts rejects empty input without editing any fixture files; summarise the change.",
+  "Make repos/goal-host-vessel/src/edge-blend.ts tolerate NaN without changing the file layout; explain the change.",
+  "Ensure repos/goal-host-vessel/src/edge-blend.ts tolerates NaN without altering the code style, and explain the change.",
+  `Make repos/goal-host-vessel/src/edge-blend.ts tolerate NaN without changing ${Y}; explain the change.`,
+  `Ensure repos/goal-host-vessel/src/edge-blend.ts tolerates NaN without touching ${Y}, then describe the change.`,
+  "Have repos/goal-host-vessel/src/edge-blend.ts reject negative weights without touching any test files; explain the change.",
+  "Have repos/goal-host-vessel/src/edge-blend.ts tolerate NaN without changing the file layout; explain the change.",
+  `Have repos/goal-host-vessel/src/edge-blend.ts tolerate NaN without changing ${Y}; explain the change.`,
+];
+// CONTROLS: the same forms on everything the goal could change still prohibit (the goal's only file counts).
+const PROHIBITED_ON_EVERYTHING = [
+  "Without touching any files, tell me what you would add to repos/goal-host-vessel/src/edge-blend.ts to support NaN.",
+  "Leave repos/goal-host-vessel/src/edge-blend.ts untouched and tell me what you would add to it.",
+  "Without changing repos/goal-host-vessel/src/edge-blend.ts, explain what you would fix in it.",
+];
+
 describe("the early hand-off and a goal that forbids every change", () => {
   for (const g of READ_ONLY) {
     it(`[MUST-FAIL] routes to the walk, not feature_compose — ${g.slice(0, 70)}…`, () => {
@@ -102,6 +127,23 @@ describe("the early hand-off and a goal that forbids every change", () => {
         expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
         expect(isEditIntentGoal(g)).toBe(true);
       }
+    });
+  }
+  for (const g of SCOPED_BY_A_PARTICULAR_OBJECT) {
+    it(`[MUST-FAIL] a qualifier on a particular object scopes the edit: it composes and demands a landed edit — ${g.slice(48, 110)}…`, () => {
+      expect(route(g)).toEqual({ route: "feature_compose", target: "repos/goal-host-vessel/src/edge-blend.ts" });
+      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
+      expect(isEditIntentGoal(g)).toBe(true);
+      expect(goalDemandsLandedEdit(g)).toBe(true);
+      expect(goalAsksForChange(g)).toBe(true);
+    });
+  }
+  for (const g of PROHIBITED_ON_EVERYTHING) {
+    it(`[CONTROL] a no-change instruction on everything the goal could change still walks — ${g.slice(0, 60)}…`, () => {
+      expect(route(g)?.route ?? "walk").toBe("walk");
+      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
+      expect(isEditIntentGoal(g)).toBe(false);
+      expect(goalDemandsLandedEdit(g)).toBe(false);
     });
   }
   it("[WIRING] the late edit-intent route declines a goal that forbids change, before it composes", () => {
