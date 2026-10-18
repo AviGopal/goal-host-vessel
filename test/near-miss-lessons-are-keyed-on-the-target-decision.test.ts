@@ -138,7 +138,7 @@ describe("the content check: a synthesised search query must share a content wor
   test("[WIRING] the walk's search resolve and the floor's search call both run the check", () => {
     expect(INDEX).toContain('if (/web_?search/i.test(shape) && typeof pointer.query === "string") observeOffGoalContent(`walk(${opts.surface}): ${shape} query`, dispatchContext.getStore()?.goal ?? goal, pointer.query, tap);');
     expect(INDEX).toContain('if (_dg && /web_?search/i.test(nm) && typeof a.query === "string") observeOffGoalContent(`floor: ${nm} query`, _dg, a.query, (m) => console.log(m));');
-    expect(INDEX).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}), ...(goal ? { goal } : {}) });");
-    expect(INDEX).toContain("...(_floorMode ? { learningMode: _floorMode } : {}), goal }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));");
+    expect(INDEX).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: opts.variables.dispatch_id, learningMode: opts.learningMode, goal }));");
+    expect(INDEX).toContain("learningMode: _floorMode, goal }), () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));");
   });
 });

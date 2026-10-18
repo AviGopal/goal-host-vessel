@@ -20,19 +20,20 @@ describe("the learning mode is in the dispatch context", () => {
     expect(src).toContain("setWalkEgressLearningModeReader(() => dispatchContext.getStore());");
   });
   test("every place the context is entered carries the mode", () => {
-    expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}), ...(goal ? { goal } : {}) });");
-    expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: _costDid, ...(learningMode ? { learningMode } : {}) });");
-    expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId, ...(learningMode ? { learningMode } : {}) });");
-    expect(src).toContain("dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}), goal }, () => universalToolFallback(");
+    expect(src).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: opts.variables.dispatch_id, learningMode: opts.learningMode, goal }));");
+    expect(src).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: _costDid, learningMode }));");
+    expect(src).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));");
+    expect(src).toContain("dispatchContext.run(enterDispatchContext(dispatchContext.getStore(), { dispatchId, decomposeGapId: _floorGapId, learningMode: _floorMode, goal }), () => universalToolFallback(");
     expect(src).toContain("const _floorMode = walkContext?.learningMode;");
-    // (each entry spreads the existing store, so the whole line is the entry: L2a's decomposeGapId rides the same entries)
-    const entries = src.match(/dispatchContext\.(enterWith|run)\(\{[^\n]*/g) ?? [];
+    // (every entry builds its store with enterDispatchContext over the existing store, so the whole line is the entry:
+    // L2a's decomposeGapId rides the same entries, and no entry downgrades observe: dispatch-context-entry.test.ts)
+    const entries = src.match(/dispatchContext\.(enterWith|run)\([^\n]*/g) ?? [];
     expect(entries.length).toBe(4);
-    expect(entries.every((m) => m.includes("learningMode") && m.includes("...dispatchContext.getStore()"))).toBe(true);
+    expect(entries.every((m) => m.includes("learningMode") && m.includes("enterDispatchContext(dispatchContext.getStore(), {"))).toBe(true);
     expect(src.match(/priorFeedback: priorFailureFeedbackFor\(goal\), (skipFailedReplays: \[\.\.\._failedReplays\], )?decomposeGapId: typeof opts\.variables\["decompose_gap_id"\] === "string" \? opts\.variables\["decompose_gap_id"\] : undefined, learningMode: opts\.learningMode \}/g)?.length).toBe(2);
   });
   test("the /run-goal background run enters it before any side effect of the dispatch", () => {
-    const i = src.indexOf("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId, ...(learningMode ? { learningMode } : {}) });");
+    const i = src.indexOf("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));");
     expect(i).toBeGreaterThan(0);
     expect(i).toBeLessThan(src.indexOf("const seek = await runGoalWithRecovery(goal, {", i));
     expect(i).toBeLessThan(src.indexOf("rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, record.selectedTemplateId", i));

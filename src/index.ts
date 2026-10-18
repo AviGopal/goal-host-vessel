@@ -5237,9 +5237,11 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // Mirrors rawResolve's content/body/success unwrap + error discipline. Fail-open: any
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
+import { enterDispatchContext } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
 // learningMode is the dispatch's own body.learning_mode: under "observe" no side effect writes (observe-mode.ts).
+// Every entry goes through enterDispatchContext (dispatch-context.ts): no entry drops a field, or downgrades observe.
 const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string; learningMode?: "observe" | "learn"; /** the dispatch's own goal, for the content check */ goal?: string }>();
 // The LLM router keys usage (tokens, calls, cost) by the dispatch id it reads from this same context.
 setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
@@ -6067,7 +6069,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   const _floorGapId = walkContext?.decomposeGapId;
   const _floorMode = walkContext?.learningMode;
   if ((dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) || (dispatchId && _floorGapId && !dispatchContext.getStore()?.decomposeGapId)) {
-    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}), goal }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
+    return await dispatchContext.run(enterDispatchContext(dispatchContext.getStore(), { dispatchId, decomposeGapId: _floorGapId, learningMode: _floorMode, goal }), () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -14081,7 +14083,7 @@ async function runGoalWithRecoveryInner(
   // Lessons recalled for this dispatch, passed explicitly into every walk below.
   // See opts.recalledLessons for why the previous goal-hash key silently never matched.
   let _dispatchLessons = "";
-  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}), ...(goal ? { goal } : {}) });
+  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: opts.variables.dispatch_id, learningMode: opts.learningMode, goal }));
   // GAP ID AT ADMISSION (the one place the goal text may supply it): a goal that reads as a gap investigation and
   // arrived without variables.decompose_gap_id gets an exact by-id gap-store lookup of its own tokens; a hit is written
   // into the field and observed (counted log, walk log, the dispatch record's gapIdRecoveredFromText). Below this line
@@ -18962,7 +18964,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
   (async () => {
     // OBSERVE (observe-mode.ts): the dispatch's learning mode is in context from here, so every side effect this
     // dispatch can cause — the post-seek and throw paths below included — reads it.
-    dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId, ...(learningMode ? { learningMode } : {}) });
+    dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));
     // Reason plane: caller-owned walk decision-log sink, attached to the record
     // in both the success and failure paths so GET /executions/:id can surface it.
     const walkStepSink: string[] = [];
@@ -19122,7 +19124,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // dispatches of one goal share). Re-entering the context lets the failed-walk trace
       // persisted below attribute the same dispatch's usage.
       const _costDid = typeof variables.dispatch_id === "string" && variables.dispatch_id.length > 0 ? variables.dispatch_id : dispatchId;
-      dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: _costDid, ...(learningMode ? { learningMode } : {}) });
+      dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: _costDid, learningMode }));
       const _spend = peekDispatchUsage(_costDid);
       (record as { cost?: { tokens_in: number; tokens_out: number; llm_calls: number; cost_usd: number; wall_ms: number } }).cost = { tokens_in: _spend.tokensIn, tokens_out: _spend.tokensOut, llm_calls: _spend.calls, cost_usd: _spend.costUsd, wall_ms: (record.endedAt ?? Date.now()) - record.startedAt };
       if (learningMode !== "observe" && !seek.abstain) void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
