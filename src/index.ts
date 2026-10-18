@@ -250,7 +250,7 @@ import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capab
 import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
-import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText } from "./compose-gap-id";
+import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
@@ -3574,6 +3574,9 @@ export function chargeChainCarrier(dispatchId: unknown, chainExecIds: readonly s
   return { durable: c.durable, composite: c.composite };
 }
 const CODE_INVESTIGATION_ORACLE = "code-investigation-citation";
+const GAP_INVESTIGATION_ORACLE = "gap-investigation";
+/** Goals that read as a gap investigation but reached the reach gate without the decompose_gap_id field, since process start. */
+let _gapIdFieldMissing = 0;
 const JUDGE_VIEW_CUT_FAMILY = "judge-view-cut";
 const oracleAbstainTally = createOracleAbstainTally();
 /** Running per-family oracle decision counters (verdicts / abstains / not-applicable). */
@@ -4251,10 +4254,18 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // goal's text carries the gap's first sentence, so an imperative there ("…: add the resolver") reads as a change
   // instruction and the write gate graded write-goal-no-artifact BEFORE the product was looked at, although the
   // goal's only target, gapDecomposition, is not a mutation shape (RUN 1 pos 11 and 17). Its product decides it.
-  if (isGapInvestigationGoal(goal)) {
-    const gid = gapIdOfGoalText(goal);
-    const gi = await verifyGapInvestigationOutcome(gid.startsWith("route-edit-") ? null : gid, poolEvidence, { readGap: readGapByIdForOracle });
+  // WHICH GAP is read ONLY from the dispatch's structured decompose_gap_id (carried on dispatchContext; recovered from
+  // text at most once, at admission), and the oracle is selected by the field's PRESENCE alone. A goal that only reads
+  // as an investigation (isGapInvestigationGoal is a loose prose classifier: "the latency gap between A and B") takes
+  // the normal grading path unchanged; it is never re-parsed for an id. That case is observed, counted and logged as
+  // gap_id_field_missing, so a dispatcher that omits the field can be found without changing anyone's verdict.
+  const _gapGrade = gapIdForGrading(goal, dispatchContext.getStore()?.decomposeGapId);
+  if (_gapGrade.gapId) {
+    const gi = await verifyGapInvestigationOutcome(_gapGrade.gapId, poolEvidence, { readGap: readGapByIdForOracle });
     if (gi) return gi;
+  } else if (_gapGrade.investigation) {
+    _gapIdFieldMissing += 1;
+    console.warn(`[${GAP_INVESTIGATION_ORACLE}-oracle] gap_id_field_missing #${_gapIdFieldMissing} for goal_hash=${goalHashOf(goal)}: the goal reads as a gap investigation but its dispatch carries no variables.decompose_gap_id (none was sent and admission found no exact gap id among its tokens); graded on the normal path`);
   }
 
   if (writeEvidence) {
@@ -5117,8 +5128,9 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // Mirrors rawResolve's content/body/success unwrap + error discipline. Fail-open: any
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
-// The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery.
-const dispatchContext = new AsyncLocalStorage<{ dispatchId: string }>();
+// The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
+// structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
+const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string }>();
 // The LLM router keys usage (tokens, calls, cost) by the dispatch id it reads from this same context.
 setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
 // Goal hashes this process is currently walking through /resolve. A walk that targets
@@ -5926,7 +5938,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // 5a0d780e unlinked). Re-enter under run() with the id the caller passed, so every tool call
   // inside the floor is attributed regardless of how the async chain reached it.
   if (dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) {
-    return await dispatchContext.run({ dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
+    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -13768,6 +13780,8 @@ function effectTupleOf(shape: string, vesselEndpoint: string | undefined, conten
  * that very commit, or a landing whose requested symbol is absent, is left as it is.
  */
 const _dispatchSentCompose = new WeakMap<object, number>();
+/** Dispatches whose gap id was recovered from goal text at admission (recoverGapIdAtAdmission), since process start. */
+let _gapIdRecoveredFromText = 0;
 async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<typeof runGoalWithRecoveryInner>[1]): Promise<GoalSeekResult> {
   const startMs = Date.now();
   const r = await runGoalWithRecoveryInner(goal, opts);
@@ -13853,6 +13867,8 @@ async function runGoalWithRecoveryInner(
     authorFallback?: () => Promise<string | undefined>;
     /** Reason plane: caller-owned sink; goal-decomposition + walk decision lines pushed here. */
     stepSink?: string[];
+    /** Admission recovered the gap id from the goal text (recoverGapIdAtAdmission): the caller records it on its dispatch. */
+    onGapIdRecovered?: (gapId: string) => void;
     /** Learning plane: caller-owned accumulator; terminalization consequences pushed here (decision-transparency). */
     learningSink?: LearningConsequences;
     /** The walks' β-withhold record (see runGoalAsPoolWalkBody), handed to every walk this dispatch runs. */
@@ -13894,6 +13910,24 @@ async function runGoalWithRecoveryInner(
   // See opts.recalledLessons for why the previous goal-hash key silently never matched.
   let _dispatchLessons = "";
   if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ dispatchId: opts.variables.dispatch_id });
+  // GAP ID AT ADMISSION (the one place the goal text may supply it): a goal that reads as a gap investigation and
+  // arrived without variables.decompose_gap_id gets an exact by-id gap-store lookup of its own tokens; a hit is written
+  // into the field and observed (counted log, walk log, the dispatch record's gapIdRecoveredFromText). Below this line
+  // only the field is read. The context store is mutated, not re-entered, so every holder of it sees the id.
+  if (goal) {
+    await recoverGapIdAtAdmission(goal, opts.variables, {
+      readGap: readGapByIdForOracle,
+      observe: (gid) => {
+        _gapIdRecoveredFromText += 1;
+        tap(`[goal-host-vessel] ${opts.surface}: gap_id_recovered_from_text #${_gapIdRecoveredFromText} - ${gid} (an exact gap-store id among the goal's tokens) written to variables.decompose_gap_id at admission; the dispatch sent no field`);
+        opts.onGapIdRecovered?.(gid);
+      },
+      unreadable: (e) => console.warn(`[goal-host-vessel] ${opts.surface}: gap-id admission lookup stopped, gap store unreadable (no field written): ${String((e as Error)?.message ?? e).slice(0, 160)}`),
+    });
+    const _field = opts.variables["decompose_gap_id"];
+    const _store = dispatchContext.getStore();
+    if (_store && _store.dispatchId === opts.variables.dispatch_id && typeof _field === "string" && _field.length > 0) _store.decomposeGapId = _field;
+  }
   if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0 && !(opts.tags ?? []).includes(`dispatch:${opts.variables.dispatch_id}`)) opts.tags = [...(opts.tags ?? []), `dispatch:${opts.variables.dispatch_id}`];
   // FAILURE-RECALL (cross-dispatch feedback edge): what earlier dispatches of THIS goal were graded
   // hollow FOR, fed into attempt 1 so the walk starts where the previous dispatch ended instead of
@@ -18801,6 +18835,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // The operator's own credential, for development-vessel to validate (src/operator-credential.ts).
         operatorCredential: trigger === "operator" ? operatorCredentialFromRequest(req.headers.get("authorization")) : undefined,
         stepSink: walkStepSink,
+        onGapIdRecovered: (gid) => { record.gapIdRecoveredFromText = gid; },
         learningSink,
         betaWithheld,
         ablation,
@@ -18854,7 +18889,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // dispatches of one goal share). Re-entering the context lets the failed-walk trace
       // persisted below attribute the same dispatch's usage.
       const _costDid = typeof variables.dispatch_id === "string" && variables.dispatch_id.length > 0 ? variables.dispatch_id : dispatchId;
-      dispatchContext.enterWith({ dispatchId: _costDid });
+      dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: _costDid });
       const _spend = peekDispatchUsage(_costDid);
       (record as { cost?: { tokens_in: number; tokens_out: number; llm_calls: number; cost_usd: number; wall_ms: number } }).cost = { tokens_in: _spend.tokensIn, tokens_out: _spend.tokensOut, llm_calls: _spend.calls, cost_usd: _spend.costUsd, wall_ms: (record.endedAt ?? Date.now()) - record.startedAt };
       if (learningMode !== "observe" && !seek.abstain) void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
@@ -19691,6 +19726,8 @@ interface DispatchRecord {
   answerBody?: string;
   /** Captured decision inputs (src/judge/capture.ts): metadata.judge_input.<entry> and metadata.routing_input. */
   metadata?: judgeCapture.JudgeCaptureMetadata;
+  /** The gap id admission recovered from the goal text into variables.decompose_gap_id (the dispatch sent no field). */
+  gapIdRecoveredFromText?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20156,6 +20193,7 @@ server = Bun.serve({
         // panel received answers this endpoint could not. One surface got the product and the
         // other got only the process, from the same record, for the same run.
         answerBody: (record as { answerBody?: string }).answerBody ?? null,
+        gapIdRecoveredFromText: record.gapIdRecoveredFromText ?? null,
         // CAPTURED DECISION INPUTS (src/judge/capture.ts), only on request: they can be tens of KB, and
         // this endpoint is polled.
         ...(url.searchParams.get("include") === "metadata" ? { metadata: record.metadata ?? null } : {}),
@@ -20275,6 +20313,7 @@ export {
   recallGoalFailures,
   runGroundedToolLoop,
   isDeterministicVerdict,
+  dispatchContext,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 

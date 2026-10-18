@@ -21,6 +21,8 @@ const prevRoot = process.env["WORKSPACE_ROOT"];
 const root = mkdtempSync(join(tmpdir(), "gap-before-write-"));
 type Gate = (goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: unknown, judgeView?: unknown, deliverables?: string[], poolEvidence?: unknown, writeEvidence?: { persistedWrites: string[]; targets?: string[]; landed?: boolean }, captureSurface?: string) => Promise<{ reached?: boolean; reason?: string; deterministic?: boolean } | null>;
 let verifyGoalReached: Gate;
+// The gap is the dispatch's structured decompose_gap_id, carried on the dispatch context (the gate reads only the field).
+let dispatchContext: { run: <T>(store: { dispatchId: string; decomposeGapId?: string }, fn: () => T) => T };
 const X = "gap-lane-picks-a-fixed-gap";
 const STEP = `${X}-step-1`;
 
@@ -37,6 +39,7 @@ beforeAll(async () => {
   }) as unknown as typeof fetch;
   const mod = (await import("../src/index")) as Record<string, unknown>;
   verifyGoalReached = mod["verifyGoalReached"] as Gate;
+  dispatchContext = mod["dispatchContext"] as typeof dispatchContext;
 });
 afterAll(() => {
   globalThis.fetch = realFetch;
@@ -46,7 +49,7 @@ afterAll(() => {
 
 const GOAL = `investigate and decompose gap ${X}: the lane re-picks a gap whose fix already landed; add the resolver check before the pick`;
 const pool = (created: string[]) => created.length ? [{ id: "imp-1", shape: "gapDecomposition", content: { body: { ok: true, gap_id: X, children: created, created, reason: "wrote steps" } } }] : [];
-const grade = (created: string[]) => verifyGoalReached(GOAL, ["gapDecomposition"], "walk(1 steps): decomposeGap", "- gapDecomposition: {...}", undefined, undefined, undefined, undefined, pool(created), { persistedWrites: [], targets: ["gapDecomposition"] }, "walk");
+const grade = (created: string[]) => dispatchContext.run({ dispatchId: "d-before-write", decomposeGapId: X }, () => verifyGoalReached(GOAL, ["gapDecomposition"], "walk(1 steps): decomposeGap", "- gapDecomposition: {...}", undefined, undefined, undefined, undefined, pool(created), { persistedWrites: [], targets: ["gapDecomposition"] }, "walk"));
 
 describe("a gap investigation is graded by its product before the write gate", () => {
   test("[MUST-FAIL] an imperative in the gap's text does not make it a write goal: its confirmed product reaches", async () => {
