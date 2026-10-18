@@ -80,12 +80,19 @@ describe("write doors: store and change classes are wired", () => {
   test("[MUST-FAIL] recovery pick: a known-reaching pathway head passes the template door before it is pinned, and a refused head is excluded from the alternatives", () => {
     const pinned = src.indexOf("        nextTarget = pinnable;");
     expect(pinned).toBeGreaterThan(0);
-    const door = src.lastIndexOf('} else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch(() => null), _changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {', pinned);
+    const door = src.lastIndexOf('} else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch((e) => {', pinned);
     expect(door).toBeGreaterThan(0);
-    expect(pinned - door).toBeLessThan(700);
+    expect(src.slice(door, pinned)).toContain('_changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {');
+    expect(pinned - door).toBeLessThan(1000);
     expect(src.slice(door, pinned)).toContain("doorRefusedHeads.push(pinnable);");
     expect(src).toContain("const firstPick = await recommendExcluding(goal, doorRefusedHeads, null, seededOutputShapes,");
     expect(src).toContain("const altPick = await recommendExcluding(goal, doorRefusedHeads, null, alt,");
+  });
+  test("[MUST-FAIL] recovery pick: a head that cannot be fetched is logged as unjudged, not silently pinned", () => {
+    const pinned = src.indexOf("        nextTarget = pinnable;");
+    const door = src.lastIndexOf("} else if (templateRefused(", pinned);
+    expect(src.slice(door, pinned)).toContain("unjudged: head unfetchable");
+    expect(src.slice(door, pinned)).not.toContain(".catch(() => null)");
   });
   test("recovery pick: the recommendation's goal product is the target it was asked for", () => {
     expect(src).toContain('writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id, new Set(targetShapes ?? []))');

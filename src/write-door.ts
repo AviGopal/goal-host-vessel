@@ -168,16 +168,19 @@ export function writeDoorShapes(shapes: readonly string[], admitted: boolean, do
 }
 
 /**
- * Every shape a template run produces: its declared outputs and each task's resolver id and outputs (what the
- * executor's task door reads; a vessel resolver is registered under the shape it serves).
+ * Every shape a template run produces: its declared outputs and each task's resolver id, config.pointer.type and
+ * outputs (what the executor's task door reads; a vessel resolver is registered under the shape it serves, and an
+ * impulse-resolve task writes the type of the pointer it sends).
  */
 export function templateRunShapes(template: unknown): string[] {
   const t = (template ?? {}) as { outputShapes?: unknown; output_shapes?: unknown; tasks?: unknown };
   const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length > 0) : []);
   const shapes = [...list(t.outputShapes), ...list(t.output_shapes)];
   for (const task of Array.isArray(t.tasks) ? t.tasks : []) {
-    const k = (task ?? {}) as { resolver?: unknown; outputShapes?: unknown };
+    const k = (task ?? {}) as { resolver?: unknown; outputShapes?: unknown; config?: { pointer?: { type?: unknown } } };
     if (typeof k.resolver === "string" && k.resolver !== "compose" && k.resolver !== "compose_parallel") shapes.push(k.resolver);
+    const pointerType = k.config?.pointer?.type; // the pointer an impulse-resolve task sends
+    if (typeof pointerType === "string" && pointerType) shapes.push(pointerType);
     shapes.push(...list(k.outputShapes));
   }
   return [...new Set(shapes)];

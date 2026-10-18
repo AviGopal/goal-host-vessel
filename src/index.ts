@@ -16139,7 +16139,7 @@ async function runGoalWithRecoveryInner(
       const pinnable = pinnableHead(reaching.activities);
       if (!pinnable) {
         console.log(`[goal-host-vessel] ${opts.surface}: known-reaching path head ${pathHead} is a satisfier pseudo-id, not a template -- NOT pinning it; deferring to shape-directed selection (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"})`);
-      } else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch(() => null), _changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {
+      } else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch((e) => { tap(`[write-door] recovery_pick: head ${pinnable} unjudged: head unfetchable (${String((e as Error)?.message ?? e).slice(0, 80)})`); return null; }), _changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {
         // WRITE DOOR (recovery pick): a known-reaching head that writes outside the goal's product is not pinned; it is
         // excluded and the shape-directed selection below (itself doored) tries an alternative.
         doorRefusedHeads.push(pinnable);

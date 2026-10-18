@@ -126,6 +126,12 @@ describe("write door classes", () => {
     expect(typeof templateRefused).toBe("function");
     expect(templateRefused!(UNDECLARED_T, false, "template_pick", "h", undefined, new Set(["resolver_pattern_report"]))).toBe(true);
   });
+  it("must-fail: a task that writes only through its impulse-resolve pointer is refused by the pointer's type", () => {
+    expect(typeof templateRefused).toBe("function");
+    const POINTER_T = { id: "resolve-a-note", outputShapes: ["llm_completion"], tasks: [{ id: "a", resolver: "impulse_resolve", config: { pointer: { type: "memoryNote_write" } } }] };
+    expect(templateRefused!(POINTER_T, false, "recovery_pick", "h", undefined, new Set(["llm_completion"]))).toBe(true);
+    expect((door as unknown as { templateRunShapes?: (t: unknown) => string[] }).templateRunShapes?.(POINTER_T)).toContain("memoryNote_write");
+  });
   it("control: the template door keeps a reading template, every template on an admitted goal, a store write that is the product, and an unfetched template", () => {
     const keeps = (t: unknown, a: boolean, d: door.WriteDoor, p: string[]) => !(templateRefused?.(t, a, d, "h", undefined, new Set(p)) ?? false);
     expect(keeps(READ_T, false, "template_pick", ["llm_completion"])).toBe(true);
