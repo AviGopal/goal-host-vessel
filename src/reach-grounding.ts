@@ -126,8 +126,8 @@ export async function judgeModelOnly(input: ReachJudgeInput, complete: ReachJudg
 }
 
 /** A shadow verdict as recorded: reached null = the judge could not be consulted. */
-export function judgeShadowOf(v: ReachJudgeVerdict | null): { reached: boolean | null; reason: string } {
-  return v ? { reached: v.reached, reason: v.reason } : { reached: null, reason: "the judge could not be consulted" };
+export function judgeShadowOf(v: { reached: boolean; reason?: string } | null): { reached: boolean | null; reason: string } {
+  return v ? { reached: v.reached, reason: v.reason ?? "" } : { reached: null, reason: "the judge could not be consulted" };
 }
 
 // ── Grounding gates ─────────────────────────────────────────────────────────────────────────────

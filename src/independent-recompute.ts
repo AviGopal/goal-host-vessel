@@ -371,10 +371,13 @@ export interface StatedBound { quantity: string; op: BoundOp; bound_ref: BoundRe
 
 /** Verbs that make the bound the goal's TARGET STATE when they LEAD the goal. Heuristic cue list (flagged). A verb
  *  further in ("write a doc explaining how to keep…", "draft a proposal to reduce…") names some other deliverable. */
-export const BOUND_TARGET_CUES = /^(?:please\s+)?(?:reconcile|bring|get|reduce|trim|prune|shrink|compact|keep|restore|cut|lower)\b/i;
+export const BOUND_TARGET_CUES = /^(?:please\s+)?(?:reconcile|bring|reduce|trim|prune|shrink|compact|keep|restore|cut|lower)\b/i;
 /** Question forms: the bound is what is asked about, not what is to be made true. */
 export const BOUND_QUESTION_CUES = /^\s*(?:is|are|was|were|does|do|did|has|have|how|what|which|why|check|verify|report|tell me)\b|\bwhether\b|\?\s*$/i;
-/** Operator phrases, longest first: "no more than" must claim before "more than". */
+/** Operator phrases, longest first: "no more than" must claim before "more than". All are PARSED so the first one claims
+ *  its position, but only the ceiling forms (lt/le) are GRADED (GRADED_BOUND_OPS): with a reducing verb, "above/over/
+ *  exceeding" names WHICH rows to remove ("trim the trace store rows above the cap"), not a state to reach, and the only
+ *  producer measures a cap. */
 export const BOUND_OPERATOR_CUES: ReadonlyArray<{ re: RegExp; op: BoundOp }> = [
   { re: /\b(?:at most|no more than|not more than|not (?:above|over)|not exceed(?:ing)?|within)\b/i, op: "le" },
   { re: /\b(?:at least|no (?:less|fewer) than|not (?:below|under))\b/i, op: "ge" },
@@ -383,6 +386,8 @@ export const BOUND_OPERATOR_CUES: ReadonlyArray<{ re: RegExp; op: BoundOp }> = [
 ];
 /** Named bounds a producer can report ("its configured cap", "the limit", "budget"). Must be the WHOLE rest of the goal. */
 export const BOUND_REFERENCE_CUES = /^\s*(?:(?:its|the|their|our)\s+)?(?:(?:configured|set|allowed|current|declared|stated)\s+)?(cap|limit|budget|ceiling|maximum|max|threshold|quota)\s*$/i;
+/** The operators the oracle grades; a goal stating any other abstains. */
+export const GRADED_BOUND_OPS: ReadonlySet<BoundOp> = new Set<BoundOp>(["lt", "le"]);
 /** A literal bound, optionally with a unit noun, as the WHOLE rest of the goal. */
 const BOUND_LITERAL = /^\s*(\d[\d,_]*)(?:\s+(?:rows?|records?|entries|traces?))?\s*$/i;
 
@@ -502,6 +507,7 @@ export async function verifyStatedBound(goal: string, deps: StatedBoundDeps): Pr
   const abstain = (why: string): null => { deps.onAbstain?.(why); return null; };
   const sb = parseStatedBound(goal);
   if (!sb) return null; // outside the family: silent, like every other oracle's not-applicable
+  if (!GRADED_BOUND_OPS.has(sb.op)) return abstain(`the goal's operator (${OP_TEXT[sb.op]}) is not a ceiling; with a reducing verb it names which rows to remove, not a state to reach`);
   const producer = producerForQuantity(sb.quantity);
   if (!producer) return abstain(`the goal states a bound on "${sb.quantity}" and no producer for that quantity is known`);
   let raw: unknown | null = null;

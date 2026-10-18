@@ -206,6 +206,27 @@ describe("stated-bound oracle: controls", () => {
     expect(v?.reason).toBe("stub judge: the answer addresses the goal");
   }, 20_000);
 
+  // qa: with a reducing verb, "above/over/exceeding" names which rows to remove. The store is UNDER its cap here, so a
+  // graded "row_count > cap" would convict a goal whose state is already fine.
+  for (const goal of ["Trim the trace store rows above the cap.", "Prune the execution traces over its limit.", "Cut the trace store rows exceeding its cap."]) {
+    test(`MUST-ABSTAIN: "${goal}" (store 4000 rows, cap 5000) → no read; the judge decides`, async () => {
+      reset({ row_count: 4000, cap: 5000 });
+      const v = await verifyGoalReached(goal, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(goal, "trimmed"));
+      expect(reads.length).toBe(0);
+      expect(v?.reason ?? "").not.toMatch(/stated-bound/);
+      expect(v?.reason).toBe("stub judge: the answer addresses the goal");
+      expect(v?.judge_verdict_before_pregate).toBeUndefined();
+    }, 20_000);
+  }
+
+  test("MUST-ABSTAIN: \"Get the trace store rows over 5000.\" (store 4000 rows) → no read; the judge decides", async () => {
+    reset({ row_count: 4000, cap: 5000 });
+    const goal = "Get the trace store rows over 5000.";
+    const v = await verifyGoalReached(goal, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(goal, "done"));
+    expect(reads.length).toBe(0);
+    expect(v?.reason).toBe("stub judge: the answer addresses the goal");
+  }, 20_000);
+
   test("a constraint the oracle cannot grade ('without deleting any rows') → abstains without reading", async () => {
     reset({ row_count: 234902, cap: 150000 });
     const goal = "Reconcile the trace store back under its configured cap without deleting any rows.";

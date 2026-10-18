@@ -4008,7 +4008,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       void verbatimShadow.run(verbatimV, {
         // Routed under a SHADOW_ROUTE_PREFIX key: the router never puts it in the dispatch's reward
         // buffer, so the final verdict cannot reward or penalise an arm for a discarded call.
-        judge: () => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`),
+        judge: () => llmJudgeModelOnly(goal, producedShapes, taskSummary, contentDigest, commandEvidence),
         budget: verbatimShadowBudget,
         log: (line) => console.log(line),
         // NOT GROUND TRUTH. Two corpus readers tally every label's verdict as a reach rate with no
@@ -4095,7 +4095,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       console.log(`[grounded-report-oracle] VERDICT reached=true — ${groundedV.reason.slice(0, 300)}`);
       const shadowKey = dispatchContext.getStore()?.dispatchId ?? goalHashOf(goal);
       void groundedReportShadow.run(groundedV, {
-        judge: () => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`),
+        judge: () => llmJudgeModelOnly(goal, producedShapes, taskSummary, contentDigest, commandEvidence),
         // No built-in window: the shadow runs only when the policy names shadow_n (and shadow_until).
         budget: async () => shadowBudgetFrom(pol, { n: 0, until: "9999-12-31T00:00:00Z" }),
         log: (line) => console.log(line),
@@ -4547,8 +4547,12 @@ function reachJudgeCompleteVia(routeKey: string): (prompt: string) => Promise<st
 /** The judge consulted in SHADOW by a gate that already decided: the model's own verdict (no grounding gate in front),
  *  routed under SHADOW_ROUTE_PREFIX so it never enters a dispatch's reward buffer. */
 async function llmJudgeShadow(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<JudgeShadow> {
-  if (!LLM_VESSEL_ENDPOINT) return judgeShadowOf(null);
-  return judgeShadowOf(await judgeModelOnly({ goal, producedShapes, taskSummary, contentDigest, commandEvidence }, reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`)));
+  return judgeShadowOf(await llmJudgeModelOnly(goal, producedShapes, taskSummary, contentDigest, commandEvidence));
+}
+/** The same shadow consultation, as a verdict: what the verbatim and grounded-report shadows compare their oracle with. */
+async function llmJudgeModelOnly(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<GoalReachVerdict | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  return judgeModelOnly({ goal, producedShapes, taskSummary, contentDigest, commandEvidence }, reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`));
 }
 
 // ── Deterministic-oracle label feed (goal_verification_labels corpus) ────────
