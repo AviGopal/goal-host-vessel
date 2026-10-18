@@ -7,7 +7,10 @@
  */
 export interface FailedTargetRecord { at: string; reason: string; targets?: string[] }
 
-export const NO_ARTIFACT_REASON = /^deterministic:write-goal-no-artifact\b/;
+// The floor supersedes the dispatch's reason with its own wrapper (index.ts: `floor ${reason_code}: ${verdict.reason}`);
+// when the floor ran only because the walk had not reached, that wrapper carries the walk's no-artifact verdict. Still
+// anchored: a reason that merely MENTIONS the class elsewhere is not one.
+export const NO_ARTIFACT_REASON = /^(?:floor floor:upstream-not-reached: )?deterministic:write-goal-no-artifact\b/;
 
 export function targetsToAvoid(exact: readonly FailedTargetRecord[]): string[] {
   const out: string[] = [];
@@ -28,4 +31,18 @@ export function targetsToAvoid(exact: readonly FailedTargetRecord[]): string[] {
  */
 export function failureRowsFrom(exact: readonly FailedTargetRecord[]): Array<{ expected_output_shapes: string[]; successful_executions: number; failed_executions: number }> {
   return exact.filter((r) => Array.isArray(r.targets) && r.targets.length > 0).map((r) => ({ expected_output_shapes: [...r.targets!], successful_executions: 0, failed_executions: 1 }));
+}
+
+/**
+ * WHETHER A FAILURE IS ABOUT THE PRODUCED CONTENT. Structural terminations and environment faults (no producer, a
+ * capacity or transport fault, an HTTP 5xx from a vessel, an abstain) carry no correctable content: they are not kept in
+ * the failure memory, and they do not invalidate the goal's memoised target routes (the same targets are still the
+ * right ones once the fault clears). A content failure does both: the routes are asked again on the next dispatch,
+ * instead of replaying the single set they proposed before.
+ */
+export function failureInvalidatesTargetMemo(reason: string | null | undefined): boolean {
+  const r = String(reason ?? "").trim();
+  if (!r) return false;
+  if (/^abstain:/i.test(r)) return false;
+  return !/no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out|\bHTTP 5\d\d\b/i.test(r);
 }

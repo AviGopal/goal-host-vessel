@@ -67,11 +67,17 @@ export interface GoalTargetDecision {
   novel?: NovelTarget;
   /** Piece 5: what the chosen set leaves unsatisfied, in the chooser's words, and what the one residual recall added. */
   residual?: { text: string; recalled: string[]; added: string[]; unknown?: true };
+  /** The selection's decision-time record (on the FINAL decision only, carried to the dispatch record): every candidate
+   *  set with its (s, f), the set chosen, the targets excluded, and whether the routes were re-asked. */
+  target_selection?: { candidates: Array<{ shapes: string[]; s: number; f: number }>; chosen: string[]; excluded: string[]; reasked: boolean };
 }
 
 export interface InferGoalTargetShapesOpts {
   /** Targets the goal's LATEST attempt failed on with no artifact (CHANGE-35 / A2b-minimal): not chosen again. */
   excludeTargets?: readonly string[];
+  /** Set only on the retry's single re-ask (inferGoalTargetDecision): the routes skip their memo and the deterministic
+   *  shortcuts (which would propose the same set again) and the chooser is told not to propose these shapes. */
+  doNotPropose?: readonly string[];
   llmEndpoint?: string;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: FetchLike;
@@ -599,15 +605,53 @@ export async function inferGoalTargetDecision(
   if (selected && selected.candidates.some((c) => c.s + c.f > 0)) {
     console.log(`[goal-target-inference] target selection ${JSON.stringify({ goal_hash: goalHashOf(goal), changed: selected.changed, candidates: selected.candidates.map((c) => ({ shapes: c.shapes, s: c.s, f: c.f, draw: Number(c.draw.toFixed(4)) })), chosen: selected.decision.shapes })}`);
   }
-  const filtered = withoutFailedTargets(selected ? selected.decision : routed, opts.excludeTargets);
+  const excluded = [...(opts.excludeTargets ?? [])];
+  let picked = selected ? selected.decision : routed;
+  let candidates = selected ? selected.candidates : null;
+  let filtered = withoutFailedTargets(picked, excluded);
+  let reasked = false;
+  // NO ALTERNATIVE SURVIVED THE EXCLUSION (withoutFailedTargets kept today's choice, the same object): the routes had
+  // proposed one set and the retry had nothing to change course to. Ask them ONCE more, told not to propose the excluded
+  // targets (the memo and the fixed shortcuts bypassed), and offer what they propose as candidates.
+  // GUARD: a gap investigation's only oracle-graded product is its decomposition (deterministicGapDecompositionRoute);
+  // a miss there means its producer failed, not that the target is wrong, so it is kept and the routes are not re-asked.
+  if (excluded.length > 0 && filtered === picked && picked.shapes.some((x) => excluded.includes(x))) {
+    const sole = deterministicGapDecompositionRoute(goal, vocabulary);
+    if (sole && picked.shapes.every((x) => sole.shapes.includes(x))) {
+      console.log(`[goal-target-inference] retry: guard held — [${sole.shapes.join(", ")}] is the goal's only oracle-graded target; not excluded, routes not re-asked`);
+    } else if (opts.complete || opts.llmEndpoint) {
+      reasked = true;
+      const reAsked: Array<string | null> = [];
+      const reOpts: InferGoalTargetShapesOpts = { ...routeOpts, doNotPropose: excluded, ...(opts.shapeCatalog && opts.complete ? { complete: async (p: string) => { const t = await opts.complete!(p); reAsked.push(t); return t; } } : {}) };
+      const reRaw = withoutMutationTargetsForReadGoal(goal, await inferGoalTargetDecisionRoutes(goal, vocabulary, reOpts));
+      const re = opts.shapeCatalog ? await describedProducerStage(goal, vocabulary, reRaw, opts, reAsked) : reRaw;
+      const added = [re.shapes, ...re.alternatives].filter((a) => a.length > 0 && !a.every((x) => excluded.includes(x)));
+      console.log(`[goal-target-inference] retry: excluded the last failed target(s) [${excluded.join(", ")}] had no alternative — re-asked the routes once: ${added.length > 0 ? added.map((a) => `[${a.join(", ")}]`).join(" ") : "nothing new"}`);
+      if (added.length > 0) {
+        const merged: GoalTargetDecision = { ...picked, alternatives: [...picked.alternatives, ...added] };
+        const reSelected = rows.length > 0 ? selectTargetSet(merged, rows) : null;
+        if (reSelected) candidates = reSelected.candidates;
+        else candidates = [merged.shapes, ...merged.alternatives].map((shapes) => ({ shapes, s: 0, f: 0, draw: 0 }));
+        picked = reSelected ? reSelected.decision : merged;
+        filtered = withoutFailedTargets(picked, excluded);
+      }
+    }
+  }
   // J2b: NOVEL survives only while nothing was chosen (a recorded reaching path the posterior selects is not novel).
-  const final = routed.novel && filtered.shapes.length === 0 && !filtered.novel ? { ...filtered, novel: routed.novel } : filtered;
+  const unrecorded = routed.novel && filtered.shapes.length === 0 && !filtered.novel ? { ...filtered, novel: routed.novel } : filtered;
+  // The selection's decision-time record, carried to the dispatch record (law 12's counterfactual, readable per run).
+  const final: GoalTargetDecision = rows.length > 0 || excluded.length > 0
+    ? { ...unrecorded, target_selection: { candidates: (candidates ?? [routed.shapes, ...routed.alternatives].filter((a) => a.length > 0).map((shapes) => ({ shapes, s: 0, f: 0 }))).map((c) => ({ shapes: c.shapes, s: c.s, f: c.f })), chosen: unrecorded.shapes, excluded, reasked } }
+    : unrecorded;
   // The routes memoise their UNFILTERED answer (decisionCache), so a retry re-filters it against the new exclusions.
   // What a reader must see is the decision actually returned: kept under its own key (CHANGE-35 A2b-min repair).
-  if (opts.finalDecisionCache && (final.shapes.length > 0 || final.alternatives.length > 0)) {
+  // An empty decision CLEARS the key: a previous attempt's decision must not be read as this one's.
+  if (opts.finalDecisionCache) {
     const fc = opts.finalDecisionCache;
-    if (fc.size >= INFER_CACHE_MAX) { const first = fc.keys().next().value; if (first !== undefined) fc.delete(first); }
-    fc.set(goalHashOf(goal), final);
+    if (final.shapes.length > 0 || final.alternatives.length > 0) {
+      if (fc.size >= INFER_CACHE_MAX) { const first = fc.keys().next().value; if (first !== undefined) fc.delete(first); }
+      fc.set(goalHashOf(goal), final);
+    } else fc.delete(goalHashOf(goal));
   }
   return final;
 }
@@ -763,7 +807,10 @@ async function inferGoalTargetDecisionRoutes(
   // Routing every exit through `remember()` also makes this correct by
   // construction for shortcuts added later, which is the property the old shape
   // lacked: a new `return` above line ~386 silently reintroduced the bug.
-  const decisionCache = opts.decisionCache;
+  // A re-ask (doNotPropose) bypasses the memo both ways: it must not replay the memoised set, and its answer is not the
+  // routes' answer to the goal.
+  const reask = (opts.doNotPropose?.length ?? 0) > 0;
+  const decisionCache = reask ? undefined : opts.decisionCache;
   const cacheKey = goalHashOf(goal);
   const remember = (d: GoalTargetDecision): GoalTargetDecision => {
     if (decisionCache) {
@@ -783,6 +830,9 @@ async function inferGoalTargetDecisionRoutes(
   // A verbatim read of one named absolute path is decided by the shared parse, not by the LLM:
   // the oracle that grades it and the walk that binds its path use the same rule, so an LLM
   // answer here could only disagree with both.
+  // THE RE-ASK SKIPS THE DETERMINISTIC SHORTCUTS (this block, down to the chooser's prompt): each returns one fixed set,
+  // which is the set the retry was told to avoid, so asking them again could only propose it again.
+  if (!reask) {
   if (gapDecomposition) return remember(gapDecomposition);
   if (verbatimRead) return remember(verbatimRead);
 
@@ -1029,6 +1079,7 @@ async function inferGoalTargetDecisionRoutes(
       return remember({ shapes: [primary], confidence: 0.7, alternatives: alts });
     }
   }
+  } // end of the deterministic shortcuts (skipped on a re-ask)
 
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -1073,7 +1124,7 @@ GOAL: ${goal}
 KNOWN producible output shapes (you MUST choose ONLY from this list):
 ${JSON.stringify(opts.promptVocabulary && opts.promptVocabulary.length > 0 ? opts.promptVocabulary : knownShapes)}
 
-Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}${describedBlockFor(goal, knownShapes, opts)}
+Return the 1-6 shapes from the KNOWN list whose production best satisfies the goal. Also provide a confidence value between 0 and 1 that production of the chosen shapes would actually satisfy the goal, and up to 2 ALTERNATIVE framings, each 1-6 shapes from the KNOWN list.${editRule}${shellRule}${describedBlockFor(goal, knownShapes, opts)}${reask ? `\n\nDO NOT PROPOSE these shapes: ${JSON.stringify(opts.doNotPropose)} — the goal's previous attempts produced no artifact on them. Choose a different framing from the KNOWN list.` : ""}
 
 COMPOSITION RULE — when the goal BOTH derives/produces a value AND asks to WRITE / SAVE / RECORD / STORE / PERSIST it somewhere (a note, a concept, a file), you MUST return BOTH shapes: the shape that PRODUCES the value AND the matching write/emit shape from the KNOWN list (e.g. "memoryNote_write" for a memory note, "concept_write" for a concept). This is a compute-then-emit COMPOSITION — never drop the write clause in favour of the compute alone. When the goal names MORE THAN ONE destination, return EVERY matching write/emit shape, not just one: a goal that asks to record a concept AND persist a memory note must return BOTH "concept_write" AND "memoryNote_write". Example: goal "count the lines in FILE and write the number to a memory note" -> {"target_shapes":["shellResult","memoryNote_write"]}. Example with two destinations: goal "produce a health report, record a concept capturing it, and persist a memory note stating it" -> {"target_shapes":["vessel_health_report","concept_write","memoryNote_write"]}.${NOVEL_OPTION}${RESIDUAL_OPTION}
 

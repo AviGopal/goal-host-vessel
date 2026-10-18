@@ -334,7 +334,7 @@ import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
-import { targetsToAvoid, failureRowsFrom } from "./failed-targets";
+import { targetsToAvoid, failureRowsFrom, failureInvalidatesTargetMemo } from "./failed-targets";
 import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
@@ -4615,8 +4615,9 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   if (!goalText || !r) return;
   // Structural terminations and environment faults carry no correctable content; only a verdict
   // about PRODUCED content can teach the next attempt what to do differently.
-  // An ABSTAIN (§9.2) is not a verdict about the content either: nothing was graded.
-  if (/^abstain:/i.test(r) || /no pick|no producer|no template produces|capability gap filed|missing shapes|constructible payload|terminating walk|hollow_walklog_capped|verdict unknown|verdict=unknown|capacity|econnrefused|unreachable|timed out/i.test(r)) return;
+  // An ABSTAIN (§9.2) is not a verdict about the content either: nothing was graded. Nor is an HTTP 5xx.
+  // The abstain test is the shared predicate's too; it stays named here, at the memory's own gate.
+  if (/^abstain:/i.test(r) || !failureInvalidatesTargetMemo(r)) return;
   const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
   const list = goalFailureMemory.get(rec.hash) ?? [];
   // The targets this attempt chose: the set the walk DISPATCHED, else the FINAL inference decision (never the routes'
@@ -4628,6 +4629,12 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   goalFailureMemory.set(rec.hash, list);
   noteGoalFailureStamp(rec.hash, rec.at);
   appendFile(goalFailureMemoryPath(), JSON.stringify(rec) + "\n").catch(() => { /* fail-open: in-process memory is authoritative */ });
+  // A content failure invalidates the routes' memo of this goal: replaying the one set they proposed before (often with
+  // no alternatives) left a retry nothing to change course to. The FINAL decision cache is kept: this dispatch's readers
+  // after this point (the record, the failed-walk trace, the next reason's triedTargets) still need it, and inference
+  // overwrites or clears it on the next attempt (goal-target-inference.ts).
+  inferredTargetRoutesMemo.delete(rec.hash);
+  inferredTargetShapeCache.delete(rec.hash);
   console.log(`[goal-host-vessel] failure-memory: REMEMBERED hash=${rec.hash} class=${rec.classToken || "-"} pick=${rec.pick ?? "-"} (${list.length} on record) reason="${rec.reason.slice(0, 100)}"`);
 }
 // THE FAILURE SIDE'S REASON (B2). A failed trace carries WHY it failed (failureMode.reason, or the failing task's
@@ -18741,6 +18748,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
       (record as { attemptCount?: number }).attemptCount = seek.attempts ?? 0;
       walkStepSink.push(`[dispatch] execution_path=${execution_path} attempt_count=${walk_tier}`);
       record.inferenceConfidence = typeof goal === "string" ? (inferredTargetDecisionCache.get(goalHashOf(goal))?.confidence ?? null) : null;
+      // The target selection's candidates (shapes, s, f), the set chosen, what was excluded and whether the routes were
+      // re-asked: why this run chose its targets, readable per dispatch (the console line is not kept with the record).
+      record.targetSelection = typeof goal === "string" ? (inferredTargetDecisionCache.get(goalHashOf(goal))?.target_selection ?? null) : null;
       // Reward the LLM router: attribute every routed selection this dispatch made
       // (buffered under the goal hash) to the final reach verdict — α on reach, β on
       // hollow. Fire-and-forget; never blocks the dispatch. Skipped in observe mode
@@ -19516,6 +19526,8 @@ interface DispatchRecord {
   requeuedAt?: number;
   requeueOf?: string;
   inferenceConfidence?: number | null;
+  /** The target selection's decision-time record (goal-target-inference.ts GoalTargetDecision.target_selection). */
+  targetSelection?: GoalTargetDecision["target_selection"] | null;
   /**
    * WHY-NOW: the categorized reason this dispatch exists, derived once at record
    * creation from the operator/tags/source the caller supplied. goal-host KNOWS
@@ -20033,6 +20045,7 @@ server = Bun.serve({
         walkLog: record.walkLog,
         learning: record.learning ?? null,
         cost: (record as { cost?: unknown }).cost ?? null,
+        targetSelection: record.targetSelection ?? null,
         // THE ANSWER. This response is built KEY BY KEY, and every key not named here is
         // dropped silently — no error, no warning, no failing test, because omitting an
         // optional field is legal. answerBody was missing, so the human surface rendered a
