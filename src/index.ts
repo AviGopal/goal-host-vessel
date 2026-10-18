@@ -306,7 +306,7 @@ import { countsSomeOtherUnit } from "./counts-other-unit";
 import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
 import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, recipeIsLive, type VerifierRecipe } from "./verifier-recipe";
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
-import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations } from "./independent-recompute";
+import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations, verifyStatedBound, type JudgeShadow } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText, prohibitsAnyMutation, asksForDescriptionUnderChangeProhibition } from "./goal-intent";
 import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
@@ -1460,7 +1460,10 @@ interface GoalReachVerdict {
   /** An ABSTAIN (REALIGNMENT §9.2): the gate declined to grade, with the cut that made it decline.
    *  Neither reached nor hollow — no α, no β, no gap filing, no retry; never the "verdict unknown"
    *  (null) channel, which means the verifier could not be reached. */
-  abstain?: GateAbstain; }
+  abstain?: GateAbstain;
+  /** A deterministic gate that displaced the judge records what the judge said, in SHADOW (never used): the measure of
+   *  how often the gate overrides it. Served on the dispatch record and logged in the walk log. */
+  judge_verdict_before_pregate?: JudgeShadow; }
 /** An ABSTAIN (REALIGNMENT §9.2). `cut-view`: the judge's view could not hold the deliverable whole. `oracle-abstain`:
  *  the oracle that owns the goal's class declined (not applicable, or its observation was unavailable) and no judge of
  *  MEASURED adequacy exists for that class, so nothing grades it — the walk stays ungraded (no α, no β). */
@@ -3782,6 +3785,22 @@ async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, pr
     }
   } catch (e) { console.warn(`[verdict-consistency] check skipped (non-fatal): ${String((e as Error)?.message ?? e).slice(0, 160)}`); }
 }
+/**
+ * A gate that decided before the judge recorded the judge's verdict in shadow (judge_verdict_before_pregate). Mirror it
+ * onto the dispatch record (served by GET /executions/:id, the way appendRouteAround mirrors route-arounds) and into the
+ * walk log, which on the walk path is the dispatch's stepSink by reference. The line is worded so no walk-log reader
+ * (the HOLLOW/TRACE FAILED failure memory, the hollow-walklog step count) can read it as a verdict or a step.
+ */
+function noteJudgeShadow(v: GoalReachVerdict, walkEvidence?: { walkLog: string[] }): void {
+  const j = v.judge_verdict_before_pregate;
+  if (!j) return;
+  const line = `[reach-shadow] judge_verdict_before_pregate reached=${j.reached === null ? "unknown" : String(j.reached)} (recorded, not used; the gate decided reached=${v.reached}: ${String(v.reason ?? "").replace(/\u2014/g, "-").slice(0, 160)}) judge: ${j.reason.replace(/\u2014/g, "-").slice(0, 240)}`;
+  console.log(line);
+  walkEvidence?.walkLog.push(line);
+  const did = dispatchContext.getStore()?.dispatchId;
+  const rec = did ? executionStore.get(did) : undefined;
+  if (rec) rec.judge_verdict_before_pregate = { reached: j.reached, reason: j.reason };
+}
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
   const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables, writeEvidence);
   if (v && v.deterministic !== true) {
@@ -3790,6 +3809,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }
   // JUDGE CONSISTENCY (src/judge/verdict-consistency.ts), before the capture so the capture records what is returned.
   if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  if (v?.judge_verdict_before_pregate) noteJudgeShadow(v, walkEvidence);
   // CAPTURE (closed, src/judge/capture.ts): the reach gate's inputs and its verdict, after the decision.
   judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput({
     goal,
@@ -4021,6 +4041,28 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     if (dateV) {
       console.log(`[reach-date-oracle] VERDICT reached=false — ${dateV.reason.slice(0, 200)}`);
       return dateV;
+    }
+  }
+
+  // STATED-BOUND ORACLE (independent-recompute.ts verifyStatedBound): a goal whose target state is a measurable bound
+  // on a named quantity ("reconcile the trace store back under its configured cap") is reached iff a FRESH read of
+  // that quantity through its advertised producer satisfies the bound — never by the answer's wording, which the judge
+  // accepted for a store 85% over its cap. Ahead of the per-class oracles and the write and hollow-walklog gates, so
+  // a measured truth answers first. The judge is consulted in SHADOW (routed under SHADOW_ROUTE_PREFIX, so no arm is
+  // rewarded for a discarded call) and its verdict recorded as judge_verdict_before_pregate. Abstains outside the
+  // family, with no producer for the quantity, or when the read fails, so the judge grades those unchanged.
+  {
+    const boundV = await verifyStatedBound(goal, {
+      read: async (shape, pointer) => {
+        const r = await ufExecuteTool(shape, pointer, new Set([shape]));
+        return r.ok ? parseMaybeJson(r.result) : null;
+      },
+      judge: () => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`),
+      onAbstain: (why) => console.log(`[stated-bound-oracle] ABSTAINED for goal_hash=${goalHashOf(goal)} — ${why.slice(0, 240)}; the judge grades this one`),
+    });
+    if (boundV) {
+      console.log(`[stated-bound-oracle] VERDICT reached=${boundV.reached} — ${boundV.reason.slice(0, 240)}`);
+      return boundV;
     }
   }
 
@@ -19771,6 +19813,8 @@ interface DispatchRecord {
   metadata?: judgeCapture.JudgeCaptureMetadata;
   /** The gap id admission recovered from the goal text into variables.decompose_gap_id (the dispatch sent no field). */
   gapIdRecoveredFromText?: string;
+  /** The judge's own verdict when a deterministic gate decided before it (noteJudgeShadow); observation only. */
+  judge_verdict_before_pregate?: JudgeShadow;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20237,6 +20281,8 @@ server = Bun.serve({
         // other got only the process, from the same record, for the same run.
         answerBody: (record as { answerBody?: string }).answerBody ?? null,
         gapIdRecoveredFromText: record.gapIdRecoveredFromText ?? null,
+        // The judge's shadow verdict when a deterministic gate decided before it (noteJudgeShadow).
+        judge_verdict_before_pregate: record.judge_verdict_before_pregate ?? null,
         // CAPTURED DECISION INPUTS (src/judge/capture.ts), only on request: they can be tens of KB, and
         // this endpoint is polled.
         ...(url.searchParams.get("include") === "metadata" ? { metadata: record.metadata ?? null } : {}),
