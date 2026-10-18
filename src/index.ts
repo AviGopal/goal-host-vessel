@@ -13782,6 +13782,8 @@ function effectTupleOf(shape: string, vesselEndpoint: string | undefined, conten
 const _dispatchSentCompose = new WeakMap<object, number>();
 /** Dispatches whose gap id was recovered from goal text at admission (recoverGapIdAtAdmission), since process start. */
 let _gapIdRecoveredFromText = 0;
+/** Hollow-satisfier retries not run because the goal's grader accepts only one shape (retry_not_widened), since process start. */
+let _retryNotWidenedCount = 0;
 async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<typeof runGoalWithRecoveryInner>[1]): Promise<GoalSeekResult> {
   const startMs = Date.now();
   const r = await runGoalWithRecoveryInner(goal, opts);
@@ -15155,9 +15157,6 @@ async function runGoalWithRecoveryInner(
         walk.selectedTemplateId.startsWith("satisfier:")
       ) {
         const suppressedShape = walk.selectedTemplateId.slice("satisfier:".length);
-        console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
-        tap(`[goal-host-vessel] ${opts.surface}: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes`);
-        noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");
         // A RETRY THAT DOES NOT WIDEN IS NOT A RETRY. This retry used to re-run with the same
         // expectedOutputShapes it started with while suppressing the ONLY producer of that shape,
         // which is unsatisfiable by construction: the walk logged "no pick — missing shapes
@@ -15177,54 +15176,73 @@ async function runGoalWithRecoveryInner(
         // write would "reach" by fetching bytes, which the edit-intent gate below catches for
         // repo edits but nothing catches for a memoryNote write), and the widening is announced in
         // the walk log so a reader can see the target changed under the retry.
+        //
+        // FOURTH: not when the goal's grader accepts only one shape. A gap investigation bound by its structured
+        // decompose_gap_id (gapIdForGrading: the same field-only predicate that binds the CHANGE-35 oracle in the reach
+        // gate) is reached only by a gapDecomposition the gap store confirms, so a retry widened to retrieval shapes
+        // cannot reach it by construction, and an unwidened one has no producer left. Neither runs: the retry ends with
+        // a named, counted retry_not_widened. Cost, latency and store load only; no reach is lost (one such dispatch
+        // ran to attempt_count 13).
         const _suppressedLc = suppressedShape.toLowerCase();
         const _suppressedIsWrite = /(write|persist|save|edit|commit|apply|insert|update|delete)/.test(_suppressedLc);
         const _suppressedIsWholeTarget =
           Array.isArray(seededOutputShapes) &&
           seededOutputShapes.length > 0 &&
           seededOutputShapes.every((s) => String(s).toLowerCase() === _suppressedLc);
-        const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;
-        const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
-        if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
-        const retryWalk = await runGoalAsPoolWalk(goal, {
-          changeAdmitted: _changeAdmitted,
-          recalledLessons: _dispatchLessons,
-          variables: opts.variables,
-          tags: opts.tags,
-          parentExecutionId: opts.parentExecutionId,
-          compositionChain: opts.compositionChain,
-          expectedOutputShapes: _retryOutputShapes,
-          terminalOutputShapes,
-          surface: opts.surface,
-          stepSink: opts.stepSink,
-          learningSink: opts.learningSink,
-          betaWithheld: opts.betaWithheld,
-          ablation: opts.ablation,
-          skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
-        learningMode: opts.learningMode,
-          preferPathway: reachingPathway?.activities,
-          preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
-          suppressSatisfierShapes: [suppressedShape],
-          // ADDITIVE (V8): continue from what was built, minus the suppressed producer's output.
-          carryFrom: (walk.carry ?? []).map((c) => ({ ...c, impulses: c.impulses.filter((i) => String((i.metadata as { shape?: unknown } | undefined)?.shape) !== suppressedShape) })).filter((c) => c.impulses.length > 0 && c.stepId !== walk.selectedTemplateId),
-        });
-        _noteFailedReplays(retryWalk);
-        if (retryWalk.reached) {
-          // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
-          // launders-hollow-into-reach): a suppressed-satisfier retry must NOT be
-          // accepted as reached for an EDIT-INTENT goal unless the retry actually
-          // produced an edit-result shape. Otherwise a hollow read/author satisfier,
-          // once suppressed, launders into a false reach that never edited the named
-          // file (observed dispatches 4c3300b3 / 51a5fcc2). When the goal names a
-          // repos source file with edit language and the retry produced no edit
-          // result, fall through to the edit-intent routing below instead of returning.
-          const _reEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
-          const _reEditShapes = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
-          const _reRetryDidNotEdit = (retryWalk.completionShapes ?? []).every((s) => !_reEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
-          if (!(_reEditIntent && _reRetryDidNotEdit)) return retryWalk;
+        const _graderOnlyShape = gapIdForGrading(goal, dispatchContext.getStore()?.decomposeGapId).gapId !== null ? "gapDecomposition" : null;
+        const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null;
+        if (_retryNotWidened) {
+          _retryNotWidenedCount += 1;
+          const _rnw = `retry_not_widened: grader accepts only ${_graderOnlyShape} and its producer failed ("${suppressedShape}" satisfier hollow), so no retry was run`;
+          tap(`[goal-host-vessel] ${opts.surface}: walk: ${_rnw} (#${_retryNotWidenedCount})`);
+          walk = { ...walk, goalReachReason: `${walk.goalReachReason ?? "not reached"}; ${_rnw}` };
+        } else {
+          console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
+          tap(`[goal-host-vessel] ${opts.surface}: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes`);
+          noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");
+          const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;
+          const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
+          if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
+          const retryWalk = await runGoalAsPoolWalk(goal, {
+            changeAdmitted: _changeAdmitted,
+            recalledLessons: _dispatchLessons,
+            variables: opts.variables,
+            tags: opts.tags,
+            parentExecutionId: opts.parentExecutionId,
+            compositionChain: opts.compositionChain,
+            expectedOutputShapes: _retryOutputShapes,
+            terminalOutputShapes,
+            surface: opts.surface,
+            stepSink: opts.stepSink,
+            learningSink: opts.learningSink,
+            betaWithheld: opts.betaWithheld,
+            ablation: opts.ablation,
+            skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
+          learningMode: opts.learningMode,
+            preferPathway: reachingPathway?.activities,
+            preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
+            suppressSatisfierShapes: [suppressedShape],
+            // ADDITIVE (V8): continue from what was built, minus the suppressed producer's output.
+            carryFrom: (walk.carry ?? []).map((c) => ({ ...c, impulses: c.impulses.filter((i) => String((i.metadata as { shape?: unknown } | undefined)?.shape) !== suppressedShape) })).filter((c) => c.impulses.length > 0 && c.stepId !== walk.selectedTemplateId),
+          });
+          _noteFailedReplays(retryWalk);
+          if (retryWalk.reached) {
+            // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
+            // launders-hollow-into-reach): a suppressed-satisfier retry must NOT be
+            // accepted as reached for an EDIT-INTENT goal unless the retry actually
+            // produced an edit-result shape. Otherwise a hollow read/author satisfier,
+            // once suppressed, launders into a false reach that never edited the named
+            // file (observed dispatches 4c3300b3 / 51a5fcc2). When the goal names a
+            // repos source file with edit language and the retry produced no edit
+            // result, fall through to the edit-intent routing below instead of returning.
+            const _reEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
+            const _reEditShapes = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
+            const _reRetryDidNotEdit = (retryWalk.completionShapes ?? []).every((s) => !_reEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+            if (!(_reEditIntent && _reRetryDidNotEdit)) return retryWalk;
+          }
+          if (retryWalk.abstain) return retryWalk; // ABSTAIN (§9.2), checked before the attempts>0 choice
+          walk = retryWalk.attempts > 0 ? retryWalk : walk;
         }
-        if (retryWalk.abstain) return retryWalk; // ABSTAIN (§9.2), checked before the attempts>0 choice
-        walk = retryWalk.attempts > 0 ? retryWalk : walk;
       }
 
       // ALTERNATIVE-FRAMING retry. J3 (user ruling 2026-10-16T22:56:41Z): EVERY alternative, in the decision's own order
