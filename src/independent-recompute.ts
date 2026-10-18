@@ -349,8 +349,8 @@ export function gradeTokenRecompute(truth: string, emitted: string[]): Recompute
 // ── Stated bounds ───────────────────────────────────────────────────────────────────────────────
 //
 // A goal that states a MEASURABLE BOUND on a named quantity ("reconcile the trace store back under
-// its configured cap", "keep the pool below 500 rows") is reached iff the bound HOLDS, and whether it
-// holds is a reading, not an opinion. The judge was graded on the answer text alone and accepted
+// its configured cap") is NOT reached while the bound is violated, and whether it is violated is a
+// reading, not an opinion. The judge was graded on the answer text alone and accepted
 // "closer to cap, done" with the store 85% over its cap (gap the-trace-store-reconcile-goal-is-
 // unreachable-by-its-producer-and-the-judge-false-accepts-it), so every hollow answer to an
 // unreachable goal became a reach. The same INDEPENDENCE rule as the recompute above applies: the
@@ -359,13 +359,19 @@ export function gradeTokenRecompute(truth: string, emitted: string[]): Recompute
 //
 // Only TARGET-STATE goals are graded. In "is the trace store under its cap?" the bound is the subject
 // of a question, and a correct "no, it is over" must not fail because the bound does not hold.
+//
+// ONE-SIDED, like the grounding gates: a violated bound is NOT REACHED; a bound that holds proves only
+// that the state is right, not that the walk did or delivered anything, so it ABSTAINS and the gates
+// and the judge after it decide. A granted reach here ended walks early on "error: could not connect"
+// and on an off-topic answer whenever the store happened to sit under its cap, crediting whatever arm ran.
 
 export type BoundOp = "lt" | "le" | "gt" | "ge";
 export type BoundRef = { kind: "literal"; value: number } | { kind: "ref"; name: string };
 export interface StatedBound { quantity: string; op: BoundOp; bound_ref: BoundRef }
 
-/** Verbs that make the bound the goal's TARGET STATE. Heuristic cue list (flagged). */
-export const BOUND_TARGET_CUES = /\b(?:reconcile|bring|get|reduce|trim|prune|shrink|compact|keep|return|restore|put|ensure|make|cut|lower)\b/i;
+/** Verbs that make the bound the goal's TARGET STATE when they LEAD the goal. Heuristic cue list (flagged). A verb
+ *  further in ("write a doc explaining how to keep…", "draft a proposal to reduce…") names some other deliverable. */
+export const BOUND_TARGET_CUES = /^(?:please\s+)?(?:reconcile|bring|get|reduce|trim|prune|shrink|compact|keep|restore|cut|lower)\b/i;
 /** Question forms: the bound is what is asked about, not what is to be made true. */
 export const BOUND_QUESTION_CUES = /^\s*(?:is|are|was|were|does|do|did|has|have|how|what|which|why|check|verify|report|tell me)\b|\bwhether\b|\?\s*$/i;
 /** Operator phrases, longest first: "no more than" must claim before "more than". */
@@ -375,8 +381,10 @@ export const BOUND_OPERATOR_CUES: ReadonlyArray<{ re: RegExp; op: BoundOp }> = [
   { re: /\b(?:under|below|beneath|less than|fewer than)\b/i, op: "lt" },
   { re: /\b(?:above|over|more than|greater than|exceed(?:ing|s)?)\b/i, op: "gt" },
 ];
-/** Named bounds a producer can report ("its configured cap", "the limit", "budget"). */
-export const BOUND_REFERENCE_CUES = /^\s*(?:(?:its|the|their|our|his|her)\s+)?(?:(?:configured|set|allowed|current|declared|stated)\s+)?(cap|limit|budget|ceiling|maximum|max|threshold|quota)\b/i;
+/** Named bounds a producer can report ("its configured cap", "the limit", "budget"). Must be the WHOLE rest of the goal. */
+export const BOUND_REFERENCE_CUES = /^\s*(?:(?:its|the|their|our)\s+)?(?:(?:configured|set|allowed|current|declared|stated)\s+)?(cap|limit|budget|ceiling|maximum|max|threshold|quota)\s*$/i;
+/** A literal bound, optionally with a unit noun, as the WHOLE rest of the goal. */
+const BOUND_LITERAL = /^\s*(\d[\d,_]*)(?:\s+(?:rows?|records?|entries|traces?))?\s*$/i;
 
 /**
  * The quantities a fresh read can measure, and the producer that measures each. A reviewable table,
@@ -406,34 +414,39 @@ export const BOUND_QUANTITY_PRODUCERS: readonly BoundQuantityProducer[] = [
 ];
 
 /**
- * Parse a target-state bound from the goal text alone. Null when the goal is a question, names no
- * target-state verb, or states no operator followed by a number or a named bound.
+ * Parse a target-state bound from the goal text alone. The whole goal must be one clause of the form
+ * [please] <target verb> <quantity> [back|down] <operator> <number | named bound>. Null otherwise: a
+ * question, a goal that does not LEAD with a target verb, no operator, or ANY further clause ("…without
+ * deleting any rows", "…, then report", a second sentence) — a constraint this cannot grade is not
+ * ignored, the goal is left to the judge.
  *
  * A NAMED bound under "under/below" is graded ≤, not <: a cap is exceeded when it is passed, which is
  * how its producer defines it (over_cap = row_count > cap), so a store sitting AT its cap is under it.
  */
 export function parseStatedBound(goal: string): StatedBound | null {
-  const g = String(goal ?? "").trim();
-  if (g.length === 0 || BOUND_QUESTION_CUES.test(g) || !BOUND_TARGET_CUES.test(g)) return null;
+  const g = String(goal ?? "").trim().replace(/[.!]\s*$/, "").trim();
+  if (g.length === 0 || /[.;:!?\n]/.test(g) || BOUND_QUESTION_CUES.test(g)) return null;
+  const lead = g.match(BOUND_TARGET_CUES);
+  if (!lead) return null;
   let best: { index: number; length: number; op: BoundOp } | null = null;
   for (const { re, op } of BOUND_OPERATOR_CUES) {
     const m = re.exec(g);
     if (m && (best === null || m.index < best.index)) best = { index: m.index, length: m[0].length, op };
   }
   if (!best) return null;
-  const head = g.slice(0, best.index);
+  if (best.index < lead[0].length) return null;
+  const head = g.slice(lead[0].length, best.index);
   const tail = g.slice(best.index + best.length);
   let bound_ref: BoundRef | null = null;
-  const lit = tail.match(/^\s*(\d[\d,_]*)\b/);
+  const lit = tail.match(BOUND_LITERAL);
   if (lit) bound_ref = { kind: "literal", value: Number(lit[1]!.replace(/[,_]/g, "")) };
   else {
     const ref = tail.match(BOUND_REFERENCE_CUES);
     if (ref) bound_ref = { kind: "ref", name: ref[1]!.toLowerCase() };
   }
   if (!bound_ref || (bound_ref.kind === "literal" && !Number.isFinite(bound_ref.value))) return null;
-  // The quantity is the object of the target verb: the words between the verb and the operator.
-  const verb = [...head.matchAll(new RegExp(BOUND_TARGET_CUES.source, "gi"))].pop();
-  const quantity = (verb ? head.slice(verb.index! + verb[0].length) : head)
+  // The quantity is the object of the leading verb: the words between it and the operator.
+  const quantity = head
     .replace(/\b(?:back|down|up|again|now)\b/gi, " ").replace(/^\s*(?:the|its|our|this)\s+/i, "").replace(/\s+/g, " ").trim();
   if (quantity.length === 0) return null;
   const op: BoundOp = bound_ref.kind === "ref" && best.op === "lt" ? "le" : best.op;
@@ -464,7 +477,7 @@ const finiteOrNull = (v: unknown): number | null => {
 /** What the judge would have said, recorded when a deterministic verdict displaces it. null reached = the judge could not be consulted. */
 export interface JudgeShadow { reached: boolean | null; reason: string }
 export interface StatedBoundVerdict {
-  reached: boolean;
+  reached: false;
   reason: string;
   completion_shapes: string[];
   deterministic: true;
@@ -474,15 +487,16 @@ export interface StatedBoundDeps {
   /** A FRESH read of `shape` through its advertised producer; null when unreachable or failed. */
   read: (shape: string, pointer: Record<string, unknown>) => Promise<unknown | null>;
   /** The LLM judge, consulted in SHADOW only: its verdict is recorded, never used. */
-  judge?: () => Promise<{ reached: boolean; reason?: string } | null>;
+  judge?: () => Promise<JudgeShadow>;
   onAbstain?: (why: string) => void;
 }
 
 /**
- * The stated-bound oracle. Returns a deterministic verdict (reached iff the freshly measured quantity
- * satisfies the goal's bound) or null to abstain: no stated target-state bound, no producer for the
- * quantity, a failed or counter-less read, or a named bound the report does not carry. The walk's
- * answer is not an input.
+ * The stated-bound oracle. ONE-SIDED: returns a deterministic NOT-REACHED when the freshly measured
+ * quantity violates the goal's bound, and null (abstain) otherwise — the bound holds, no stated
+ * target-state bound, no producer for the quantity, a failed or counter-less read, a measured 0 (the
+ * counter surface's fallback when it has no row, indistinguishable from a real 0), or a named bound the
+ * report does not carry. It never returns reached. The walk's answer is not an input.
  */
 export async function verifyStatedBound(goal: string, deps: StatedBoundDeps): Promise<StatedBoundVerdict | null> {
   const abstain = (why: string): null => { deps.onAbstain?.(why); return null; };
@@ -498,7 +512,8 @@ export async function verifyStatedBound(goal: string, deps: StatedBoundDeps): Pr
   if (body && typeof body === "object" && "body" in body && typeof (body as { body?: unknown }).body === "object") body = (body as { body: unknown }).body;
   const report = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   if (report["available"] === false || report["counters_available"] === false) return abstain(`${producer.shape} reports its counters unavailable`);
-  const measured = finiteOrNull(report[producer.measuredField]);
+  let measured = finiteOrNull(report[producer.measuredField]);
+  if (measured !== null && measured <= 0) measured = null;
   let bound: number | null;
   let boundName: string;
   if (sb.bound_ref.kind === "literal") { bound = sb.bound_ref.value; boundName = "stated"; }
@@ -512,17 +527,15 @@ export async function verifyStatedBound(goal: string, deps: StatedBoundDeps): Pr
   }
   const verdict = gradeBound(measured, bound, sb.op);
   if (verdict === "no-measurement") return abstain(`${producer.shape} did not report a usable ${producer.measuredField}${sb.bound_ref.kind === "ref" ? ` and ${boundName}` : ""}`);
-  const holds = verdict === "agree";
+  if (verdict === "agree") return abstain(`the bound holds (${producer.measuredField}=${measured} ${OP_TEXT[sb.op]} ${boundName}=${bound}); a state that holds is not evidence the walk reached the goal`);
   const v: StatedBoundVerdict = {
-    reached: holds,
-    reason: `deterministic:stated-bound-${holds ? "holds" : "violated"} — the goal states ${producer.quantity} ${OP_TEXT[sb.op]} ${sb.bound_ref.kind === "literal" ? sb.bound_ref.value : `its ${sb.bound_ref.name}`}; a fresh read through ${producer.shape} measured ${producer.measuredField}=${measured} against bound ${boundName}=${bound}${holds ? "" : ", so the goal's target state does not hold whatever the answer says"}`,
+    reached: false,
+    reason: `deterministic:stated-bound-violated — the goal states ${producer.quantity} ${OP_TEXT[sb.op]} ${sb.bound_ref.kind === "literal" ? sb.bound_ref.value : `its ${sb.bound_ref.name}`}; a fresh read through ${producer.shape} measured ${producer.measuredField}=${measured} against bound ${boundName}=${bound}, so the goal's target state does not hold whatever the answer says`,
     completion_shapes: [],
     deterministic: true,
   };
   if (deps.judge) {
-    let j: { reached: boolean; reason?: string } | null = null;
-    try { j = await deps.judge(); } catch { j = null; }
-    v.judge_verdict_before_pregate = j ? { reached: j.reached === true, reason: String(j.reason ?? "") } : { reached: null, reason: "the judge could not be consulted" };
+    try { v.judge_verdict_before_pregate = await deps.judge(); } catch { v.judge_verdict_before_pregate = { reached: null, reason: "the judge could not be consulted" }; }
   }
   return v;
 }

@@ -92,26 +92,38 @@ export function parseReachJudgeText(text: unknown): ReachJudgeVerdict | null {
   };
 }
 
-/** The LLM reach judge: prompt, model call, sanitised verdict. null = the judge could not be consulted. */
-export async function judgeReach(input: ReachJudgeInput, complete: ReachJudgeComplete): Promise<ReachJudgeVerdict | null> {
-  const { goal, producedShapes, taskSummary, contentDigest, commandEvidence } = input;
+/** The LLM reach judge: prompt, model call, sanitised verdict. null = the judge could not be consulted.
+ *  `shadowComplete` is the model call for a SHADOW consultation (a gate that decided records what the judge said):
+ *  the caller routes it so it is never rewarded (index.ts: SHADOW_ROUTE_PREFIX). Absent, `complete` is used. */
+export async function judgeReach(input: ReachJudgeInput, complete: ReachJudgeComplete, shadowComplete?: ReachJudgeComplete): Promise<ReachJudgeVerdict | null> {
   const now = input.now ?? new Date();
   const gated = groundingPreGate({ ...input, now });
-  const prompt = temporalGroundingBlock(now) + buildReachJudgePrompt(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
   // The local-state rule is new, and an answer from the agentic llm_completion_dispatch wrapper can rest on tool reads
   // that surface no shape (hasInRunSource), so the judge is still asked IN SHADOW: its verdict is recorded beside the
   // gate's, never used, which measures how often this gate overrides it. The older gates do not call the judge.
   if (gated && gated.reason.startsWith(`deterministic:${LOCAL_STATE_CODE} `)) {
-    let shadow: ReachJudgeVerdict | null = null;
-    try { const text = await complete(prompt); shadow = text === null ? null : parseReachJudgeText(text); } catch { shadow = null; }
-    return { ...gated, judge_verdict_before_pregate: shadow ? { reached: shadow.reached, reason: shadow.reason } : { reached: null, reason: "the judge could not be consulted" } };
+    return { ...gated, judge_verdict_before_pregate: judgeShadowOf(await judgeModelOnly(input, shadowComplete ?? complete)) };
   }
   if (gated) return gated;
+  return judgeModelOnly(input, complete);
+}
+
+/** The model's own verdict: the prompt and the sanitised reply, with NO grounding gate in front. This is what a shadow
+ *  records — gating the shadow would record a gate's verdict (e.g. this file's own local-state rule on a goal that a
+ *  stated-bound oracle decided) instead of the judge's. */
+export async function judgeModelOnly(input: ReachJudgeInput, complete: ReachJudgeComplete): Promise<ReachJudgeVerdict | null> {
+  const { goal, producedShapes, taskSummary, contentDigest, commandEvidence } = input;
+  const prompt = temporalGroundingBlock(input.now ?? new Date()) + buildReachJudgePrompt(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
   try {
     const text = await complete(prompt);
     if (text === null) return null;
     return parseReachJudgeText(text);
   } catch { return null; }
+}
+
+/** A shadow verdict as recorded: reached null = the judge could not be consulted. */
+export function judgeShadowOf(v: ReachJudgeVerdict | null): { reached: boolean | null; reason: string } {
+  return v ? { reached: v.reached, reason: v.reason } : { reached: null, reason: "the judge could not be consulted" };
 }
 
 // ── Grounding gates ─────────────────────────────────────────────────────────────────────────────

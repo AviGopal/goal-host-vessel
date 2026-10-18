@@ -316,7 +316,7 @@ import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { judgeReach } from "./reach-grounding";
+import { judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
@@ -3793,12 +3793,13 @@ async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, pr
  */
 function noteJudgeShadow(v: GoalReachVerdict, walkEvidence?: { walkLog: string[] }): void {
   const j = v.judge_verdict_before_pregate;
-  if (!j) return;
+  const did = dispatchContext.getStore()?.dispatchId;
+  const rec = did ? executionStore.get(did) : undefined;
+  // PER VERDICT: an interim check's shadow does not outlive the verdict it belonged to.
+  if (!j) { if (rec) delete rec.judge_verdict_before_pregate; return; }
   const line = `[reach-shadow] judge_verdict_before_pregate reached=${j.reached === null ? "unknown" : String(j.reached)} (recorded, not used; the gate decided reached=${v.reached}: ${String(v.reason ?? "").replace(/\u2014/g, "-").slice(0, 160)}) judge: ${j.reason.replace(/\u2014/g, "-").slice(0, 240)}`;
   console.log(line);
   walkEvidence?.walkLog.push(line);
-  const did = dispatchContext.getStore()?.dispatchId;
-  const rec = did ? executionStore.get(did) : undefined;
   if (rec) rec.judge_verdict_before_pregate = { reached: j.reached, reason: j.reason };
 }
 async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
@@ -3809,7 +3810,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }
   // JUDGE CONSISTENCY (src/judge/verdict-consistency.ts), before the capture so the capture records what is returned.
   if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence);
-  if (v?.judge_verdict_before_pregate) noteJudgeShadow(v, walkEvidence);
+  if (v) noteJudgeShadow(v, walkEvidence);
   // CAPTURE (closed, src/judge/capture.ts): the reach gate's inputs and its verdict, after the decision.
   judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput({
     goal,
@@ -4045,19 +4046,21 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   }
 
   // STATED-BOUND ORACLE (independent-recompute.ts verifyStatedBound): a goal whose target state is a measurable bound
-  // on a named quantity ("reconcile the trace store back under its configured cap") is reached iff a FRESH read of
-  // that quantity through its advertised producer satisfies the bound — never by the answer's wording, which the judge
-  // accepted for a store 85% over its cap. Ahead of the per-class oracles and the write and hollow-walklog gates, so
-  // a measured truth answers first. The judge is consulted in SHADOW (routed under SHADOW_ROUTE_PREFIX, so no arm is
-  // rewarded for a discarded call) and its verdict recorded as judge_verdict_before_pregate. Abstains outside the
-  // family, with no producer for the quantity, or when the read fails, so the judge grades those unchanged.
+  // on a named quantity ("reconcile the trace store back under its configured cap") is NOT reached while a FRESH read
+  // of that quantity through THIS substrate's own producer violates the bound — whatever the answer's wording, which
+  // the judge accepted for a store 85% over its cap. ONE-SIDED: it never grants reach (a bound that holds abstains), so
+  // its place ahead of the per-class oracles and the write and hollow-walklog gates can only refuse. The judge is
+  // consulted in SHADOW (its own verdict, no grounding gate in front, routed under SHADOW_ROUTE_PREFIX so no arm is
+  // rewarded for a discarded call) and recorded as judge_verdict_before_pregate. Abstains outside the family, with no
+  // producer for the quantity, or when the read fails, so the judge grades those unchanged.
   {
     const boundV = await verifyStatedBound(goal, {
       read: async (shape, pointer) => {
-        const r = await ufExecuteTool(shape, pointer, new Set([shape]));
+        // ownOnly: the bound is THIS substrate's; a federated peer's store would grade the wrong quantity.
+        const r = await ufExecuteTool(shape, pointer, new Set([shape]), new Set([shape]));
         return r.ok ? parseMaybeJson(r.result) : null;
       },
-      judge: () => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`),
+      judge: () => llmJudgeShadow(goal, producedShapes, taskSummary, contentDigest, commandEvidence),
       onAbstain: (why) => console.log(`[stated-bound-oracle] ABSTAINED for goal_hash=${goalHashOf(goal)} — ${why.slice(0, 240)}; the judge grades this one`),
     });
     if (boundV) {
@@ -4509,16 +4512,25 @@ async function observeAggregateReport(goal: string, targetShapes: string[], pool
 async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, routeKey?: string): Promise<GoalReachVerdict | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
   // Prompt, parse and sanitisation live in reach-grounding.ts (moved verbatim, testable).
-  return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation() }, async (prompt) => {
-    // Routed per task type (reach_verification) across the llm-resolver fleet;
-    // buffered under the goal hash and rewarded by this dispatch's final verdict.
-    const rr = await routedComplete(routeKey ?? goalHashOf(goal), "reach_verification", {
-      prompt, model: "auto",
-    });
+  // Routed per task type (reach_verification) across the llm-resolver fleet; buffered under the goal hash and rewarded
+  // by this dispatch's final verdict. A shadow consultation inside the judge is routed under SHADOW_ROUTE_PREFIX.
+  return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation() },
+    reachJudgeCompleteVia(routeKey ?? goalHashOf(goal)), reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`));
+}
+/** The judge's model call under one routing key. */
+function reachJudgeCompleteVia(routeKey: string): (prompt: string) => Promise<string | null> {
+  return async (prompt) => {
+    const rr = await routedComplete(routeKey, "reach_verification", { prompt, model: "auto" });
     if (!rr.ok) return null;
     const j: any = rr.json;
     return j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
-  });
+  };
+}
+/** The judge consulted in SHADOW by a gate that already decided: the model's own verdict (no grounding gate in front),
+ *  routed under SHADOW_ROUTE_PREFIX so it never enters a dispatch's reward buffer. */
+async function llmJudgeShadow(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<JudgeShadow> {
+  if (!LLM_VESSEL_ENDPOINT) return judgeShadowOf(null);
+  return judgeShadowOf(await judgeModelOnly({ goal, producedShapes, taskSummary, contentDigest, commandEvidence }, reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`)));
 }
 
 // ── Deterministic-oracle label feed (goal_verification_labels corpus) ────────

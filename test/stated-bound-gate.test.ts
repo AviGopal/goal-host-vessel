@@ -8,7 +8,13 @@
 // advertised producer (trace_store_health_observer, dry run) and decides; the judge is consulted in
 // SHADOW and its verdict recorded as judge_verdict_before_pregate, never used.
 //
-// The judge stub below is the measured failure: it grades every answer reached.
+// ONE-SIDED (qa review of the first cut): the oracle only ever says NOT REACHED (bound violated) or
+// abstains. A first cut that granted reach when the bound held passed "error: could not connect" and
+// "I like turtles." whenever the store happened to sit under its cap (or the counter surface fell back
+// to row_count 0), ahead of every later gate, and an interim reach ended walks early.
+//
+// The judge stub below is the measured failure: by default it grades every answer reached. T1/T3 flip
+// it to HOLLOW, so a reached verdict there can only have come from the oracle.
 //
 // NO LIVE SERVICES. globalThis.fetch is replaced BEFORE index.ts is imported (its bootstrap starts
 // timers that call out); discovery names a fake observer vessel and a fake llm vessel, and anything
@@ -22,7 +28,8 @@ const JUDGE_MARK = "You verify whether a substrate execution REACHED";
 const realFetch = globalThis.fetch;
 let judgeCalls = 0;
 let reads: string[] = [];
-let observer: { row_count: number; cap: number } | "down" = { row_count: 234902, cap: 150000 };
+let observer: { row_count: number; cap: number } | "down" | "foreign" = { row_count: 234902, cap: 150000 };
+let judgeSays = true;
 
 function stubFetch(input: unknown, init?: { body?: unknown }): Promise<Response> {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : String((input as { url?: string })?.url ?? input);
@@ -30,12 +37,15 @@ function stubFetch(input: unknown, init?: { body?: unknown }): Promise<Response>
   const json = (o: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json" } }));
   if (body.includes(JUDGE_MARK)) {
     judgeCalls++;
-    const verdict = JSON.stringify({ reached: true, reason: "stub judge: the answer addresses the goal", completion_shapes: ["llm_completion_dispatch"] });
+    const verdict = JSON.stringify(judgeSays
+      ? { reached: true, reason: "stub judge: the answer addresses the goal", completion_shapes: ["llm_completion_dispatch"] }
+      : { reached: false, reason: "stub judge: the answer is off-topic or an error", completion_shapes: [] });
     return json({ content: { body: { content: verdict } }, body: { content: verdict } });
   }
   if (url === OBSERVER) {
     reads.push(body);
     if (observer === "down") return json({ error: "stub: observer unavailable" }, 503);
+    if (observer === "foreign") return json({ shape: "traceStoreHealthReport", body: { available: true, counters_available: true, row_count: 900000, cap: 150000 } });
     const o = observer;
     return json({ shape: "traceStoreHealthReport", body: { available: true, counters_available: true, row_count: o.row_count, cap: o.cap, over_cap: o.row_count > o.cap, gap_emitted: false } });
   }
@@ -43,7 +53,10 @@ function stubFetch(input: unknown, init?: { body?: unknown }): Promise<Response>
     return json({ content: { vessels: [{ id: "llm-test-vessel", endpoint: "http://llm-vessel.test.invalid", resolve_endpoint: LLM_VESSEL, protocol: "http" }] } });
   }
   if (body.includes('"vesselCapability"') && body.includes('"trace_store_health_observer"')) {
-    return json({ content: { vessels: [{ id: "observer-vessel", endpoint: "http://observer-vessel.test.invalid", resolve_endpoint: OBSERVER, protocol: "http" }] } });
+    // A federated peer's row (not this substrate's) when observer === "foreign": the read must refuse it (ownOnly).
+    return json({ content: { vessels: [observer === "foreign"
+      ? { id: "peer-observer", endpoint: "http://peer.test.invalid", resolve_endpoint: OBSERVER, protocol: "http", origin: "peer", peerEndpoint: "http://peer.test.invalid" }
+      : { id: "observer-vessel", endpoint: "http://observer-vessel.test.invalid", resolve_endpoint: OBSERVER, protocol: "http", origin: "local" }] } });
   }
   return json({ error: "stub: not served" }, 404);
 }
@@ -84,7 +97,13 @@ const answered = (goal: string, answer: string) => [
   `- shellResult: {"stdout":"swap step finished","exit_code":0}`,
   `- llm_completion_dispatch: ${answer}`,
 ].join("\n");
-const reset = (o: typeof observer) => { observer = o; judgeCalls = 0; reads = []; };
+const LLM_ONLY = ["goal", "dispatch_id", "llm_completion_dispatch"];
+const llmOnly = (goal: string, answer: string) => [
+  `- goal: ${JSON.stringify({ goal })}`,
+  `- dispatch_id: 6f1c1a52-0000-4000-8000-000000000002`,
+  `- llm_completion_dispatch: ${answer}`,
+].join("\n");
+const reset = (o: typeof observer, says = true) => { observer = o; judgeCalls = 0; reads = []; judgeSays = says; };
 
 describe("stated-bound oracle: must-fail", () => {
   test("(a) the store over its cap → not reached, deterministic, measured/bound named; the judge's reach is recorded, not used", async () => {
@@ -122,13 +141,81 @@ describe("stated-bound oracle: must-fail", () => {
   }
 });
 
+describe("T3: a hollow answer is never reached on a bound goal (the judge says hollow; only the oracle could grant)", () => {
+  const cases: Array<[string, string, { row_count: number; cap: number }]> = [
+    ["the counter fallback row_count:0 + an error", RECONCILE, { row_count: 0, cap: 150000 }],
+    ["under its cap + an error", RECONCILE, { row_count: 1200, cap: 150000 }],
+    ["a write goal ABOUT the bound + an off-topic answer", "Write a doc explaining how to keep the trace store under its cap.", { row_count: 1200, cap: 150000 }],
+    ["a write goal ABOUT the bound + the row_count:0 fallback", "Write a doc explaining how to keep the trace store under its cap.", { row_count: 0, cap: 150000 }],
+  ];
+  for (const [name, goal, obs] of cases) {
+    for (const answer of ["error: could not connect", "I like turtles."]) {
+      test(`${name}: "${answer}" → not reached`, async () => {
+        reset(obs, false);
+        const v = await verifyGoalReached(goal, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(goal, answer));
+        expect(v?.reached).toBe(false);
+        expect(v?.reason ?? "").not.toMatch(/stated-bound-holds/);
+      }, 20_000);
+    }
+  }
+});
+
+describe("T5 + recursion: the shadow judge is the model's own verdict and leaves the reward buffer unchanged", () => {
+  test("an LLM-only reconcile chain over its cap → the shadow records the JUDGE's verdict, not a grounding gate's", async () => {
+    reset({ row_count: 234902, cap: 150000 });
+    const before = rewardBufferEntries();
+    const v = await verifyGoalReached(RECONCILE, LLM_ONLY, "1 step: llm_completion_dispatch", llmOnly(RECONCILE, "closer to cap, done"));
+    expect(v?.reason).toMatch(/^deterministic:stated-bound-violated/);
+    expect(v?.judge_verdict_before_pregate).toEqual({ reached: true, reason: "stub judge: the answer addresses the goal" });
+    expect(rewardBufferEntries()).toBe(before);
+  }, 20_000);
+
+  test("the local-state gate's shadow judge (through verifyGoalReached) adds nothing to any reward buffer", async () => {
+    reset({ row_count: 234902, cap: 150000 });
+    const goal = "What is the structure of the full filesystem from root? List the top-level directories and what each one holds.";
+    const before = rewardBufferEntries();
+    const v = await verifyGoalReached(goal, LLM_ONLY, "1 step: llm_completion_dispatch", llmOnly(goal, "The root contains /bin, /etc, /home, /usr and /var."));
+    expect(v?.reached).toBe(false);
+    expect(judgeCalls).toBe(1);
+    expect(v?.judge_verdict_before_pregate?.reached).toBe(true);
+    expect(rewardBufferEntries()).toBe(before);
+  }, 20_000);
+});
+
 describe("stated-bound oracle: controls", () => {
-  test("the store at or under its cap → reached, deterministic", async () => {
-    reset({ row_count: 150000, cap: 150000 });
+  test("T1: the bound holding (at its cap) never grants reach: the judge decides either way", async () => {
+    for (const says of [true, false]) {
+      reset({ row_count: 150000, cap: 150000 }, says);
+      const v = await verifyGoalReached(RECONCILE, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(RECONCILE, "swap completed"));
+      expect(reads.length).toBe(1);
+      expect(v?.reason).not.toMatch(/stated-bound/);
+      expect(v?.reached).toBe(says);
+      expect(v?.judge_verdict_before_pregate).toBeUndefined();
+    }
+  }, 20_000);
+
+  test("a goal that does not LEAD with the target verb → abstains without reading", async () => {
+    reset({ row_count: 234902, cap: 150000 });
+    const goal = "Draft a proposal to reduce the trace store below its cap.";
+    const v = await verifyGoalReached(goal, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(goal, "Proposal: lower the hot window."));
+    expect(reads.length).toBe(0);
+    expect(v?.reason).toBe("stub judge: the answer addresses the goal");
+  }, 20_000);
+
+  test("a constraint the oracle cannot grade ('without deleting any rows') → abstains without reading", async () => {
+    reset({ row_count: 234902, cap: 150000 });
+    const goal = "Reconcile the trace store back under its configured cap without deleting any rows.";
+    const v = await verifyGoalReached(goal, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(goal, "swap completed"));
+    expect(reads.length).toBe(0);
+    expect(v?.reason).toBe("stub judge: the answer addresses the goal");
+  }, 20_000);
+
+  test("only a federated peer serves the observer → abstains (ownOnly): a peer's store is not this bound", async () => {
+    reset("foreign");
     const v = await verifyGoalReached(RECONCILE, SHAPES, "2 steps: shellResult -> llm_completion_dispatch", answered(RECONCILE, "swap completed"));
-    expect(v?.reached).toBe(true);
-    expect(v?.deterministic).toBe(true);
-    expect(v?.reason).toMatch(/^deterministic:stated-bound-holds .*row_count=150000 against bound cap=150000/);
+    expect(reads.length).toBe(0);
+    expect(v?.reason).toBe("stub judge: the answer addresses the goal");
+    expect(v?.judge_verdict_before_pregate).toBeUndefined();
   }, 20_000);
 
   test("the producer unreachable → abstains: the judge decides, no shadow record", async () => {
