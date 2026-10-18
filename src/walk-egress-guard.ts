@@ -33,6 +33,8 @@
  * which goal-host's credential does not satisfy; this guard does not read the store to learn a row's shape.
  */
 
+import { observeEgressRefusal, observeSkips } from "./observe-mode";
+
 /** The write type that reaches dev-vessel's pool store from outside. */
 export const POOL_WRITE_TYPE = "poolImpulse_write";
 
@@ -90,6 +92,12 @@ export function walkEgressRefusal(shape: string, body: unknown): string | null {
   return null;
 }
 
+/** The dispatch's learning mode and id, read from goal-host's dispatch context (set by setWalkEgressLearningModeReader,
+ *  the same pattern as llm-router's setRouterDispatchIdReader). Unset reads as no mode: nothing is refused for it. */
+type DispatchModeRead = { learningMode?: unknown; dispatchId?: string } | undefined;
+let readLearningMode: () => DispatchModeRead = () => undefined;
+export function setWalkEgressLearningModeReader(reader: () => DispatchModeRead): void { readLearningMode = reader; }
+
 /** Thrown by walkEgressFetch instead of sending; each site maps it to its own failure path. */
 export class WalkEgressRefused extends Error {
   readonly refused = true;
@@ -116,7 +124,12 @@ export function walkEgressRefusalLine(shape: string, site: string): string {
  * here, once, before the throw. Sites that log their own refusal (rawResolve, the floor tool loop) omit it.
  */
 export async function walkEgressFetch(shape: string, url: string, init: RequestInit, site?: string): Promise<Response> {
-  const why = walkEgressRefusal(shape, bodyOf(init));
+  // OBSERVE (observe-mode.ts): an observe dispatch's walk writes no gap; refused here, before egress, like the above.
+  let ctx: DispatchModeRead;
+  try { ctx = readLearningMode(); } catch { ctx = undefined; }
+  const observeWhy = observeEgressRefusal(ctx?.learningMode, shape, bodyOf(init));
+  if (observeWhy) observeSkips(ctx?.learningMode, ctx?.dispatchId, "gap_write");
+  const why = walkEgressRefusal(shape, bodyOf(init)) ?? observeWhy;
   if (why) {
     if (site) console.log(walkEgressRefusalLine(shape, site));
     throw new WalkEgressRefused(shape, why);

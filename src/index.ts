@@ -330,7 +330,8 @@ import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
-import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
+import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
+import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, type ObserveSideEffect } from "./observe-mode";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
@@ -1073,6 +1074,8 @@ export function reachVerdictBody(
   reason?: string | null,
   goalHash?: string | null,
   betaWithheldReason?: string | null,
+  // The dispatch's learning mode (observe-mode.ts): /reach records an observe verdict but grades no posterior with it.
+  learningMode?: "observe" | "learn" | null,
 ): string {
   const r = typeof reason === "string" ? reason.trim() : "";
   const h = typeof goalHash === "string" ? goalHash.trim() : "";
@@ -1085,6 +1088,7 @@ export function reachVerdictBody(
     ...(h ? { goal_hash: h } : {}),
     ...(typeof betaWithheldReason === "string" ? { beta_withheld: true } : {}),
     ...(w ? { beta_withheld_reason: w.slice(0, 600) } : {}),
+    ...(learningMode ? { learning_mode: learningMode } : {}),
   });
 }
 
@@ -1111,7 +1115,7 @@ export function deliverReachVerdict(
     console.warn(`[goal-host-vessel] reach-patch NOT ATTEMPTED (${origin}): ${skipReason} — this execution stays ungraded and its arm learns nothing from it`);
     return;
   }
-  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string));
+  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string), dispatchLearningMode());
   const _reachId = executionId as string;
   const _reachVerdict = reached as boolean;
   void (async () => {
@@ -1151,7 +1155,7 @@ export function deliverReachVerdict(
       // (`/v2/impulses/resolve`), shape in the BODY, sent to the vessel that SERVES it
       // (development-vessel, not activity-api). `fetch` does not throw on 404/500, so the
       // `!r.ok` branch is load-bearing: without it this fails silently exactly as before.
-      if (_reachVerdict) {
+      if (_reachVerdict && !observeSkip("gap_write")) { // OBSERVE (observe-mode.ts): no lost-verdict gap
         try {
           const _gapId = `lost-reached-verdict-${String(_reachId).replace(/[^a-zA-Z0-9_.-]/g, "_")}`.slice(0, 120);
           const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
@@ -1467,7 +1471,8 @@ interface GoalReachVerdict {
 /** An ABSTAIN (REALIGNMENT §9.2). `cut-view`: the judge's view could not hold the deliverable whole. `oracle-abstain`:
  *  the oracle that owns the goal's class declined (not applicable, or its observation was unavailable) and no judge of
  *  MEASURED adequacy exists for that class, so nothing grades it — the walk stays ungraded (no α, no β). */
-type GateAbstain = { kind: "cut-view" | "oracle-abstain"; cuts: JudgeCut[]; family?: string };
+// "observe-dry-run" (observe-mode.ts): an observe dispatch's compose ran as a dry run — nothing landed, nothing is graded.
+type GateAbstain = { kind: "cut-view" | "oracle-abstain" | "observe-dry-run"; cuts: JudgeCut[]; family?: string };
 
 // ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
 // The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
@@ -3774,6 +3779,7 @@ async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, pr
       sample: (i) => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${_gh}:consistency-${i}`, targets),
       recordDisagreement: async (c) => {
         await verdictConsistency.fsStore.write(verdictConsistency.disagreementCasePath(_dir, c), JSON.stringify(c, null, 2));
+        if (observeSkip("gap_write")) return; // OBSERVE (observe-mode.ts): the case is kept, no gap is seeded
         const _u = await ufResolveUrl("substrateGap_write");
         if (!_u) { console.warn(`[verdict-consistency] disagreement on ${c.goal_hash}/${c.digest} recorded; no producer of substrateGap_write to seed a gap`); return; }
         await fetch(_u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: { ...verdictConsistency.disagreementGapSeed(c), detected_at: new Date().toISOString() } } } }), signal: AbortSignal.timeout(10_000) });
@@ -4580,6 +4586,7 @@ function isDeterministicVerdict(v: { deterministic?: boolean; reason?: string | 
 }
 function recordDeterministicLabel(goal: string, executionId: string | undefined, activityId: string | undefined, verdict: GoalReachVerdict, override?: LabelOverride): void {
   if (!executionId) return;
+  if (observeSkip("oracle_label")) return; // OBSERVE (observe-mode.ts): no label enters the oracle corpus
   const det = isDeterministicVerdict(verdict);
   if (!det) return;
   if (override) {
@@ -4630,6 +4637,7 @@ const reachedCommandCache = new Map<string, { command: string; field: string; sh
 const REACHED_CMD_CACHE_PATH = process.env.REACHED_CMD_CACHE_PATH ?? "/workspace/.goal-host-reached-commands.jsonl";
 const REACHED_CMD_CACHE_MAX_LOAD = 2000;
 function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis }): void {
+  if (observeSkip("reached_command_bank")) return; // OBSERVE (observe-mode.ts): the known-command library is not banked
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
 }
 
@@ -4649,6 +4657,7 @@ function persistReachedCommand(hash: string, e: { command: string; field: string
 // applies it in order. Last-N-wins then does the right thing for free — a later re-bank after a
 // genuine reach overrides an earlier tombstone, and a later tombstone overrides an earlier bank.
 function evictReachedCommand(hash: string, reason: string): void {
+  if (observeSkip("reached_command_evict")) return; // OBSERVE (observe-mode.ts): no strike, delete or tombstone
   const envOrUnknown = String(reason ?? "").toLowerCase();
   // Unconfirmation is not disconfirmation (2026-09-18): a grader whose READBACK missed a
   // write that in fact landed must not destroy a proven command. Deterministic mismatch
@@ -4723,6 +4732,7 @@ function goalClassTokenOf(goalText: string): string {
   return gw && gw[1] ? `${gw[1]}${gw[2] ? "-" + gw[2] : ""}` : "";
 }
 function rememberGoalFailure(goalText: string, reason: string | undefined | null, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): void {
+  if (observeSkip("failure_memory")) return; // OBSERVE (observe-mode.ts): nothing is remembered, in process or on disk
   const r = String(reason ?? "").trim();
   if (!goalText || !r) return;
   // Structural terminations and environment faults carry no correctable content; only a verdict
@@ -4816,6 +4826,7 @@ export function composeReportReason(body: Record<string, unknown> | null | undef
 }
 function markGoalReached(goalText: string): void {
   if (!goalText) return;
+  if (observeSkip("failure_memory")) return; // OBSERVE (observe-mode.ts): a reach supersedes nothing
   const hash = goalHashOf(goalText);
   if (!goalFailureMemory.has(hash)) return;
   const at = new Date().toISOString();
@@ -5142,7 +5153,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   }
   console.log(`[rebind] result for "${shape}": selected=${!!best} candidates=${candidates} refusals: ${Object.entries(refusals).map(([k,n])=>k+"x"+n).join(" ")}`); return best;
 }
-function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
+function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } if (observeSkip("child_dispatch")) return; /* OBSERVE (observe-mode.ts): a child dispatch would run as learn */ fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
 // When the structured shape-walk produces a HOLLOW result (an always-succeeds /
@@ -5231,9 +5242,21 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 import { AsyncLocalStorage } from "node:async_hooks";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
-const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string }>();
+// learningMode is the dispatch's own body.learning_mode: under "observe" no side effect writes (observe-mode.ts).
+const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string; learningMode?: "observe" | "learn" }>();
 // The LLM router keys usage (tokens, calls, cost) by the dispatch id it reads from this same context.
 setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
+// OBSERVE (observe-mode.ts): the walk egress guard refuses an observe dispatch's gap writes, reading this same context.
+setWalkEgressLearningModeReader(() => dispatchContext.getStore());
+/** The learning mode of the dispatch this code runs for (dispatchContext), carried on its reach verdict. */
+function dispatchLearningMode(): "observe" | "learn" | undefined {
+  return dispatchContext.getStore()?.learningMode;
+}
+/** OBSERVE (observe-mode.ts): whether this dispatch's side effect is skipped — recorded once per dispatch and effect. */
+function observeSkip(effect: ObserveSideEffect): boolean {
+  const s = dispatchContext.getStore();
+  return observeSkips(s?.learningMode, s?.dispatchId, effect);
+}
 // Goal hashes this process is currently walking through /resolve. A walk that targets
 // goal_execution resolves it through discovery back into this same /resolve with the same
 // goal; with nothing tracking that, one goal recursed without bound (2026-09-26: load 26,
@@ -5414,6 +5437,7 @@ async function loadVerifierRecipes(): Promise<void> {
 void loadVerifierRecipes();
 
 async function fileMissingVerifierGap(goal: string): Promise<void> {
+  if (observeSkip("gap_write")) return; // OBSERVE (observe-mode.ts): an observe dispatch files no gap
   try {
     // AN UNRECOGNISED FAMILY IS THE ONE THAT MOST NEEDS A VERIFIER.
     //
@@ -5606,7 +5630,7 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   if (_useRecipe && _recipe) {
     const agreed = a?.value != null && b?.value != null && a.value === b.value;
     const contradicted = a?.value != null && b?.value != null && a.value !== b.value;
-    if (agreed || contradicted) {
+    if ((agreed || contradicted) && !observeSkip("verifier_recipe")) { // OBSERVE (observe-mode.ts): no recipe audit written
       const updated: VerifierRecipe = { ..._recipe, agreed: _recipe.agreed + (agreed ? 1 : 0), disagreed: _recipe.disagreed + (contradicted ? 1 : 0) };
       verifierRecipes.set(updated.family, updated);
       persistRecipe(updated);
@@ -5666,7 +5690,7 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   // took reach 25/48 -> 18/48 and had to be reverted, arriving through a second door.
   if (!isToken && typeof truth === "number" && truth > 0) {
     const donorHash = goalHashOf(goal);
-    if (!reachedCommandCache.has(donorHash)) {
+    if (!reachedCommandCache.has(donorHash) && !observeSkip("reached_command_bank")) { // OBSERVE (observe-mode.ts): no donation
       // Two independent derivations agreeing on a non-degenerate truth: the "concurring" bank basis.
       const donor = { command: a!.command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: goal, basis: "concurring" as const };
       reachedCommandCache.set(donorHash, donor);
@@ -5706,7 +5730,7 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
     ? (typeof truth === "string" && truth.trim().length > 0
        && !/^(null|undefined|nan|none|error|unknown|n\/a)$/i.test(truth.trim()))
     : (typeof truth === "number" && truth > 0);
-  if (_family && _tree && !_useRecipe && !verifierRecipes.has(_family) && _truthIsMintable) {
+  if (_family && _tree && !_useRecipe && !verifierRecipes.has(_family) && _truthIsMintable && !observeSkip("verifier_recipe")) { // OBSERVE: no recipe minted
     const template = generaliseCommand(a!.command, _tree);
     if (template) {
       const minted: VerifierRecipe = { family: _family, template, originGoal: goal.slice(0, 200), originValue: truth as never, agreed: 0, disagreed: 0 };
@@ -6039,10 +6063,11 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // 5a0d780e unlinked). Re-enter under run() with the id the caller passed, so every tool call
   // inside the floor is attributed regardless of how the async chain reached it.
   // The dispatch's gap-id field rides along the same way: an empty store would otherwise drop it, and the floor's reach
-  // gate would grade a gap investigation as a no-field goal.
+  // gate would grade a gap investigation as a no-field goal. The learning mode rides along with it (observe-mode.ts).
   const _floorGapId = walkContext?.decomposeGapId;
+  const _floorMode = walkContext?.learningMode;
   if ((dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) || (dispatchId && _floorGapId && !dispatchContext.getStore()?.decomposeGapId)) {
-    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}) }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
+    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}) }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -6697,6 +6722,7 @@ async function goalDeficiencyMinRuns(): Promise<number> {
   } catch { return 3; }
 }
 async function fileCapabilityGap(missingShape: string, goal: string, goalTargets: string[]): Promise<string | null> {
+  if (observeSkip("gap_write")) return null; // OBSERVE (observe-mode.ts): an observe dispatch files no gap
   const knownShapes = await fetchKnownShapes();
   const canonicalShape: string | null = canonicalizeShapeName(missingShape, knownShapes);
   if (canonicalShape === null) {
@@ -6811,6 +6837,7 @@ const EXECUTOR_ROOTED_SHAPES = new Set([
 ]);
 
 async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
+  if (observeSkip("gap_write")) return null; // OBSERVE (observe-mode.ts): an observe dispatch files no gap
   if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
   if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
   // EXECUTOR shapes are parameter-rooted in exactly the same way as the action shapes above:
@@ -6937,6 +6964,8 @@ async function mintGovernorAllows(shape: string): Promise<boolean> {
   }
 }
 async function penaliseHollowTemplate(activityId: string, reason: string, goalText?: string): Promise<{ templateId: string; dAlpha: number; dBeta: number }> { let _betaApplied = false;
+  // OBSERVE (observe-mode.ts): no β and no reach-gate lesson mirrored to concept-db (both are learning writes).
+  if (observeSkip("beta_penalty")) { observeSkip("reach_gate_lesson"); return { templateId: activityId, dAlpha: 0, dBeta: 0 }; }
   if (creditHold.heldForGoal(goalText, "hollow", "penaliseHollowTemplate")) return { templateId: activityId, dAlpha: 0, dBeta: 0 }; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   try {
     const res = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/feedback`, {
@@ -8679,6 +8708,8 @@ async function runGoalAsPoolWalkBody(
   const MAX_STEPS = (await resolveSelectionTuning()).maxWalkSteps;
   // Terminal emit targets to DEFER until intermediates are produced (composition).
   const terminalShapes = new Set<string>(writeDoorShapes(opts.terminalOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
+  // OBSERVE (observe-mode.ts): an observe dispatch's walk targets no gap write (dropped and recorded, like the write door).
+  observeDropFrom(terminalShapes, opts.learningMode, dispatchContext.getStore()?.dispatchId, tap);
 
   // Live resolver shapes advertised by discovery — a shape present here is
   // RESOLVABLE (some vessel resolves it), so a wrapper activity invoking it as a
@@ -11177,6 +11208,7 @@ If one of those sibling shapes is the action that would create what the goal ask
 
   // WRITE DOOR (target): every walk call site's target passes here, a prepended pathway head and the retry framings included.
   const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
+  observeDropFrom(target, opts.learningMode, dispatchContext.getStore()?.dispatchId, tap); // OBSERVE: no gap-write target
   // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): snapshot the
   // pool shapes present BEFORE any walk step ran. A reach judged solely on these
   // pre-existing seed shapes (e.g. active_note_path, open_note_paths) delivered no
@@ -14014,7 +14046,7 @@ async function runGoalWithRecoveryInner(
   // Lessons recalled for this dispatch, passed explicitly into every walk below.
   // See opts.recalledLessons for why the previous goal-hash key silently never matched.
   let _dispatchLessons = "";
-  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ dispatchId: opts.variables.dispatch_id });
+  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}) });
   // GAP ID AT ADMISSION (the one place the goal text may supply it): a goal that reads as a gap investigation and
   // arrived without variables.decompose_gap_id gets an exact by-id gap-store lookup of its own tokens; a hit is written
   // into the field and observed (counted log, walk log, the dispatch record's gapIdRecoveredFromText). Below this line
@@ -14740,7 +14772,7 @@ async function runGoalWithRecoveryInner(
               }));
             }
             const earlyOwners = earlyRows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(earlyTargetVessel));
-            if (earlyOwners.length > 1 && !_dupOwnerFiled.has(earlyTargetVessel)) {
+            if (earlyOwners.length > 1 && !_dupOwnerFiled.has(earlyTargetVessel) && !observeSkip("gap_write")) { // OBSERVE: no gap
               _dupOwnerFiled.add(earlyTargetVessel);
               const claimants = earlyOwners.map((r) => String(r.vesselId ?? ""));
               void fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
@@ -14790,6 +14822,8 @@ async function runGoalWithRecoveryInner(
                   spec: earlySpec,
                   verify_vessels: earlyAllVessels.map((v) => `repos/${v}`),
                   land: true,
+                  // OBSERVE (observe-mode.ts): an observe dispatch's compose may draft and verify, never land.
+                  ...observeComposeFields(opts.learningMode),
                   gap: {
                     id: earlyGapId,
                     summary: goal.replace(/^(?:Close substrate gap [-\w:.!]+:\s*)+/, "").trim() || goal,
@@ -14855,6 +14889,12 @@ async function runGoalWithRecoveryInner(
             const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
             const earlyBody = resolveReportBody(earlyJ);
             const earlyVerdict = String(earlyBody.verdict ?? "");
+            // OBSERVE (observe-mode.ts): the compose ran as a dry run; nothing is graded, walked or escalated.
+            if (opts.learningMode === "observe") {
+              observeSkip("edit_intent_escalation");
+              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT observe dispatch: feature_compose verdict=${earlyVerdict || "(none)"} as a dry run; ending the dispatch (no landing, no walk, no escalation)`);
+              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(earlyVerdict, composeReportReason(earlyBody)) };
+            }
             if (earlyVerdict === "FAVORABLE") {
               const earlyCutovers = Array.isArray(earlyBody.cutovers) ? earlyBody.cutovers as Array<Record<string, unknown>> : [];
               let earlyLandedSha: string | null = null;
@@ -14978,6 +15018,12 @@ async function runGoalWithRecoveryInner(
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failure detail name=${String((earlyErr as Error)?.name ?? "")} cause=${String(((earlyErr as { cause?: unknown })?.cause as Error | undefined)?.message ?? (earlyErr as { cause?: unknown })?.cause ?? "")} code=${String((earlyErr as { code?: unknown })?.code ?? "")}`);
           if ((earlyErr as Error)?.name === "TimeoutError" || /timed out|socket|closed|reset/i.test(String((earlyErr as Error)?.message ?? ""))) _earlyComposeCutAtCaller = true;
+        }
+        // OBSERVE (observe-mode.ts): an observe dispatch whose dry-run compose failed or answered non-OK is not walked
+        // or escalated either: the post-walk route and patch_with_tools would compose the same edit again.
+        if (opts.learningMode === "observe") {
+          observeSkip("edit_intent_escalation");
+          return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome("(none)", "the compose did not answer OK; not walked or escalated") };
         }
         // A LANDING ENDS THE DISPATCH (value-per-cost-selection 3.1). Every successful compose
         // outcome above returns, so reaching this line means timeout, exception, non-favourable
@@ -15111,7 +15157,7 @@ async function runGoalWithRecoveryInner(
           noteRouteTaken(_floorRec, "universal-tool-fallback");
           appendRouteAround(opts.variables.dispatch_id, _floorRec);
           // J1: a reused floor has no walk before it, but the goal's earlier failures are still its lessons.
-          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, undefined, { priorFeedback: priorFailureFeedbackFor(goal), decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined });
+          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, undefined, { priorFeedback: priorFailureFeedbackFor(goal), decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
           if (reused?.reached) {
             if (opts.learningMode !== "observe") {
               void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
@@ -15502,7 +15548,7 @@ async function runGoalWithRecoveryInner(
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
           const _ufOut: { reason?: string } = {};
           // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined });
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
@@ -15721,6 +15767,7 @@ async function runGoalWithRecoveryInner(
                     spec,
                     verify_vessels: allEditVessels.map((v) => `repos/${v}`),
                     land: true,
+                    ...observeComposeFields(opts.learningMode),   // see the early site: observe never lands
                     gap: {
                       id: gapId,
                       summary: goal.replace(/^(?:Close substrate gap [-\w:.!]+:\s*)+/, '').trim() || goal,
@@ -15770,6 +15817,12 @@ async function runGoalWithRecoveryInner(
             let j: any = await resp.json().catch(() => ({}));
             let body = resolveReportBody(j) as Record<string, any>;
             let verdict = String(body.verdict ?? "");
+            // OBSERVE (observe-mode.ts): a dry run is the whole route — no BUSY retry, grade, landing probe or escalation.
+            if (opts.learningMode === "observe") {
+              observeSkip("edit_intent_escalation");
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT observe dispatch: feature_compose verdict=${verdict || "(none)"} as a dry run; not escalated`);
+              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(verdict, composeReportReason(body)) };
+            }
             if (verdict === "BUSY") {
               console.log("[edit-intent] EDIT-INTENT compose BUSY — waiting 45 s before retry");
               await new Promise<void>((r) => setTimeout(r, 45_000));
@@ -18547,7 +18600,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
     // arrived on rather than serializing trigger:null (an unattributable dispatch).
     return "run-goal";
   })();
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}) };
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}), ...(learningMode ? { learningMode } : {}) };
   judgeCapture.attachRoutingInput(record, _routingInput);
   executionStore.set(dispatchId, record);
   persistDispatchStore();
@@ -18854,6 +18907,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
   let authoredTemplateId: string | undefined;
 
   (async () => {
+    // OBSERVE (observe-mode.ts): the dispatch's learning mode is in context from here, so every side effect this
+    // dispatch can cause — the post-seek and throw paths below included — reads it.
+    dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId, ...(learningMode ? { learningMode } : {}) });
     // Reason plane: caller-owned walk decision-log sink, attached to the record
     // in both the success and failure paths so GET /executions/:id can surface it.
     const walkStepSink: string[] = [];
@@ -19011,7 +19067,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // dispatches of one goal share). Re-entering the context lets the failed-walk trace
       // persisted below attribute the same dispatch's usage.
       const _costDid = typeof variables.dispatch_id === "string" && variables.dispatch_id.length > 0 ? variables.dispatch_id : dispatchId;
-      dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: _costDid });
+      dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: _costDid, ...(learningMode ? { learningMode } : {}) });
       const _spend = peekDispatchUsage(_costDid);
       (record as { cost?: { tokens_in: number; tokens_out: number; llm_calls: number; cost_usd: number; wall_ms: number } }).cost = { tokens_in: _spend.tokensIn, tokens_out: _spend.tokensOut, llm_calls: _spend.calls, cost_usd: _spend.costUsd, wall_ms: (record.endedAt ?? Date.now()) - record.startedAt };
       if (learningMode !== "observe" && !seek.abstain) void flushRouterFeedback(goalHashOf(String(goal ?? "")), seek.reached === true);
@@ -19086,7 +19142,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // dev-vessel write resolver (close_without_open_row).
       void closeAuthoringDecisions(typeof goal === "string" ? goal : "");
       // WHY affordance: operator dispatches render their walk reasoning into the vault.
-      if (operator && walkStepSink.length > 0) {
+      if (operator && walkStepSink.length > 0 && !observeSkip("vault_note")) { // OBSERVE (observe-mode.ts): no vault write
         try {
           const dr2 = await fetch(DISCOVERY_ENDPOINT + "/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: "ApiKey " + API_KEY } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "obsidian:write_note" } }), signal: AbortSignal.timeout(5000) });
           const dj2 = await dr2.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
@@ -19172,7 +19228,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         const isOperator = Array.isArray(tags) && tags.some((t) =>
           typeof t === "string" && t.startsWith("dispatcher:") && !t.includes("auto"));
         const isUnservable = /no template id returned|fallback_tier=refused/i.test(msg);
-        if (isOperator && isUnservable && typeof goal === "string") {
+        if (isOperator && isUnservable && typeof goal === "string" && !observeSkip("gap_write")) { // OBSERVE: no gap, no vault note
           const dispatcher = (tags as string[]).find((t) =>
             typeof t === "string" && t.startsWith("dispatcher:")) ?? "dispatcher:unknown";
           // Dedup by goal CLASS so repeated identical operator goals collapse to one
@@ -19776,6 +19832,8 @@ interface DispatchRecord {
   status: "running" | "completed" | "failed";
   requeuedAt?: number;
   requeueOf?: string;
+  /** The dispatch's body.learning_mode, kept so a requeue after a restart runs in the same mode (observe-mode.ts). */
+  learningMode?: "observe" | "learn";
   inferenceConfidence?: number | null;
   /** The target selection's decision-time record (goal-target-inference.ts GoalTargetDecision.target_selection). */
   targetSelection?: GoalTargetDecision["target_selection"] | null;
@@ -19964,6 +20022,7 @@ async function emitAuthoringDecision(
   classification_metadata: Record<string, unknown>,
 ): Promise<void> {
   if (process.env.SUBSTRATE_AUTHORING_DECISION_EMIT === "0") return;
+  if (observeSkip("authoring_decision")) return; // OBSERVE (observe-mode.ts): no decision-log row is written
   // Telemetry redirect (R4a): auto_draft_* authoring decisions are telemetry,
   // not gaps. As substrateGap rows they were ~94 percent of daily gap closes and
   // drowned the gap-triple metric. No consumer reads auto_draft_decision rows
@@ -20025,6 +20084,7 @@ async function emitAuthoringDecision(
 // scheme). The write resolver skips closes whose class has no open row, so firing
 // all four categories unconditionally is safe and idempotent.
 async function closeAuthoringDecisions(goalText: string): Promise<void> {
+  if (observeSkip("authoring_decision")) return; // OBSERVE (observe-mode.ts): no decision-log gap row is written
   if (goalText.length === 0) return;
   // Mirror emitAuthoringDecision's id scheme exactly: every emit call site passes
   // goal.slice(0, 200) into classification_metadata, so the open row's id hashes
@@ -20106,7 +20166,7 @@ async function drainInterruptedRequeue(): Promise<void> {
       await fetch("http://127.0.0.1:" + PORT + "/run-goal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId })
+        body: JSON.stringify({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) })
       });
       console.log("[goal-host-vessel] requeued interrupted dispatch " + r.dispatchId);
       await new Promise((res) => setTimeout(res, 5000));
@@ -20269,6 +20329,7 @@ server = Bun.serve({
         write_door: writeDoorCounters(),
         // The executor's task-level drops (ias-executor-ts writeDoorTaskCounters); null on a dist that predates the door.
         write_door_ias_task: (iasExecutor as unknown as { writeDoorTaskCounters?: () => unknown }).writeDoorTaskCounters?.() ?? null,
+        observe_skips: observeSkipCounters(),
       });
     }
 

@@ -93,7 +93,7 @@ describe("reached-command bank is gated, and a retry skips only the banked comma
     expect(src.slice(gate, run)).toContain("if (rc && !_seedFailed) {");
     expect(src.slice(gate, run)).toContain("floor: NOT seeding the family recipe");
     // The post-walk floor (the retry's floor) is handed the dispatch's failed replays.
-    expect(src).toContain('priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined });');
+    expect(src).toContain('priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });');
   });
   test("control: the first walk is unchanged — reuse off only on an exact-hash failure history, and no skip list", () => {
     expect(src).toContain("ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,");

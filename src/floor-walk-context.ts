@@ -27,6 +27,8 @@ export interface FloorWalkContext {
   /** The dispatch's structured variables.decompose_gap_id, carried explicitly like the dispatch id: the floor re-enters
    *  the dispatch context when its store is empty, and the reach gate inside the floor reads the field from there. */
   decomposeGapId?: string;
+  /** The dispatch's learning mode, carried into the floor's own dispatch context (observe-mode.ts). */
+  learningMode?: "observe" | "learn";
 }
 
 /**
