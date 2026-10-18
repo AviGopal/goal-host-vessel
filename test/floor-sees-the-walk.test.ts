@@ -44,7 +44,8 @@ describe("the floor is shown what the walk gathered", () => {
   });
   it("[WIRING] the floor prompt carries the block; the post-walk site passes carry + reason + feedback; the reuse site passes feedback", () => {
     expect(INDEX).toContain("${investigationSeed}${floorObservationsBlock(walkContext, (await resolveSelectionTuning()).floorObservationsMaxChars)}");
-    expect(INDEX).toContain("_ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal) });");
+    // (+ the dispatch's failed replays, so the floor does not seed a recipe that failed: reached-command-bank-wiring.test.ts)
+    expect(INDEX).toContain("_ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays] });");
     expect(INDEX).toContain("undefined, { priorFeedback: priorFailureFeedbackFor(goal) });");
     expect(INDEX).toContain("universalToolFallback(goal, targetShapes, dispatchId, out, walkContext)");
   });

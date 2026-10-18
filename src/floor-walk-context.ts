@@ -12,6 +12,7 @@
  * the carried impulses (the block a terminal writer binds) and the prior-failure feedback text the walks already receive.
  */
 import { findingsDigest, type CarriedStep } from "./walk-pool";
+import type { FailedReplay } from "./reached-command-store";
 
 export interface FloorWalkContext {
   /** The walk's carry-forward (carryForward over its pool): impulses real producers returned in this dispatch. */
@@ -20,6 +21,9 @@ export interface FloorWalkContext {
   reason?: string | null;
   /** The goal's prior-failure feedback (priorFailureFeedbackFor), the lessons the walks already receive. */
   priorFeedback?: string;
+  /** The banked/recipe commands whose replay FAILED earlier in this dispatch (reached-command-store.ts), keyed by
+   *  shape + command: the floor does not seed one of them as a verified measurement. */
+  skipFailedReplays?: readonly FailedReplay[];
 }
 
 /**

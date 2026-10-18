@@ -156,6 +156,12 @@ describe("family recipe replays", () => {
     const failed = store.failedBankReplays(new Map([["shellResult", R]]), new Map());
     expect(store.replayBlocked(failed, "shellResult", R)?.command).toBe(R);
   });
+  // The floor seed reads the same list with the same key: a recipe that succeeded is still seeded.
+  test("control: a recipe that succeeded is still seeded into the floor", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", R]]), new Map([["shellResult", R]]));
+    expect(store.replayBlocked(failed, "shellResult", R)).toBeUndefined();
+    expect(store.replayBlocked(undefined, "shellResult", R)).toBeUndefined(); // the pre-walk (reuse) floor passes no list
+  });
   test("control: a recipe replay that succeeded is reused", () => {
     const failed = store.failedBankReplays(new Map([["shellResult", R]]), new Map([["shellResult", R]]));
     expect(failed).toEqual([]);

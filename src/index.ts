@@ -5954,7 +5954,11 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   let recipeSeed = "";
   {
     const rc = recipeCommandFor(goal);
-    if (rc) {
+    // The same rule as the walk's recipe paths: a recipe command that FAILED earlier in this dispatch is not handed to
+    // the floor as a verified measurement (the retry floor would build its answer on the very output that failed).
+    const _seedFailed = rc ? replayBlocked(walkContext?.skipFailedReplays, "shellResult", rc) : undefined;
+    if (_seedFailed) console.log(`[goal-host-vessel] floor: NOT seeding the family recipe for "shellResult" (skip 1 of ${walkContext?.skipFailedReplays?.length ?? 0} failed in this dispatch) — it FAILED earlier in this dispatch: ${_seedFailed.why}; command: ${_seedFailed.command.slice(0, 200)}`);
+    if (rc && !_seedFailed) {
       const shell = await ufExecuteTool("shellResult", { command: rc }, new Set<string>(["shellResult"]));
       if (shell.ok) {
         let out = shell.result;
@@ -15342,7 +15346,7 @@ async function runGoalWithRecoveryInner(
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
           const _ufOut: { reason?: string } = {};
           // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal) });
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays] });
       if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
