@@ -76,8 +76,8 @@ describe("a gap investigation is graded by its product before the write gate", (
     }
   });
 
-  test("[CONTROL] a goal that is not an investigation, asking for a change, still meets the write gate", async () => {
-    const v = await verifyGoalReached("Add the resolver check before the pick to the lane", ["llm_completion"], "walk(1 steps)", "- llm_completion: done", undefined, undefined, undefined, undefined, [], { persistedWrites: [], targets: ["llm_completion"] }, "walk");
+  test("[CONTROL] the exemption is narrow: a no-field investigation that targets a mutation shape still meets the write gate", async () => {
+    const v = await verifyGoalReached(GOAL, ["gapDecomposition"], "walk(1 steps): decomposeGap", "- gapDecomposition: {...}", undefined, undefined, undefined, undefined, pool([STEP]), { persistedWrites: [], targets: ["gapDecomposition", "substrateGap_write"] }, "walk");
     expect(v?.reason ?? "").toContain("write-goal-no-artifact");
   });
 
