@@ -331,7 +331,7 @@ import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains,
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
-import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
+import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
@@ -9466,6 +9466,8 @@ async function runGoalAsPoolWalkBody(
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     // The shape is resolved LAST: a synthesized `type` must never change it (see resolve-pointer.ts).
     const pointer: Record<string, unknown> = buildResolvePointer(shape, base as Record<string, unknown>, extraArgs);
+    // OBSERVE (observe-mode.ts): an observe walk's gapDecomposition asks for a dry decomposition (no child gap written).
+    Object.assign(pointer, observeDecomposeFields(shape, opts.learningMode));
     if ((shape === "shellResult" || shape === "shell" || shape === "bash" || shape === "bounded_shell" || shape === "gitCommitResult" || shape === "git_commit") && !pointer.execution_id && dispatchContext.getStore()?.dispatchId) pointer.execution_id = dispatchContext.getStore()!.dispatchId;
     // SEARCH PROVENANCE (web_resource trust gate, user ruling 10-02: "allow any https URL that a
     // web_search in the same walk returned"). The walk sends a REFERENCE to the search impulse that

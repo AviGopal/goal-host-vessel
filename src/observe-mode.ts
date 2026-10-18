@@ -87,8 +87,9 @@ export function observeEgressRefusal(mode: unknown, shape: string, body: unknown
 export const OBSERVE_MODE_BLIND_SHAPES: ReadonlySet<string> = new Set([
   "gap_to_feature", "apply_proposal_as_patch", "perf_canary_resolve", "patch_with_tools", "goal_execution",
 ]);
-/** Change resolvers that read the pointer's learning_mode (feature_compose, and gap_compose, which runs it). */
-export const OBSERVE_MODE_READING_SHAPES: ReadonlySet<string> = new Set(["feature_compose", "gap_compose"]);
+/** Change resolvers that read the pointer's learning_mode (feature_compose, and gap_compose, which runs it), and
+ *  development-vessel's gapDecomposition, whose observe run drafts the decomposition and writes no child gap. */
+export const OBSERVE_MODE_READING_SHAPES: ReadonlySet<string> = new Set(["feature_compose", "gap_compose", "gapDecomposition"]);
 
 const bareShape = (t: string): string => t.slice(t.lastIndexOf(":") + 1);
 
@@ -108,8 +109,17 @@ export function observeModeBlindRefusal(mode: unknown, shape: string, body: unkn
   if (blind) return `observe: refused before egress — ${blind} does not read learning_mode, so an observe dispatch keeps it as a would-be op and never dispatches it`;
   const reading = types.find((t) => OBSERVE_MODE_READING_SHAPES.has(t));
   const p = ptr ?? imp ?? b;
-  if (reading && p?.["learning_mode"] !== "observe") return `observe: refused before egress — this ${reading} pointer does not carry learning_mode "observe", so it would run as a landing compose; kept as a would-be op`;
+  if (reading && p?.["learning_mode"] !== "observe") return `observe: refused before egress — this ${reading} pointer does not carry learning_mode "observe", so it would run as learn; kept as a would-be op`;
   return null;
+}
+
+/**
+ * The fields the walk's own gapDecomposition pointer carries for this dispatch, set AFTER the pointer is built (so a
+ * pool value or a synthesised arg cannot change them): learning_mode "observe" for an observe dispatch, so the
+ * decomposition runs dry and the egress guard lets it out; nothing for any other mode (the pointer is unchanged).
+ */
+export function observeDecomposeFields(shape: string, mode: unknown): { learning_mode?: "observe" } {
+  return isObserve(mode) && bareShape(shape) === "gapDecomposition" ? { learning_mode: "observe" } : {};
 }
 
 /** The walk's target form: an observe dispatch drops a gap-write target, and the drop is recorded. */

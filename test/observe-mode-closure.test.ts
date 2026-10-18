@@ -8,6 +8,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import * as om from "../src/observe-mode";
 import { isWalkEgressRefused, setWalkEgressLearningModeReader, walkEgressFetch } from "../src/walk-egress-guard";
+import { buildResolvePointer } from "../src/resolve-pointer";
+import { walkResolveBody } from "../src/applied-write";
 
 const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
 const fnBody = (sig: string, span = 2500): string => {
@@ -238,6 +240,65 @@ describe("scope: an observe walk never dispatches a resolver that ignores the mo
     setWalkEgressLearningModeReader(() => undefined);
     await walkEgressFetch("patch_with_tools", "http://dv/v2/impulses/resolve", init({ type: "patch_with_tools" }));
     expect(calls.length).toBe(BLIND.length + 3);
+    expect(om.observeSkipCounters()).toEqual({});
+  });
+});
+
+describe("gapDecomposition: an observe walk's decomposition runs dry, and one that would run as learn is refused", () => {
+  const realFetch = globalThis.fetch;
+  let sent: unknown[] = [];
+  const stubFetch = () => {
+    sent = [];
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => { sent.push(JSON.parse(String(init?.body ?? "null"))); return new Response("{}", { status: 200 }); }) as typeof fetch;
+  };
+  afterEach(() => { globalThis.fetch = realFetch; setWalkEgressLearningModeReader(() => undefined); om.resetObserveSkips(); });
+  const decomposeFields = (shape: string, mode: unknown) => (om as any).observeDecomposeFields?.(shape, mode);
+  /** The walk's satisfier egress for a shape, as rawResolve builds it: pointer from pool + args, the observe stamp, the body. */
+  const walkEgress = async (mode: string, extraArgs: Record<string, unknown>): Promise<unknown> => {
+    setWalkEgressLearningModeReader(() => ({ learningMode: mode, dispatchId: `d-${mode}` }));
+    const pointer = buildResolvePointer("gapDecomposition", { dispatch_id: `d-${mode}` }, extraArgs);
+    Object.assign(pointer, decomposeFields("gapDecomposition", mode) ?? {});
+    try { await walkEgressFetch("gapDecomposition", "http://dv/v2/impulses/resolve", { method: "POST", body: JSON.stringify(walkResolveBody("gapDecomposition", pointer)) }); return null; } catch (e) { return e; }
+  };
+
+  test("[MUST-FAIL] observe: the walk's gapDecomposition pointer carries learning_mode observe and goes out", async () => {
+    stubFetch();
+    expect(decomposeFields("gapDecomposition", "observe")).toEqual({ learning_mode: "observe" });
+    expect(decomposeFields("development-vessel:gapDecomposition", "observe")).toEqual({ learning_mode: "observe" });
+    expect(await walkEgress("observe", { decompose_gap_id: "g-1" })).toBeNull();
+    expect(sent).toEqual([{ impulse: { pointer: { dispatch_id: "d-observe", decompose_gap_id: "g-1", type: "gapDecomposition", learning_mode: "observe" } } }]);
+    // a synthesised arg cannot turn it back to learn: the stamp is applied after the pointer is built
+    stubFetch();
+    expect(await walkEgress("observe", { decompose_gap_id: "g-1", learning_mode: "learn" })).toBeNull();
+    expect((sent[0] as any).impulse.pointer.learning_mode).toBe("observe");
+  });
+  test("[MUST-FAIL] observe: a gapDecomposition egress whose pointer lacks learning_mode observe is refused before fetch", async () => {
+    stubFetch();
+    setWalkEgressLearningModeReader(() => ({ learningMode: "observe", dispatchId: "d-obs" }));
+    let err: unknown = null;
+    try { await walkEgressFetch("gapDecomposition", "http://dv/v2/impulses/resolve", { method: "POST", body: JSON.stringify({ impulse: { pointer: { type: "gapDecomposition", decompose_gap_id: "g-1" } } }) }); } catch (e) { err = e; }
+    expect(isWalkEgressRefused(err)).toBe(true);
+    expect(String((err as Error)?.message)).toContain("would-be op");
+    expect(sent).toEqual([]);
+    expect(om.observeSkipCounters()).toEqual({ mode_blind_dispatch: 1 });
+    expect((om as any).OBSERVE_MODE_BLIND_SHAPES?.has("gapDecomposition")).toBe(false); // runnable, not blind
+  });
+  test("[MUST-FAIL] rawResolve stamps the walk's pointer after it is built and before the egress", () => {
+    const body = fnBody("const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>, site = \"walk\")", 12000);
+    const built = body.indexOf("const pointer: Record<string, unknown> = buildResolvePointer(shape, base as Record<string, unknown>, extraArgs);");
+    const stamp = body.indexOf("Object.assign(pointer, observeDecomposeFields(shape, opts.learningMode));");
+    expect(built).toBeGreaterThan(0);
+    expect(stamp).toBeGreaterThan(built);
+    expect(stamp).toBeLessThan(body.indexOf("resp = await walkEgressFetch(shape,"));
+    expect(src).toContain("directArgsRaw = { decompose_gap_id: gid };");
+  });
+  test("control (learn / absent): the pointer is unchanged and goes out", async () => {
+    stubFetch();
+    expect(decomposeFields("gapDecomposition", "learn")).toEqual({});
+    expect(decomposeFields("gapDecomposition", undefined)).toEqual({});
+    expect(decomposeFields("feature_compose", "observe")).toEqual({});
+    expect(await walkEgress("learn", { decompose_gap_id: "g-1" })).toBeNull();
+    expect(sent).toEqual([{ impulse: { pointer: { dispatch_id: "d-learn", decompose_gap_id: "g-1", type: "gapDecomposition" } } }]);
     expect(om.observeSkipCounters()).toEqual({});
   });
 });
