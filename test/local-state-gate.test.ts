@@ -35,6 +35,12 @@ function stubFetch(input: unknown, init?: { body?: unknown }): Promise<Response>
   if (body.includes('"vesselCapability"') && (body.includes('"shellResult"') || body.includes('"fs_read"'))) {
     return json({ content: { vessels: [{ id: "local-tools", endpoint: "http://local-tools.test.invalid", resolve_endpoint: "http://local-tools.test.invalid/resolve", protocol: "http", origin: "local" }] } });
   }
+  if (body.includes('"vesselCapability"') && (body.includes('"memoryNote"') || body.includes('"web_resource"'))) {
+    return json({ content: { vessels: [{ id: "own-other", endpoint: "http://own-other.test.invalid", resolve_endpoint: "http://own-other.test.invalid/resolve", protocol: "http", origin: "local" }] } });
+  }
+  if (body.includes('"vesselCapability"') && body.includes('"fileContent"')) {
+    return Promise.reject(new Error("stub: discovery unreachable"));
+  }
   if (body.includes('"vesselCapability"') && body.includes('"peerInventory"')) {
     return json({ content: { vessels: [{ id: "peer-vessel", endpoint: "http://peer.test.invalid", resolve_endpoint: "http://peer.test.invalid/resolve", protocol: "http", origin: "peer", peerEndpoint: "http://peer.test.invalid" }] } });
   }
@@ -133,6 +139,33 @@ describe("T4: a question about this system, answered from model memory, is not r
     const dig = `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- shellResult: {"stdout":"bin\\netc\\nhome","exit_code":0}`;
     const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", dig, undefined, undefined, undefined, ["shellResult"]);
     expect(v?.reason).toBe(JUDGE_REASON);
+  }, 20_000);
+});
+
+describe("local reads are a POSITIVE role set (files, code, shell), not 'anything else'", () => {
+  test("a web_resource or memoryNote step in the chain is not a local read of this host → still unsourced-local-state", async () => {
+    for (const extra of ["web_resource", "memoryNote"]) {
+      const shapes = ["goal", "dispatch_id", extra, "llm_completion_dispatch"];
+      const v = await verifyGoalReached(FS_GOAL, shapes, "2 steps", `${llmOnly(FS_GOAL, GENERIC_TREE)}\n- ${extra}: {"content":"..."}`, undefined, undefined, undefined, ["shellResult"]);
+      expect(v?.reason).toMatch(/^deterministic:unsourced-local-state /);
+    }
+  }, 20_000);
+
+  test("a goal whose own-served target is memoryNote or web_resource is not a local-state question → the judge decides", async () => {
+    for (const target of ["memoryNote", "web_resource"]) {
+      const v = await verifyGoalReached("Summarise what the notes say about release planning.", LLM_ONLY, "1 step", llmOnly("Summarise what the notes say about release planning.", "They say to plan releases weekly."), undefined, undefined, undefined, [target]);
+      expect(v?.reason).toBe(JUDGE_REASON);
+    }
+  }, 20_000);
+
+  test("discovery unreachable for a local target → the rule is off for the call, and says so", async () => {
+    const warn = console.warn; const seen: string[] = [];
+    console.warn = (...a: unknown[]) => { seen.push(a.map(String).join(" ")); };
+    try {
+      const v = await verifyGoalReached(FS_GOAL, LLM_ONLY, "1 step", llmOnly(FS_GOAL, GENERIC_TREE), undefined, undefined, undefined, ["fileContent"]);
+      expect(v?.reason).toBe(JUDGE_REASON);
+    } finally { console.warn = warn; }
+    expect(seen.some((l) => l.includes("[local-state] discovery unreachable") && l.includes("fail-open"))).toBe(true);
   }, 20_000);
 });
 

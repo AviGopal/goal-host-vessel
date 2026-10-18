@@ -316,7 +316,7 @@ import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { isLocalReadShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
+import { hasLocalRead, isLocalReadShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
@@ -3761,7 +3761,7 @@ function landedEditOf(meaningfulShapes: readonly string[], dig: string): boolean
  * this node's earlier verdict for the same goal + answer; on disagreement a k-sample majority decides (and is kept for the
  * key), recorded by the module and seeded as a gap. Mutates `v` only when the majority overrides it. Never fails the gate.
  */
-async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string): Promise<void> {
+async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, targets?: readonly string[]): Promise<void> {
   try {
     const _t = await resolveSelectionTuning();
     const _answer = (contentDigest ?? "").trim() || taskSummary;
@@ -3770,7 +3770,8 @@ async function reconcileVerdictConsistency(v: GoalReachVerdict, goal: string, pr
     if (!_dir) return; // no store on this process (only the service boot sets one): consistency is not checked here
     const _r = await verdictConsistency.reconcileVerdict({ goalHash: _gh, digest: verdictConsistency.answerDigest(_answer, producedShapes), goal, answer: _answer, producedShapes, verdict: v, k: _t.verdictConsistencyK, ttlMs: _t.verdictConsistencyTtlMs }, {
       dir: _dir, store: verdictConsistency.fsStore, now: () => new Date(),
-      sample: (i) => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${_gh}:consistency-${i}`),
+      // The same targets as the verdict being checked, so a sample meets the same local-state rule the verdict met.
+      sample: (i) => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${_gh}:consistency-${i}`, targets),
       recordDisagreement: async (c) => {
         await verdictConsistency.fsStore.write(verdictConsistency.disagreementCasePath(_dir, c), JSON.stringify(c, null, 2));
         const _u = await ufResolveUrl("substrateGap_write");
@@ -3809,7 +3810,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     v.completion_shapes = restrictCompletionShapes(v.completion_shapes, new Set(producedShapes), false, keep);
   }
   // JUDGE CONSISTENCY (src/judge/verdict-consistency.ts), before the capture so the capture records what is returned.
-  if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence, deliverables ?? writeEvidence?.targets);
   if (v) noteJudgeShadow(v, walkEvidence);
   // CAPTURE (closed, src/judge/capture.ts): the reach gate's inputs and its verdict, after the decision.
   judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput({
@@ -4513,7 +4514,8 @@ async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary
   if (!LLM_VESSEL_ENDPOINT) return null;
   // LOCAL STATE IS STRUCTURAL (reach-grounding.ts rule 5): the goal's targets (the caller's, else the inferred ones) that
   // read local state and are served by THIS substrate's own vessels, resolved through discovery now.
-  const localTargets = await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
+  // Skipped when the chain already made a local read: the rule cannot fire then, and the lookup is a discovery call per target.
+  const localTargets = hasLocalRead(producedShapes, commandEvidence) ? [] : await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
   // Prompt, parse and sanitisation live in reach-grounding.ts (moved verbatim, testable).
   // Routed per task type (reach_verification) across the llm-resolver fleet; buffered under the goal hash and rewarded
   // by this dispatch's final verdict. A shadow consultation inside the judge is routed under SHADOW_ROUTE_PREFIX.
@@ -4524,7 +4526,9 @@ async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary
  *  use time, own-substrate rows only, as the floor offers own-only tools). A target only a peer serves is not this system. */
 async function ownLocalTargets(targets: readonly string[]): Promise<string[]> {
   const candidates = [...new Set(targets.map(String))].filter(isLocalReadShape);
-  const own = await Promise.all(candidates.map(async (t) => ((await ufOwnProducerUrl(t).catch(() => null)) ? t : null)));
+  // FAIL-OPEN, VISIBLY: discovery unreachable means no target is known to be local, so the rule is off for this call.
+  const failOpen = (why: string) => console.warn(`[local-state] discovery unreachable (${why.slice(0, 160)}): the local-state rule is OFF for this judge call (fail-open)`);
+  const own = await Promise.all(candidates.map(async (t) => ((await ufOwnProducerUrl(t, failOpen).catch(() => null)) ? t : null)));
   return own.filter((t): t is string => t !== null);
 }
 /** The shapes the floor's reach gate is handed: the requested targets and the writes it made, plus the READ tools it
@@ -5148,10 +5152,10 @@ function escalateNoProducerToInvestigation(goal: string, confidence: number | nu
 // floor for cold arbitrary goals. Additive, guarded, fail-open.
 // UNIVERSAL_READ_TOOLS lives in floor-tools.ts (no shell: see there).
 /** Discovery's producer rows for a shape: the request ufResolveUrl has always made, with its v2 fallback. */
-async function ufDiscoverRows(shape: string): Promise<any[]> {
+async function ufDiscoverRows(shape: string, onUnreachable?: (why: string) => void): Promise<any[]> {
   try {
     const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ pointer: { type: "vesselCapability", shape } }), signal: AbortSignal.timeout(5000) });
-    if (!r.ok) return [];
+    if (!r.ok) { onUnreachable?.(`HTTP ${r.status}`); return []; }
     const j = await r.json() as any; let vessels: any[] = Array.isArray(j?.content?.vessels) ? j.content.vessels : [];
     if (vessels.length === 0) {
       // Fallback: retry via the v2 impulses endpoint which some vessels register under
@@ -5161,7 +5165,7 @@ async function ufDiscoverRows(shape: string): Promise<any[]> {
       } catch { /* fall through to return null */ }
     }
     return vessels;
-  } catch { return []; }
+  } catch (e) { onUnreachable?.(String((e as Error)?.message ?? e)); return []; }
 }
 async function ufResolveUrl(shape: string): Promise<string | null> {
   try {
@@ -5185,8 +5189,8 @@ async function ufResolveUrl(shape: string): Promise<string | null> {
 /** THE OWN-SUBSTRATE PRODUCER of a shape (CHANGE-29), or null: a row served on this node, or a peer row reached
  *  through one of THIS substrate's nodes (substrateNodes, CHANGE-15's ordering) that dials its own endpoint. A
  *  foreign peer's row is never returned, so a floor tool built from it is neither offered nor answered by it. */
-async function ufOwnProducerUrl(shape: string): Promise<string | null> {
-  const rows = await ufDiscoverRows(shape);
+async function ufOwnProducerUrl(shape: string, onUnreachable?: (why: string) => void): Promise<string | null> {
+  const rows = await ufDiscoverRows(shape, onUnreachable);
   if (rows.length === 0) return null;
   const peers = await ownSubstratePeers();
   const own = orderProducers(rows as ProducerRow[], peers).find((r) => isOwnSubstrateRow(r, peers)) as any;

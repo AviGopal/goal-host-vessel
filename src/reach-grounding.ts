@@ -213,11 +213,15 @@ export function hasInRunSource(producedShapes: string[]): boolean {
   return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s));
 }
 
-/** A shape that reads state rather than writing it, answering from a model, seeding a dispatch or searching the world:
- *  hasInRunSource's role sets, less the world sources (web search). A file, shell, code-search or store read
- *  (fs_read, fileContent, shellResult, codeSearch, the store's own read shape). */
+/** The shapes that read THIS host's files, code or shell: the floor's read tools (floor-tools.ts) and the walk's shell
+ *  and file readers. A POSITIVE role set: by exclusion, web_resource, http_response, problem_detection and memoryNote
+ *  counted as local reads, both as a goal's local target and as evidence of a local read. */
+export const LOCAL_READ_SHAPES: ReadonlySet<string> = new Set([
+  "fs_read", "fs_grep", "fileContent", "codeSearchResult", "shellResult", "shell", "bash", "bounded_shell",
+]);
+/** A shape that reads this host's files, code or shell (LOCAL_READ_SHAPES). */
 export function isLocalReadShape(s: string): boolean {
-  return !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s) && !SEARCH_RESULT_SHAPES.has(s);
+  return LOCAL_READ_SHAPES.has(s);
 }
 
 /** Did the chain read THIS system in-run? A produced local-read shape (isLocalReadShape) — on the floor, the read tools
