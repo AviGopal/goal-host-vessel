@@ -338,6 +338,7 @@ import { confirmComposeLanding } from "./compose-landing-evidence";
 import { targetsToAvoid, failureRowsFrom, failureInvalidatesTargetMemo } from "./failed-targets";
 import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
+import { isExecutorShape, unansweredTransiently } from "./executor-shape";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
@@ -8961,9 +8962,10 @@ async function runGoalAsPoolWalkBody(
       }
     } catch { /* fail-open: no how-to available, fall back to goal-text-only extraction */ }
     // Fallback executor detection (schema-independent): the resolver's own rejection names
-    // the missing executable field, or the shape name marks a shell/exec resolver.
+    // the missing executable field, or the shape name marks a shell/exec resolver. The shared
+    // executor-shape.ts test is exact here: its sql/script/cmd branch is a subset of `_em`, already missed.
     if (!execField && correction) { const mm = correction.match(/\b(command|cmd|script|sql)\b/i); if (mm) execField = mm[1].toLowerCase(); }
-    if (!execField) { const _em = shape.match(/(^|[_-])(sql|script|cmd|command)([_-]|$|result|query)/i); if (_em) execField = _em[2].toLowerCase(); else if (/(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command)/i.test(shape)) execField = "command"; }
+    if (!execField) { const _em = shape.match(/(^|[_-])(sql|script|cmd|command)([_-]|$|result|query)/i); if (_em) execField = _em[2].toLowerCase(); else if (isExecutorShape(shape)) execField = "command"; }
     if (execField) executorGuidance = `EXECUTOR SHAPE: the required field "${execField}" is an executable ${execField} the resolver will RUN — NOT text to copy verbatim from the goal. The goal states a TASK, not the ${execField}. SYNTHESIZE the exact, correct ${execField} that accomplishes the goal: a SINGLE line, non-interactive (no prompts, pagers, editors, or long-running/daemon commands), deterministic. PREFER threading an ALREADY-PRODUCED pool operand by its SHAPE as a {{shape}} or {{shape.field}} placeholder (e.g. "wc -l {{fileContent.path}}", or compute over {{shellResult}}) — placeholders are interpolated deterministically from the pool (shell-quoted for you), so the command becomes a FUNCTION of threaded inputs; ONLY inline a literal path/value when NO produced pool shape supplies that operand (it is named solely in the goal). Do NOT wrap {{...}} placeholders in quotes yourself. Output ONLY the computed value to stdout — do NOT write, tee, redirect (> or >>), or save the result to any file/note/path; for COUNTING lines/words/characters/bytes of a FILE, run wc DIRECTLY on the file path (wc -l FILE for lines, wc -w FILE for words, wc -c FILE for bytes, wc -m FILE for characters) and take the leading number — do NOT read the file and re-serialize/JSON-encode its content first (re-encoding changes the character/byte count); PERSISTING the result is a SEPARATE downstream step, and a command that pipes the value into tee/a file frequently mangles the count (produces the wrong number). Emit it under "${execField}". Example: goal "compute sha256 of foo.txt" -> {"${execField}":"sha256sum foo.txt"}. AVAILABLE INTERPRETERS: bash, jq, bun, awk, perl — there is NO python, python3, node, or bc in this container. For any arithmetic or string computation you would normally reach for python (digit sums, factorials, primality, parsing), synthesize it with bun -e \x27<javascript>\x27, or perl -e \x27<perl>\x27, or awk — NEVER python or python3. Example: goal "sum the digits of 391" -> {"${execField}":"bun -e \x27console.log([...String(391)].reduce((a,c)=>a+ +c,0))\x27"}.\n\nVALUES THAT ARE NOT IN THIS REPOSITORY. This guidance is otherwise entirely filesystem-shaped, and that framing has produced literal nonsense: a goal asking for a distance "in astronomical units" was synthesized as \x60find /workspace/git/super-repo/astronomical units -maxdepth 1 -type f | wc -l\x60 — a NOUN PHRASE FROM THE GOAL TREATED AS A DIRECTORY. Never build a path out of goal wording; only inline a path the goal actually names. When the value asked for is a live, current or external fact — a market price, a measurement, an astronomical quantity at the present instant — it is NOT on this disk and no amount of find/grep/wc will produce it. This container HAS outbound internet access, so RETRIEVE it: curl a public HTTP API. Two constraints that are properties of this container, not preferences. (1) There are NO third-party API keys or credentials configured here, so any endpoint requiring authentication WILL fail — measured: a real astronomy API returned "Unauthorized (API key is missing…)" as plain text with HTTP 401 — and you must choose an endpoint that serves the data with NO key. (2) Do NOT pipe a fetch straight into jq: if the endpoint answers with an error page, HTML, or plain text, jq reports only "Invalid numeric literal" and the body that would have told you what went wrong is consumed and gone. PRINT the response first with a GENEROUS byte count (\x60curl -s '<url>' | head -c 4000\x60 — a few hundred bytes typically shows only a banner or licence header while the DATA sits thousands of characters further in), or request a format the endpoint genuinely serves, and parse only once you have seen it.\n\n`;
     const temporalGrounding = temporalGroundingBlock();
     // SUBSTRATE SELF-INVENTORY KNOWLEDGE (2026-07-27, assess-the-unknown-with-the-known). A goal
@@ -10043,7 +10045,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // first-mile reliability: detect a degenerate result and re-synthesize the command
     // with the failure fed back, bounded, BEFORE accepting it. Scoped to executor/
     // command shapes that are not terminal writes — good commands never enter the loop.
-    const _isExecShape = /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command|(^|[_-])(sql|script|cmd)([_-]|$|result|query))/i.test(shape);
+    const _isExecShape = isExecutorShape(shape); // executor-shape.ts — the one executor test, shared by every site
     type _BodyHonesty = {
       envelopeKeys: string[];        // {shape, body} / {shape, content} wrappers unwrapped before inspection
       flagFields: string[];          // field === false  ⇒ denial
@@ -10433,6 +10435,9 @@ If one of those sibling shapes is the action that would create what the goal ask
         direct = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs, "satisfier-transient-retry");
       }
     }
+    // Set when the executor block below REFUSES the shape (a command failure after its corrections):
+    // the post-loop arg-correction must not override that refusal with one more resolve.
+    let _execRefused = false;
     if (_isExecShape && !terminalShapes.has(shape)) {
       let _tries = 0;
       // Hosts proven this dispatch to refuse us outright (401/403/quota). Populated from the
@@ -10486,6 +10491,14 @@ If one of those sibling shapes is the action that would create what the goal ask
       // by hop (command-egress.ts).
       const _origCmd = commandOf(directArgsRaw);
       while (_deg && _tries < _correctionBudget + Math.min(_inspections, 3)) {
+        // RETRIED, NOT CORRECTED — at the first attempt too. A first resolve that went unanswered
+        // for a transient reason (the client timed out, the producer 5xx'd) says nothing about the
+        // command, and re-synthesising one only stacks a second request on a server still running
+        // the first (executor-shape.ts).
+        if (_tries === 0 && unansweredTransiently(direct, lastRawResolveTransient)) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" first resolve went UNANSWERED (${String(lastRawResolveReason ?? "").slice(0, 120)}) — transient, not a wrong command; no self-correction`);
+          break;
+        }
         _tries++;
         const _prevCmd = ["command", "cmd", "script", "sql"].map((k) => directArgsRaw[k]).find((v) => typeof v === "string") as string | undefined;
         // RECOVER THE RESPONSE BODY THE PIPELINE ATE — don't ask the model to go and look.
@@ -10797,6 +10810,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         directArgsRaw = { ...directArgsRaw, ..._reSyn };
         directArgs = bindBody(directArgsRaw);
         const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+        // A transient failure is retried, not corrected (see the comment above the deterministic retry):
+        // a timed-out attempt leaves its server query running, so the next one would only pile on.
+        if (unansweredTransiently(_re, lastRawResolveTransient)) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" self-correction attempt ${_tries} went UNANSWERED (${String(lastRawResolveReason ?? "").slice(0, 120)}) — transient, stopping the corrections`);
+          break;
+        }
         if (_re != null) direct = _re;
         _deg = _degenerateReason(direct);
         // LOG THE COMMAND, NOT JUST THE COMPLAINT.
@@ -10878,6 +10897,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (_deg && !/returned "0"/.test(_deg)) {
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" STILL a command FAILURE after ${_tries} self-correction attempt(s) (${_deg.slice(0, 80)}) — refusing to satisfy with a failed/empty command; grading reach honestly (no hollow green)`);
         direct = null;
+        _execRefused = true;
       }
     }
     // SATISFIER HONESTY FOR ALL SHAPES (gap-satisfier-grades-itself): until now ONLY exec
@@ -10926,6 +10946,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         return false; // no body/content field found in readback -> cannot prove empty, don't over-reject
       } catch { return false; }
     };
+    // The satisfier's own last resolve, read before the write read-back below can overwrite it.
+    const _lastResolveTransient = lastRawResolveTransient;
     if (direct != null) {
       const v = await verifyWritePersisted(shape, direct);
       const _terminalWrite = terminalShapes.has(shape) && (/_write$/.test(shape) || shape === "write_note");
@@ -11001,7 +11023,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
       }
     }
-    if (lastRawResolveReason) {
+    // NO ARG-CORRECTION OVER A REFUSAL OR A TRANSIENT FAILURE. The executor block's refusal is final
+    // for this attempt, and a resolve that went unanswered (timeout / transport / 5xx) is not a bad
+    // request — correcting its args issues one more heavy request while the server still runs the last.
+    if (lastRawResolveReason && (_execRefused || _lastResolveTransient)) {
+      tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" arg-correction SKIPPED — ${_execRefused ? "the executor self-correction already refused it" : `the last resolve failed transiently (${String(lastRawResolveReason).slice(0, 120)})`}`);
+    } else if (lastRawResolveReason) {
       const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
       if (correctedRaw && !refuseReapply(shape, "arg-correction")) {
         const mergedArgs = { ...directArgsRaw, ...correctedRaw };
@@ -11487,10 +11514,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the pool. Mirrors terminal deferral: pure selection-ordering, never mutates satisfierTried,
       // no loop risk. No-op when the executor is the only/last pending shape (single-step shell goal
       // where the operand is already present) — guarded by the some(!isExecutor) check.
-      const _isExecutorShape = (sh: string) =>
-        /(^shellResult$|shell|bash|(^|[_-])exec|(^|[_-])command|(^|[_-])(sql|script|cmd)([_-]|$|result|query))/i.test(sh);
-      if (eligibleForSatisfier.some((sh) => !_isExecutorShape(sh))) {
-        eligibleForSatisfier = eligibleForSatisfier.filter((sh) => !_isExecutorShape(sh));
+      if (eligibleForSatisfier.some((sh) => !isExecutorShape(sh))) {
+        eligibleForSatisfier = eligibleForSatisfier.filter((sh) => !isExecutorShape(sh));
       }
       const liveForSatisfier = await liveShapes();
       // COMPOSITION-PREFERENCE PROBE (Fix #2, 2026-07-24): when >1 target shape is still

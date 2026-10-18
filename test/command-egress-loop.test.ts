@@ -174,17 +174,56 @@ describe.skipIf(!HERMETIC)("self-correction never runs a rewrite that changes th
     expect(named.shellCommands).toContain(cmd);
   }, 120_000);
 
-  test("(h) every entry path: arg-correction and the producer-scan re-entry (vessel-resolver candidate) refuse too", async () => {
+  test("(h) the producer-scan re-entry (vessel-resolver candidate) refuses too", async () => {
     // A 503 from the shell resolver is TRANSIENT, so after the satisfier gives up the producer scan
     // un-poisons shellResult and re-enters vesselResolveShape (the "injecting vesselResolve step"
     // path), which synthesises a fresh command. Every LLM answer after the first is the external host.
+    // The satisfier itself neither re-synthesises nor arg-corrects a transiently unanswered command
+    // (retried, not corrected — the describe below), so the re-entry is the rewrite this replays.
     const r = await replay(scenario("egress-producer-scan", GOAL9, [STEP9[0]!, STEP9[1]!], [], { status: 503, text: "upstream unavailable" }));
     assertNoRealEgress(r);
     expect(r.shellCommands.some((c) => c.includes("127.0.0.1:8100/landing-paths/audit"))).toBe(true);
     expect(ranInvented(r)).toEqual([]);
-    expect(r.log).toContain("REJECTED re-synthesis #1");
-    expect(r.log).toContain("arg-correction REFUSED — it introduced origin(s) https://api.merlonix.com:443");
+    expect(r.log).toContain("first resolve went UNANSWERED (upstream unavailable)");
+    expect(r.log).toContain("arg-correction SKIPPED");
     expect(r.log).toContain("injecting vesselResolve step");
     expect(r.log).toContain("REFUSED the synthesised command — it introduced origin(s) https://api.merlonix.com:443");
+  }, 120_000);
+});
+
+// A TRANSIENTLY UNANSWERED EXECUTOR RESOLVE IS RETRIED, NOT CORRECTED (executor-shape.ts). Measured: a
+// heavy read that timed out at the client was "corrected" through the whole executor_correction_budget,
+// each attempt preceded by a raw-body re-fetch, then arg-corrected once more — fourteen resolves per
+// satisfier entry against a server still running the first. Same walk, same stubs as above.
+describe.skipIf(!HERMETIC)("a transiently unanswered executor resolve is not corrected", () => {
+  const TIMEOUT = { throw: "The operation timed out." };
+  const shellResolves = (r: Replay) => r.requests.filter((q) => q.body?.impulse?.pointer?.type === "shellResult").length;
+  const entries = (r: Replay) => 1 + (r.log.match(/injecting vesselResolve step/g) ?? []).length;
+  const variants = Array.from({ length: 8 }, (_, i) => `curl -s 'http://127.0.0.1:8100/landing-paths/audit?since=24h&n=${i}' | jq '.paths | length'`);
+
+  test("a timed-out first resolve gets exactly one resolve per satisfier entry: no re-synthesis, no arg-correction", async () => {
+    const r = await replay(scenario("transient-first", GOAL9, [STEP9[0]!, ...variants], [], TIMEOUT));
+    assertNoRealEgress(r);
+    expect(shellResolves(r)).toBe(entries(r));
+    expect(r.synthCalls).toBe(entries(r));
+    expect(r.log).toContain("first resolve went UNANSWERED (transport: The operation timed out.)");
+    expect(r.log).not.toContain("self-correction attempt 1");
+    expect(r.log).toContain("arg-correction SKIPPED — the executor self-correction already refused it");
+    expect(r.log).not.toContain("succeeded after arg-correction");
+  }, 120_000);
+
+  test("a correction attempt that times out ends the corrections", async () => {
+    const r = await replay(scenario("transient-mid", GOAL9, [STEP9[0]!, ...variants], [{ body: ["since=24h' | jq"], stdout: "" }], TIMEOUT));
+    assertNoRealEgress(r);
+    expect(r.log).toContain("self-correction attempt 1 went UNANSWERED (transport: The operation timed out.)");
+    expect(r.log).not.toContain("self-correction attempt 2");
+  }, 120_000);
+
+  test("control: a degenerate reply (empty stdout) still runs the full correction budget", async () => {
+    const r = await replay(scenario("degenerate-full", GOAL9, [STEP9[0]!, ...variants]));
+    assertNoRealEgress(r);
+    expect(r.log).toContain("cold-command self-correction attempt 6 — still degenerate (the command produced empty stdout)");
+    expect(r.log).toContain("STILL a command FAILURE after 6 self-correction attempt(s)");
+    expect(r.log).not.toContain("UNANSWERED");
   }, 120_000);
 });
