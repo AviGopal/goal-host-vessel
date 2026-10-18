@@ -26,7 +26,8 @@ describe("the hollow-satisfier retry and a single-shape grader", () => {
     // the same predicate that binds the CHANGE-35 oracle in the reach gate, read from the dispatch's field
     expect(block).toContain('const _graderOnlyShape = gapIdForGrading(goal, dispatchContext.getStore()?.decomposeGapId).gapId !== null ? "gapDecomposition" : null;');
     expect(SRC).toContain("const _gapGrade = gapIdForGrading(goal, dispatchContext.getStore()?.decomposeGapId);");
-    expect(block).toContain("const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null;");
+    // and only when the hollow satisfier is the very shape the grader accepts
+    expect(block).toContain("const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null && suppressedShape === _graderOnlyShape;");
     expect(block).toContain("retry_not_widened: grader accepts only ${_graderOnlyShape} and its producer failed");
     expect(block).toContain("walk = { ...walk, goalReachReason: `${walk.goalReachReason ?? \"not reached\"}; ${_rnw}` };");
     // the not-widened branch is counted, and the retry (its log, its route record, the widening and the walk) runs only

@@ -15199,7 +15199,8 @@ async function runGoalWithRecoveryInner(
         // FOURTH: not when the goal's grader accepts only one shape. A gap investigation bound by its structured
         // decompose_gap_id (gapIdForGrading: the same field-only predicate that binds the CHANGE-35 oracle in the reach
         // gate) is reached only by a gapDecomposition the gap store confirms, so a retry widened to retrieval shapes
-        // cannot reach it by construction, and an unwidened one has no producer left. Neither runs: the retry ends with
+        // cannot reach it by construction, and an unwidened one has no producer left (the suppressed satisfier is the one
+        // shape the grader accepts, checked by name). Neither runs: the retry ends with
         // a named, counted retry_not_widened. Cost, latency and store load only; no reach is lost (one such dispatch
         // ran to attempt_count 13).
         const _suppressedLc = suppressedShape.toLowerCase();
@@ -15209,7 +15210,7 @@ async function runGoalWithRecoveryInner(
           seededOutputShapes.length > 0 &&
           seededOutputShapes.every((s) => String(s).toLowerCase() === _suppressedLc);
         const _graderOnlyShape = gapIdForGrading(goal, dispatchContext.getStore()?.decomposeGapId).gapId !== null ? "gapDecomposition" : null;
-        const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null;
+        const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null && suppressedShape === _graderOnlyShape;
         if (_retryNotWidened) {
           _retryNotWidenedCount += 1;
           const _rnw = `retry_not_widened: grader accepts only ${_graderOnlyShape} and its producer failed ("${suppressedShape}" satisfier hollow), so no retry was run`;
