@@ -129,3 +129,27 @@ describe("N1 landed latch: an observe dispatch returns before the latch", () => 
     expect(src).toContain("_dispatchSentCompose.set(opts, Date.now());");
   });
 });
+
+describe("N2 transform oracle: a verified observe reach writes no expectation note and mints no trend commitment", () => {
+  const oracle = (): string => {
+    const i = src.indexOf("{ let dtFamily = \"\"; let dtOperand = \"\";");
+    expect(i).toBeGreaterThan(0);
+    return src.slice(i, src.indexOf("\n", i));
+  };
+  test("[MUST-FAIL] both memoryNote_write POSTs sit behind the observe guard", () => {
+    const o = oracle();
+    const guard = o.indexOf('if (dtReached) { if (nt && nt[1] && !observeSkip("artifact_expectation")) { void (async () => {');
+    expect(guard).toBeGreaterThan(0);
+    const writes = [...o.matchAll(/type: "memoryNote_write"/g)].map((m) => m.index ?? -1);
+    expect(writes.length).toBe(2); // the expectation record and the trend commitment
+    for (const w of writes) expect(w).toBeGreaterThan(guard);
+    expect(o.indexOf('const trendTitle = "expectation-trend:" + dtFamily;')).toBeGreaterThan(guard);
+  });
+  test("control (learn): the verdict reads before the guard and the verdict returns are unchanged", () => {
+    const o = oracle();
+    const guard = o.indexOf('!observeSkip("artifact_expectation")');
+    expect(o.indexOf("dtReached = typeof nb === \"string\" && nb.trim() === dtExpected;")).toBeLessThan(guard);
+    expect(o).toContain("return { reached: true, reason: `deterministic:transform-verified");
+    expect(o).toContain("return { reached: false, reason: `deterministic:transform-mismatch");
+  });
+});

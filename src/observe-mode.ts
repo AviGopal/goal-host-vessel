@@ -22,7 +22,7 @@ export type LearningMode = "observe" | "learn";
 export type ObserveSideEffect =
   | "failure_memory" | "reached_command_bank" | "reached_command_evict" | "reach_gate_lesson" | "beta_penalty"
   | "oracle_label" | "gap_write" | "authoring_decision" | "vault_note" | "edit_intent_escalation" | "verifier_recipe"
-  | "child_dispatch" | "alpha_credit";
+  | "child_dispatch" | "alpha_credit" | "artifact_expectation";
 
 export function isObserve(mode: unknown): boolean {
   return mode === "observe";
