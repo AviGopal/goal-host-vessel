@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { applyReachedCommandLines } from "./reached-command-store";
+// A namespace import, so on a tree without shouldBank the file still loads and only the tests that need it fail.
+import * as store from "./reached-command-store";
+const { applyReachedCommandLines } = store;
 
 // The property under test is that a FALSE verdict can un-bank what a TRUE verdict banked, and
 // that it survives a restart. Before the tombstone, the loader only ever created entries, so an
@@ -7,8 +9,9 @@ import { applyReachedCommandLines } from "./reached-command-store";
 // was replayed byte-identical. A library that can only grow is the same one-way ratchet as a
 // posterior that can only rise.
 
-const bank = (hash: string, command: string) =>
-  JSON.stringify({ hash, command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: "g" });
+// Bank lines carry their bank basis, as every line written since the bank gate does (the legacy case is below).
+const bank = (hash: string, command: string, basis: string | null = "deterministic") =>
+  JSON.stringify({ hash, command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: "g", ...(basis ? { basis } : {}) });
 const tomb = (hash: string, reason = "reach graded false") =>
   JSON.stringify({ hash, tombstone: true, reason });
 
@@ -69,5 +72,79 @@ describe("applyReachedCommandLines", () => {
     const { applied, tombstoned } = applyReachedCommandLines([bank("h1", "a"), tomb("h1")]);
     expect(applied).toBe(2);
     expect(tombstoned).toBe(1);
+  });
+});
+
+// THE BANK GATE. One judge "yes" banked a command, and the retry of the same failed dispatch replayed it: the wrong
+// answer came back at attempt 2. Only a deterministic oracle's reach, or two independent observers concurring, banks.
+describe("bank basis", () => {
+  test("[MUST-FAIL on parent] a judge-only reach is not banked", () => {
+    expect(store.shouldBank({ deterministic: false, independentConcurring: false })).toBeNull();
+  });
+  test("[MUST-FAIL on parent] an untagged pre-gate entry is not returned for replay", () => {
+    const { entries, legacy } = applyReachedCommandLines([bank("h1", "curl judged-once", null)]);
+    expect(entries.has("h1")).toBe(false);
+    expect(legacy).toBe(1);
+  });
+  test("[MUST-FAIL on parent] an untagged entry comes back only through a fresh tagged re-bank", () => {
+    const { entries } = applyReachedCommandLines([bank("h1", "old", null), bank("h1", "rebanked", "deterministic")]);
+    expect(entries.get("h1")?.command).toBe("rebanked");
+    expect(entries.get("h1")?.basis).toBe("deterministic");
+  });
+  test("[MUST-FAIL on parent] a deterministic reach banks under the deterministic basis", () => {
+    expect(store.shouldBank({ deterministic: true, independentConcurring: false })).toBe("deterministic");
+  });
+  test("[MUST-FAIL on parent] two independent concurring observers bank under the concurring basis", () => {
+    expect(store.shouldBank({ deterministic: false, independentConcurring: true })).toBe("concurring");
+  });
+  test("[MUST-FAIL on parent] an unknown basis value is treated as untagged", () => {
+    const { entries } = applyReachedCommandLines([bank("h1", "a", "judge")]);
+    expect(entries.has("h1")).toBe(false);
+  });
+  test("control: a deterministic-tagged line replays on the next boot (a fresh dispatch)", () => {
+    const { entries } = applyReachedCommandLines([bank("h1", "curl verified", "deterministic")]);
+    expect(entries.get("h1")?.command).toBe("curl verified");
+  });
+  test("control: a concurring-tagged line replays", () => {
+    const { entries } = applyReachedCommandLines([bank("h2", "curl agreed", "concurring")]);
+    expect(entries.get("h2")?.command).toBe("curl agreed");
+  });
+});
+
+// A RETRY SKIPS ONLY WHAT FAILED. A retry after an in-dispatch failure used to run with ablation.disableReuse, which
+// turned off every replay: on a feedback retry a VERIFIED http_fetch (200, 5.7k chars) was discarded and re-derived
+// cold. Now the walk reads each banked replay against its success ledger, and the next attempt skips only the
+// replays that failed, keyed by shape + command.
+describe("failed bank replays", () => {
+  const X = "curl -s http://127.0.0.1:1/broken | jq .n";
+  const Y = "curl -s https://example.org/page";
+  test("[MUST-FAIL on parent] a banked command whose replay produced nothing is recorded failed, and blocked on the retry", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", X]]), new Map());
+    expect(failed).toEqual([{ shape: "shellResult", command: X, why: "its replay produced no usable result" }]);
+    expect(store.replayBlocked(failed, "shellResult", X)?.command).toBe(X);
+  });
+  test("[MUST-FAIL on parent] a replay the walk had to correct to another command is recorded failed", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", X]]), new Map([["shellResult", "curl -s http://127.0.0.1:2/fixed"]]));
+    expect(failed.map((f) => f.command)).toEqual([X]);
+    expect(failed[0]!.why).toContain("corrected");
+  });
+  // The "no disableReuse ablation" half is pinned on the retry call sites in test/reached-command-bank-wiring.test.ts.
+  test("[MUST-FAIL on parent] on the same retry a banked command that SUCCEEDED in the attempt stays reusable", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", X], ["http_fetch", Y]]), new Map([["http_fetch", Y]]));
+    expect(failed.map((f) => f.shape)).toEqual(["shellResult"]);
+    expect(store.replayBlocked(failed, "http_fetch", Y)).toBeUndefined();
+    expect(store.replayBlocked(failed, "shellResult", X)).toBeDefined();
+  });
+  test("[MUST-FAIL on parent] the block is keyed by shape AND command", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", X]]), new Map());
+    expect(store.replayBlocked(failed, "shellResult", Y)).toBeUndefined();
+    expect(store.replayBlocked(failed, "http_fetch", X)).toBeUndefined();
+  });
+  test("[MUST-FAIL on parent] a first attempt carries no failure list, so nothing is blocked", () => {
+    expect(store.replayBlocked(undefined, "shellResult", X)).toBeUndefined();
+    expect(store.replayBlocked([], "shellResult", X)).toBeUndefined();
+  });
+  test("[MUST-FAIL on parent] a walk that replayed nothing records nothing", () => {
+    expect(store.failedBankReplays(new Map(), new Map([["shellResult", X]]))).toEqual([]);
   });
 });

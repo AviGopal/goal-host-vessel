@@ -261,7 +261,7 @@ import { blendEdgeScore, type EdgeEvidence } from "./edge-blend";
 import { psiInputs } from "./psi-inputs";
 import { resolveSelectionTuning, SELECTION_TUNING_DEFAULTS } from "./selection-tuning";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
-import { applyReachedCommandLines } from "./reached-command-store";
+import { applyReachedCommandLines, shouldBank, failedBankReplays, replayBlocked, type ReachedCommandBasis, type FailedReplay } from "./reached-command-store";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { comparePathways } from "./pathway-rank";
@@ -4507,7 +4507,7 @@ function noteDispatchedTargets(goal: string, shapes: string[] | undefined | null
   if (dispatchedTargetsByGoal.size >= 512) { const first = dispatchedTargetsByGoal.keys().next().value; if (first !== undefined) dispatchedTargetsByGoal.delete(first); }
   dispatchedTargetsByGoal.set(goalHashOf(goal), [...shapes]);
 }
-const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; strikes?: number }>();
+const reachedCommandCache = new Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis; strikes?: number }>();
 // PERSISTENCE (2026-07-25): reachedCommandCache is the "known command" library — a verified command
 // that a NEW similar goal reuses (Tier-1 exact replay + Tier-2/multi-slot rebind). In-process it
 // resets on every restart/deploy, so the learned reuse never compounds across restarts. Persist it
@@ -4517,7 +4517,7 @@ const reachedCommandCache = new Map<string, { command: string; field: string; sh
 // failure starts empty rather than breaking boot.
 const REACHED_CMD_CACHE_PATH = process.env.REACHED_CMD_CACHE_PATH ?? "/workspace/.goal-host-reached-commands.jsonl";
 const REACHED_CMD_CACHE_MAX_LOAD = 2000;
-function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string }): void {
+function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis }): void {
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
 }
 
@@ -4572,10 +4572,10 @@ async function loadReachedCommandCache(): Promise<void> {
     // Replay semantics (including tombstones) live in reached-command-store.ts so they are
     // testable — this loader used to inline them, which is how the resurrect-on-boot defect
     // went unnoticed. last-N wins on dedup by hash (most recent verified command).
-    const { entries, applied, tombstoned } = applyReachedCommandLines(lines.slice(-REACHED_CMD_CACHE_MAX_LOAD));
+    const { entries, applied, tombstoned, legacy } = applyReachedCommandLines(lines.slice(-REACHED_CMD_CACHE_MAX_LOAD));
     reachedCommandCache.clear();
     for (const [k, v] of entries) reachedCommandCache.set(k, v);
-    console.log(`[goal-host-vessel] reached-command cache: loaded ${reachedCommandCache.size} persisted commands (${applied} lines applied, ${tombstoned} tombstone(s)) from ${REACHED_CMD_CACHE_PATH}`);
+    console.log(`[goal-host-vessel] reached-command cache: loaded ${reachedCommandCache.size} persisted commands (${applied} lines applied, ${tombstoned} tombstone(s), ${legacy} untagged pre-gate bank(s) not replayed) from ${REACHED_CMD_CACHE_PATH}`);
   } catch { /* fail-open: start empty */ }
 }
 // ── FAILURE MEMORY (cross-dispatch feedback edge) ──
@@ -5554,7 +5554,8 @@ Respond with ONLY JSON: {"command": "<the command>"}`;
   if (!isToken && typeof truth === "number" && truth > 0) {
     const donorHash = goalHashOf(goal);
     if (!reachedCommandCache.has(donorHash)) {
-      const donor = { command: a!.command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: goal };
+      // Two independent derivations agreeing on a non-degenerate truth: the "concurring" bank basis.
+      const donor = { command: a!.command, field: "command", shape: "shellResult", targetShapes: ["shellResult"], goalText: goal, basis: "concurring" as const };
       reachedCommandCache.set(donorHash, donor);
       persistReachedCommand(donorHash, donor);
       console.log(`[recompute] DONATED verified command for this goal class (truth=${truth}, two agreeing derivations): \`${a!.command}\``);
@@ -8266,6 +8267,9 @@ interface GoalSeekResult {
   /** ADDITIVE WALK (V8): this walk's successful intermediates, for the next attempt in the dispatch.
    *  In-process only — never served or persisted. */
   carry?: CarriedStep[];
+  /** The banked commands this walk replayed whose resolve FAILED (reached-command-store.ts failedBankReplays), for the
+   *  next attempt in the dispatch to skip. In-process only, like `carry`. */
+  failedReplays?: FailedReplay[];
 }
 
 /** Mirror a route-around record onto its dispatch record (bounded), where goalWalkState serves it.
@@ -8453,6 +8457,9 @@ async function runGoalAsPoolWalkBody(
     /** ADDITIVE WALK (V8): the prior attempt's successful steps in this dispatch. They enter the pool
      *  and the chain as already-taken steps, so a retry or re-frame continues from what was built. */
     carryFrom?: CarriedStep[];
+    /** Banked commands whose replay FAILED earlier in this dispatch (keyed by shape + command): this walk does not replay
+     *  them. Every other banked command stays reusable. Set by the retry sites instead of an ablation flag. */
+    skipFailedReplays?: readonly FailedReplay[];
     surface: string;
     /** Reason plane: caller-owned sink; walk decision lines are pushed here (additive to console.log). */
     stepSink?: string[];
@@ -8465,8 +8472,9 @@ async function runGoalAsPoolWalkBody(
     suppressSatisfierShapes?: string[];
     /** FEEDBACK EDGE (hill-climb retry): the prior attempt's reach verdict reason, injected into the
      * synthesis prompt so the retry CORRECTS the named defect instead of re-deriving blind. Set only on
-     * the feedback-retry, paired with ablation.disableReuse so the reached-command cache does not replay
-     * the failed recipe. This is the grade->next-attempt edge: without it a hollow verdict is graded and
+     * the feedback-retry, paired with skipFailedReplays so a banked command that failed in this
+     * dispatch is not replayed (no ablation flag: the rest of the bank stays live). This is the
+     * grade->next-attempt edge: without it a hollow verdict is graded and
      * discarded, and the retry either repeats the mistake (cache replay) or abandons the producer that
      * worked (suppressSatisfierShapes) — both anti-learning. */
     priorVerdictFeedback?: string;
@@ -8606,6 +8614,10 @@ async function runGoalAsPoolWalkBody(
   // are the concrete impulses (with content) we seed into each step's execution.
   const producedShapes = new Set<string>();
   let commandReuseFired = false; // Tier-2 lexical rebind fired this walk -> record as learned_pathway
+  // Shape -> the BANKED command this walk replayed for it (exact hit or lexical rebind). Read against the success ledger
+  // (executorCommands) at return: a replay the ledger does not hold failed, and the next attempt skips only that one.
+  const bankReplays = new Map<string, string>();
+  let failedReplaysSkipped = 0;
   const poolImpulses: Impulse[] = [];
   // goalWalkState {impulseId} serves one impulse of this pool in full (walk-pool.ts): the read a
   // web_resource search-provenance check makes. The array is registered by reference, so every later
@@ -9696,7 +9708,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (_suppressReuse && _rcHitRaw && _rcHitRaw.shape === shape) {
       tap(`[goal-host-vessel] walk(${opts.surface}): reuse SUPPRESSED by ablation (forceFloor/disableReuse) — a reached-command cache HIT for "${shape}" was IGNORED; running cold derivation (floor arm)`);
     }
-    const _rcHit = _suppressReuse ? undefined : _rcHitRaw;
+    // A banked command whose replay FAILED earlier in this dispatch is not replayed again; the rest of the bank stays live.
+    const _rcFailed = !_suppressReuse && _rcHitRaw && _rcHitRaw.shape === shape ? replayBlocked(opts.skipFailedReplays, shape, _rcHitRaw.command) : undefined;
+    if (_rcFailed) tap(`[goal-host-vessel] walk(${opts.surface}): NOT replaying the banked command for "${shape}" (skip ${++failedReplaysSkipped} this walk) — it FAILED earlier in this dispatch: ${_rcFailed.why}; command: ${_rcFailed.command.slice(0, 200)}`);
+    const _rcHit = _suppressReuse || _rcFailed ? undefined : _rcHitRaw;
     let directArgsRaw: Record<string, unknown>;
     // A command BUILT IN CODE from the goal (registry-count / registry-ratio / file-count and its
     // aggregate siblings), shared with the oracle that verifies it. Set only on those branches.
@@ -9761,6 +9776,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       tap(`[goal-host-vessel] walk: DETERMINISTIC verbatim-read path for "${shape}" (path=${verbatimReadTarget(goal)}, shared with the verbatim oracle) — SKIPPED pointer_arg synthesis`);
     } else if (_rcHit && _rcHit.shape === shape) {
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
+      bankReplays.set(shape, _rcHit.command);
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
     } else if (!_suppressReuse && shape === "shellResult" && recipeCommandFor(goal) !== null) {
       // A family recipe is a measurement two independent derivations already agreed on, which
@@ -9772,9 +9788,13 @@ If one of those sibling shapes is the action that would create what the goal ask
       commandReuseFired = true;
       tap(`[goal-host-vessel] walk: ANSWERED from learned family recipe for "${shape}" — verification will pay for two FRESH derivations so the answer cannot confirm itself`);
     } else {
-      const _rebind = _suppressReuse ? null : tryLexicalRebind(goal, shape);
+      const _rebindRaw = _suppressReuse ? null : tryLexicalRebind(goal, shape);
+      const _rebindFailed = _rebindRaw ? replayBlocked(opts.skipFailedReplays, shape, _rebindRaw.command) : undefined;
+      if (_rebindFailed) tap(`[goal-host-vessel] walk(${opts.surface}): NOT replaying the rebound banked command for "${shape}" (skip ${++failedReplaysSkipped} this walk) — it FAILED earlier in this dispatch: ${_rebindFailed.why}; command: ${_rebindFailed.command.slice(0, 200)}`);
+      const _rebind = _rebindFailed ? null : _rebindRaw;
       if (_rebind && !(terminalShapes.has(shape) && [...chainProduced].some((s) => s !== "goal" && !terminalShapes.has(s)))) {
         directArgsRaw = { [_rebind.field]: _rebind.command };
+        bankReplays.set(shape, _rebind.command);
         commandReuseFired = true;
         tap(`[goal-host-vessel] walk: REBOUND verified command for "${shape}" from a similar goal (src ${_rebind.srcHash}) — content swapped, SKIPPED pointer_arg_extraction synthesis`);
       } else {
@@ -12482,6 +12502,8 @@ If one of those sibling shapes is the action that would create what the goal ask
   let answerBody: string | undefined;
   let reached = false;
   let walkAbstain: GoalReachVerdict["abstain"];
+  // The reach as finally decided (after every flip below) came from a DETERMINISTIC oracle: the bank gate's input.
+  let walkReachDeterministic = false;
 
   if (!lastTrace || chain.length === 0) {
     reached = false;
@@ -13403,10 +13425,16 @@ If one of those sibling shapes is the action that would create what the goal ask
         // the miss; the insert keeps running, and the verdict it carries is still graded at insert by its tags.
         await persistWithinDeadline(persistSatisfierTrace(durableTrace), (await resolveSelectionTuning()).satisfierFlushDeadlineMs, durableTrace.id);
       }
+      walkReachDeterministic = reached === true && isDeterministicVerdict(verdict);
     } catch (e) {
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
     }
-    if (reached) {
+    // BANK GATE (reached-command-store.ts shouldBank): one judge "yes" banked a command that the retry of the same failed
+    // dispatch then replayed. Bank only a deterministic oracle's reach. No second INDEPENDENT observer exists here: the
+    // verdict-consistency layer re-samples the same judge on the same answer, which is one observer sampled twice.
+    const _bankBasis = reached ? shouldBank({ deterministic: walkReachDeterministic, independentConcurring: false }) : null;
+    if (reached && !_bankBasis && executorCommands.size > 0) tap(`[goal-host-vessel] walk(${opts.surface}): NOT banking the reached command — the reach was judge-credited, not deterministic; one judge "yes" is not a reusable recipe`);
+    if (_bankBasis) {
       for (const [sh, cmd] of executorCommands.entries()) {
         // A DONOR WHOSE OUTPUT DEPENDS ON WHICH SHELL RUNS IT IS NOT A RECIPE.
         //
@@ -13437,8 +13465,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
         if (opts.learningMode !== "observe" && producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
           const _field = ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(sh)) ?? "command";
-          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal, strikes: 0 });
-          persistReachedCommand(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal }); // durable known-command library
+          reachedCommandCache.set(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal, basis: _bankBasis, strikes: 0 });
+          persistReachedCommand(goalHashOf(goal), { command: cmd, field: _field, shape: sh, targetShapes: [...producedShapes], goalText: goal, basis: _bankBasis }); // durable known-command library
           break;
         }
       }
@@ -13521,6 +13549,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     ...(routeAround ? { routeAround } : {}),
     // No target rule here: the RECEIVING walk applies its own target (carryForTarget at intake).
     carry: carryForward(poolImpulses, terminalShapes),
+    failedReplays: failedBankReplays(bankReplays, executorCommands),
     fedDeliverableShapes: [...new Set(involvedSteps(chain.map((_, i) => stepEdges.get(i)), new Set(completionShapes ?? []), () => false, stepIsStub).flatMap((i) => stepEdges.get(i)?.outputShapes ?? []))],
   };
 }
@@ -15007,11 +15036,21 @@ async function runGoalWithRecoveryInner(
         tap(`[goal-host-vessel] ${opts.surface}: walk: ABSTAIN — no retry, re-frame or floor (${walk.goalReachReason ?? "abstain"}) goal_hash=${goalHashOf(goal)}`);
         return walk;
       }
+      // EVERY ATTEMPT AFTER AN IN-DISPATCH FAILURE skips the banked commands whose replay FAILED in this dispatch (accumulated
+      // over its attempts, keyed by shape + command) and sets NO ablation flag. disableReuse here turned off every replay: a
+      // verified retrieval that ran fine in the failed attempt was discarded and the retry re-derived it cold. Ablation is
+      // for counterfactual arms, never a production dispatch. A walk that returns no list skips nothing (fail-open to reuse).
+      const _failedReplays: FailedReplay[] = [];
+      const _noteFailedReplays = (w: GoalSeekResult): void => {
+        for (const f of w.failedReplays ?? []) if (!replayBlocked(_failedReplays, f.shape, f.command)) _failedReplays.push(f);
+        if ((w.failedReplays ?? []).length > 0) tap(`[goal-host-vessel] ${opts.surface}: ${_failedReplays.length} banked command(s) failed in this dispatch and will not be replayed by a later attempt: ${_failedReplays.map((f) => `${f.shape} (${f.why})`).join("; ").slice(0, 400)}`);
+      };
+      _noteFailedReplays(walk);
       // FEEDBACK-RETRY (hill-climb; the grade->next-attempt edge). Before the suppress-retry ABANDONS
       // the producer that just ran, or a cached recipe replays the same failure, re-run the SAME chain
-      // ONCE with the judge's verdict fed into synthesis (priorVerdictFeedback) and the reached-command
-      // cache bypassed (ablation.disableReuse), so the retry CORRECTS the named defect instead of
-      // re-deriving blind. Gated to CONTENT-hollow verdicts (a structural no-pick has nothing to
+      // ONCE with the judge's verdict fed into synthesis (priorVerdictFeedback) and the banked commands
+      // that failed in this dispatch skipped (skipFailedReplays), so the retry CORRECTS the named defect
+      // instead of re-deriving blind. Gated to CONTENT-hollow verdicts (a structural no-pick has nothing to
       // correct) and fires at most once — only the initial walk carries no priorVerdictFeedback.
       if (
         walk.reached === false &&
@@ -15020,7 +15059,7 @@ async function runGoalWithRecoveryInner(
         !/no pick|no producer|missing shapes|constructible payload|terminating walk/i.test(walk.goalReachReason)
       ) {
         noteRouteTaken(walk.routeAround, "retry:feedback");
-        tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=${goalHashOf(goal)}`);
+        tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=${goalHashOf(goal)}`);
         const fbWalk = await runGoalAsPoolWalk(goal, {
           changeAdmitted: _changeAdmitted,
           recalledLessons: _dispatchLessons,
@@ -15034,13 +15073,15 @@ async function runGoalWithRecoveryInner(
           stepSink: opts.stepSink,
           learningSink: opts.learningSink,
           betaWithheld: opts.betaWithheld,
-          ablation: { ...(opts.ablation ?? {}), disableReuse: true },
+          ablation: opts.ablation,
+          skipFailedReplays: [..._failedReplays],
           learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
           carryFrom: walk.carry,
           priorVerdictFeedback: [_priorFailureFeedback, `- (this dispatch, the attempt just graded) ${walk.goalReachReason}`].filter(Boolean).join("\n"),
         });
+        _noteFailedReplays(fbWalk);
         if (fbWalk.reached) {
           // Same edit-intent guard as the suppress-retry: a hollow author/read satisfier must not
           // launder into a false reach for a repo-edit goal that produced no edit-result shape.
@@ -15110,7 +15151,8 @@ async function runGoalWithRecoveryInner(
           stepSink: opts.stepSink,
           learningSink: opts.learningSink,
           betaWithheld: opts.betaWithheld,
-        ablation: opts.ablation,
+          ablation: opts.ablation,
+          skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
         learningMode: opts.learningMode,
           preferPathway: reachingPathway?.activities,
           preferPathwayOrigin: reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : undefined,
@@ -15118,6 +15160,7 @@ async function runGoalWithRecoveryInner(
           // ADDITIVE (V8): continue from what was built, minus the suppressed producer's output.
           carryFrom: (walk.carry ?? []).map((c) => ({ ...c, impulses: c.impulses.filter((i) => String((i.metadata as { shape?: unknown } | undefined)?.shape) !== suppressedShape) })).filter((c) => c.impulses.length > 0 && c.stepId !== walk.selectedTemplateId),
         });
+        _noteFailedReplays(retryWalk);
         if (retryWalk.reached) {
           // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
           // launders-hollow-into-reach): a suppressed-satisfier retry must NOT be
@@ -15162,10 +15205,12 @@ async function runGoalWithRecoveryInner(
             stepSink: opts.stepSink,
             learningSink: opts.learningSink,
             betaWithheld: opts.betaWithheld,
-        ablation: opts.ablation,
+            ablation: opts.ablation,
+            skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
         learningMode: opts.learningMode,
             suppressSatisfierShapes: undefined,
           });
+          _noteFailedReplays(altWalkResult);
           // B1 punt-shape guard: the ALTERNATIVE-FRAMING retry only fires after the
           // original walk was HOLLOW, so a reframe that "reached" solely by producing
           // punt/dispatch shapes (obsidian_dispatch_goal = hand to a human, dispatch_goal
