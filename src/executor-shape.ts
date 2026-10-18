@@ -22,11 +22,17 @@ export function isExecutorShape(shape: string): boolean {
 }
 
 /**
- * Whether an executor resolve went UNANSWERED for a transient reason (timeout, transport, 5xx — the
- * shared transient-failure.ts classification): no reply came back, so nothing says the command was
- * wrong. Such a failure is retried where the walk retries, never corrected — a re-synthesised command
- * is a second request against a producer that may still be running the first.
+ * Whether a resolve went UNANSWERED: no value came back AND no response arrived at all — the request
+ * failed at the transport (the client timed out, the connection was refused), so there is no HTTP
+ * status and rawResolve recorded a `transport:` reason. Nothing then says the request was wrong, and
+ * the server may still be running it, so it is not corrected: a re-synthesised command or corrected
+ * args would only stack a second request on the first.
+ *
+ * A 5xx is NOT unanswered. The producer ran and answered, and a resolver host reports a resolver's
+ * own throw — "invalid URL", "pattern is required" — as HTTP 500, so the error-informed correction is
+ * exactly the repair for it. That is why this is narrower than transient-failure.ts, which counts any
+ * 5xx as transient for the purpose of a verbatim retry.
  */
-export function unansweredTransiently(resolved: unknown, transient: boolean): boolean {
-  return resolved == null && transient;
+export function unanswered(resolved: unknown, status: number | undefined, reason: string | null | undefined): boolean {
+  return resolved == null && status === undefined && typeof reason === "string" && /^transport: /.test(reason);
 }

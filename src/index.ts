@@ -338,7 +338,7 @@ import { confirmComposeLanding } from "./compose-landing-evidence";
 import { targetsToAvoid, failureRowsFrom, failureInvalidatesTargetMemo } from "./failed-targets";
 import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
-import { isExecutorShape, unansweredTransiently } from "./executor-shape";
+import { isExecutorShape, unanswered } from "./executor-shape";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
@@ -10438,6 +10438,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     // Set when the executor block below REFUSES the shape (a command failure after its corrections):
     // the post-loop arg-correction must not override that refusal with one more resolve.
     let _execRefused = false;
+    // Set when the executor's resolve went UNANSWERED (no response arrived — executor-shape.ts). Not a
+    // refusal and not a command failure: the shape stays unsatisfied and is reported as unanswered.
+    let _execUnanswered = false;
     if (_isExecShape && !terminalShapes.has(shape)) {
       let _tries = 0;
       // Hosts proven this dispatch to refuse us outright (401/403/quota). Populated from the
@@ -10491,12 +10494,13 @@ If one of those sibling shapes is the action that would create what the goal ask
       // by hop (command-egress.ts).
       const _origCmd = commandOf(directArgsRaw);
       while (_deg && _tries < _correctionBudget + Math.min(_inspections, 3)) {
-        // RETRIED, NOT CORRECTED — at the first attempt too. A first resolve that went unanswered
-        // for a transient reason (the client timed out, the producer 5xx'd) says nothing about the
+        // NOT CORRECTED WHEN UNANSWERED — at the first attempt too. A first resolve to which no
+        // response arrived (the client timed out, the connection was refused) says nothing about the
         // command, and re-synthesising one only stacks a second request on a server still running
-        // the first (executor-shape.ts).
-        if (_tries === 0 && unansweredTransiently(direct, lastRawResolveTransient)) {
-          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" first resolve went UNANSWERED (${String(lastRawResolveReason ?? "").slice(0, 120)}) — transient, not a wrong command; no self-correction`);
+        // the first (executor-shape.ts). A 5xx did answer, and is corrected as before.
+        if (_tries === 0 && unanswered(direct, lastRawResolveStatus, lastRawResolveReason)) {
+          _execUnanswered = true;
+          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" first resolve went UNANSWERED (${String(lastRawResolveReason ?? "").slice(0, 120)}) — no response, not a wrong command; no self-correction`);
           break;
         }
         _tries++;
@@ -10810,10 +10814,10 @@ If one of those sibling shapes is the action that would create what the goal ask
         directArgsRaw = { ...directArgsRaw, ..._reSyn };
         directArgs = bindBody(directArgsRaw);
         const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
-        // A transient failure is retried, not corrected (see the comment above the deterministic retry):
-        // a timed-out attempt leaves its server query running, so the next one would only pile on.
-        if (unansweredTransiently(_re, lastRawResolveTransient)) {
-          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" self-correction attempt ${_tries} went UNANSWERED (${String(lastRawResolveReason ?? "").slice(0, 120)}) — transient, stopping the corrections`);
+        // An attempt no response arrived for leaves its server query running; the next would only pile on.
+        if (unanswered(_re, lastRawResolveStatus, lastRawResolveReason)) {
+          _execUnanswered = true;
+          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" self-correction attempt ${_tries} went UNANSWERED (${String(lastRawResolveReason ?? "").slice(0, 120)}) — no response, stopping the corrections`);
           break;
         }
         if (_re != null) direct = _re;
@@ -10894,7 +10898,11 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the grounded universal-tool floor / bridge / honest not-reached). A bare "0" for a count goal
       // IS a possible genuine value and is still accepted — the retry cap already gave the command a
       // chance to correct, per the original design intent.
-      if (_deg && !/returned "0"/.test(_deg)) {
+      if (_deg && _execUnanswered) {
+        // Unanswered is its own outcome: the walk log and goal_reasoning say so, not "command failure".
+        tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" UNANSWERED after ${_tries} self-correction attempt(s) (${String(lastRawResolveReason ?? "").slice(0, 80)}) — no response arrived; not satisfied, not a command failure`);
+        direct = null;
+      } else if (_deg && !/returned "0"/.test(_deg)) {
         tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" STILL a command FAILURE after ${_tries} self-correction attempt(s) (${_deg.slice(0, 80)}) — refusing to satisfy with a failed/empty command; grading reach honestly (no hollow green)`);
         direct = null;
         _execRefused = true;
@@ -10947,7 +10955,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       } catch { return false; }
     };
     // The satisfier's own last resolve, read before the write read-back below can overwrite it.
-    const _lastResolveTransient = lastRawResolveTransient;
+    const _lastResolveUnanswered = _execUnanswered || unanswered(direct, lastRawResolveStatus, lastRawResolveReason);
     if (direct != null) {
       const v = await verifyWritePersisted(shape, direct);
       const _terminalWrite = terminalShapes.has(shape) && (/_write$/.test(shape) || shape === "write_note");
@@ -11023,11 +11031,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
       }
     }
-    // NO ARG-CORRECTION OVER A REFUSAL OR A TRANSIENT FAILURE. The executor block's refusal is final
-    // for this attempt, and a resolve that went unanswered (timeout / transport / 5xx) is not a bad
-    // request — correcting its args issues one more heavy request while the server still runs the last.
-    if (lastRawResolveReason && (_execRefused || _lastResolveTransient)) {
-      tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" arg-correction SKIPPED — ${_execRefused ? "the executor self-correction already refused it" : `the last resolve failed transiently (${String(lastRawResolveReason).slice(0, 120)})`}`);
+    // NO ARG-CORRECTION OVER A REFUSAL OR AN UNANSWERED RESOLVE. The executor block's refusal is final
+    // for this attempt, and a resolve no response arrived for (timeout / refused connection) is not a
+    // bad request — correcting its args issues one more heavy request while the server still runs the
+    // last. A 5xx is an answer (often a resolver's throw over its args) and is still corrected.
+    if (lastRawResolveReason && (_execRefused || _lastResolveUnanswered)) {
+      tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" arg-correction SKIPPED — ${_execRefused ? "the executor self-correction already refused it" : `the last resolve went unanswered, no response arrived (${String(lastRawResolveReason).slice(0, 120)})`}`);
     } else if (lastRawResolveReason) {
       const correctedRaw = await llmExtractPointerArgs(shape, lastRawResolveReason);
       if (correctedRaw && !refuseReapply(shape, "arg-correction")) {

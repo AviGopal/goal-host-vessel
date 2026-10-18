@@ -178,24 +178,59 @@ describe.skipIf(!HERMETIC)("self-correction never runs a rewrite that changes th
     // A 503 from the shell resolver is TRANSIENT, so after the satisfier gives up the producer scan
     // un-poisons shellResult and re-enters vesselResolveShape (the "injecting vesselResolve step"
     // path), which synthesises a fresh command. Every LLM answer after the first is the external host.
-    // The satisfier itself neither re-synthesises nor arg-corrects a transiently unanswered command
-    // (retried, not corrected — the describe below), so the re-entry is the rewrite this replays.
+    // A 503 is an ANSWER, so the satisfier still corrects it; its refusal is final, so the post-loop
+    // arg-correction is skipped there and its origin gate is exercised by (i) instead.
     const r = await replay(scenario("egress-producer-scan", GOAL9, [STEP9[0]!, STEP9[1]!], [], { status: 503, text: "upstream unavailable" }));
     assertNoRealEgress(r);
     expect(r.shellCommands.some((c) => c.includes("127.0.0.1:8100/landing-paths/audit"))).toBe(true);
     expect(ranInvented(r)).toEqual([]);
-    expect(r.log).toContain("first resolve went UNANSWERED (upstream unavailable)");
-    expect(r.log).toContain("arg-correction SKIPPED");
+    expect(r.log).toContain("REJECTED re-synthesis #1");
+    expect(r.log).toContain("arg-correction SKIPPED — the executor self-correction already refused it");
     expect(r.log).toContain("injecting vesselResolve step");
     expect(r.log).toContain("REFUSED the synthesised command — it introduced origin(s) https://api.merlonix.com:443");
   }, 120_000);
+
+  test("(i) arg-correction: a command-bearing shape that is not an executor refuses a corrected command on a new origin", async () => {
+    // Not an executor, so no self-correction loop: the resolver's 400 goes straight to the post-loop
+    // arg-correction, whose rewrite to the external host is refused by the same origin rule.
+    const r = await replay(argScenario("egress-arg-correction", GOAL9, "landingAuditReport", "command", [STEP9[0]!, STEP9[1]!],
+      { status: 400, json: { success: false, error: "command rejected: unknown option since" } }));
+    assertNoRealEgress(r);
+    expect(r.requests.some((q) => q.body?.impulse?.pointer?.type === "landingAuditReport" && String(q.body.impulse.pointer.command ?? "").includes("127.0.0.1:8100/landing-paths/audit"))).toBe(true);
+    expect(r.requests.filter((q) => q.body?.impulse?.pointer?.type === "landingAuditReport").some((q) => INVENTED.some((h) => String(q.body.impulse.pointer.command ?? "").includes(h)))).toBe(false);
+    expect(r.log).not.toContain("self-correction attempt");
+    expect(r.log).toContain("arg-correction REFUSED — it introduced origin(s) https://api.merlonix.com:443");
+  }, 120_000);
 });
 
-// A TRANSIENTLY UNANSWERED EXECUTOR RESOLVE IS RETRIED, NOT CORRECTED (executor-shape.ts). Measured: a
-// heavy read that timed out at the client was "corrected" through the whole executor_correction_budget,
-// each attempt preceded by a raw-body re-fetch, then arg-corrected once more — fourteen resolves per
-// satisfier entry against a server still running the first. Same walk, same stubs as above.
-describe.skipIf(!HERMETIC)("a transiently unanswered executor resolve is not corrected", () => {
+/** A goal whose target is `shape`, served by its own vessel, with one required arg `field`; the first resolve answers `first`. */
+function argScenario(id: string, goal: string, shape: string, field: string, answers: string[], first: Record<string, unknown>, then: Record<string, unknown> = { json: { success: true, shape, body: { value: 12 } } }) {
+  return {
+    id,
+    description: "arg-correction loop test (not part of the verdict-diff corpus)",
+    fleet: { vessels: [{ id: "arg-vessel", endpoint: "http://arg-vessel.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: [shape] }] },
+    routes: [
+      { id: "llm:target-inference", method: "POST", caller: "goal-host:goal_target_inference",
+        respond: { llm: JSON.stringify({ target_shapes: [shape], confidence: 0.9, alternatives: [] }) } },
+      { id: `schema:${shape}`, method: "POST", type: "resolver_schema", body: [`"shape":"${shape}"`],
+        respond: { json: { success: true, shape: "resolver_schema", body: { shape, known: true, fields: [{ name: field, required: true, type: "string" }] } } } },
+      { id: "llm:arg-extraction", method: "POST", caller: "goal-host:pointer_arg_extraction",
+        sequence: answers.map((a) => ({ llm: JSON.stringify({ [field]: a }) })) },
+      { id: `arg:${shape}:first`, method: "POST", type: shape, body: [JSON.stringify(answers[0]).slice(1, -1)], respond: first },
+      { id: `arg:${shape}`, method: "POST", type: shape, respond: then },
+      { id: "judge", method: "POST", caller: "goal-host:reach_verification", respond: { llm: "{\"reached\": false, \"reason\": \"no value\", \"completion_shapes\": []}" } },
+      { id: "floor:answer", method: "POST", caller: "goal-host:floor_tool_loop", respond: { json: { success: true, shape: "llmTextCompletion", body: { text: "UNKNOWN" } } } },
+    ],
+    steps: [{ op: "runGoal", body: { goal } }],
+  };
+}
+
+// AN UNANSWERED EXECUTOR RESOLVE IS NOT CORRECTED (executor-shape.ts). Measured: a heavy read that
+// timed out at the client was "corrected" through the whole executor_correction_budget, each attempt
+// preceded by a raw-body re-fetch, then arg-corrected once more — fourteen resolves per satisfier entry
+// against a server still running the first. "Unanswered" is narrow: NO response arrived. A 5xx is an
+// answer — a resolver host reports a resolver's throw over bad args as HTTP 500 — and is still corrected.
+describe.skipIf(!HERMETIC)("an unanswered resolve is not corrected; an answered failure still is", () => {
   const TIMEOUT = { throw: "The operation timed out." };
   const shellResolves = (r: Replay) => r.requests.filter((q) => q.body?.impulse?.pointer?.type === "shellResult").length;
   const entries = (r: Replay) => 1 + (r.log.match(/injecting vesselResolve step/g) ?? []).length;
@@ -208,7 +243,10 @@ describe.skipIf(!HERMETIC)("a transiently unanswered executor resolve is not cor
     expect(r.synthCalls).toBe(entries(r));
     expect(r.log).toContain("first resolve went UNANSWERED (transport: The operation timed out.)");
     expect(r.log).not.toContain("self-correction attempt 1");
-    expect(r.log).toContain("arg-correction SKIPPED — the executor self-correction already refused it");
+    // reported as unanswered, not as a refused command failure
+    expect(r.log).toContain("UNANSWERED after 0 self-correction attempt(s)");
+    expect(r.log).not.toContain("STILL a command FAILURE");
+    expect(r.log).toContain("arg-correction SKIPPED — the last resolve went unanswered, no response arrived (transport: The operation timed out.)");
     expect(r.log).not.toContain("succeeded after arg-correction");
   }, 120_000);
 
@@ -217,6 +255,7 @@ describe.skipIf(!HERMETIC)("a transiently unanswered executor resolve is not cor
     assertNoRealEgress(r);
     expect(r.log).toContain("self-correction attempt 1 went UNANSWERED (transport: The operation timed out.)");
     expect(r.log).not.toContain("self-correction attempt 2");
+    expect(r.log).toContain("UNANSWERED after 1 self-correction attempt(s)");
   }, 120_000);
 
   test("control: a degenerate reply (empty stdout) still runs the full correction budget", async () => {
@@ -225,5 +264,16 @@ describe.skipIf(!HERMETIC)("a transiently unanswered executor resolve is not cor
     expect(r.log).toContain("cold-command self-correction attempt 6 — still degenerate (the command produced empty stdout)");
     expect(r.log).toContain("STILL a command FAILURE after 6 self-correction attempt(s)");
     expect(r.log).not.toContain("UNANSWERED");
+  }, 120_000);
+
+  test("a resolver's own throw answered as HTTP 500 (http_fetch: invalid URL) still gets the error-informed arg-correction", async () => {
+    const goal = "Fetch the landing-paths audit page from the local audit service and report its title.";
+    const r = await replay(argScenario("fetch-500-bad-url", goal, "http_fetch", "url", ["127.0.0.1:8100 landing-paths/audit", "http://127.0.0.1:8100/landing-paths/audit"],
+      { status: 500, json: { success: false, error: "invalid URL: 127.0.0.1:8100 landing-paths/audit" } },
+      { json: { success: true, shape: "httpResponse", body: { url: "http://127.0.0.1:8100/landing-paths/audit", status: 200, bodyText: "<title>Landing paths</title>" } } }));
+    assertNoRealEgress(r);
+    expect(r.log).toContain("walk rawResolve http_fetch: HTTP 500");
+    expect(r.log).not.toContain('satisfier \\"http_fetch\\" arg-correction SKIPPED');
+    expect(r.log).toContain('satisfier \\"http_fetch\\" succeeded after arg-correction');
   }, 120_000);
 });
