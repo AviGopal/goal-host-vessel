@@ -71,7 +71,7 @@ export function prohibitsAnyMutation(rawGoal: string): boolean {
  *   - change is FORBIDDEN outright: prohibitsAnyMutation, or a no-change instruction on everything the goal could
  *     change ("without touching anything", "leave the file untouched", "everything stays unchanged", or the goal's
  *     ONLY named file), or read-only as the request's MODE ("Read-only pass: ...");
- *   - NO clause opens with an instruction to change (an imperative edit verb, make/ensure, or "can/could you <verb>").
+ *   - NO clause opens with an instruction to change (an imperative edit verb, or "can/could you <edit verb>").
  * A qualifier on a PARTICULAR object scopes an edit, it does not prohibit one: "without changing its signature",
  * "so existing callers stay unchanged", "keeping the API unchanged", "without altering its return type", "without
  * changing anything else", "without touching any test files", "without changing the file layout", "without changing
@@ -81,35 +81,48 @@ export function prohibitsAnyMutation(rawGoal: string): boolean {
  */
 const CLAUSE_JOINER = String.raw`(?:and|then|just|please|only|now|so)`;
 const CLAUSE_LEAD = String.raw`(?:^|[.!?;:,]\s*|\n\s*|\b${CLAUSE_JOINER}\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?)`;
-// The object ENDS its clause: nothing after it narrows it ("the file layout", "the code style").
+// A clause ends here: punctuation, the end, or a clause joiner.
 const CLAUSE_END = String.raw`(?=\s*(?:[.!?;:,]|$)|\s+${CLAUSE_JOINER}\b)`;
 const DESCRIPTION_REQUEST = new RegExp(String.raw`${CLAUSE_LEAD}(?:tell me|describe|explain|report|summari[sz]e|outline|list|show me)\b`, "i");
 const QUESTION = /^\s*(?:what|which|who|whose|why|how|when|where|is|are|does|do|did|can|could|would|should|will)\b|\?\s*$/i;
 const CHANGE_STEM = String.raw`(?:edit|add|insert|append|prepend|chang|modif|replac|fix|remov|delet|updat|renam|refactor|wir|guard|creat|regist|scaffold|touch|alter|writ)`;
 // The whole of what the goal could change, never a part of it: no word inside it ("any test files"), nothing that
-// excludes ("anything else", "any other file", "the file's API").
-const UNIVERSAL = String.raw`(?:anything|everything|any\s+files?|(?:the|this|that)\s+(?:file|files|source|code|codebase|repo|repository|tree|working tree)|files)(?!['\w-]|\s+(?:else|other|outside|beyond|besides|except|but)\b)`;
+// excludes ("anything else", "any other file", "the file's API"). Whatever follows it ("anything yet", "the code at
+// all", "the source in any way", "the file or its tests") does not narrow it, with one exception below.
+const NOT_A_PART = String.raw`(?!['\w-]|\s+(?:else|other|outside|beyond|besides|except|but)\b)`;
+const WHOLE = String.raw`(?:anything|everything|any\s+files?|files)${NOT_A_PART}`;
+const THE_WHOLE = String.raw`(?:the|this|that)\s+(?:file|files|source|code|codebase|repo|repository|tree|working tree)${NOT_A_PART}`;
+// One exception, and only inside a clause (a "without" clause that does not open its clause qualifies the change
+// requested before it): "the file"/"the code" followed by exactly ONE word that closes the clause is a compound naming
+// a part ("<edit> without changing the file layout;"), a scope. A "without" clause that OPENS its clause ("Without
+// touching the code yet, explain ...") is always the whole. Without a lexicon one word cannot be told from an adverb,
+// so mid-clause "... without touching the code yet." still reads as a compound (stated debt).
+const COMPOUND = String.raw`(?!\s+[a-z]+${CLAUSE_END})`;
+const UNIVERSAL = String.raw`(?:${WHOLE}|${THE_WHOLE})`;
+const UNIVERSAL_AFTER_WITHOUT = String.raw`(?:${WHOLE}|${THE_WHOLE}${COMPOUND})`;
 const FILE_PATH = String.raw`repos\/[\w.\/-]+\.\w+`;
 const UNCHANGED = String.raw`(?:un${CHANGE_STEM}\w*ed|as[- ]is|alone|intact)`;
-/** The three no-change forms on `obj`: "without <change> obj", "leave obj unchanged", "obj stays unchanged". */
-const noChangeOn = (obj: string): string =>
-  String.raw`\bwithout\s+${CHANGE_STEM}\w*\s+(?:(?:to|in|on)\s+)?${obj}${CLAUSE_END}` +
+/** The no-change forms: "without <change> obj" (opening its clause, or inside it), "leave obj unchanged", "obj
+ *  stays / is left unchanged". */
+const noChangeOn = (obj: string, objAfterWithout: string): string =>
+  String.raw`${CLAUSE_LEAD}without\s+${CHANGE_STEM}\w*\s+(?:(?:to|in|on)\s+)?${obj}` +
+  String.raw`|\bwithout\s+${CHANGE_STEM}\w*\s+(?:(?:to|in|on)\s+)?${objAfterWithout}` +
   String.raw`|\b(?:leave|leaving|keep|keeping)\s+${obj}\s+${UNCHANGED}\b` +
-  String.raw`|\b${obj}\s+(?:(?:must|should|will)\s+)?(?:(?:stays?|remains?|is|are|be|left|kept)\s+)?un${CHANGE_STEM}\w*ed\b`;
+  String.raw`|\b${obj}\s+(?:(?:must|should|will)\s+)?(?:(?:stays?|remains?|is|are|be|left|kept)\s+){0,2}un${CHANGE_STEM}\w*ed\b`;
 const CHANGE_PROHIBITION = new RegExp(
-  noChangeOn(UNIVERSAL) +
+  noChangeOn(UNIVERSAL, UNIVERSAL_AFTER_WITHOUT) +
     String.raw`|${CLAUSE_LEAD}read-?only\s*(?:[:;,.!-]|$|(?:please|pass|mode|request|question|task|review|analysis|investigation)\b)` +
     String.raw`|\b(?:stay|stays|remain|remains)\s+read-?only\b|\bthis is a read-?only\b`,
   "i",
 );
 // A named file is everything the goal could change only when it is the ONLY file the goal names.
-const NO_CHANGE_ON_FILE = new RegExp(noChangeOn(`(${FILE_PATH})`), "gi");
-const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}(?:${CHANGE_STEM}|implement|extend|make|ensure)\w*\b`, "i");
+const NO_CHANGE_ON_FILE = new RegExp(noChangeOn(`(${FILE_PATH})`, `(${FILE_PATH})(?!['\\w-])`), "gi");
+const CHANGE_INSTRUCTION = new RegExp(String.raw`${CLAUSE_LEAD}(?:${CHANGE_STEM}|implement|extend)\w*\b`, "i");
 
 function forbidsChangeToItsOnlyFile(goal: string): boolean {
   const named = new Set(goal.match(new RegExp(FILE_PATH, "g")) ?? []);
   if (named.size !== 1) return false;
-  for (const m of goal.matchAll(NO_CHANGE_ON_FILE)) if (named.has(m[1] ?? m[2] ?? m[3] ?? "")) return true;
+  for (const m of goal.matchAll(NO_CHANGE_ON_FILE)) if (named.has(m[1] ?? m[2] ?? m[3] ?? m[4] ?? "")) return true;
   return false;
 }
 

@@ -85,6 +85,26 @@ const PROHIBITED_ON_EVERYTHING = [
   "Without changing repos/goal-host-vessel/src/edge-blend.ts, explain what you would fix in it.",
 ];
 
+// A PROHIBITION ON THE WHOLE STAYS A PROHIBITION, WHATEVER FOLLOWS IT (qa probe of the predicate's third form, the
+// dangerous direction: each walked on a46074f and went to feature_compose, a landing write, on 88a75e8). A make/ensure
+// lead is not a change instruction; "anything yet", "the code at all", "the source in any way", "the file or its
+// tests" are still the whole; a "without" clause that opens its clause is the whole; "is left unchanged" is the
+// "stays unchanged" form.
+const F = "repos/goal-host-vessel/src/edge-blend.ts";
+const PROHIBITED_WHATEVER_FOLLOWS = [
+  `Make no edits. Explain what would change in ${F}, without touching the file.`,
+  `Ensure the file stays unchanged: just explain what you would change in ${F}.`,
+  `Make sure the file stays unchanged and just explain what would change in ${F}.`,
+  `Make sure ${F} stays unchanged; describe what you would change to support NaN.`,
+  `Without touching anything yet, explain what would change in ${F}.`,
+  `Without changing the code at all, explain what you would fix in ${F}.`,
+  `Without modifying the source in any way, describe what a fix to ${F} would change.`,
+  `Without changing the file or its tests, explain what you would add to ${F}.`,
+  `Ensure the file is left unchanged, then describe what you would fix in ${F}.`,
+  `Without touching the code yet, explain what you would fix in ${F}.`,
+  `Without changing the file first, tell me what you would add to ${F}.`,
+];
+
 describe("the early hand-off and a goal that forbids every change", () => {
   for (const g of READ_ONLY) {
     it(`[MUST-FAIL] routes to the walk, not feature_compose — ${g.slice(0, 70)}…`, () => {
@@ -140,6 +160,14 @@ describe("the early hand-off and a goal that forbids every change", () => {
   }
   for (const g of PROHIBITED_ON_EVERYTHING) {
     it(`[CONTROL] a no-change instruction on everything the goal could change still walks — ${g.slice(0, 60)}…`, () => {
+      expect(route(g)?.route ?? "walk").toBe("walk");
+      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
+      expect(isEditIntentGoal(g)).toBe(false);
+      expect(goalDemandsLandedEdit(g)).toBe(false);
+    });
+  }
+  for (const g of PROHIBITED_WHATEVER_FOLLOWS) {
+    it(`[MUST-FAIL] (walk control) a prohibition on the whole walks and is no edit — ${g.slice(0, 64)}…`, () => {
       expect(route(g)?.route ?? "walk").toBe("walk");
       expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
       expect(isEditIntentGoal(g)).toBe(false);
