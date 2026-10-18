@@ -80,3 +80,34 @@ describe("B2 traces: every trace goal-host persists for an observe dispatch carr
     expect(src.slice(run, run + 400)).toContain("tags: effectiveTags,");
   });
 });
+
+describe("B3 boot: an interrupted observe dispatch resumes as observe and is not reconciled into the corpus", () => {
+  const boot = (): string => {
+    const i = src.indexOf("const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];");
+    expect(i).toBeGreaterThan(0);
+    return src.slice(i, src.indexOf("function persistDispatchStore(): void {", i));
+  };
+  test("[MUST-FAIL] the boot resume POST carries the record's learning mode", () => {
+    const b = boot();
+    const post = b.indexOf('fetch("http://127.0.0.1:" + PORT + "/run-goal"');
+    expect(post).toBeGreaterThan(0);
+    expect(b.slice(post, post + 400)).toContain('tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) })');
+  });
+  test("[MUST-FAIL] the edit-intent reconciliation (verdict + recordDeterministicLabel) is skipped for an observe record", () => {
+    const b = boot();
+    const gate = b.indexOf('if (typeof r.goal === "string" && /edit repos\\//i.test(r.goal) && !observeSkips(r.learningMode, r.dispatchId, "oracle_label")) {');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(b.indexOf("recordDeterministicLabel("));
+    expect(gate).toBeLessThan(b.indexOf('r.status = "completed"; r.reached = true;'));
+  });
+  test("control (learn): the reconciliation still labels, the record still persists its mode, the requeue still carries it", () => {
+    const b = boot();
+    expect(b).toContain("recordDeterministicLabel(");
+    expect(b).toContain("if (!reconciled) { interruptedRequeue.push(r); }");
+    expect(src).toMatch(/interface DispatchRecord \{[\s\S]{0,600}?\n  learningMode\?: "observe" \| "learn";/);
+    expect(src).toContain("dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) })");
+    // observeSkips is false for learn/absent (observe-mode.test.ts (b)), so a learn record reconciles as before
+    expect(om.observeSkips("learn", "d", "oracle_label", () => {})).toBe(false);
+    expect(om.observeSkips(undefined, "d", "oracle_label", () => {})).toBe(false);
+  });
+});

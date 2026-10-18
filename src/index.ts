@@ -20191,7 +20191,9 @@ try {
     const wasRunning = r.status === "running";
     if (wasRunning) {
       let reconciled = false;
-      if (typeof r.goal === "string" && /edit repos\//i.test(r.goal)) {
+      // OBSERVE (observe-mode.ts): an observe compose never lands, so a compose report found for its goal is another
+      // dispatch's; reconciling would grade this one from it and label the oracle corpus. Interrupted marking instead.
+      if (typeof r.goal === "string" && /edit repos\//i.test(r.goal) && !observeSkips(r.learningMode, r.dispatchId, "oracle_label")) {
         try {
           const h = goalHashOf(r.goal);
           const reportFile = Bun.file("/workspace/proposals/route-edit-" + h + "-compose-report.json");
@@ -20251,8 +20253,9 @@ try {
     // Resume chains are also depth-capped: a dispatch that is itself a resume
     // (tags carry resumed_from:) is not resumed again.
     const isEditIntentGoal = typeof r.goal === "string" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(r.goal);
+    // The resume carries the record's learning mode (observe-mode.ts): an interrupted observe dispatch resumes as observe.
     const isResumeChild = Array.isArray((r as { tags?: string[] }).tags) && ((r as { tags?: string[] }).tags ?? []).some((t) => t.startsWith("resumed_from:"));
-    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId] }) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
+    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
     executionStore.set(r.dispatchId, r);
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
