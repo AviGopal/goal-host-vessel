@@ -4277,10 +4277,13 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
 
   if (writeEvidence) {
     const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
-    // CHANGE-36a, kept when the gap oracle did not decide (no field, or an unreadable gap store): an investigation whose
-    // targets hold no mutation shape is not a write goal, so an imperative in the gap's first sentence does not make it
-    // write-goal-no-artifact. It goes on to the normal judge path (qa ruling, which sanctions the prose predicate here).
-    const _gapInvestigationNotAWrite = _gapGrade.investigation && !_wgTargets.some((t) => isMutationShape(t));
+    // CHANGE-36a, kept when the gap oracle did not decide (no field, or an unreadable gap store): a goal whose targets
+    // ask for a gapDecomposition and hold no mutation shape is not a write goal, so an imperative in the gap's first
+    // sentence does not make it write-goal-no-artifact. It goes on to the normal judge path. Keyed on the TARGET SHAPES
+    // (sent, or inferred for an investigation at goal-target-inference), never on the goal's prose: the prose predicate
+    // stays at inference time (law 1, qa).
+    const _gapInvestigationNotAWrite = _wgTargets.includes("gapDecomposition") && !_wgTargets.some((t) => isMutationShape(t));
+    if (_gapInvestigationNotAWrite && _gapGrade.gapId) console.warn(`[${GAP_INVESTIGATION_ORACLE}-oracle] gap ${_gapGrade.gapId}: the gap store could not be read, so the oracle decided nothing; the write gate is skipped (a gapDecomposition target is not a write) and the goal is graded on the normal path`);
     if (!_gapInvestigationNotAWrite) {
       const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));
       if (_wg.hollow) return { reached: false, reason: _wg.reason ?? "deterministic:judge-rules-refused", ...(_wg.deterministic ? { deterministic: true } : {}), completion_shapes: [] };
@@ -15210,7 +15213,7 @@ async function runGoalWithRecoveryInner(
           seededOutputShapes.length > 0 &&
           seededOutputShapes.every((s) => String(s).toLowerCase() === _suppressedLc);
         const _graderOnlyShape = gapIdForGrading(goal, dispatchContext.getStore()?.decomposeGapId).gapId !== null ? "gapDecomposition" : null;
-        const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null && suppressedShape === _graderOnlyShape;
+        const _retryNotWidened = _suppressedIsWholeTarget && !_suppressedIsWrite && _graderOnlyShape !== null && _suppressedLc === _graderOnlyShape.toLowerCase();
         if (_retryNotWidened) {
           _retryNotWidenedCount += 1;
           const _rnw = `retry_not_widened: grader accepts only ${_graderOnlyShape} and its producer failed ("${suppressedShape}" satisfier hollow), so no retry was run`;
