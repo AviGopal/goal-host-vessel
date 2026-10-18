@@ -4281,8 +4281,10 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     // ask for a gapDecomposition and hold no mutation shape is not a write goal, so an imperative in the gap's first
     // sentence does not make it write-goal-no-artifact. It goes on to the normal judge path. Keyed on the TARGET SHAPES
     // (sent, or inferred for an investigation at goal-target-inference), never on the goal's prose: the prose predicate
-    // stays at inference time (law 1, qa).
-    const _gapInvestigationNotAWrite = _wgTargets.includes("gapDecomposition") && !_wgTargets.some((t) => isMutationShape(t));
+    // stays at inference time (law 1, qa). A target may be vessel-qualified ("development-vessel:gapDecomposition") or
+    // differently cased, so the "<vessel>:" prefix is stripped and the name compared case-insensitively.
+    const _isGapDecompositionTarget = (t: string): boolean => t.slice(t.lastIndexOf(":") + 1).toLowerCase() === "gapdecomposition";
+    const _gapInvestigationNotAWrite = _wgTargets.some(_isGapDecompositionTarget) && !_wgTargets.some((t) => isMutationShape(t));
     if (_gapInvestigationNotAWrite && _gapGrade.gapId) console.warn(`[${GAP_INVESTIGATION_ORACLE}-oracle] gap ${_gapGrade.gapId}: the gap store could not be read, so the oracle decided nothing; the write gate is skipped (a gapDecomposition target is not a write) and the goal is graded on the normal path`);
     if (!_gapInvestigationNotAWrite) {
       const _wg = judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, targets: _wgTargets, deliverables: deliverables ?? null, landed: landedEdit || writeEvidence.landed === true, producedShapes }));

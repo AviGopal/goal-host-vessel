@@ -17,6 +17,7 @@
 //   [MUST-FAIL] the exemption is keyed on the TARGET SHAPES, not the prose: a goal that reads as an investigation but
 //               targets a non-gap shape meets the write gate. (A non-investigation imperative goal is answered by the
 //               edit-intent gate before the write gate, so the exempt side is the gapDecomposition cases above.)
+//   [MUST-FAIL] a vessel-qualified or differently-cased gapDecomposition target takes the exemption too.
 //   [MUST-FAIL] field present but the gap store unreadable: the exemption is taken, warned, and the judge grades.
 //   [WIRING]    the gap gate sits above the write gate in index.ts.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -100,6 +101,15 @@ describe("a gap investigation is graded by its product before the write gate", (
     // phrased as an investigation, but its target is not a gapDecomposition: the prose no longer exempts it
     const byProse = await verifyGoalReached(GOAL, ["llm_completion"], "walk(1 steps)", "- llm_completion: {...}", undefined, undefined, undefined, undefined, [], { persistedWrites: [], targets: ["llm_completion"] }, "walk");
     expect(byProse?.reason ?? "").toContain("write-goal-no-artifact");
+  });
+
+  test("[MUST-FAIL] a vessel-qualified or differently-cased gapDecomposition target takes the exemption", async () => {
+    for (const target of ["development-vessel:gapDecomposition", "GapDecomposition"]) {
+      const judgedBefore = judgeCalls;
+      const v = await verifyGoalReached(GOAL, [target], "walk(1 steps): decomposeGap", "- gapDecomposition: {...}", undefined, undefined, undefined, undefined, pool([STEP]), { persistedWrites: [], targets: [target] }, "walk");
+      expect(v?.reason ?? "").not.toContain("write-goal-no-artifact");
+      expect(judgeCalls).toBe(judgedBefore + 1);
+    }
   });
 
   test("[MUST-FAIL] field present, gap store unreadable: the exemption is taken, warned, and the judge grades", async () => {
