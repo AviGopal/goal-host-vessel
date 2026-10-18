@@ -33,6 +33,10 @@ export interface ReachJudgeInput {
   now?: Date;
   /** J2a: the dispatch has a REQUIRED input every derivation failed for (needs-information.ts), a structural fact. */
   needsInformation?: boolean;
+  /** The goal's target shapes that THIS substrate's own vessels serve and that read local state (isLocalReadShape),
+   *  resolved by the caller through discovery at use time (index.ts ownLocalTargets). Non-empty makes the goal a
+   *  question about this system's own state, whatever its words (rule 5). */
+  localTargets?: string[];
 }
 
 /** Structurally a GoalReachVerdict (index.ts). */
@@ -147,19 +151,6 @@ export const SELF_KNOWLEDGE_SHAPES: ReadonlySet<string> = new Set([
 /** A command that read the discovery registry (/registry, /registry/stats, /registry/shapes). */
 const REGISTRY_READ_RE = /\/registry\b/;
 
-/** Goals about THIS system's own local state: its filesystem, config, processes, units or stores. A heuristic cue list
- *  (flagged). "running"/"installed" count only next to a local object or "on this host", so "who is running for mayor"
- *  is not a local-state question; "this system" overlaps SELF_DESCRIPTION_CUES, whose rule runs first. */
-export const LOCAL_STATE_CUES = new RegExp([
-  String.raw`\bfrom (?:the )?root\b`,
-  String.raw`(?:^|[\s"'(\x60])\/[A-Za-z][\w.-]*(?:\/[\w.-]*)*`, // an absolute path
-  String.raw`\b(?:this|our|the local) (?:host|node|machine|server|box|container|substrate|deployment|instance|system|vm)\b`,
-  String.raw`\b(?:processes|services|units|daemons|containers|vessels|packages|binaries|ports)\b[^.?!]{0,40}\b(?:running|installed|listening|enabled|active)\b`,
-  String.raw`\b(?:running|installed|listening|enabled|active)\b[^.?!]{0,30}\b(?:processes|services|units|daemons|containers|vessels|packages|binaries|ports)\b`,
-  String.raw`\b(?:running|installed) (?:on|in) (?:this|the) (?:host|node|machine|server|container|substrate|system)\b`,
-  String.raw`\b(?:systemd|vessel) units?\b`,
-  String.raw`\b(?:trace|gap|memory|impulse|concept|dispatch) store\b|\bthe (?:impulse )?pool\b|\bconcept graph\b|\b(?:our|this|the local) database\b`,
-].join("|"), "i");
 const LOCAL_STATE_CODE = "unsourced-local-state";
 
 /** Sentences that commit to nothing: a hedge, a request to clarify, or an offer instead of an answer.
@@ -222,12 +213,17 @@ export function hasInRunSource(producedShapes: string[]): boolean {
   return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s));
 }
 
-/** Did the chain read THIS system in-run? hasInRunSource's role sets, less the world sources (web search): a file,
- *  shell, code-search or store read (fs_read, fileContent, shellResult, codeSearch, the store's own read shape), or a
- *  command that read the registry. SHAPES ONLY, like hasInRunSource. */
+/** A shape that reads state rather than writing it, answering from a model, seeding a dispatch or searching the world:
+ *  hasInRunSource's role sets, less the world sources (web search). A file, shell, code-search or store read
+ *  (fs_read, fileContent, shellResult, codeSearch, the store's own read shape). */
+export function isLocalReadShape(s: string): boolean {
+  return !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s) && !SEARCH_RESULT_SHAPES.has(s);
+}
+
+/** Did the chain read THIS system in-run? A produced local-read shape (isLocalReadShape) — on the floor, the read tools
+ *  it EXECUTED, which index.ts floorJudgedShapes puts in the produced shapes — or a command that read the registry. */
 export function hasLocalRead(producedShapes: string[], commandEvidence?: string): boolean {
-  return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s) && !SEARCH_RESULT_SHAPES.has(s))
-    || REGISTRY_READ_RE.test(commandEvidence ?? "");
+  return producedShapes.some(isLocalReadShape) || REGISTRY_READ_RE.test(commandEvidence ?? "");
 }
 
 const DAY_MS = 86_400_000;
@@ -246,8 +242,10 @@ const notReached = (code: string, why: string): ReachJudgeVerdict => ({
  *     offset). Other dates in the answer (yesterday's items, history) are not read.
  *  4. WRONG SUBJECT: a SELF_DESCRIPTION_CUES goal whose chain used no SELF_KNOWLEDGE_SHAPES producer and
  *     read no registry.
- *  5. UNSOURCED LOCAL STATE: a LOCAL_STATE_CUES goal (this system's filesystem, config, processes, units, stores)
- *     whose chain made no local read (hasLocalRead). The judge is consulted in shadow for this rule (judgeReach).
+ *  5. UNSOURCED LOCAL STATE: a goal whose targets are local reads THIS substrate's own vessels serve (localTargets,
+ *     resolved through discovery by the caller: STRUCTURAL, no word list) and whose chain made no local read
+ *     (hasLocalRead). A walk aimed at no local shape is not a local-state question, whatever its words. The judge
+ *     is consulted in shadow for this rule (judgeReach).
  */
 export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJudgeVerdict | null {
   const { goal, producedShapes, now } = input;
@@ -284,8 +282,9 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
     }
   }
 
-  if (LOCAL_STATE_CUES.test(goal) && !hasLocalRead(producedShapes, input.commandEvidence)) {
-    return notReached(LOCAL_STATE_CODE, `the goal asks about this system's own state (filesystem, config, processes, units or stores) and the chain made no local read (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory describes some other system`);
+  const localTargets = input.localTargets ?? [];
+  if (localTargets.length > 0 && !hasLocalRead(producedShapes, input.commandEvidence)) {
+    return notReached(LOCAL_STATE_CODE, `the goal targets ${localTargets.slice(0, 4).join(", ")}, served by this substrate's own vessels, and the chain made no local read (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory describes some other system`);
   }
   return null;
 }

@@ -52,6 +52,9 @@ function stubFetch(input: unknown, init?: { body?: unknown }): Promise<Response>
   if (body.includes('"vesselCapability"') && body.includes('"llm_completion"')) {
     return json({ content: { vessels: [{ id: "llm-test-vessel", endpoint: "http://llm-vessel.test.invalid", resolve_endpoint: LLM_VESSEL, protocol: "http" }] } });
   }
+  if (body.includes('"vesselCapability"') && body.includes('"shellResult"')) {
+    return json({ content: { vessels: [{ id: "shell-vessel", endpoint: "http://shell-vessel.test.invalid", resolve_endpoint: "http://shell-vessel.test.invalid/resolve", protocol: "http", origin: "local" }] } });
+  }
   if (body.includes('"vesselCapability"') && body.includes('"trace_store_health_observer"')) {
     // A federated peer's row (not this substrate's) when observer === "foreign": the read must refuse it (ownOnly).
     return json({ content: { vessels: [observer === "foreign"
@@ -174,7 +177,8 @@ describe("T5 + recursion: the shadow judge is the model's own verdict and leaves
     reset({ row_count: 234902, cap: 150000 });
     const goal = "What is the structure of the full filesystem from root? List the top-level directories and what each one holds.";
     const before = rewardBufferEntries();
-    const v = await verifyGoalReached(goal, LLM_ONLY, "1 step: llm_completion_dispatch", llmOnly(goal, "The root contains /bin, /etc, /home, /usr and /var."));
+    // The goal targets shellResult, which this substrate's own vessel serves: a local-state question (structural).
+    const v = await (verifyGoalReached as unknown as (...a: unknown[]) => Promise<Verdict | null>)(goal, LLM_ONLY, "1 step: llm_completion_dispatch", llmOnly(goal, "The root contains /bin, /etc, /home, /usr and /var."), undefined, undefined, undefined, ["shellResult"]);
     expect(v?.reached).toBe(false);
     expect(judgeCalls).toBe(1);
     expect(v?.judge_verdict_before_pregate?.reached).toBe(true);

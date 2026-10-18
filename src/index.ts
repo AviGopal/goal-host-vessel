@@ -316,7 +316,7 @@ import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
+import { isLocalReadShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
@@ -4430,7 +4430,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       abstain: { kind: "cut-view", cuts },
     };
   }
-  const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, undefined, deliverables ?? writeEvidence?.targets);
   judgeCapture.noteLlmJudge(judged);
   // G1 OBSERVE: the judge's verdict stands; record whether G1 agreed (the promotion evidence).
   if (groundedObserved && judged) {
@@ -4509,13 +4509,23 @@ async function observeAggregateReport(goal: string, targetShapes: string[], pool
  * oracle can consult it in SHADOW (recorded, never used) without re-running the oracle chain.
  * Same prompt, same routing, same sanitisation; deterministic is always false.
  */
-async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, routeKey?: string): Promise<GoalReachVerdict | null> {
+async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, routeKey?: string, targets?: readonly string[]): Promise<GoalReachVerdict | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
+  // LOCAL STATE IS STRUCTURAL (reach-grounding.ts rule 5): the goal's targets (the caller's, else the inferred ones) that
+  // read local state and are served by THIS substrate's own vessels, resolved through discovery now.
+  const localTargets = await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
   // Prompt, parse and sanitisation live in reach-grounding.ts (moved verbatim, testable).
   // Routed per task type (reach_verification) across the llm-resolver fleet; buffered under the goal hash and rewarded
   // by this dispatch's final verdict. A shadow consultation inside the judge is routed under SHADOW_ROUTE_PREFIX.
-  return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation() },
+  return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation(), localTargets },
     reachJudgeCompleteVia(routeKey ?? goalHashOf(goal)), reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`));
+}
+/** The target shapes that read local state (isLocalReadShape) and that THIS substrate's own vessels serve (discovery at
+ *  use time, own-substrate rows only, as the floor offers own-only tools). A target only a peer serves is not this system. */
+async function ownLocalTargets(targets: readonly string[]): Promise<string[]> {
+  const candidates = [...new Set(targets.map(String))].filter(isLocalReadShape);
+  const own = await Promise.all(candidates.map(async (t) => ((await ufOwnProducerUrl(t).catch(() => null)) ? t : null)));
+  return own.filter((t): t is string => t !== null);
 }
 /** The judge's model call under one routing key. */
 function reachJudgeCompleteVia(routeKey: string): (prompt: string) => Promise<string | null> {
