@@ -22,7 +22,7 @@ export type LearningMode = "observe" | "learn";
 export type ObserveSideEffect =
   | "failure_memory" | "reached_command_bank" | "reached_command_evict" | "reach_gate_lesson" | "beta_penalty"
   | "oracle_label" | "gap_write" | "authoring_decision" | "vault_note" | "edit_intent_escalation" | "verifier_recipe"
-  | "child_dispatch" | "alpha_credit" | "artifact_expectation";
+  | "child_dispatch" | "alpha_credit" | "artifact_expectation" | "mode_blind_dispatch";
 
 export function isObserve(mode: unknown): boolean {
   return mode === "observe";
@@ -77,6 +77,39 @@ export function observeEgressRefusal(mode: unknown, shape: string, body: unknown
   const types = [shape, ptr?.["type"], imp?.["type"], b?.["type"]];
   const hit = types.find((t) => isObserveRefusedWrite(t));
   return hit ? `observe: refused before egress — an observe dispatch writes no gap (${String(hit)})` : null;
+}
+
+/**
+ * Change resolvers that do not read learning_mode: dispatched from an observe walk they would run as learn (draft,
+ * land, patch, cut over, or walk a nested goal as learn). development-vessel's gap_to_feature, apply_proposal_as_patch,
+ * perf_canary_resolve and patch_with_tools; goal-host's own goal_execution (/resolve takes no learning mode).
+ */
+export const OBSERVE_MODE_BLIND_SHAPES: ReadonlySet<string> = new Set([
+  "gap_to_feature", "apply_proposal_as_patch", "perf_canary_resolve", "patch_with_tools", "goal_execution",
+]);
+/** Change resolvers that read the pointer's learning_mode (feature_compose, and gap_compose, which runs it). */
+export const OBSERVE_MODE_READING_SHAPES: ReadonlySet<string> = new Set(["feature_compose", "gap_compose"]);
+
+const bareShape = (t: string): string => t.slice(t.lastIndexOf(":") + 1);
+
+/**
+ * The refusal for one walk egress that would hand an observe dispatch's work to a resolver that ignores the mode
+ * (pure), or null. A mode-blind resolver is never dispatched; a mode-reading one only when the outgoing pointer itself
+ * says learning_mode "observe" (a walk builds its pointer from pool values and model output, so it does not). Either
+ * way the step is kept as a would-be op: the refusal names it, and nothing leaves goal-host.
+ */
+export function observeModeBlindRefusal(mode: unknown, shape: string, body: unknown): string | null {
+  if (!isObserve(mode)) return null;
+  const b = asRecord(body);
+  const imp = asRecord(b?.["impulse"]);
+  const ptr = asRecord(imp?.["pointer"]);
+  const types = [shape, ptr?.["type"], imp?.["type"], b?.["type"]].filter((t): t is string => typeof t === "string").map(bareShape);
+  const blind = types.find((t) => OBSERVE_MODE_BLIND_SHAPES.has(t));
+  if (blind) return `observe: refused before egress — ${blind} does not read learning_mode, so an observe dispatch keeps it as a would-be op and never dispatches it`;
+  const reading = types.find((t) => OBSERVE_MODE_READING_SHAPES.has(t));
+  const p = ptr ?? imp ?? b;
+  if (reading && p?.["learning_mode"] !== "observe") return `observe: refused before egress — this ${reading} pointer does not carry learning_mode "observe", so it would run as a landing compose; kept as a would-be op`;
+  return null;
 }
 
 /** The walk's target form: an observe dispatch drops a gap-write target, and the drop is recorded. */

@@ -4,9 +4,10 @@
 // as a namespace, so a missing export reads as a named failure rather than a link error).
 // Controls: the learn path keeps its write after the guard (the guard is observeSkip, whose learn/absent answer is
 // false: observe-mode.test.ts (b)), and the pure helpers leave a learn dispatch's data unchanged.
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import * as om from "../src/observe-mode";
+import { isWalkEgressRefused, setWalkEgressLearningModeReader, walkEgressFetch } from "../src/walk-egress-guard";
 
 const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
 const fnBody = (sig: string, span = 2500): string => {
@@ -190,5 +191,53 @@ describe("N5 would-be ops: an observe dispatch's record carries them as a struct
       const i = src.indexOf(call);
       expect(i - src.lastIndexOf('if (opts.learningMode === "observe") {', i)).toBeLessThan(800);
     }
+  });
+});
+
+describe("scope: an observe walk never dispatches a resolver that ignores the mode", () => {
+  const realFetch = globalThis.fetch;
+  let calls: string[] = [];
+  const stubFetch = () => {
+    calls = [];
+    globalThis.fetch = (async (url: string | URL | Request) => { calls.push(String(url)); return new Response("{}", { status: 200 }); }) as typeof fetch;
+  };
+  afterEach(() => { globalThis.fetch = realFetch; setWalkEgressLearningModeReader(() => undefined); om.resetObserveSkips(); });
+  const init = (pointer: Record<string, unknown>): RequestInit => ({ method: "POST", body: JSON.stringify({ impulse: { pointer } }) });
+  const send = async (mode: string, shape: string, pointer: Record<string, unknown>): Promise<unknown> => {
+    setWalkEgressLearningModeReader(() => ({ learningMode: mode, dispatchId: `d-${mode}` }));
+    try { await walkEgressFetch(shape, "http://dv/v2/impulses/resolve", init(pointer)); return null; } catch (e) { return e; }
+  };
+  const BLIND = ["gap_to_feature", "apply_proposal_as_patch", "perf_canary_resolve", "patch_with_tools", "goal_execution"];
+
+  test("[MUST-FAIL] observe: each mode-blind resolver is refused before fetch, bare or vessel-qualified, by site or body", async () => {
+    stubFetch();
+    for (const s of BLIND) {
+      expect(isWalkEgressRefused(await send("observe", s, { type: s, gap_id: "g" }))).toBe(true);
+      expect(isWalkEgressRefused(await send("observe", "x", { type: `development-vessel:${s}` }))).toBe(true);
+    }
+    expect(calls).toEqual([]);
+    expect(om.observeSkipCounters()).toEqual({ mode_blind_dispatch: BLIND.length * 2 });
+  });
+  test("[MUST-FAIL] observe: a walk-built feature_compose / gap_compose pointer without learning_mode observe is refused", async () => {
+    stubFetch();
+    expect(isWalkEgressRefused(await send("observe", "feature_compose", { type: "feature_compose", spec: "s", land: true }))).toBe(true);
+    expect(isWalkEgressRefused(await send("observe", "gap_compose", { type: "gap_compose", spec: "s", learning_mode: "learn" }))).toBe(true);
+    expect(calls).toEqual([]);
+    const why = (om as any).observeModeBlindRefusal?.("observe", "patch_with_tools", {});
+    expect(why).toContain("would-be op");
+  });
+  test("control: observe lets a compose that carries learning_mode observe, and ordinary reads, go out", async () => {
+    stubFetch();
+    expect(await send("observe", "feature_compose", { type: "feature_compose", spec: "s", learning_mode: "observe", land: false })).toBeNull();
+    expect(await send("observe", "memoryNote", { type: "memoryNote", title_prefix: "x" })).toBeNull();
+    expect(calls.length).toBe(2);
+  });
+  test("control (learn / absent): every one of them goes out unchanged", async () => {
+    stubFetch();
+    for (const s of [...BLIND, "feature_compose", "gap_compose"]) expect(await send("learn", s, { type: s })).toBeNull();
+    setWalkEgressLearningModeReader(() => undefined);
+    await walkEgressFetch("patch_with_tools", "http://dv/v2/impulses/resolve", init({ type: "patch_with_tools" }));
+    expect(calls.length).toBe(BLIND.length + 3);
+    expect(om.observeSkipCounters()).toEqual({});
   });
 });

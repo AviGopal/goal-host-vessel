@@ -33,7 +33,7 @@
  * which goal-host's credential does not satisfy; this guard does not read the store to learn a row's shape.
  */
 
-import { observeEgressRefusal, observeSkips } from "./observe-mode";
+import { observeEgressRefusal, observeModeBlindRefusal, observeSkips } from "./observe-mode";
 
 /** The write type that reaches dev-vessel's pool store from outside. */
 export const POOL_WRITE_TYPE = "poolImpulse_write";
@@ -124,12 +124,15 @@ export function walkEgressRefusalLine(shape: string, site: string): string {
  * here, once, before the throw. Sites that log their own refusal (rawResolve, the floor tool loop) omit it.
  */
 export async function walkEgressFetch(shape: string, url: string, init: RequestInit, site?: string): Promise<Response> {
-  // OBSERVE (observe-mode.ts): an observe dispatch's walk writes no gap; refused here, before egress, like the above.
+  // OBSERVE (observe-mode.ts): an observe dispatch's walk writes no gap and hands no work to a resolver that ignores
+  // the mode; refused here, before egress, like the above.
   let ctx: DispatchModeRead;
   try { ctx = readLearningMode(); } catch { ctx = undefined; }
   const observeWhy = observeEgressRefusal(ctx?.learningMode, shape, bodyOf(init));
   if (observeWhy) observeSkips(ctx?.learningMode, ctx?.dispatchId, "gap_write");
-  const why = walkEgressRefusal(shape, bodyOf(init)) ?? observeWhy;
+  const blindWhy = observeWhy ? null : observeModeBlindRefusal(ctx?.learningMode, shape, bodyOf(init));
+  if (blindWhy) observeSkips(ctx?.learningMode, ctx?.dispatchId, "mode_blind_dispatch");
+  const why = walkEgressRefusal(shape, bodyOf(init)) ?? observeWhy ?? blindWhy;
   if (why) {
     if (site) console.log(walkEgressRefusalLine(shape, site));
     throw new WalkEgressRefused(shape, why);
