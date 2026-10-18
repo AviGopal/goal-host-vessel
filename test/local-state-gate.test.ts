@@ -7,8 +7,10 @@
 // when the goal's targets include a local-read shape that THIS substrate's own vessels serve (resolved
 // through discovery at use time, own-substrate rows only), whatever the goal's words.
 //
-// Also here: the floor's reach gate is handed the read tools the floor EXECUTED (floorJudgedShapes), so a
-// floor that ran a local read or a search passes the grounding rules it used to fail.
+// Also here: the floor's reach gate is handed the read tools the floor EXECUTED (floorJudgedShapes). Its real
+// effect is on the current-information rule: an executed web search is an in-run source. On the floor the
+// local-state rule is inert for now: the floor's requested targets are in its produced shapes, so a local-read
+// target always counts as read (named debt in the commit that rewrote T6).
 //
 // NO LIVE SERVICES. globalThis.fetch is replaced BEFORE index.ts is imported; discovery names a local
 // shell/file vessel (this substrate's own), a peer-only producer, and an llm vessel; anything else 404s.
@@ -169,26 +171,35 @@ describe("local reads are a POSITIVE role set (files, code, shell), not 'anythin
   }, 20_000);
 });
 
-describe("T6: the floor's executed reads are evidence", () => {
-  test("a floor that EXECUTED fs_read passes the local-state gate", async () => {
-    const produced = floorJudgedShapes(["llm_completion"], new Set(), [{ tool: "fs_read", ok: true }]);
-    expect(produced).toContain("fs_read");
-    const v = await verifyGoalReached(FS_GOAL, produced, "universal ReAct fallback: 1/1 tool call(s) OK [fs_read]", `${GENERIC_TREE}\n\n--- grounded tool outputs ---\nTOOL fs_read => bin etc home`, undefined, undefined, undefined, ["shellResult"]);
-    expect(v?.reason ?? "").not.toMatch(/unsourced-local-state/);
+// T6 at the REAL floor call shape (index.ts universalToolFallback): the floor passes produced = floorJudgedShapes(
+// targetShapes, writes, executed), deliverables undefined, and writeEvidence { targets: targetShapes, surface: "floor" }.
+describe("T6: the floor's executed reads are evidence (the real floor call shape)", () => {
+  const floorGate = (goal: string, targets: string[], executed: Array<{ tool: string; ok: boolean }>, digest: string) =>
+    (verifyGoalReached as unknown as (...a: unknown[]) => Promise<Verdict | null>)(
+      goal, floorJudgedShapes(targets, new Set(), executed),
+      `universal ReAct fallback: ${executed.filter((e) => e.ok).length}/${executed.length} tool call(s) OK [${executed.map((e) => e.tool + (e.ok ? "" : "!")).join(", ")}]`,
+      digest, undefined, undefined, undefined, undefined, undefined, { persistedWrites: [], targets, surface: "floor" }, "floor");
+  const NEWS = "Summarise this week's news on semiconductor supply chains.";
+  const NEWS_ANSWER = "Chipmakers announced capacity expansions and several governments discussed export controls.";
+
+  test("a floor that EXECUTED a web search for a current-information goal passes the current-information rule", async () => {
+    const v = await floorGate(NEWS, ["llm_completion"], [{ tool: "webSearchResult", ok: true }], NEWS_ANSWER);
+    expect(v?.reason ?? "").not.toMatch(/unsourced-current-information/);
     expect(v?.reason).toBe(JUDGE_REASON);
   }, 20_000);
 
-  test("a floor that EXECUTED a web search passes the current-information rule", async () => {
-    const goal = "Summarise this week's news on semiconductor supply chains.";
-    const produced = floorJudgedShapes(["llm_completion"], new Set(), [{ tool: "webSearchResult", ok: true }]);
-    const v = await verifyGoalReached(goal, produced, "universal ReAct fallback: 1/1 tool call(s) OK [webSearchResult]", "Chipmakers announced capacity expansions and several governments discussed export controls.", undefined, undefined, undefined, ["llm_completion"]);
-    expect(v?.reason ?? "").not.toMatch(/unsourced-current-information/);
+  test("control: a floor that executed NO tool for it → unsourced-current-information", async () => {
+    const v = await floorGate(NEWS, ["llm_completion"], [], NEWS_ANSWER);
+    expect(v?.reason).toMatch(/^deterministic:unsourced-current-information /);
   }, 20_000);
 
-  test("control: a floor whose read FAILED made no read → still unsourced-local-state", async () => {
-    const produced = floorJudgedShapes(["llm_completion"], new Set(), [{ tool: "fs_read", ok: false }]);
-    expect(produced).not.toContain("fs_read");
-    const v = await verifyGoalReached(FS_GOAL, produced, "universal ReAct fallback: 0/1 tool call(s) OK [fs_read!]", GENERIC_TREE, undefined, undefined, undefined, ["shellResult"]);
-    expect(v?.reason).toMatch(/^deterministic:unsourced-local-state /);
+  test("control: a floor whose web search FAILED made no read → unsourced-current-information", async () => {
+    const v = await floorGate(NEWS, ["llm_completion"], [{ tool: "webSearchResult", ok: false }], NEWS_ANSWER);
+    expect(v?.reason).toMatch(/^deterministic:unsourced-current-information /);
+  }, 20_000);
+
+  test("a floor that EXECUTED fs_read for a local-state goal passes the local-state gate (NOTE: it would pass without the read too — the floor's targets are in its produced shapes; named debt)", async () => {
+    const v = await floorGate(FS_GOAL, ["shellResult"], [{ tool: "fs_read", ok: true }], `${GENERIC_TREE}\n\n--- grounded tool outputs ---\nTOOL fs_read => bin etc home`);
+    expect(v?.reason ?? "").not.toMatch(/unsourced-local-state/);
   }, 20_000);
 });
