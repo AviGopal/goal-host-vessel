@@ -21,6 +21,7 @@
  * named exported constants, kept here so they are reviewable in one place.
  */
 import { ANSWER_SHAPES, assertedDatesInText, digestSegments, isStaleDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
+import { SEARCH_RESULT_SHAPES } from "./grounded-report";
 
 export interface ReachJudgeInput {
   goal: string;
@@ -41,6 +42,8 @@ export interface ReachJudgeVerdict {
   completion_shapes: string[];
   missing?: string[];
   deterministic: boolean;
+  /** Set only when a gate that SHADOWS the judge decided (the local-state rule): what the judge said, recorded, never used. */
+  judge_verdict_before_pregate?: { reached: boolean | null; reason: string };
 }
 
 /** The model call: the prompt in, the reply text out; null when the call failed. */
@@ -94,8 +97,16 @@ export async function judgeReach(input: ReachJudgeInput, complete: ReachJudgeCom
   const { goal, producedShapes, taskSummary, contentDigest, commandEvidence } = input;
   const now = input.now ?? new Date();
   const gated = groundingPreGate({ ...input, now });
-  if (gated) return gated;
   const prompt = temporalGroundingBlock(now) + buildReachJudgePrompt(goal, producedShapes, taskSummary, contentDigest, commandEvidence);
+  // The local-state rule is new, and an answer from the agentic llm_completion_dispatch wrapper can rest on tool reads
+  // that surface no shape (hasInRunSource), so the judge is still asked IN SHADOW: its verdict is recorded beside the
+  // gate's, never used, which measures how often this gate overrides it. The older gates do not call the judge.
+  if (gated && gated.reason.startsWith(`deterministic:${LOCAL_STATE_CODE} `)) {
+    let shadow: ReachJudgeVerdict | null = null;
+    try { const text = await complete(prompt); shadow = text === null ? null : parseReachJudgeText(text); } catch { shadow = null; }
+    return { ...gated, judge_verdict_before_pregate: shadow ? { reached: shadow.reached, reason: shadow.reason } : { reached: null, reason: "the judge could not be consulted" } };
+  }
+  if (gated) return gated;
   try {
     const text = await complete(prompt);
     if (text === null) return null;
@@ -123,6 +134,21 @@ export const SELF_KNOWLEDGE_SHAPES: ReadonlySet<string> = new Set([
 ]);
 /** A command that read the discovery registry (/registry, /registry/stats, /registry/shapes). */
 const REGISTRY_READ_RE = /\/registry\b/;
+
+/** Goals about THIS system's own local state: its filesystem, config, processes, units or stores. A heuristic cue list
+ *  (flagged). "running"/"installed" count only next to a local object or "on this host", so "who is running for mayor"
+ *  is not a local-state question; "this system" overlaps SELF_DESCRIPTION_CUES, whose rule runs first. */
+export const LOCAL_STATE_CUES = new RegExp([
+  String.raw`\bfrom (?:the )?root\b`,
+  String.raw`(?:^|[\s"'(\x60])\/[A-Za-z][\w.-]*(?:\/[\w.-]*)*`, // an absolute path
+  String.raw`\b(?:this|our|the local) (?:host|node|machine|server|box|container|substrate|deployment|instance|system|vm)\b`,
+  String.raw`\b(?:processes|services|units|daemons|containers|vessels|packages|binaries|ports)\b[^.?!]{0,40}\b(?:running|installed|listening|enabled|active)\b`,
+  String.raw`\b(?:running|installed|listening|enabled|active)\b[^.?!]{0,30}\b(?:processes|services|units|daemons|containers|vessels|packages|binaries|ports)\b`,
+  String.raw`\b(?:running|installed) (?:on|in) (?:this|the) (?:host|node|machine|server|container|substrate|system)\b`,
+  String.raw`\b(?:systemd|vessel) units?\b`,
+  String.raw`\b(?:trace|gap|memory|impulse|concept|dispatch) store\b|\bthe (?:impulse )?pool\b|\bconcept graph\b|\b(?:our|this|the local) database\b`,
+].join("|"), "i");
+const LOCAL_STATE_CODE = "unsourced-local-state";
 
 /** Sentences that commit to nothing: a hedge, a request to clarify, or an offer instead of an answer.
  *  A sentence is non-committal when it matches this OR ends in "?". Heuristic phrase list (flagged). */
@@ -184,6 +210,14 @@ export function hasInRunSource(producedShapes: string[]): boolean {
   return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s));
 }
 
+/** Did the chain read THIS system in-run? hasInRunSource's role sets, less the world sources (web search): a file,
+ *  shell, code-search or store read (fs_read, fileContent, shellResult, codeSearch, the store's own read shape), or a
+ *  command that read the registry. SHAPES ONLY, like hasInRunSource. */
+export function hasLocalRead(producedShapes: string[], commandEvidence?: string): boolean {
+  return producedShapes.some((s) => !LLM_WRITER_SHAPES.has(s) && !SEED_SHAPES.has(s) && !/_write$/.test(s) && !SEARCH_RESULT_SHAPES.has(s))
+    || REGISTRY_READ_RE.test(commandEvidence ?? "");
+}
+
 const DAY_MS = 86_400_000;
 const notReached = (code: string, why: string): ReachJudgeVerdict => ({
   reached: false, deterministic: true, completion_shapes: [], reason: `deterministic:${code} — ${why}`,
@@ -200,6 +234,8 @@ const notReached = (code: string, why: string): ReachJudgeVerdict => ({
  *     offset). Other dates in the answer (yesterday's items, history) are not read.
  *  4. WRONG SUBJECT: a SELF_DESCRIPTION_CUES goal whose chain used no SELF_KNOWLEDGE_SHAPES producer and
  *     read no registry.
+ *  5. UNSOURCED LOCAL STATE: a LOCAL_STATE_CUES goal (this system's filesystem, config, processes, units, stores)
+ *     whose chain made no local read (hasLocalRead). The judge is consulted in shadow for this rule (judgeReach).
  */
 export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJudgeVerdict | null {
   const { goal, producedShapes, now } = input;
@@ -234,6 +270,10 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
     if (!selfKnown) {
       return notReached("ungrounded-self-description", `the goal asks the substrate to describe itself and the chain consulted no self-knowledge producer (${[...SELF_KNOWLEDGE_SHAPES].slice(0, 4).join(", ")}, …) and read no registry; a model's own persona is the wrong subject`);
     }
+  }
+
+  if (LOCAL_STATE_CUES.test(goal) && !hasLocalRead(producedShapes, input.commandEvidence)) {
+    return notReached(LOCAL_STATE_CODE, `the goal asks about this system's own state (filesystem, config, processes, units or stores) and the chain made no local read (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory describes some other system`);
   }
   return null;
 }
