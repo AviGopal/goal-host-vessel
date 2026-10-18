@@ -167,6 +167,33 @@ export function writeDoorShapes(shapes: readonly string[], admitted: boolean, do
   return writeDoorFilter(shapes, (s) => [s], admitted, door, goalHash, record, String, goalProduct ?? new Set(shapes));
 }
 
+/**
+ * Every shape a template run produces: its declared outputs and each task's resolver id and outputs (what the
+ * executor's task door reads; a vessel resolver is registered under the shape it serves).
+ */
+export function templateRunShapes(template: unknown): string[] {
+  const t = (template ?? {}) as { outputShapes?: unknown; output_shapes?: unknown; tasks?: unknown };
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.length > 0) : []);
+  const shapes = [...list(t.outputShapes), ...list(t.output_shapes)];
+  for (const task of Array.isArray(t.tasks) ? t.tasks : []) {
+    const k = (task ?? {}) as { resolver?: unknown; outputShapes?: unknown };
+    if (typeof k.resolver === "string" && k.resolver !== "compose" && k.resolver !== "compose_parallel") shapes.push(k.resolver);
+    shapes.push(...list(k.outputShapes));
+  }
+  return [...new Set(shapes)];
+}
+
+/**
+ * The template door: on a goal not admitted, a fetched template whose declared outputs or own tasks are refused is not
+ * run, so the caller excludes it and tries another, instead of running it with its writing tasks skipped. Counted and
+ * recorded like every door. A template that could not be fetched is not judged here (the task door still holds).
+ */
+export function templateRefused(template: unknown, admitted: boolean, door: WriteDoor, goalHash: string, record?: (line: string) => void, goalProduct?: ReadonlySet<string> | null): boolean {
+  if (admitted || !template) return false;
+  const id = String((template as { id?: unknown }).id ?? "template");
+  return writeDoorFilter([template], templateRunShapes, false, door, goalHash, record, () => id, goalProduct).length === 0;
+}
+
 /** The executor's task-level door (ias-executor-ts ExecuteOptions.writeDoor): same predicate, same goal product. */
 export interface TaskWriteDoor { admitted: boolean; governs: (shape: string) => boolean }
 

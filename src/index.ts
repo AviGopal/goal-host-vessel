@@ -329,7 +329,7 @@ const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
-import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
+import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
@@ -16102,6 +16102,7 @@ async function runGoalWithRecoveryInner(
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
+  const doorRefusedHeads: string[] = [];
   // Correlation id of the recommendation actually selected for THIS attempt.
   let pickCorrelationId: string | null = null;
   if (!nextTarget && goal) {
@@ -16138,6 +16139,10 @@ async function runGoalWithRecoveryInner(
       const pinnable = pinnableHead(reaching.activities);
       if (!pinnable) {
         console.log(`[goal-host-vessel] ${opts.surface}: known-reaching path head ${pathHead} is a satisfier pseudo-id, not a template -- NOT pinning it; deferring to shape-directed selection (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"})`);
+      } else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch(() => null), _changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {
+        // WRITE DOOR (recovery pick): a known-reaching head that writes outside the goal's product is not pinned; it is
+        // excluded and the shape-directed selection below (itself doored) tries an alternative.
+        doorRefusedHeads.push(pinnable);
       } else {
         nextTarget = pinnable;
         console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${nextTarget} (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"}${reaching.activities.length > 1 ? ` remaining=[${reaching.activities.slice(1).join(",")}]` : ""})`);
@@ -16148,12 +16153,12 @@ async function runGoalWithRecoveryInner(
     // Track whether ANY producer lookup failed outright. Without this, a flaky recommend
     // endpoint is read as "this shape has no producer at all" — see recommendExcluding.
     const lookupOutcome = { lookupFailed: false };
-    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
+    const firstPick = await recommendExcluding(goal, doorRefusedHeads, null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
     nextTarget = firstPick?.id ?? undefined;
     pickCorrelationId = firstPick?.correlationId ?? null;
     if (!nextTarget && goalTargetDecision) {
       for (const alt of goalTargetDecision.alternatives) {
-        const altPick = await recommendExcluding(goal, [], null, alt, lookupOutcome, { completion: alt }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
+        const altPick = await recommendExcluding(goal, doorRefusedHeads, null, alt, lookupOutcome, { completion: alt }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
         if (altPick) {
           console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
           seededOutputShapes = alt;

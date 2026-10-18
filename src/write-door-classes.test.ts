@@ -103,6 +103,38 @@ describe("write door classes", () => {
     }
   });
 
+  // THE TEMPLATE DOOR: a fetched template is judged by its declared outputs AND its own tasks, so a template whose
+  // declared outputs omit a writing task is excluded before it runs (the recovery loop's pinned known-reaching head),
+  // rather than pinned and run with that task skipped by the executor.
+  type T = { id: string; outputShapes?: string[]; tasks: Array<{ id: string; resolver: string; outputShapes?: string[] }> };
+  const LEARNED_T: T = {
+    id: "learned-composition-shellresult-to-llm-completion-to-memorynote-write", outputShapes: ["shellResult", "llm_completion", "memoryNote_write"],
+    tasks: [{ id: "s1", resolver: "shellResult", outputShapes: ["shellResult"] }, { id: "s2", resolver: "llm_completion", outputShapes: ["llm_completion"] }, { id: "s3", resolver: "memoryNote_write", outputShapes: ["memoryNote_write"] }],
+  };
+  const UNDECLARED_T: T = { id: "declares-only-a-report", outputShapes: ["resolver_pattern_report"], tasks: [{ id: "a", resolver: "resolver_pattern_report" }, { id: "b", resolver: "uiPanel_write" }] };
+  const READ_T: T = { id: "reads-only", outputShapes: ["llm_completion"], tasks: [{ id: "a", resolver: "shellResult" }, { id: "b", resolver: "llm_completion", outputShapes: ["llm_completion"] }] };
+  const templateRefused = (door as unknown as { templateRefused?: (t: unknown, a: boolean, d: door.WriteDoor, h: string, r?: (l: string) => void, p?: ReadonlySet<string>) => boolean }).templateRefused;
+  it("must-fail: a question goal not admitted: the learned composition as a known-reaching pathway head is refused before it is pinned", () => {
+    expect(typeof templateRefused).toBe("function");
+    const lines: string[] = [];
+    const product = new Set(["llm_completion"]);
+    expect(templateRefused!(LEARNED_T, false, "recovery_pick", "h", (l) => lines.push(l), product)).toBe(true);
+    expect(lines[0]).toContain(`dropped ${LEARNED_T.id}: goal not admitted as a change (door=recovery_pick`);
+    expect(door.writeDoorCounters().recovery_pick).toBe(1);
+  });
+  it("must-fail: a template whose declared outputs omit a writing task is refused by its tasks", () => {
+    expect(typeof templateRefused).toBe("function");
+    expect(templateRefused!(UNDECLARED_T, false, "template_pick", "h", undefined, new Set(["resolver_pattern_report"]))).toBe(true);
+  });
+  it("control: the template door keeps a reading template, every template on an admitted goal, a store write that is the product, and an unfetched template", () => {
+    const keeps = (t: unknown, a: boolean, d: door.WriteDoor, p: string[]) => !(templateRefused?.(t, a, d, "h", undefined, new Set(p)) ?? false);
+    expect(keeps(READ_T, false, "template_pick", ["llm_completion"])).toBe(true);
+    expect(keeps(LEARNED_T, true, "recovery_pick", [])).toBe(true);
+    expect(keeps(LEARNED_T, false, "recovery_pick", ["shellResult", "memoryNote_write"])).toBe(true);
+    expect(keeps(null, false, "recovery_pick", [])).toBe(true);
+    expect(door.writeDoorCounters().recovery_pick).toBe(0);
+  });
+
   it("control: an admitted goal keeps every write producer", () => {
     const lines: string[] = [];
     const admitted = door.admittedChange({ admittedEditRoute: true, declaredOutputShapes: null });

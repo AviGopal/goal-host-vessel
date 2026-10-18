@@ -77,6 +77,16 @@ describe("write doors: store and change classes are wired", () => {
     // every pick drawn from a discover-by-shapes fetch in the walk is drawn from a list that passed the door
     expect(src.match(/pick = producers\.find\(/g)?.length).toBe(1);
   });
+  test("[MUST-FAIL] recovery pick: a known-reaching pathway head passes the template door before it is pinned, and a refused head is excluded from the alternatives", () => {
+    const pinned = src.indexOf("        nextTarget = pinnable;");
+    expect(pinned).toBeGreaterThan(0);
+    const door = src.lastIndexOf('} else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch(() => null), _changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {', pinned);
+    expect(door).toBeGreaterThan(0);
+    expect(pinned - door).toBeLessThan(700);
+    expect(src.slice(door, pinned)).toContain("doorRefusedHeads.push(pinnable);");
+    expect(src).toContain("const firstPick = await recommendExcluding(goal, doorRefusedHeads, null, seededOutputShapes,");
+    expect(src).toContain("const altPick = await recommendExcluding(goal, doorRefusedHeads, null, alt,");
+  });
   test("recovery pick: the recommendation's goal product is the target it was asked for", () => {
     expect(src).toContain('writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id, new Set(targetShapes ?? []))');
   });
