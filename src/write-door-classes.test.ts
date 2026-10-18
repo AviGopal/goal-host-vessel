@@ -92,6 +92,17 @@ describe("write door classes", () => {
     expect(writeDoor.governs("llm_completion")).toBe(false);
   });
 
+  it("must-fail: the re-dispatch, template-rewrite and directory-pruning primitives are change shapes too", () => {
+    // dispatch_latest_auto_draft and goalDispatchAsync re-enter routing as dispatch_goal does; reachability_gap_repair
+    // rewrites templates as template_repair does; prune_stale_mitosis deletes directories. All in the live vocabulary.
+    const more = ["dispatch_latest_auto_draft", "goalDispatchAsync", "reachability_gap_repair", "prune_stale_mitosis"];
+    const { writeDoor } = door.taskWriteDoor(false, more);
+    for (const s of more) {
+      expect([s, door.isWriteShape(s)]).toEqual([s, true]);
+      expect([s, writeDoor.governs(s)]).toEqual([s, true]);
+    }
+  });
+
   it("control: an admitted goal keeps every write producer", () => {
     const lines: string[] = [];
     const admitted = door.admittedChange({ admittedEditRoute: true, declaredOutputShapes: null });

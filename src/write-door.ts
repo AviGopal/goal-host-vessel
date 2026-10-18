@@ -59,15 +59,18 @@ import { isMutationShape } from "./judge/shapes";
 /**
  * Drafter / landing shapes, the mutating primitives (git, GitHub, units, database, the tree), and the primitives that
  * draft, mint, retire, apply or re-dispatch (none of them matches isMutationShape): gap_compose goes straight to
- * development-vessel's feature compose; dispatch_goal is a child /run-goal that re-enters routing with its own
- * admission. Classified BY NAME, the second half a copy of development-vessel's MUTATING_PRIMITIVES (named debt:
- * write-ness belongs in declared shape metadata, not in two hand-kept lists).
+ * development-vessel's feature compose; dispatch_goal, dispatch_latest_auto_draft and goalDispatchAsync are a child
+ * /run-goal that re-enters routing with its own admission; template_repair and reachability_gap_repair rewrite
+ * templates; prune_stale_mitosis deletes directories. Classified BY NAME, the second half a copy of
+ * development-vessel's MUTATING_PRIMITIVES (named debt: write-ness belongs in declared shape metadata, not in two
+ * hand-kept lists; this list is what that retires).
  */
 export const CHANGE_PRIMITIVE_SHAPES: ReadonlySet<string> = new Set([
   "code_modification_proposal", "code_modification_proposal_write", "feature_compose", "patch_with_tools", "apply_proposal_as_patch",
-  "gap_compose", "author_new_resolver", "author_producer", "author_composed_capability", "dispatch_goal",
-  "vessel_mitosis_start", "template_repair", "variant_promote", "activity_create_variant", "activityTemplate_deprecate",
-  "escalation_disposition_apply",
+  "gap_compose", "author_new_resolver", "author_producer", "author_composed_capability",
+  "dispatch_goal", "dispatch_latest_auto_draft", "goalDispatchAsync",
+  "vessel_mitosis_start", "prune_stale_mitosis", "template_repair", "reachability_gap_repair", "variant_promote",
+  "activity_create_variant", "activityTemplate_deprecate", "escalation_disposition_apply",
   "git_add", "git_commit", "git_push", "git_branch_create", "gh_pr_create", "gh_pr_merge", "gh_repo_create",
   "systemd_restart", "pull_cutover", "surrealdb_import", "activate_substrate_script", "vessel_mitosis_cutover",
 ]);
