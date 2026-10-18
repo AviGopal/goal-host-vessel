@@ -171,7 +171,7 @@ describe("[WIRING] the reach gate consults it, the system can see it, and the ju
     const body = index.slice(helper, start);
     expect(body).toContain("verdictConsistency.reconcileVerdict(");
     expect(body).toContain("k: _t.verdictConsistencyK, ttlMs: _t.verdictConsistencyTtlMs");
-    expect(body).toContain('sample: (i) => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${_gh}:consistency-${i}`),');
+    expect(body).toContain('sample: (i) => llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, `${_gh}:consistency-${i}`, targets),');
   });
   test("advertised and served as a read shape, and counted on /health", () => {
     expect(index).toMatch(/"verdictCorpusRun", "verdictConsistency"\] as const;/);
