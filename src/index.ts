@@ -8614,7 +8614,7 @@ async function runGoalAsPoolWalkBody(
   // are the concrete impulses (with content) we seed into each step's execution.
   const producedShapes = new Set<string>();
   let commandReuseFired = false; // Tier-2 lexical rebind fired this walk -> record as learned_pathway
-  // Shape -> the BANKED command this walk replayed for it (exact hit or lexical rebind). Read against the success ledger
+  // Shape -> the BANKED command this walk replayed for it (exact hit, lexical rebind or family recipe). Read against the success ledger
   // (executorCommands) at return: a replay the ledger does not hold failed, and the next attempt skips only that one.
   const bankReplays = new Map<string, string>();
   let failedReplaysSkipped = 0;
@@ -9712,6 +9712,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     const _rcFailed = !_suppressReuse && _rcHitRaw && _rcHitRaw.shape === shape ? replayBlocked(opts.skipFailedReplays, shape, _rcHitRaw.command) : undefined;
     if (_rcFailed) tap(`[goal-host-vessel] walk(${opts.surface}): NOT replaying the banked command for "${shape}" (skip ${++failedReplaysSkipped} this walk) — it FAILED earlier in this dispatch: ${_rcFailed.why}; command: ${_rcFailed.command.slice(0, 200)}`);
     const _rcHit = _suppressReuse || _rcFailed ? undefined : _rcHitRaw;
+    // The same rule for a learned family recipe (here and in the recovery below): a recipe command that FAILED earlier in
+    // this dispatch is not replayed again. Returns true, with the counted line, when `cmd` is blocked.
+    const _recipeFailedHere = (cmd: string, where: string): boolean => {
+      const f = replayBlocked(opts.skipFailedReplays, shape, cmd);
+      if (f) tap(`[goal-host-vessel] walk(${opts.surface}): NOT replaying the family recipe ${where} for "${shape}" (skip ${++failedReplaysSkipped} this walk) — it FAILED earlier in this dispatch: ${f.why}; command: ${f.command.slice(0, 200)}`);
+      return !!f;
+    };
     let directArgsRaw: Record<string, unknown>;
     // A command BUILT IN CODE from the goal (registry-count / registry-ratio / file-count and its
     // aggregate siblings), shared with the oracle that verifies it. Set only on those branches.
@@ -9778,12 +9785,13 @@ If one of those sibling shapes is the action that would create what the goal ask
       directArgsRaw = { [_rcHit.field]: _rcHit.command };
       bankReplays.set(shape, _rcHit.command);
       tap(`[goal-host-vessel] walk: REUSED verified command for "${shape}" from reached-command cache (goal_hash hit) — SKIPPED pointer_arg_extraction synthesis`);
-    } else if (!_suppressReuse && shape === "shellResult" && recipeCommandFor(goal) !== null) {
+    } else if (!_suppressReuse && shape === "shellResult" && recipeCommandFor(goal) !== null && !_recipeFailedHere(recipeCommandFor(goal)!, "answer")) {
       // A family recipe is a measurement two independent derivations already agreed on, which
       // is stronger evidence than the lexical rebind below (a literal-gated guess) and is the
       // only donor available for a class this walk has never solved.
       const _rc = recipeCommandFor(goal)!;
       directArgsRaw = { command: _rc };
+      bankReplays.set(shape, _rc);
       answeredFromRecipe.add(goalHashOf(goal));       // ... so the verifier will NOT reuse it
       commandReuseFired = true;
       tap(`[goal-host-vessel] walk: ANSWERED from learned family recipe for "${shape}" — verification will pay for two FRESH derivations so the answer cannot confirm itself`);
@@ -10681,7 +10689,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       // stop differing in the one way the experiment varies.
       if (_deg && !_suppressReuse && shape === "shellResult") {
         const _recovery = recipeCommandFor(goal);
-        if (_recovery && _recovery !== (directArgsRaw["command"] as string | undefined)) {
+        if (_recovery && _recovery !== (directArgsRaw["command"] as string | undefined) && !_recipeFailedHere(_recovery, "recovery")) {
+          // Noted as a replay unless this call already replayed a banked command (that one's outcome is the one to read).
+          if (!bankReplays.has(shape)) bankReplays.set(shape, _recovery);
           const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, bindBody({ ...directArgsRaw, command: _recovery }));
           const _reDeg = _degenerateReason(_re);
           tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" self-correction exhausted — RECOVERING with the learned family recipe instead of refusing; ${_reDeg ? "recipe also degenerate (" + _reDeg.slice(0, 60) + ")" : "recipe produced a value"}`);

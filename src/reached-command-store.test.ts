@@ -148,3 +148,17 @@ describe("failed bank replays", () => {
     expect(store.failedBankReplays(new Map(), new Map([["shellResult", X]]))).toEqual([]);
   });
 });
+
+// The family recipe goes through the same two functions: its replay is noted like a banked command's.
+describe("family recipe replays", () => {
+  const R = "find /workspace -name '*.ts' | wc -l";
+  test("control (green on 0fdd24c): a recipe replay that failed is blocked on the retry", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", R]]), new Map());
+    expect(store.replayBlocked(failed, "shellResult", R)?.command).toBe(R);
+  });
+  test("control: a recipe replay that succeeded is reused", () => {
+    const failed = store.failedBankReplays(new Map([["shellResult", R]]), new Map([["shellResult", R]]));
+    expect(failed).toEqual([]);
+    expect(store.replayBlocked(failed, "shellResult", R)).toBeUndefined();
+  });
+});

@@ -51,10 +51,31 @@ describe("reached-command bank is gated, and a retry skips only the banked comma
     expect(src.slice(hit, hit + 300)).toContain("replayBlocked(opts.skipFailedReplays, shape, _rcHitRaw.command)");
     expect(src).toContain("const _rcHit = _suppressReuse || _rcFailed ? undefined : _rcHitRaw;");
     expect(src).toContain("replayBlocked(opts.skipFailedReplays, shape, _rebindRaw.command)");
-    expect(src.match(/\(skip \$\{\+\+failedReplaysSkipped\} this walk\) — it FAILED earlier in this dispatch/g)?.length).toBe(2);
+    // Three counted skip lines: the exact hit, the lexical rebind, and the family recipe (answer + recovery share one).
+    expect(src.match(/\(skip \$\{\+\+failedReplaysSkipped\} this walk\) — it FAILED earlier in this dispatch/g)?.length).toBe(3);
     // Both banked-replay branches note what they replayed.
     expect(src).toContain("bankReplays.set(shape, _rcHit.command);");
     expect(src).toContain("bankReplays.set(shape, _rebind.command);");
+  });
+  // THE FAMILY RECIPE IS A REPLAY TOO. Its two paths (the recipe answer and the recipe recovery after exhausted
+  // self-correction) did not consult the failed list, so a shellResult command that failed earlier in the dispatch and
+  // equals recipeCommandFor(goal) was replayed on the retry; and the recipe answer was never noted, so its own
+  // failure could not be recorded at all.
+  test("[MUST-FAIL on 0fdd24c] a recipe command that failed earlier in the dispatch is not replayed on the retry", () => {
+    const ans = src.indexOf('recipeCommandFor(goal) !== null && !_recipeFailedHere(recipeCommandFor(goal)!, "answer")) {');
+    expect(ans).toBeGreaterThan(0);
+    // The recipe answer is noted, so a failed recipe answer is recorded for the next attempt.
+    expect(src.slice(ans, ans + 600)).toContain("bankReplays.set(shape, _rc);");
+    expect(src).toContain('if (_recovery && _recovery !== (directArgsRaw["command"] as string | undefined) && !_recipeFailedHere(_recovery, "recovery")) {');
+    expect(src).toContain("if (!bankReplays.has(shape)) bankReplays.set(shape, _recovery);");
+    const helper = src.indexOf("const _recipeFailedHere = (cmd: string, where: string): boolean => {");
+    expect(helper).toBeGreaterThan(0);
+    expect(src.slice(helper, helper + 400)).toContain("replayBlocked(opts.skipFailedReplays, shape, cmd)");
+  });
+  test("control: a recipe is blocked only by a recorded failure — the recipe gates are otherwise unchanged", () => {
+    // Still gated on !_suppressReuse and shellResult as before; the only added condition is the failed-list check.
+    expect(src).toContain('} else if (!_suppressReuse && shape === "shellResult" && recipeCommandFor(goal) !== null && !_recipeFailedHere(');
+    expect(src).toContain('if (_deg && !_suppressReuse && shape === "shellResult") {\n        const _recovery = recipeCommandFor(goal);');
   });
   test("control: the first walk is unchanged — reuse off only on an exact-hash failure history, and no skip list", () => {
     expect(src).toContain("ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,");
