@@ -329,6 +329,7 @@ const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
+import { admittedChange, noteWriteRefusal, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused } from "./walk-egress-guard";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
@@ -7746,7 +7747,7 @@ type RecommendPick = { id: string; correlationId: string | null };
  *
  * Callers that do not pass `outcome` are unaffected.
  */
-async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null, outcome?: { lookupFailed: boolean }, stateShapes?: { impulse?: readonly string[]; completion?: readonly string[] | null }): Promise<RecommendPick | null> {
+async function recommendExcluding(goalText: string, exclude: string[], repairSig?: string | null, targetShapes?: string[] | null, outcome?: { lookupFailed: boolean }, stateShapes?: { impulse?: readonly string[]; completion?: readonly string[] | null }, writeDoor?: WriteDoorPass): Promise<RecommendPick | null> {
   if (!goalText) return null;
   try {
     const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
@@ -7772,6 +7773,9 @@ async function recommendExcluding(goalText: string, exclude: string[], repairSig
       const id = String((x && (x.template_id || x.id || x.activity_id || x.variant_id)) || "");
       const recShapes = (Array.isArray(x?.output_shapes) ? x.output_shapes : Array.isArray(x?.outputShapes) ? x.outputShapes : []) as string[];
       if (targetShapes && targetShapes.length && recShapes.length && !recShapes.some((s) => targetShapes.includes(String(s)))) continue;
+      // WRITE DOOR (recovery pick, write-door.ts): with the write target dropped the shape filter above passes everything,
+      // so a producer of a write shape is refused here for a goal not admitted as a change.
+      if (writeDoor && writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick", writeDoor.goalHash, writeDoor.record, () => id).length === 0) continue;
       if (id && !excludedNorm.has(norm(id))) {
         // Carry the correlation id of THE RECOMMENDATION WE ACTUALLY PICKED — not the
         // first in the list. Picking one arm and reporting another's id would attribute
@@ -8487,11 +8491,18 @@ async function runGoalAsPoolWalkBody(
      * recordGoalPath's `parent`.
      */
     preferPathwayOrigin?: { goalHash: string | null; pathSignature: string | null };
+    /** THE WRITE DOORS (write-door.ts): this dispatch was admitted as a change — handed to feature_compose by
+     *  the edit-intent route, or the caller declared a write shape. Absent ⇒ not admitted: no write shape is
+     *  targeted, picked or composed by this walk. */
+    changeAdmitted?: boolean;
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
   // stepSink (if provided). Additive — never alters control flow.
   const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
+  // THE WRITE DOORS (write-door.ts): admission is decided by the caller, never re-derived from the goal text here.
+  const changeAdmitted = opts.changeAdmitted === true;
+  const writeDoorHash = goalHashOf(goal);
 
   // REUSE BEFORE DERIVE — the proven composition for this goal, normalised to the
   // same id form the walk's candidates carry so the two are comparable.
@@ -8524,7 +8535,7 @@ async function runGoalAsPoolWalkBody(
   // learnable rather than frozen at process start.
   const MAX_STEPS = (await resolveSelectionTuning()).maxWalkSteps;
   // Terminal emit targets to DEFER until intermediates are produced (composition).
-  const terminalShapes = new Set<string>(opts.terminalOutputShapes ?? []);
+  const terminalShapes = new Set<string>(writeDoorShapes(opts.terminalOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
 
   // Live resolver shapes advertised by discovery — a shape present here is
   // RESOLVABLE (some vessel resolves it), so a wrapper activity invoking it as a
@@ -9527,7 +9538,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     // The satisfier pick already excluded these shapes; the vessel-resolver producer
     // scan reached this function anyway and wrote the live super-repo clone (10-01).
     // Checked here, where every vessel resolve starts, so no call site can skip it.
-    if (isFsWriteShape(shape)) {
+    if (isFsWriteShape(shape)) { // = write-door.ts isWriteShape: unconditional, admitted or not
+      noteWriteRefusal("vessel_resolve");
       tap(`[goal-host-vessel] walk: vesselResolve REFUSED filesystem-write shape ${shape} — a walk-side write has no snapshot/rollback and cannot be credited without a landed sha; edits must route through feature_compose / patch_with_tools`);
       return null;
     }
@@ -10992,7 +11004,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     addToPool(k, v, `seed var ${k}`, { producedBy: "seed" });
   }
 
-  const target = new Set<string>(opts.expectedOutputShapes ?? []);
+  // WRITE DOOR (target): every walk call site's target passes here, a prepended pathway head and the retry framings included.
+  const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
   // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): snapshot the
   // pool shapes present BEFORE any walk step ran. A reach judged solely on these
   // pre-existing seed shapes (e.g. active_note_path, open_note_paths) delivered no
@@ -11363,6 +11376,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const SATISFIER_FORBIDDEN_FS_WRITE = FS_WRITE_SHAPES; // fs-write-shapes.ts — shared with vesselResolveShape below
       const _fsBlocked = eligibleForSatisfier.filter((s) => SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)));
       if (_fsBlocked.length > 0) {
+        noteWriteRefusal("satisfier", _fsBlocked.length);
         tap(`[goal-host-vessel] walk(${opts.surface}): satisfier REFUSED filesystem-write shapes ${JSON.stringify(_fsBlocked)} — the bare satisfier has no snapshot/rollback and an edit-effect reach is uncreditable without a landed sha; edits must route through feature_compose / patch_with_tools`);
       }
       // REUSE BEFORE DERIVE, ON THE SATISFIER PLANE TOO.
@@ -11670,6 +11684,9 @@ If one of those sibling shapes is the action that would create what the goal ask
         } catch { /* forward target-producer merge is best-effort */ }
       }
     }
+    // WRITE DOOR (template pick, write-door.ts): a producer of a filesystem-write shape is not a candidate on a goal
+    // not admitted as a change. Every single-pick tier below (reuse, genuine, scaffold, opportunistic) picks from here.
+    candidates = writeDoorFilter(candidates, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id));
 
     // (b) SELECT BEST — goal-gap weighted. With a target, prefer candidates that
     // advance TOWARD it; do NOT grab unrelated progress-makers (that wanders into
@@ -11791,6 +11808,8 @@ If one of those sibling shapes is the action that would create what the goal ask
             const j: any = await r.json();
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
             forward = (Array.isArray(rows) ? rows : []).map((c: any) => readCandidateShapes(c, _blendK)).filter((c): c is WalkCandidate => c !== null);
+            // WRITE DOOR (template pick): the OR-edge's own forward fetch never passed through `candidates`.
+            forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id));
           }
         } catch { /* discover failed */ }
         const seen = new Set<string>();
@@ -12032,7 +12051,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     //       the walk can genuinely produce the shape this iteration. Only true
     //       capability gaps (no live resolver) fall through to escalate/stop.
     if (!pick && target.size > 0) {
-      const missingTargets = [...target].filter((s) => !producedShapes.has(s));
+      // WRITE DOOR (bridge pick): no wrapper is minted around a write resolver for a goal not admitted as a change.
+      const missingTargets = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "bridge_pick", writeDoorHash, tap);
       const live = await liveShapes();
       let X = missingTargets.find((s) => live.has(s) && !minted.has(s));
       if (X && !(await mintGovernorAllows(X))) {
@@ -12065,7 +12085,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           // Recurse: add the producer's missing inputs as sub-targets so the walk
           // produces them FIRST — mint-as-you-go builds the chain backward from
           // the goal toward what the pool already has.
-          for (const s of authored.inputShapes) if (!producedShapes.has(s)) target.add(s);
+          for (const s of writeDoorShapes(authored.inputShapes, changeAdmitted, "bridge_pick", writeDoorHash, tap)) if (!producedShapes.has(s)) target.add(s);
           if (authored.inputShapes.every((s) => producedShapes.has(s))) {
             pickSource = "bridge";
             pick = { id: authored.id, inputShapes: authored.inputShapes, outputShapes: [X] };
@@ -12079,13 +12099,17 @@ If one of those sibling shapes is the action that would create what the goal ask
     // (c.3) COMPOSE FROM EXISTING RESOLVERS (B2, composite-authoring.ts): a missing target nothing produces, or a NOVEL
     //       chooser answer with no target yet. Once per walk; a refusal falls through to the capability gap below.
     {
-      const _missingC = [...target].filter((s) => !producedShapes.has(s));
+      // WRITE DOOR (composite pick): a write shape is neither composed for nor accepted from the composite author on a
+      // goal not admitted as a change — the novel-target path makes the composite's outputs the target.
+      const _missingC = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "composite_pick", writeDoorHash, tap);
       const _novelC = unboundByDispatch.get(String(opts.variables?.dispatch_id ?? ""))?.novel ?? null;
       const _why = composeTrigger({ tried: walkComposeTried, goal, hasPick: !!pick, missing: _missingC, targetSize: target.size, novel: !!_novelC, steps: chain.length });
       if (_why) {
         walkComposeTried = true;
         const _c = await authorComposite(goal, _missingC, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 180_000 });
-        if (_c.ok) {
+        if (_c.ok && writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id).length === 0) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): composite ${_c.pick.id} REFUSED at the write door (outputs=[${_c.pick.outputShapes.join(",")}]) — not executing it`);
+        } else if (_c.ok) {
           pickSource = "improvise";
           pick = { id: _c.pick.id, inputShapes: [], outputShapes: _c.pick.outputShapes };
           walkComposed = { id: _c.pick.id, outputShapes: _c.pick.outputShapes, residual: _why === "novel_target" ? _novelC?.residual ?? null : null };
@@ -13768,6 +13792,9 @@ async function runGoalWithRecoveryInner(
   // compose was cut at the caller while the callee may still land it.
   const _dispatchStartMs = Date.now();
   let _earlyComposeCutAtCaller = false;
+  // THE WRITE DOORS (write-door.ts): admitted as a change iff the caller declared a write shape (read here, before
+  // inference seeds anything) or the early edit-intent route hands this dispatch to feature_compose (set there).
+  let _changeAdmitted = admittedChange({ admittedEditRoute: false, declaredOutputShapes: opts.expectedOutputShapes });
   // DEFAULT strategy (2026-06-23): when there's a goal, the caller did NOT pin a
   // target, and no firstTarget is supplied, WALK THE SHAPE GRAPH across multiple
   // activities instead of picking one whole template by goal-text. Automatic
@@ -14446,6 +14473,7 @@ async function runGoalWithRecoveryInner(
       judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: earlyEditIntentEnabled });
       const earlyHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: earlyEditIntentEnabled });
       if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {
+        _changeAdmitted = true; // admitted on the edit-intent route; a compose that falls through walks as a change
         const earlyEditFile = earlyHandoff.target;
         const earlyEditVessel = earlyEditFile.split("/")[1]!;
         // Multi-file goals (2026-07-17): a goal may name SEVERAL repos paths; the
@@ -14804,6 +14832,13 @@ async function runGoalWithRecoveryInner(
           reached: false,
         };
       }
+      // WRITE DOOR (target): an inferred write shape is not a target of a goal not admitted as a change — dropped
+      // before the pathway store, the floor shortcut, the walk and the recovery loop read it. With fs_edit kept, a
+      // read-only goal walked toward the live tree; dropping it leaves the goal's other targets, or none.
+      if (!_changeAdmitted && goal) {
+        if (seededOutputShapes) seededOutputShapes = writeDoorShapes(seededOutputShapes, false, "target", goalHashOf(goal), tap);
+        if (terminalOutputShapes) terminalOutputShapes = writeDoorShapes(terminalOutputShapes, false, "target", goalHashOf(goal), tap);
+      }
       // REUSE BEFORE DERIVE: consult the proven-composition store BEFORE the walk,
       // not only in the recovery loop it used to be confined to. `ablation.disableReuse`
       // suppresses it so a cold-derivation counterfactual arm stays cold.
@@ -14893,6 +14928,7 @@ async function runGoalWithRecoveryInner(
         const _pathHeadSat = typeof _headAct === "string" && _headAct.startsWith("satisfier:") ? _headAct.slice("satisfier:".length) : null;
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
         let walk = await runGoalAsPoolWalk(goal, {
+        changeAdmitted: _changeAdmitted,
         recalledLessons: _dispatchLessons,
         priorVerdictFeedback: _priorFailureFeedback || undefined,
         variables: opts.variables,
@@ -14951,6 +14987,7 @@ async function runGoalWithRecoveryInner(
         noteRouteTaken(walk.routeAround, "retry:feedback");
         tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=${goalHashOf(goal)}`);
         const fbWalk = await runGoalAsPoolWalk(goal, {
+          changeAdmitted: _changeAdmitted,
           recalledLessons: _dispatchLessons,
           variables: opts.variables,
           tags: opts.tags,
@@ -15026,6 +15063,7 @@ async function runGoalWithRecoveryInner(
         const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
         if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
         const retryWalk = await runGoalAsPoolWalk(goal, {
+          changeAdmitted: _changeAdmitted,
           recalledLessons: _dispatchLessons,
           variables: opts.variables,
           tags: opts.tags,
@@ -15076,6 +15114,7 @@ async function runGoalWithRecoveryInner(
           tap(`[goal-host-vessel] ${opts.surface}: walk: re-framing to alternative target shapes ${JSON.stringify(altShapes)} after no-pick/hollow termination`);
           noteRouteTaken(walk.routeAround, "reframe");
           const altWalkResult = await runGoalAsPoolWalk(goal, {
+            changeAdmitted: _changeAdmitted,
             recalledLessons: _dispatchLessons,
             variables: opts.variables,
             tags: opts.tags,
@@ -16071,12 +16110,12 @@ async function runGoalWithRecoveryInner(
     // Track whether ANY producer lookup failed outright. Without this, a flaky recommend
     // endpoint is read as "this shape has no producer at all" — see recommendExcluding.
     const lookupOutcome = { lookupFailed: false };
-    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes });
+    const firstPick = await recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
     nextTarget = firstPick?.id ?? undefined;
     pickCorrelationId = firstPick?.correlationId ?? null;
     if (!nextTarget && goalTargetDecision) {
       for (const alt of goalTargetDecision.alternatives) {
-        const altPick = await recommendExcluding(goal, [], null, alt, lookupOutcome, { completion: alt });
+        const altPick = await recommendExcluding(goal, [], null, alt, lookupOutcome, { completion: alt }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
         if (altPick) {
           console.log("[goal-host-vessel] OR-alternative framing [" + alt.join(",") + "] has a producer - committing alternative");
           seededOutputShapes = alt;
@@ -16269,7 +16308,7 @@ async function runGoalWithRecoveryInner(
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
       const repairKey = await repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
-        const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null });
+        const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
       if (altPickRetry && 'status' in altPickRetry && (altPickRetry.status === 401 || altPickRetry.status === 403)) {
         tap(`[goal-host-vessel] ${opts.surface}: auth failure (${altPickRetry.status}) - refusing to use as evidence`);
         break;
@@ -19955,6 +19994,8 @@ server = Bun.serve({
         llm: LLM_VESSEL_ENDPOINT ? `http-vessel:${LLM_VESSEL_ENDPOINT}` : "in-process",
         // Judge consistency (src/judge/verdict-consistency.ts): lookups, agreements, disagreements, k-sample resolutions.
         verdict_consistency: verdictConsistency.consistencyCounters(),
+        // Write doors (src/write-door.ts): write candidates/targets dropped on goals not admitted as a change, per door.
+        write_door: writeDoorCounters(),
       });
     }
 

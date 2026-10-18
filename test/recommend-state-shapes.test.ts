@@ -22,7 +22,7 @@ describe("C6: the recovery pick is state-conditioned", () => {
     const fn = SRC.slice(SRC.indexOf("async function recommendExcluding"), SRC.indexOf("async function recommendExcluding") + 2500);
     expect(fn).toContain("...c6StateShapeFields(stateShapes)");
     expect(SRC).toContain("for (const s of producedShapes) c6SeekPool.add(s);");
-    expect(SRC).toContain("recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null })");
-    expect(SRC).toContain("recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes })");
+    expect(SRC).toContain("recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap })");
+    expect(SRC).toContain("recommendExcluding(goal, [], null, seededOutputShapes, lookupOutcome, { completion: seededOutputShapes }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap })");
   });
 });
