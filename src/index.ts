@@ -13926,6 +13926,9 @@ let _retryNotWidenedCount = 0;
 async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<typeof runGoalWithRecoveryInner>[1]): Promise<GoalSeekResult> {
   const startMs = Date.now();
   const r = await runGoalWithRecoveryInner(goal, opts);
+  // OBSERVE (observe-mode.ts): an observe dispatch's compose is a dry run that cannot land, so there is no landing to
+  // latch: no git probe, no wait out of the compose ceiling, and no landed verdict over the dry run's abstain.
+  if (opts.learningMode === "observe") return r;
   if (r.reached === true || typeof goal !== "string" || !_dispatchSentCompose.has(opts)) return r;
   const sentAt = _dispatchSentCompose.get(opts) ?? startMs;
   const fm = /repos\/([\w.-]+)\/[\w./-]+\.\w+/.exec(goal);

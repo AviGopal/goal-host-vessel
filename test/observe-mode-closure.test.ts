@@ -111,3 +111,21 @@ describe("B3 boot: an interrupted observe dispatch resumes as observe and is not
     expect(om.observeSkips(undefined, "d", "oracle_label", () => {})).toBe(false);
   });
 });
+
+describe("N1 landed latch: an observe dispatch returns before the latch", () => {
+  const latch = (): string => fnBody("async function runGoalWithRecovery(", 5000);
+  test("[MUST-FAIL] the observe return precedes the latch's git probe, its wait and its landed verdict", () => {
+    const b = latch();
+    const obs = b.indexOf('if (opts.learningMode === "observe") return r;');
+    expect(obs).toBeGreaterThan(b.indexOf("const r = await runGoalWithRecoveryInner(goal, opts);"));
+    expect(obs).toBeLessThan(b.indexOf("let sha = await landedCommitForGoal("));
+    expect(obs).toBeLessThan(b.indexOf("await new Promise((res) => setTimeout(res, 30_000));"));
+    expect(obs).toBeLessThan(b.indexOf("recordDeterministicLabel(goal, `feature_compose:${sha}`"));
+  });
+  test("control (learn): the latch itself is unchanged, and the post-walk compose still arms it", () => {
+    const b = latch();
+    expect(b).toContain('if (r.reached === true || typeof goal !== "string" || !_dispatchSentCompose.has(opts)) return r;');
+    expect(b).toContain("reached: true,\n    executionId: `feature_compose:${sha}`,");
+    expect(src).toContain("_dispatchSentCompose.set(opts, Date.now());");
+  });
+});
