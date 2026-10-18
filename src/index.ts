@@ -8187,6 +8187,8 @@ async function resolveMaxExtractionDepth(): Promise<number> {
 const foreignConsumptionGate = makeForeignConsumptionGate({
   lib: iasExecutor as unknown as Record<string, unknown>,
   log: (line) => console.warn(line),
+  // OBSERVE (observe-mode.ts): an observe dispatch files no gap, and leaves the once-flag unset for a learn one.
+  skipReport: () => observeSkip("gap_write"),
   writeGap: async (gap) => {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST",
@@ -19371,6 +19373,8 @@ let _verdictCorpusRun: Promise<unknown> | null = null;
 /** File (or re-file) one of the verdict-corpus runner's gaps (dev-vessel substrateGap_write). The disposition is
  *  written explicitly ("" included) because the gap store carries omitted keys forward. */
 async function fileVerdictCorpusGap(g: import("./judge/corpus-activity").CorpusGap): Promise<void> {
+  // OBSERVE (observe-mode.ts): reachable inside a dispatch (a credit-hold read with the status unavailable); no gap.
+  if (observeSkip("gap_write")) return;
   const { dispositionFor, RUNNER_ID, RUNNER_PARK } = await import("./judge/corpus-activity");
   const disposition = dispositionFor(g.route);
   try {
@@ -19419,6 +19423,9 @@ async function readLiveScopeExcluded(): Promise<string[] | null> {
 // unreadable, credit-hold.ts) and files ONE high-severity gap (stable id).
 creditHold.configureCreditHold({
   onUnavailable: (why, holds) => {
+    // OBSERVE (observe-mode.ts): a credit-hold read inside an observe dispatch files no gap and reports "not reported",
+    // so the hold's once-latch stays open for the next (learn) read.
+    if (observeSkip("gap_write")) return false;
     void (async () => {
       const { hostname } = await import("node:os");
       const node = hostname();

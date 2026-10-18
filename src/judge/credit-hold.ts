@@ -64,7 +64,8 @@ export const DEPLOYED_CORPUS_DIR = verdictCorpusDir();
 
 type Reader = () => Record<string, unknown> | null;
 type EverGreenReader = () => string[] | null;
-type UnavailableHook = (why: string, holds: Hold[]) => void;
+/** Returns false when it did not report (an observe dispatch: observe-mode.ts), so the next read reports again. */
+type UnavailableHook = (why: string, holds: Hold[]) => void | boolean;
 
 /** The workspace root, as the shaped-policy store resolves it (no environment read of its own). */
 export function workspaceRoot(): string { return dirname(dirname(shapedPolicyPath(STATUS_SHAPE))); }
@@ -220,7 +221,7 @@ export function currentHolds(): HoldView {
     if (!unavailableReported) {
       unavailableReported = true;
       const detail = reader === readStatusSync ? poolMissingWhy() : null;
-      try { onUnavailable(status ? "status record malformed" : detail ? `status record missing: ${detail}` : "status record missing", view.holds); } catch { /* reporting never changes a hold */ }
+      try { if (onUnavailable(status ? "status record malformed" : detail ? `status record missing: ${detail}` : "status record missing", view.holds) === false) unavailableReported = false; } catch { /* reporting never changes a hold */ }
     }
   } else unavailableReported = false;
   cache = { at: now, view };

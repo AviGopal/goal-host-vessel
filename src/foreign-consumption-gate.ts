@@ -66,6 +66,9 @@ export interface ForeignConsumptionGateDeps {
   log: (line: string) => void;
   /** Files a substrate gap. Called at most once per gate instance. */
   writeGap: (gap: typeof GATE_UNAVAILABLE_GAP) => Promise<unknown> | void;
+  /** True when this report must not be made now (an observe dispatch: observe-mode.ts). Asked BEFORE the once-flag is
+   *  set, so a skipped report is made by the next (learn) dispatch that meets the missing export. */
+  skipReport?: () => boolean;
 }
 
 export interface ForeignConsumptionVerdict {
@@ -87,6 +90,7 @@ export function makeForeignConsumptionGate(deps: ForeignConsumptionGateDeps) {
   let reportedUnavailable = false;
   const reportUnavailable = (): void => {
     if (reportedUnavailable) return;
+    if (deps.skipReport?.()) return;
     reportedUnavailable = true;
     deps.log(GATE_UNAVAILABLE_LOG);
     try {

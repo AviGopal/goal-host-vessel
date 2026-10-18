@@ -11,6 +11,8 @@ import { isWalkEgressRefused, setWalkEgressLearningModeReader, walkEgressFetch }
 import { buildResolvePointer } from "../src/resolve-pointer";
 import { walkResolveBody } from "../src/applied-write";
 import * as ca from "../src/composite-authoring";
+import { configureCreditHold, heldFor, readStatusSync, DEPLOYED_CORPUS_DIR, HOLD_CACHE_TTL_MS } from "../src/judge/credit-hold";
+import { makeForeignConsumptionGate } from "../src/foreign-consumption-gate";
 
 const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
 const fnBody = (sig: string, span = 2500): string => {
@@ -438,13 +440,48 @@ describe("commit 10: template authoring goes through the walk egress door, and e
     compute_state_signature: "state signature for the dispatch's tags (computed per call)",
   };
   const NOT_A_DISPATCH: Array<{ fn: string; shape: string; why: string }> = [
-    { fn: "async function fileVerdictCorpusGap(", shape: "substrateGap_write", why: "the verdict-corpus runner, on its own trigger" },
     { fn: "let expWatchdogGapOpen", shape: "substrateGap_write", why: "the expectation watchdog's timer" },
   ];
-  const DEBT: Array<{ fn: string; shape: string; why: string }> = [
-    { fn: "const foreignConsumptionGate", shape: "substrateGap_write", why: "once per process, fixed id; can fire during an observe dispatch (residual)" },
-  ];
+  const DEBT: Array<{ fn: string; shape: string; why: string }> = [];
   const GUARD_WINDOW = 20_000;
+  /** The end of the call whose "(" follows `at` (strings, template literals and ${} expressions are skipped). */
+  const callEnd = (text: string, at: number): number => {
+    const stack: string[] = [];
+    let depth = 0;
+    for (let j = text.indexOf("(", at); j >= 0 && j < text.length; j++) {
+      const c = text[j]!;
+      const mode = stack[stack.length - 1] ?? "code";
+      if (mode === "code" || mode === "expr" || mode === "brace") {
+        if (c === '"' || c === "'" || c === "`") stack.push(c);
+        else if (mode === "code" && c === "(") depth++;
+        else if (mode === "code" && c === ")") { if (--depth === 0) return j + 1; }
+        else if (mode !== "code" && c === "{") stack.push("brace");
+        else if (mode !== "code" && c === "}") stack.pop();
+      } else if (c === "\\") j++;
+      else if (c === mode) stack.pop();
+      else if (mode === "`" && c === "$" && text[j + 1] === "{") { stack.push("expr"); j++; }
+    }
+    return text.length;
+  };
+  /** The shape a send writes or reads: the first type literal INSIDE the fetch call, else the one in the declaration (in
+   *  the same function, before the send) of what its `body` names — the identifier itself, or the latest-declared
+   *  identifier inside its JSON.stringify(...). Never a literal that merely follows the send. */
+  const shapeOf = (text: string, fs: number, at: number): string | null => {
+    const call = text.slice(at, callEnd(text, at));
+    const inCall = /type:\s*"([^"]+)"/.exec(call);
+    if (inCall) return inCall[1]!;
+    const fnText = text.slice(fs, at);
+    const declOf = (id: string): number => {
+      const ds = [...fnText.matchAll(new RegExp(`\\b(?:const|let)\\s+${id}\\b[^=]*=`, "g"))];
+      return ds.length > 0 ? ds[ds.length - 1]!.index ?? -1 : -1;
+    };
+    const named = /\bbody(?:\s*:\s*([A-Za-z_$][\w$]*)|\s*[,}\n])/.exec(call);
+    let ids: string[] = named ? [named[1] ?? "body"] : [];
+    if (ids[0] === "JSON") ids = [...(/JSON\.stringify\(([^)]*)\)/.exec(call)?.[1] ?? "").matchAll(/[A-Za-z_$][\w$]*/g)].map((x) => x[0]);
+    const decl = ids.map(declOf).filter((i) => i >= 0).sort((a, b) => b - a)[0];
+    if (decl === undefined) return null;
+    return /type:\s*"([^"]+)"/.exec(fnText.slice(decl))?.[1] ?? null;
+  };
   const scan = (text: string) => {
     const sendRe = /(?<![\w.])fetch\(\s*`\$\{(?:DEV_VESSEL_ENDPOINT|ACTIVITY_API_ENDPOINT|process\.env\.DEVELOPMENT_VESSEL_ENDPOINT[^}]*)\}\/v2\/impulses\/resolve`/g;
     const fnStarts = [...text.matchAll(/\n(?:export )?(?:async )?function |\n(?:const|let) \w+ = |\nserver = |\n[ \t]+const \w+ = async \(/g)].map((m) => (m.index ?? 0) + 1);
@@ -452,10 +489,8 @@ describe("commit 10: template authoring goes through the walk egress door, and e
     const out: Array<{ line: number; shape: string | null; fn: string; ok: string | null }> = [];
     for (const m of text.matchAll(sendRe)) {
       const at = m.index ?? 0;
-      const after = /type:\s*"([^"]+)"/.exec(text.slice(at, at + 1500));
-      const before = [...text.slice(Math.max(0, at - 1500), at).matchAll(/type:\s*"([^"]+)"/g)].pop();
-      const shape = after?.[1] ?? before?.[1] ?? null;
       const fs = fnStarts.filter((x) => x <= at).pop() ?? 0;
+      const shape = shapeOf(text, fs, at);
       const fn = text.slice(fs, fs + 80).trimStart();
       const guarded = guards.some((g) => g >= fs && g < at && at - g <= GUARD_WINDOW);
       const ok = shape && READS[shape] ? `read: ${READS[shape]}`
@@ -476,6 +511,15 @@ describe("commit 10: template authoring goes through the walk egress door, and e
     const guarded = probe.replace("{\n  await", "{\n  if (observeSkip(\"authoring_mint\")) return;\n  await");
     expect(scan(guarded).map((s) => s.ok)).toEqual(["observe-guarded"]);
   });
+  test("[MUST-FAIL] class detector: a write body built BEFORE the send is named by that body, not by a later read literal (qa case B)", () => {
+    const probe = "\nasync function probeWriter(): Promise<void> {\n  const body = JSON.stringify({ impulse: { pointer: { type: \"activityVariant_write\" } } });\n  await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, { method: \"POST\", body });\n  const n = { type: \"memoryNote\" };\n}\n";
+    expect(scan(probe).map((s) => [s.shape, s.ok])).toEqual([["activityVariant_write", null]]);
+    const named = probe.replace("const body =", "const payload =").replace("body });", "body: payload });");
+    expect(scan(named).map((s) => [s.shape, s.ok])).toEqual([["activityVariant_write", null]]);
+    // a read built the same way is still a read, and every index.ts site resolves to a shape
+    expect(scan(probe.replace("activityVariant_write", "memoryNote")).map((s) => s.ok)).toEqual(["read: memory read"]);
+    expect(scan(src).filter((s) => s.shape === null)).toEqual([]);
+  });
   test("composite-authoring.ts sends only through the door (or a caller's fetchImpl)", () => {
     const ca_src = require("node:fs").readFileSync(`${import.meta.dir}/../src/composite-authoring.ts`, "utf8") as string;
     expect(ca_src).toContain("deps.fetchImpl ?? ((url, init) => walkEgressFetch(shape, url, init))");
@@ -484,5 +528,52 @@ describe("commit 10: template authoring goes through the walk egress door, and e
     const direct = [...ca_src.matchAll(/deps\.fetchImpl \?\? fetch\b/g)].map((m) => ca_src.lastIndexOf("export async function ", m.index ?? 0));
     expect(direct.map((i) => ca_src.slice(i, i + 48))).toEqual(["export async function describeMintedShape(discov"]);
     for (const s of ["author_producer", "author_composed_capability", "activityTemplate_deprecate"]) expect(ca_src).toContain(`sendFor("${s}", deps)`);
+  });
+});
+
+describe("commit 11: the verdict-corpus and foreign-gate gaps are not filed by an observe dispatch, and do not latch", () => {
+  const MOMENT = Date.parse("2026-10-12T12:00:00Z");
+  test("[MUST-FAIL] credit hold: a hook that did not report (observe) leaves the once-latch open; the next read reports", () => {
+    const calls: string[] = [];
+    let t = MOMENT; let observe = true;
+    configureCreditHold({ reader: () => null, clock: () => t, onUnavailable: (why) => { if (observe) return false; calls.push(why); } });
+    heldFor(["floor:zero-tool"], "reach", "t"); // observe: not reported
+    observe = false; t += HOLD_CACHE_TTL_MS + 1;
+    heldFor(["floor:zero-tool"], "reach", "t"); // learn: reported now
+    expect(calls.length).toBe(1);
+  });
+  test("control (learn): a hook that reports is still called once per loss", () => {
+    const calls: string[] = [];
+    let t = MOMENT;
+    configureCreditHold({ reader: () => null, clock: () => t, onUnavailable: (why) => { calls.push(why); } });
+    heldFor(["floor:zero-tool"], "reach", "t"); t += HOLD_CACHE_TTL_MS + 1; heldFor(["floor:zero-tool"], "reach", "t");
+    expect(calls.length).toBe(1);
+    configureCreditHold({ reader: readStatusSync, corpusDir: DEPLOYED_CORPUS_DIR, clock: () => Date.now(), onUnavailable: () => {} });
+  });
+  test("[MUST-FAIL] index.ts: the hook and fileVerdictCorpusGap skip under observe, the hook answering false", () => {
+    expect(fnBody("  onUnavailable: (why, holds) => {", 400)).toContain('if (observeSkip("gap_write")) return false;');
+    expect(fnBody("async function fileVerdictCorpusGap(", 300)).toContain('if (observeSkip("gap_write")) return;');
+  });
+  const gateHarness = (skip: () => boolean) => {
+    const gaps: unknown[] = []; const logs: string[] = [];
+    const gate = makeForeignConsumptionGate({ lib: {}, log: (l) => logs.push(l), writeGap: (g) => { gaps.push(g); }, skipReport: skip } as any);
+    const trace = { id: "e", templateId: "t", status: "completed", inputImpulseIds: [], outputImpulseIds: [], tasks: [] } as any;
+    return { gate, gaps, logs, trace };
+  };
+  test("[MUST-FAIL] foreign gate: an observe dispatch files no gap and does not set the once-flag; a later learn one files it", () => {
+    let observe = true;
+    const h = gateHarness(() => observe);
+    h.gate.check(h.trace, { strict: true });
+    expect(h.gaps).toEqual([]);
+    observe = false;
+    h.gate.check(h.trace, { strict: true });
+    h.gate.check(h.trace, { strict: true });
+    expect(h.gaps.length).toBe(1);
+    expect(src).toContain('skipReport: () => observeSkip("gap_write"),');
+  });
+  test("control (learn): the gap is still filed exactly once per process", () => {
+    const h = gateHarness(() => false);
+    for (let i = 0; i < 3; i++) h.gate.check(h.trace, { strict: true });
+    expect(h.gaps.length).toBe(1);
   });
 });
