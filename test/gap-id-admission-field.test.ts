@@ -142,7 +142,7 @@ describe("the gap id is recovered from text once, at admission, by exact lookup"
 
   test("[MUST-FAIL] wiring: admission runs where the dispatch context is entered, the record carries the observation", () => {
     const SRC = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
-    const enter = SRC.indexOf("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}) });");
+    const enter = SRC.indexOf("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}), ...(goal ? { goal } : {}) });");
     const admit = SRC.indexOf("await recoverGapIdAtAdmission(goal, opts.variables, {");
     expect(enter).toBeGreaterThan(0);
     expect(admit).toBeGreaterThan(enter);
@@ -155,7 +155,7 @@ describe("the gap id is recovered from text once, at admission, by exact lookup"
 
   test("[MUST-FAIL] wiring: the floor carries the field through its empty-store re-entry, from both callers", () => {
     const SRC = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
-    expect(SRC).toContain("return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}) }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));");
+    expect(SRC).toContain("return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}), goal }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));");
     expect(SRC).toContain("|| (dispatchId && _floorGapId && !dispatchContext.getStore()?.decomposeGapId)) {");
     const carried = 'decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });';
     expect(SRC.split(carried).length - 1).toBe(2);

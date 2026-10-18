@@ -64,7 +64,7 @@ export function floorObservationsBlock(ctx: FloorWalkContext | undefined, maxCha
   const fbLines = (ctx.priorFeedback ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
   const fbKept: string[] = [];
   for (const l of fbLines) { if (l.length <= left) { fbKept.push(l); left -= l.length; } else omittedLines++; }
-  if (fbKept.length > 0) parts.push(`Earlier attempts at this goal failed as follows; do not repeat them:\n${fbKept.join("\n")}`);
+  if (fbKept.length > 0) parts.push(`Earlier attempts failed as follows; do not repeat them (a line naming "a DIFFERENT goal" is about that goal, not this one: take its defect, never its subject):\n${fbKept.join("\n")}`);
   if (omittedImpulses + omittedLines > 0) {
     parts.push(`(${omittedImpulses} further observation(s) and ${omittedLines} further note(s) were omitted to keep this block within its size budget; you saw a subset.)`);
   }

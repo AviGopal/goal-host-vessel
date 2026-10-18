@@ -16,14 +16,14 @@ const firstLines = (sig: string, n: number): string => fnBody(sig).split("\n").s
 
 describe("the learning mode is in the dispatch context", () => {
   test("the context carries it and the walk egress guard reads it", () => {
-    expect(src).toContain("const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string; learningMode?: \"observe\" | \"learn\" }>();");
+    expect(src).toContain("const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string; learningMode?: \"observe\" | \"learn\"; /** the dispatch's own goal, for the content check */ goal?: string }>();");
     expect(src).toContain("setWalkEgressLearningModeReader(() => dispatchContext.getStore());");
   });
   test("every place the context is entered carries the mode", () => {
-    expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}) });");
+    expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}), ...(goal ? { goal } : {}) });");
     expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: _costDid, ...(learningMode ? { learningMode } : {}) });");
     expect(src).toContain("dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId, ...(learningMode ? { learningMode } : {}) });");
-    expect(src).toContain("dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}) }, () => universalToolFallback(");
+    expect(src).toContain("dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}), goal }, () => universalToolFallback(");
     expect(src).toContain("const _floorMode = walkContext?.learningMode;");
     // (each entry spreads the existing store, so the whole line is the entry: L2a's decomposeGapId rides the same entries)
     const entries = src.match(/dispatchContext\.(enterWith|run)\(\{[^\n]*/g) ?? [];

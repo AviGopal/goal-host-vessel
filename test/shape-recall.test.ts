@@ -60,7 +60,7 @@ describe("the chooser is shown the BOUNDED candidates, whatever the registry siz
 describe("[WIRING] the call site recalls by meaning with a shaped k, and records the tier", () => {
   it("k is shaped, recall reads the shape index's shared scope, the tier is logged on the decision", () => {
     expect(INDEX).toContain('const _recallK = await shapedBudget("shape_recall_k", 12, 3, 40);');
-    expect(INDEX).toContain('await recallConceptRows(goal, _recallK, 10_000, { shape: "shape_description", include_global: true });');
+    expect(INDEX).toContain('await recallConceptRows(stripDispatchIds(goal), _recallK, 10_000, { shape: "shape_description", include_global: true });');
     expect(INDEX).toContain('...(_cands.tier === "recall" ? { shapeCatalog: _cands.catalog, promptVocabulary: _cands.shapes } : {}),');
     expect(INDEX).toContain("recall_tier: _cands.tier, chooser_tier: decision.chooser_tier ?? null");
     expect(INDEX).toContain("shape recall tier=${_cands.tier}");

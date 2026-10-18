@@ -317,6 +317,7 @@ import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
+import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, observeOffGoalContent, targetSimilarityKey } from "./failure-recall";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
@@ -4713,7 +4714,8 @@ async function loadReachedCommandCache(): Promise<void> {
 // A later verified reach does not erase the history; it supersedes it (records older than the last
 // reach are not fed back), so a goal that now reaches gets its reuse back and a goal that goes
 // hollow again after a counterfeit reach is steered again. Fail-open throughout, like the caches.
-type GoalFailureRecord = { hash: string; classToken: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean; /** the attempt's inferred targets (CHANGE-35 / A2b-min) */ targets?: string[] };
+type GoalFailureRecord = { hash: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean; /** the attempt's inferred targets (CHANGE-35 / A2b-min) */ targets?: string[];
+  /** the goal-target-inference DECISION for the goal: the near-miss key (failure-recall.ts) */ inferred?: string[]; /** the goal's text, ids stripped, shown when the lesson reaches a DIFFERENT goal */ goal?: string };
 const goalFailureMemory = new Map<string, GoalFailureRecord[]>();
 const goalLastReachedAt = new Map<string, string>();
 // Every failure stamp per goal (uncapped by GOAL_FAILURE_PER_HASH, bounded below), for counting distinct failed RUNS since the last reach
@@ -4730,11 +4732,7 @@ function noteGoalFailureStamp(hash: string, at: string): void {
 const goalFailureMemoryPath = (): string => process.env.GOAL_FAILURE_MEMORY_PATH ?? "/workspace/.goal-host-failure-memory.jsonl";
 const GOAL_FAILURE_MEMORY_MAX_LOAD = 4000;
 const GOAL_FAILURE_PER_HASH = 5;
-function goalClassTokenOf(goalText: string): string {
-  const gw = String(goalText ?? "").toLowerCase().match(/\b([a-z]{3,12})\b[^a-z]*(?:the\s+|all\s+|every\s+)?([a-z_][a-z0-9_:.-]{2,24})?/);
-  return gw && gw[1] ? `${gw[1]}${gw[2] ? "-" + gw[2] : ""}` : "";
-}
-function rememberGoalFailure(goalText: string, reason: string | undefined | null, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): void {
+function rememberGoalFailure(goalText: string, reason: string | undefined | null, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, decided: readonly string[] | null | undefined = inferredTargetDecisionCache.get(goalHashOf(goalText))?.shapes): void {
   if (observeSkip("failure_memory")) return; // OBSERVE (observe-mode.ts): nothing is remembered, in process or on disk
   const r = String(reason ?? "").trim();
   if (!goalText || !r) return;
@@ -4744,13 +4742,16 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   // (a graded verdict that only quotes one in its prose is still about the content: failed-targets.ts).
   // The abstain test is the shared predicate's too; it stays named here, at the memory's own gate.
   if (/^abstain:/i.test(r) || !failureInvalidatesTargetMemo(r)) return;
-  const rec: GoalFailureRecord = { hash: goalHashOf(goalText), classToken: goalClassTokenOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
+  const rec: GoalFailureRecord = { hash: goalHashOf(goalText), reason: r.slice(0, 600), pick: pick ?? null, shapes: (shapes ?? []).slice(0, 12), attempts: attempts ?? 0, at: new Date().toISOString(), deterministic: /^deterministic:/.test(r) };
   const list = goalFailureMemory.get(rec.hash) ?? [];
   // The targets this attempt chose: the set the walk DISPATCHED, else the FINAL inference decision (never the routes'
   // unfiltered memo). A retry must not choose them again when this failure was "no artifact on the target"
   // (CHANGE-35 / A2b-minimal, failedTargetsToAvoid).
   const triedTargets = dispatchedTargetsByGoal.get(rec.hash) ?? inferredTargetDecisionCache.get(rec.hash)?.shapes;
   if (triedTargets && triedTargets.length > 0) rec.targets = triedTargets.slice(0, 8);
+  // The near-miss key is the inference DECISION (never word tokens), compared decision-to-decision at recall.
+  if (decided && decided.length > 0) rec.inferred = decided.slice(0, 8);
+  rec.goal = stripDispatchIds(goalText).slice(0, 300);
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
   goalFailureMemory.set(rec.hash, list);
   noteGoalFailureStamp(rec.hash, rec.at);
@@ -4761,7 +4762,7 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   // overwrites or clears it on the next attempt (goal-target-inference.ts).
   inferredTargetRoutesMemo.delete(rec.hash);
   inferredTargetShapeCache.delete(rec.hash);
-  console.log(`[goal-host-vessel] failure-memory: REMEMBERED hash=${rec.hash} class=${rec.classToken || "-"} pick=${rec.pick ?? "-"} (${list.length} on record) reason="${rec.reason.slice(0, 100)}"`);
+  console.log(`[goal-host-vessel] failure-memory: REMEMBERED hash=${rec.hash} class=${targetSimilarityKey(rec.inferred) || "-"} pick=${rec.pick ?? "-"} (${list.length} on record) reason="${rec.reason.slice(0, 100)}"`);
 }
 // THE FAILURE SIDE'S REASON (B2). A failed trace carries WHY it failed (failureMode.reason, or the failing task's
 // error), but every goalReachReason assignment sat on the completed/reach-gate path, so a failed attempt reached the
@@ -4837,14 +4838,14 @@ function markGoalReached(goalText: string): void {
   appendFile(goalFailureMemoryPath(), JSON.stringify({ hash, reachedAt: at }) + "\n").catch(() => { /* fail-open */ });
   console.log(`[goal-host-vessel] failure-memory: SUPERSEDED hash=${hash} (goal reached; older failure records no longer fed back)`);
 }
-function recallGoalFailures(goalText: string): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
-  const hash = goalHashOf(goalText); const cls = goalClassTokenOf(goalText);
+/** This goal's failures since its last reach (exact, by goal hash), and other goals' failures whose recorded inference
+ *  decision has the same target set as this goal's (near; failure-recall.ts). `targets` defaults to the goal's current
+ *  decision; before its first inference there is none, so near is empty until the decision exists. */
+function recallGoalFailures(goalText: string, targets: readonly string[] | null | undefined = inferredTargetDecisionCache.get(goalHashOf(goalText))?.shapes): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
+  const hash = goalHashOf(goalText);
   const since = (h: string) => goalLastReachedAt.get(h) ?? "";
   const exact = exactFailuresSince(goalFailureMemory.get(hash) ?? [], since(hash));
-  const near: GoalFailureRecord[] = [];
-  if (cls) for (const [h, list] of goalFailureMemory) { if (h === hash) continue; for (const r of list) if (r.classToken === cls && r.at > since(h)) near.push(r); }
-  near.sort((a, b) => b.at.localeCompare(a.at));
-  return { exact, near: near.slice(0, 3) };
+  return { exact, near: nearFailures(goalFailureMemory, hash, targets, since) };
 }
 /** The targets a retry of this goal must not choose again: every target of the unbroken run of LATEST "no artifact on
  *  the target" (write-goal-no-artifact) failures since its last reach (src/failed-targets.ts targetsToAvoid). Any other
@@ -4879,15 +4880,7 @@ function failedTargetsToAvoid(goalText: string): string[] {
 }
 function priorFailureFeedbackFor(goalText: string): string {
   const { exact, near } = recallGoalFailures(goalText);
-  if (exact.length === 0 && near.length === 0) return "";
-  // Deterministic verdicts outrank LLM-judged ones: a judge that once credited a counterfeit can
-  // also mis-grade a hollow, and a lesson built on a mis-grade steers the wrong way.
-  const rank = (a: GoalFailureRecord, b: GoalFailureRecord) => Number(b.deterministic) - Number(a.deterministic) || b.at.localeCompare(a.at);
-  const lines: string[] = [];
-  for (const r of [...exact].sort(rank).slice(0, 3)) lines.push(`- (this exact goal, ${r.at.slice(0, 16)}, producer ${r.pick ?? "?"}) ${r.reason}`);
-  // Near-miss lessons only when the verdict was deterministic: an LLM-judged hollow on a different goal is too weak to steer this one.
-  for (const r of near.filter((x) => x.deterministic)) lines.push(`- (a similar goal, ${r.at.slice(0, 16)}) ${r.reason}`);
-  return lines.join("\n");
+  return failureFeedbackText(exact, near);
 }
 async function loadGoalFailureMemory(): Promise<void> {
   try {
@@ -4903,7 +4896,8 @@ async function loadGoalFailureMemory(): Promise<void> {
         if (!o.reason) continue;
         noteGoalFailureStamp(o.hash, o.at ?? "");
         const list = goalFailureMemory.get(o.hash) ?? [];
-        list.push({ hash: o.hash, classToken: o.classToken ?? "", reason: o.reason, pick: o.pick ?? null, shapes: o.shapes ?? [], attempts: o.attempts ?? 0, at: o.at ?? "", deterministic: o.deterministic === true });
+        // targets/inferred/goal reload with the record: a field dropped here is a basis that dies on every boot.
+        list.push({ hash: o.hash, reason: o.reason, pick: o.pick ?? null, shapes: o.shapes ?? [], attempts: o.attempts ?? 0, at: o.at ?? "", deterministic: o.deterministic === true, ...(Array.isArray(o.targets) ? { targets: o.targets } : {}), ...(Array.isArray(o.inferred) ? { inferred: o.inferred } : {}), ...(typeof o.goal === "string" ? { goal: o.goal } : {}) });
         while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
         goalFailureMemory.set(o.hash, list); n++;
       } catch { /* skip a malformed line */ }
@@ -5246,7 +5240,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
 // learningMode is the dispatch's own body.learning_mode: under "observe" no side effect writes (observe-mode.ts).
-const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string; learningMode?: "observe" | "learn" }>();
+const dispatchContext = new AsyncLocalStorage<{ dispatchId: string; decomposeGapId?: string; learningMode?: "observe" | "learn"; /** the dispatch's own goal, for the content check */ goal?: string }>();
 // The LLM router keys usage (tokens, calls, cost) by the dispatch id it reads from this same context.
 setRouterDispatchIdReader(() => dispatchContext.getStore()?.dispatchId);
 // OBSERVE (observe-mode.ts): the walk egress guard refuses an observe dispatch's gap writes, reading this same context.
@@ -6025,6 +6019,9 @@ async function runGroundedToolLoop(
         const a = argsOf(c);
         const key = `${nm}:${JSON.stringify(a)}`;
         if (doneKeys.has(key)) continue;         // already ran this exact call — skip re-exec (anti-spin)
+        // CONTENT CHECK (observe), as on the walk's search resolve: the floor's own search query against the dispatch's goal.
+        const _dg = dispatchContext.getStore()?.goal;
+        if (_dg && /web_?search/i.test(nm) && typeof a.query === "string") observeOffGoalContent(`floor: ${nm} query`, _dg, a.query, (m) => console.log(m));
         const res = await ufExecuteTool(nm, a, allowlist, ownOnly);
         executed.push({ tool: nm, ok: res.ok });
         const execCmd = execFieldOf(a);
@@ -6070,7 +6067,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   const _floorGapId = walkContext?.decomposeGapId;
   const _floorMode = walkContext?.learningMode;
   if ((dispatchId && dispatchContext.getStore()?.dispatchId !== dispatchId) || (dispatchId && _floorGapId && !dispatchContext.getStore()?.decomposeGapId)) {
-    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}) }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
+    return await dispatchContext.run({ ...dispatchContext.getStore(), dispatchId, ...(_floorGapId ? { decomposeGapId: _floorGapId } : {}), ...(_floorMode ? { learningMode: _floorMode } : {}), goal }, () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
@@ -9487,6 +9484,9 @@ async function runGoalAsPoolWalkBody(
         tap(`[goal-host-vessel] walk(${opts.surface}): ${shape} url is a result of search impulse ${_pid} — passing it as provenance for the trust gate to verify`);
       }
     }
+    // CONTENT CHECK (observe): a synthesised search query that shares no content word with the dispatch's goal is about
+    // another subject (a lesson's, a pool record's). Counted and logged; the resolve still runs.
+    if (/web_?search/i.test(shape) && typeof pointer.query === "string") observeOffGoalContent(`walk(${opts.surface}): ${shape} query`, dispatchContext.getStore()?.goal ?? goal, pointer.query, tap);
     // llm_completion / llmCompletion resolvers REQUIRE a non-empty `prompt`. The LLM
     // pointer-arg extractor does not reliably synthesize one for a bare inferred
     // llm_completion target (a pure question), so the resolver rejects "body must
@@ -9506,7 +9506,7 @@ async function runGoalAsPoolWalkBody(
       // FEEDBACK EDGE: on a hill-climb retry the prior attempt's verdict reason is injected here so the
       // model CORRECTS the named defect instead of re-deriving blind (the grade->next-attempt edge).
       const _fbPreamble = (typeof opts.priorVerdictFeedback === "string" && opts.priorVerdictFeedback.trim().length > 0)
-        ? `Earlier attempts at this goal (or a similar one) were graded NOT REACHED for these reasons:\n${opts.priorVerdictFeedback.trim().slice(0, 1200)}\nProduce a CORRECTED final artifact that avoids EXACTLY those defects — if an attempt was "incomplete", cover every class in the records; if member ids were wrong or invented, use ONLY ids that appear verbatim in the records below; if a count was wrong, count the listed members and state that number.\n\n`
+        ? `Earlier attempts were graded NOT REACHED for these reasons (a line naming "a DIFFERENT goal" is about that goal, not this one: take its defect, never its subject):\n${opts.priorVerdictFeedback.trim().slice(0, 1200)}\nProduce a CORRECTED final artifact that avoids EXACTLY those defects — if an attempt was "incomplete", cover every class in the records; if member ids were wrong or invented, use ONLY ids that appear verbatim in the records below; if a count was wrong, count the listed members and state that number.\n\n`
         : "";
       // THE CLOCK AT SYNTHESIS (reach-date.ts): a time-relative goal's writer reads the same host-clock
       // block arg extraction and the producer pick already bind; other goals' prompts are unchanged.
@@ -14081,7 +14081,7 @@ async function runGoalWithRecoveryInner(
   // Lessons recalled for this dispatch, passed explicitly into every walk below.
   // See opts.recalledLessons for why the previous goal-hash key silently never matched.
   let _dispatchLessons = "";
-  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}) });
+  if (typeof opts.variables.dispatch_id === "string" && opts.variables.dispatch_id.length > 0) dispatchContext.enterWith({ ...dispatchContext.getStore(), dispatchId: opts.variables.dispatch_id, ...(opts.learningMode ? { learningMode: opts.learningMode } : {}), ...(goal ? { goal } : {}) });
   // GAP ID AT ADMISSION (the one place the goal text may supply it): a goal that reads as a gap investigation and
   // arrived without variables.decompose_gap_id gets an exact by-id gap-store lookup of its own tokens; a hit is written
   // into the field and observed (counted log, walk log, the dispatch record's gapIdRecoveredFromText). Below this line
@@ -14105,7 +14105,8 @@ async function runGoalWithRecoveryInner(
   // hollow FOR, fed into attempt 1 so the walk starts where the previous dispatch ended instead of
   // re-deriving blind. Paired with disableReuse on attempt 1: a cached recipe whose latest verdict
   // was hollow is not replayed on the strength of one earlier reach.
-  const _priorFailureFeedback = goal ? priorFailureFeedbackFor(goal) : "";
+  // let, not const: the near-miss half is keyed on this goal's target DECISION, so it is recomputed once inference decides.
+  let _priorFailureFeedback = goal ? priorFailureFeedbackFor(goal) : "";
   const _priorExactFailures = goal ? recallGoalFailures(goal).exact.length : 0;
   if (_priorFailureFeedback && goal) {
     const _pf = recallGoalFailures(goal);
@@ -14158,9 +14159,9 @@ async function runGoalWithRecoveryInner(
         // loud failure with a silent zero. Longest content words first (they carry the most
         // signal), narrowing until something matches; the tap records which width hit, so a
         // recall that only ever succeeds at one term is visible rather than inferred.
-        const _stop = new Set(["the","and","for","that","with","from","this","into","under","are","was","how","many","what","which","then","than","when","where","file","files","using","use","report","name","list","each"]);
-        const _terms = [...new Set((goal.toLowerCase().match(/[a-z][a-z_]{3,}/g) ?? []).filter((w) => !_stop.has(w)))]
-          .sort((a, b) => b.length - a.length);
+        // Same stop list and longest-first order, now in failure-recall.ts (contentTermsOf), over the goal with its
+        // dispatch ids stripped: a uuid's letter runs ("acda" of 16acda74-…) were searched as if they were subjects.
+        const _terms = contentTermsOf(goal);
         // Producer selection and envelope unwrapping now live in recallConceptRows,
         // which distinguishes "could not be asked" (null) from "asked, nothing there"
         // ([]). Both used to log identically, which is how a read against the WRONG
@@ -14419,7 +14420,7 @@ async function runGoalWithRecoveryInner(
     // read at use time), unioned with this goal class's recorded target shapes. Bounded by k, whatever the shape count.
     // Recall unavailable means the named DEGRADED tier (today's names-only path), recorded here and on the decision.
     const _recallK = await shapedBudget("shape_recall_k", 12, 3, 40);
-    const _recallRows = await recallConceptRows(goal, _recallK, 10_000, { shape: "shape_description", include_global: true });
+    const _recallRows = await recallConceptRows(stripDispatchIds(goal), _recallK, 10_000, { shape: "shape_description", include_global: true });
     const _goalPathShapes = [...new Set((_targetPosterior ?? []).flatMap((r) => [...(r.expected_output_shapes ?? [])]))];
     const _cands = recalledCandidates(_recallRows, _goalPathShapes, new Set(knownShapes));
     tap(`[goal-host-vessel] ${opts.surface}: shape recall tier=${_cands.tier} k=${_recallK} recalled=${_cands.recalled.length} from_goal_paths=${_cands.fromGoalPaths.length}${_cands.reason ? ` reason="${_cands.reason}"` : ""} candidates=${JSON.stringify(_cands.shapes.slice(0, 20))}`);
@@ -14427,7 +14428,7 @@ async function runGoalWithRecoveryInner(
         ...(_cands.tier === "recall" ? { shapeCatalog: _cands.catalog, promptVocabulary: _cands.shapes } : {}),
         // Piece 5: the chooser's residual is recalled by meaning ONCE, with the same shaped k and the same index.
         ...(_cands.tier === "recall" ? { recallResidual: async (text: string) => {
-          const rows = await recallConceptRows(text, _recallK, 10_000, { shape: "shape_description", include_global: true });
+          const rows = await recallConceptRows(stripDispatchIds(text), _recallK, 10_000, { shape: "shape_description", include_global: true });
           const c = recalledCandidates(rows, [], new Set(knownShapes));
           return c.tier === "recall" ? c.catalog : null;
         } } : {}),
@@ -14451,6 +14452,16 @@ async function runGoalWithRecoveryInner(
       );
       goalTargetDecision = decision;
       if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
+      // NEAR-MISS ON THE DECISION: other goals that inferred this same target set are the similar ones (failure-recall.ts);
+      // their labelled lessons join attempt 1's feedback now that the decision exists.
+      {
+        const _pfNow = recallGoalFailures(goal);
+        const _fbNow = failureFeedbackText(_pfNow.exact, _pfNow.near);
+        if (_fbNow !== _priorFailureFeedback) {
+          _priorFailureFeedback = _fbNow;
+          tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL on the target decision ${JSON.stringify(decision.shapes)} — ${_pfNow.exact.length} exact + ${_pfNow.near.length} near-miss (a DIFFERENT goal with the same target set); fed into attempt 1: ${_fbNow.slice(0, 220).replace(/\n/g, " | ")}`);
+        }
+      }
       // J2b: the chooser found no candidate whose production satisfies the goal. Recorded for the dispatch (classified at
       // its record write only if it then does not reach); the fallbacks below still run (ReAct parity).
       if (decision.novel) {
