@@ -23,6 +23,13 @@
  * wording rule. Both are pre-existing.
  */
 
+import { walkEgressFetch } from "./walk-egress-guard";
+
+/** The send for one authoring shape: the caller's fetchImpl, else the walk egress door (walk-egress-guard.ts), which
+ *  refuses template authoring under observe and otherwise sends exactly fetch(url, init). */
+type Send = (url: string, init: RequestInit) => Promise<Response>;
+const sendFor = (shape: string, deps: { fetchImpl?: typeof fetch }): Send => deps.fetchImpl ?? ((url, init) => walkEgressFetch(shape, url, init));
+
 export interface ComposedPick { id: string; outputShapes: string[]; reusedExisting: boolean }
 export type ComposeOutcome = { ok: true; pick: ComposedPick } | { ok: false; reason: string };
 
@@ -46,7 +53,7 @@ export function composeTrigger(s: { tried: boolean; goal: string; hasPick: boole
 export async function authorComposite(goal: string, targetShapes: readonly string[], availableShapes: readonly string[], executionId: string | undefined, deps: ComposeDeps): Promise<ComposeOutcome> {
   const url = await deps.resolveUrl("author_composed_capability");
   if (!url) return { ok: false, reason: "no vessel serves author_composed_capability" };
-  const f = deps.fetchImpl ?? fetch;
+  const f = sendFor("author_composed_capability", deps);
   try {
     const r = await f(url, {
       method: "POST",
@@ -65,6 +72,33 @@ export async function authorComposite(goal: string, targetShapes: readonly strin
   } catch (e) {
     return { ok: false, reason: `author_composed_capability unreachable: ${(e as Error).message}`.slice(0, 300) };
   }
+}
+
+/**
+ * MINT-AS-YOU-GO (the walk's bridge author): development-vessel's author_producer authors, validates and mints a thin
+ * producer of `shape` around its live resolver. The minted producer and the input shapes it needs, or null on any
+ * refusal (not validated, HTTP error, timeout, or the observe door), which the walk treats as no producer.
+ */
+export async function authorProducer(shape: string, goal: string, availableShapes: readonly string[], executionId: string | undefined, deps: ComposeDeps): Promise<{ id: string; inputShapes: string[] } | null> {
+  const url = await deps.resolveUrl("author_producer");
+  if (!url) return null;
+  const f = sendFor("author_producer", deps);
+  try {
+    const r = await f(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(deps.apiKey ? { Authorization: `ApiKey ${deps.apiKey}` } : {}) },
+      body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape, goal, available_shapes: [...availableShapes], max_attempts: 3, ...(executionId ? { execution_id: executionId } : {}) } } }),
+      signal: AbortSignal.timeout(deps.timeoutMs),
+    });
+    if (r.ok) {
+      const j = (await r.json()) as Record<string, unknown>;
+      const b = (j?.["body"] ?? j) as Record<string, unknown>;
+      if (b?.["minted_activity_id"] && b?.["validated"]) {
+        return { id: String(b["minted_activity_id"]), inputShapes: Array.isArray(b["input_shapes"]) ? (b["input_shapes"] as unknown[]).map(String) : [] };
+      }
+    }
+  } catch { /* author failed (or refused at the door) → the walk falls through to escalate/stop */ }
+  return null;
 }
 
 /** A2: describe a minted shape in discovery's learned vocabulary, claimed by the template that produced it. */
@@ -122,7 +156,7 @@ export function compositesToRetire(composed: readonly ComposedPick[], reached: b
 export async function retireComposite(templateId: string, reason: string, deps: ComposeDeps): Promise<{ ok: boolean; status: number | null; reason: string }> {
   const url = await deps.resolveUrl("activityTemplate_deprecate");
   if (!url) return { ok: false, status: null, reason: "no vessel serves activityTemplate_deprecate" };
-  const f = deps.fetchImpl ?? fetch;
+  const f = sendFor("activityTemplate_deprecate", deps);
   try {
     const r = await f(url, {
       method: "POST",

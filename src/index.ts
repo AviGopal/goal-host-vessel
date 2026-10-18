@@ -323,7 +323,7 @@ import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseM
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { floorObservationsBlock, type FloorWalkContext } from "./floor-walk-context";
 import { recalledCandidates } from "./shape-recall";
-import { ComposedLedger, authorComposite, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
+import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
 // B2: composites a dispatch's walks minted, read back at its verdict (a non-reached first run retires a NEW mint).
 const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
@@ -12288,22 +12288,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         // BRIDGE-AUTHOR: author a GENUINELY-PRODUCING invocation of X's resolver
         // (author→validate→refine via the resolver's own errors), returning a
         // validated producer + the input shapes it needs.
-        let authored: { id: string; inputShapes: string[] } | null = null;
-        try {
-          const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape: X, goal, available_shapes: [...producedShapes], max_attempts: 3, ...(dispatchContext.getStore()?.dispatchId ? { execution_id: dispatchContext.getStore()!.dispatchId } : {}) } } }),
-            signal: AbortSignal.timeout(180_000),
-          });
-          if (r.ok) {
-            const j: any = await r.json();
-            const b = j?.body ?? j;
-            if (b?.minted_activity_id && b?.validated) {
-              authored = { id: String(b.minted_activity_id), inputShapes: Array.isArray(b.input_shapes) ? b.input_shapes.map(String) : [] };
-            }
-          }
-        } catch { /* author failed → falls through to escalate/stop */ }
+        // Through the walk egress door (composite-authoring.ts authorProducer): under observe it mints nothing.
+        const authored = await authorProducer(X, goal, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: async () => `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, apiKey: API_KEY, timeoutMs: 180_000 });
         if (authored) {
           tap(`[goal-host-vessel] walk(${opts.surface}): BRIDGE-AUTHORED validated producer for "${X}" → ${authored.id} (inputs=[${authored.inputShapes.join(",")}])`);
           // Recurse: add the producer's missing inputs as sub-targets so the walk
@@ -16283,7 +16269,8 @@ async function runGoalWithRecoveryInner(
       // in a 1-step chain (via the optional_input_shapes primitive), so this
       // hardcoded interception is redundant and defaults OFF. Set the env flag
       // ROUTE_ACTIVITY_REPAIR=1 to re-enable it as a fallback.
-      if (process.env.ROUTE_ACTIVITY_REPAIR === "1" && !/repos\/[\w.-]+\//.test(goal)) {
+      // OBSERVE (observe-mode.ts): template_repair mints a variant, so an observe dispatch does not take this route.
+      if (process.env.ROUTE_ACTIVITY_REPAIR === "1" && !/repos\/[\w.-]+\//.test(goal) && !observeSkip("authoring_mint")) {
         const actId =
           goal.match(/activity:⟨([^⟩]+)⟩/)?.[1] ??
           goal.match(/\b(?:activity|template)\s+[`"'‘’]?([a-z0-9][\w-]*(?::[\w-]+)+|[a-z0-9][\w-]*-[\w-]{2,})/i)?.[1] ??
@@ -16683,6 +16670,8 @@ async function runGoalWithRecoveryInner(
 // resolve_timeout_ms and is EXTENDED while composition heartbeats arrive —
 // never abandon a human mid-answer (hard cap SOLICITATION_MAX_WAIT_MS).
 async function solicitHumanInput(goal: string, evidenceMarkdown: string, dispatchId?: string): Promise<PendingSolicitation | null> {
+  // OBSERVE (observe-mode.ts): an observe dispatch asks no human (a solicitation card is a write to a human surface).
+  if (observeSkip("human_solicitation")) return null;
   let producer: { endpoint?: string; resolve_endpoint?: string; resolve_timeout_ms?: number } | null = null;
   try {
     const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
@@ -17658,7 +17647,8 @@ async function lintAndRepairAuthoredTemplate(
       }
     }
 
-    if (changed) {
+    // OBSERVE (observe-mode.ts): the repair is a template write; an observe dispatch records it only in the result.
+    if (changed && !observeSkip("authoring_mint")) {
       const body = JSON.stringify({ impulse: { type: "activityTemplate_update", pointer: {
         type: "activityTemplate_update",
         templateId: bareId,

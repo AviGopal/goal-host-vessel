@@ -22,7 +22,7 @@ export type LearningMode = "observe" | "learn";
 export type ObserveSideEffect =
   | "failure_memory" | "reached_command_bank" | "reached_command_evict" | "reach_gate_lesson" | "beta_penalty"
   | "oracle_label" | "gap_write" | "authoring_decision" | "vault_note" | "edit_intent_escalation" | "verifier_recipe"
-  | "child_dispatch" | "alpha_credit" | "artifact_expectation" | "mode_blind_dispatch" | "auto_draft";
+  | "child_dispatch" | "alpha_credit" | "artifact_expectation" | "mode_blind_dispatch" | "auto_draft" | "authoring_mint" | "human_solicitation";
 
 export function isObserve(mode: unknown): boolean {
   return mode === "observe";
@@ -130,6 +130,25 @@ export function observeModeBlindRefusal(mode: unknown, shape: string, body: unkn
  */
 export function observeDecomposeFields(shape: string, mode: unknown): { learning_mode?: "observe" } {
   return isObserve(mode) && bareShape(shape) === "gapDecomposition" ? { learning_mode: "observe" } : {};
+}
+
+/**
+ * The template-authoring writes an observe dispatch never sends: the walk's bridge producer (author_producer), its
+ * composite (author_composed_capability) and the composite's retirement (activityTemplate_deprecate). A template minted
+ * during an observe probe would stay in the catalog and be picked by later learn dispatches.
+ */
+export const OBSERVE_REFUSED_AUTHORING: ReadonlySet<string> = new Set(["author_producer", "author_composed_capability", "activityTemplate_deprecate"]);
+
+/** The refusal for one egress that would author or retire a template under observe (pure), or null. Read by the
+ *  site's shape and every type the body carries (impulse.pointer, impulse, a bare pointer, the bare body). */
+export function observeAuthoringRefusal(mode: unknown, shape: string, body: unknown): string | null {
+  if (!isObserve(mode)) return null;
+  const b = asRecord(body);
+  const imp = asRecord(b?.["impulse"]);
+  const types = [shape, asRecord(imp?.["pointer"])?.["type"], imp?.["type"], asRecord(b?.["pointer"])?.["type"], b?.["type"]]
+    .filter((t): t is string => typeof t === "string").map(bareShape);
+  const hit = types.find((t) => OBSERVE_REFUSED_AUTHORING.has(t));
+  return hit ? `observe: refused before egress — an observe dispatch authors or retires no template (${hit}); kept as a would-be op` : null;
 }
 
 /** The walk's target form: an observe dispatch drops a gap-write target, and the drop is recorded. */

@@ -14,7 +14,9 @@
  *   - rawResolve (the satisfier sites, arg correction, action-then-read, the bridge sinks);
  *   - ufExecuteTool (the floor tool loop: its allowlist includes the goal's own write shapes);
  *   - the dev-vessel proxy resolver and the discovery proxy resolver (template tasks run inside a walk; the
- *     dev-vessel proxy is registered for every shape dev-vessel serves, poolImpulse_write included).
+ *     dev-vessel proxy is registered for every shape dev-vessel serves, poolImpulse_write included);
+ *   - the walk's own authoring calls (composite-authoring.ts: author_producer, author_composed_capability, and the
+ *     composite's activityTemplate_deprecate), so the floor and the walk share one door.
  * The check reads the OUTGOING body the way dev-vessel's route reads it (impulse.pointer, else impulse, else the
  * bare body), plus the shape the site was asked to resolve, so a model cannot move the pointer to escape it.
  *
@@ -33,7 +35,7 @@
  * which goal-host's credential does not satisfy; this guard does not read the store to learn a row's shape.
  */
 
-import { observeEgressRefusal, observeModeBlindRefusal, observeSkips } from "./observe-mode";
+import { observeAuthoringRefusal, observeEgressRefusal, observeModeBlindRefusal, observeSkips } from "./observe-mode";
 
 /** The write type that reaches dev-vessel's pool store from outside. */
 export const POOL_WRITE_TYPE = "poolImpulse_write";
@@ -124,15 +126,17 @@ export function walkEgressRefusalLine(shape: string, site: string): string {
  * here, once, before the throw. Sites that log their own refusal (rawResolve, the floor tool loop) omit it.
  */
 export async function walkEgressFetch(shape: string, url: string, init: RequestInit, site?: string): Promise<Response> {
-  // OBSERVE (observe-mode.ts): an observe dispatch's walk writes no gap and hands no work to a resolver that ignores
-  // the mode; refused here, before egress, like the above.
+  // OBSERVE (observe-mode.ts): an observe dispatch's walk writes no gap, authors or retires no template, and hands no
+  // work to a resolver that ignores the mode; refused here, before egress, like the above.
   let ctx: DispatchModeRead;
   try { ctx = readLearningMode(); } catch { ctx = undefined; }
   const observeWhy = observeEgressRefusal(ctx?.learningMode, shape, bodyOf(init));
   if (observeWhy) observeSkips(ctx?.learningMode, ctx?.dispatchId, "gap_write");
-  const blindWhy = observeWhy ? null : observeModeBlindRefusal(ctx?.learningMode, shape, bodyOf(init));
+  const authorWhy = observeWhy ? null : observeAuthoringRefusal(ctx?.learningMode, shape, bodyOf(init));
+  if (authorWhy) observeSkips(ctx?.learningMode, ctx?.dispatchId, "authoring_mint");
+  const blindWhy = observeWhy || authorWhy ? null : observeModeBlindRefusal(ctx?.learningMode, shape, bodyOf(init));
   if (blindWhy) observeSkips(ctx?.learningMode, ctx?.dispatchId, "mode_blind_dispatch");
-  const why = walkEgressRefusal(shape, bodyOf(init)) ?? observeWhy ?? blindWhy;
+  const why = walkEgressRefusal(shape, bodyOf(init)) ?? observeWhy ?? authorWhy ?? blindWhy;
   if (why) {
     if (site) console.log(walkEgressRefusalLine(shape, site));
     throw new WalkEgressRefused(shape, why);

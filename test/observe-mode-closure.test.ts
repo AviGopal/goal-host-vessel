@@ -10,6 +10,7 @@ import * as om from "../src/observe-mode";
 import { isWalkEgressRefused, setWalkEgressLearningModeReader, walkEgressFetch } from "../src/walk-egress-guard";
 import { buildResolvePointer } from "../src/resolve-pointer";
 import { walkResolveBody } from "../src/applied-write";
+import * as ca from "../src/composite-authoring";
 
 const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
 const fnBody = (sig: string, span = 2500): string => {
@@ -350,5 +351,138 @@ describe("commit 9: no auto-draft under observe, and a walk-built compose is ref
     }
     expect(calls.length).toBe(4);
     expect(om.observeSkipCounters()).toEqual({});
+  });
+});
+
+describe("commit 10: template authoring goes through the walk egress door, and every direct dev-vessel send is accounted for", () => {
+  const realFetch = globalThis.fetch;
+  let sent: Array<{ url: string; init: RequestInit }> = [];
+  const stubFetch = (reply: unknown = { body: { minted_activity_id: "m-1", validated: true, input_shapes: ["a"], output_shapes: ["T"] } }) => {
+    sent = [];
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => { sent.push({ url: String(url), init: init ?? {} }); return new Response(JSON.stringify(reply), { status: 200 }); }) as typeof fetch;
+  };
+  afterEach(() => { globalThis.fetch = realFetch; setWalkEgressLearningModeReader(() => undefined); om.resetObserveSkips(); });
+  const inMode = (mode: string | undefined) => setWalkEgressLearningModeReader(() => (mode ? { learningMode: mode, dispatchId: `d-${mode}` } : undefined));
+  const deps = { resolveUrl: async () => "http://dv/v2/impulses/resolve", apiKey: "k", timeoutMs: 1000 };
+
+  test("[MUST-FAIL] observe: a walk with no pick and a missing target sends no author_producer and no author_composed_capability; counted", async () => {
+    stubFetch();
+    inMode("observe");
+    const ap = (ca as any).authorProducer;
+    expect(typeof ap).toBe("function");
+    expect(await ap?.("T", "goal", ["a"], "d-observe", deps)).toBeNull();
+    const c = await ca.authorComposite("goal", ["T"], ["a"], "d-observe", deps);
+    expect(c.ok).toBe(false);
+    const r = await ca.retireComposite("m-1", "first run did not reach", deps);
+    expect(r.ok).toBe(false);
+    expect(sent).toEqual([]);
+    expect(om.observeSkipCounters()).toEqual({ authoring_mint: 3 });
+  });
+  test("[MUST-FAIL] the walk's mint-as-you-go calls authorProducer; no direct author_producer send is left in index.ts", () => {
+    expect(src).toContain("const authored = await authorProducer(X, goal, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: async () => `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, apiKey: API_KEY, timeoutMs: 180_000 });");
+    expect(src).not.toContain('impulse: { type: "author_producer"');
+    // the composite ledger only learns of a composite the author returned, so an observe dispatch has nothing to retire
+    expect(src).toContain("composedByDispatch.note(String(opts.variables?.dispatch_id ?? \"\"), _c.pick);");
+    expect(ca.compositesToRetire([], false)).toEqual([]);
+  });
+  test("control (learn): the exact egress is unchanged — URL, method, headers and body bytes", async () => {
+    stubFetch();
+    inMode("learn");
+    expect(await (ca as any).authorProducer?.("T", "goal", ["a"], "d-learn", deps)).toEqual({ id: "m-1", inputShapes: ["a"] });
+    const c = await ca.authorComposite("goal", ["T"], ["a"], "d-learn", deps);
+    expect(c.ok).toBe(true);
+    stubFetch({});
+    inMode(undefined);
+    expect((await ca.retireComposite("m-1", "why", deps)).ok).toBe(true);
+    const headers = { "Content-Type": "application/json", Authorization: "ApiKey k" };
+    expect(sent.map((x) => [x.url, x.init.method, x.init.headers, x.init.body])).toEqual([
+      ["http://dv/v2/impulses/resolve", "POST", headers, JSON.stringify({ pointer: { type: "activityTemplate_deprecate", templateId: "m-1", reason: "why" } })],
+    ]);
+    expect(om.observeSkipCounters()).toEqual({});
+  });
+  test("control (learn): author_producer and author_composed_capability bodies are the walk's original bytes", async () => {
+    stubFetch();
+    inMode("learn");
+    await (ca as any).authorProducer?.("T", "goal", ["a"], "d-learn", deps);
+    await ca.authorComposite("goal", ["T"], ["a"], "d-learn", deps);
+    const headers = { "Content-Type": "application/json", Authorization: "ApiKey k" };
+    expect(sent.map((x) => [x.url, x.init.method, x.init.headers, x.init.body])).toEqual([
+      ["http://dv/v2/impulses/resolve", "POST", headers, JSON.stringify({ impulse: { type: "author_producer", pointer: { type: "author_producer", shape: "T", goal: "goal", available_shapes: ["a"], max_attempts: 3, execution_id: "d-learn" } } })],
+      ["http://dv/v2/impulses/resolve", "POST", headers, JSON.stringify({ impulse: { type: "author_composed_capability", pointer: { type: "author_composed_capability", goal: "goal", target_shapes: ["T"], available_shapes: ["a"], max_attempts: 2, execution_id: "d-learn" } } })],
+    ]);
+  });
+  test("[MUST-FAIL] minor: no human solicitation, no template_repair route and no lint-repair template write under observe", () => {
+    expect(fnBody("async function solicitHumanInput(", 400)).toContain('if (observeSkip("human_solicitation")) return null;');
+    expect(src).toContain('if (process.env.ROUTE_ACTIVITY_REPAIR === "1" && !/repos\\/[\\w.-]+\\//.test(goal) && !observeSkip("authoring_mint")) {');
+    expect(fnBody("async function lintAndRepairAuthoredTemplate(", 6000)).toContain('if (changed && !observeSkip("authoring_mint")) {');
+  });
+
+  // ── THE CLASS DETECTOR (law 6) ─────────────────────────────────────────────────────────────────────────────────
+  // Every direct send to development-vessel's or activity-api's /v2/impulses/resolve in index.ts must be (a) a READ,
+  // named below with the shape it reads, (b) observe-guarded (an observeSkip/observeSkips call earlier in the same
+  // function, top-level or a nested `const x = async (`, within GUARD_WINDOW chars), or (c) named below as running
+  // outside any dispatch, or as stated
+  // debt. A new unguarded write fails this test. The lists ARE the debt: they are hand-written, and the step that
+  // replaces them is the declared-write-metadata gap (a resolver declares its writes, and the door reads the registry).
+  // Limits, stated: proximity is not dominance (a guard on another branch of the same function would satisfy it), and
+  // only literal endpoint + /v2/impulses/resolve URLs are scanned (discovery-resolved URLs and the /v2/activities/*
+  // routes are not; the walk's own egress goes through walkEgressFetch instead).
+  const READS: Record<string, string> = {
+    substrateGap: "gap-store read",
+    poolImpulse: "pool read",
+    memoryNote: "memory read",
+    learning_transfer_report: "the mint governor's headroom read",
+    thompson_posterior: "satisfier reliability read",
+    consumer_productivity_audit: "consumability audit read",
+    vesselRegistry: "registry read",
+    compute_state_signature: "state signature for the dispatch's tags (computed per call)",
+  };
+  const NOT_A_DISPATCH: Array<{ fn: string; shape: string; why: string }> = [
+    { fn: "async function fileVerdictCorpusGap(", shape: "substrateGap_write", why: "the verdict-corpus runner, on its own trigger" },
+    { fn: "let expWatchdogGapOpen", shape: "substrateGap_write", why: "the expectation watchdog's timer" },
+  ];
+  const DEBT: Array<{ fn: string; shape: string; why: string }> = [
+    { fn: "const foreignConsumptionGate", shape: "substrateGap_write", why: "once per process, fixed id; can fire during an observe dispatch (residual)" },
+  ];
+  const GUARD_WINDOW = 20_000;
+  const scan = (text: string) => {
+    const sendRe = /(?<![\w.])fetch\(\s*`\$\{(?:DEV_VESSEL_ENDPOINT|ACTIVITY_API_ENDPOINT|process\.env\.DEVELOPMENT_VESSEL_ENDPOINT[^}]*)\}\/v2\/impulses\/resolve`/g;
+    const fnStarts = [...text.matchAll(/\n(?:export )?(?:async )?function |\n(?:const|let) \w+ = |\nserver = |\n[ \t]+const \w+ = async \(/g)].map((m) => (m.index ?? 0) + 1);
+    const guards = [...text.matchAll(/observeSkips?\(/g)].map((m) => m.index ?? 0);
+    const out: Array<{ line: number; shape: string | null; fn: string; ok: string | null }> = [];
+    for (const m of text.matchAll(sendRe)) {
+      const at = m.index ?? 0;
+      const after = /type:\s*"([^"]+)"/.exec(text.slice(at, at + 1500));
+      const before = [...text.slice(Math.max(0, at - 1500), at).matchAll(/type:\s*"([^"]+)"/g)].pop();
+      const shape = after?.[1] ?? before?.[1] ?? null;
+      const fs = fnStarts.filter((x) => x <= at).pop() ?? 0;
+      const fn = text.slice(fs, fs + 80).trimStart();
+      const guarded = guards.some((g) => g >= fs && g < at && at - g <= GUARD_WINDOW);
+      const ok = shape && READS[shape] ? `read: ${READS[shape]}`
+        : guarded ? "observe-guarded"
+        : [...NOT_A_DISPATCH, ...DEBT].find((e) => fn.startsWith(e.fn) && e.shape === shape)?.why ?? null;
+      out.push({ line: text.slice(0, at).split("\n").length, shape, fn: fn.split("\n")[0]!, ok });
+    }
+    return out;
+  };
+  test("[MUST-FAIL] class detector: no unguarded direct write to dev-vessel or activity-api from index.ts", () => {
+    const sites = scan(src);
+    expect(sites.length).toBeGreaterThan(20);
+    expect(sites.filter((s) => s.ok === null).map((s) => `${s.line} ${s.shape} in ${s.fn}`)).toEqual([]);
+  });
+  test("class detector control: it flags an unguarded write it has not been told about", () => {
+    const probe = "\nasync function probeWriter(): Promise<void> {\n  await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, { method: \"POST\", body: JSON.stringify({ impulse: { type: \"activityVariant_write\" } }) });\n}\n";
+    expect(scan(probe).map((s) => s.ok)).toEqual([null]);
+    const guarded = probe.replace("{\n  await", "{\n  if (observeSkip(\"authoring_mint\")) return;\n  await");
+    expect(scan(guarded).map((s) => s.ok)).toEqual(["observe-guarded"]);
+  });
+  test("composite-authoring.ts sends only through the door (or a caller's fetchImpl)", () => {
+    const ca_src = require("node:fs").readFileSync(`${import.meta.dir}/../src/composite-authoring.ts`, "utf8") as string;
+    expect(ca_src).toContain("deps.fetchImpl ?? ((url, init) => walkEgressFetch(shape, url, init))");
+    // the one direct send left is A2's describeMintedShape (discovery's learned descriptions), which runs only after a
+    // composite this walk minted RAN: unreachable under observe, where authorComposite is refused at the door
+    const direct = [...ca_src.matchAll(/deps\.fetchImpl \?\? fetch\b/g)].map((m) => ca_src.lastIndexOf("export async function ", m.index ?? 0));
+    expect(direct.map((i) => ca_src.slice(i, i + 48))).toEqual(["export async function describeMintedShape(discov"]);
+    for (const s of ["author_producer", "author_composed_capability", "activityTemplate_deprecate"]) expect(ca_src).toContain(`sendFor("${s}", deps)`);
   });
 });
