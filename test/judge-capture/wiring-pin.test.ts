@@ -70,7 +70,7 @@ describe("judge capture wiring pin: every decision site calls the closed capture
   });
 
   test("reachGate: the LLM judge's verdict is recorded as data where the gate consults it", () => {
-    callAfter("const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence);", "judgeCapture.noteLlmJudge(judged);", 1);
+    callAfter("const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, undefined, deliverables ?? writeEvidence?.targets);", "judgeCapture.noteLlmJudge(judged);", 1);
   });
 
   test("ports: the citation oracle's re-read and the walk's write read-back are recorded", () => {
