@@ -228,11 +228,10 @@ describe("scope: an observe walk never dispatches a resolver that ignores the mo
     const why = (om as any).observeModeBlindRefusal?.("observe", "patch_with_tools", {});
     expect(why).toContain("would-be op");
   });
-  test("control: observe lets a compose that carries learning_mode observe, and ordinary reads, go out", async () => {
+  test("control: observe lets an ordinary read go out", async () => {
     stubFetch();
-    expect(await send("observe", "feature_compose", { type: "feature_compose", spec: "s", learning_mode: "observe", land: false })).toBeNull();
     expect(await send("observe", "memoryNote", { type: "memoryNote", title_prefix: "x" })).toBeNull();
-    expect(calls.length).toBe(2);
+    expect(calls.length).toBe(1);
   });
   test("control (learn / absent): every one of them goes out unchanged", async () => {
     stubFetch();
@@ -299,6 +298,57 @@ describe("gapDecomposition: an observe walk's decomposition runs dry, and one th
     expect(decomposeFields("feature_compose", "observe")).toEqual({});
     expect(await walkEgress("learn", { decompose_gap_id: "g-1" })).toBeNull();
     expect(sent).toEqual([{ impulse: { pointer: { dispatch_id: "d-learn", decompose_gap_id: "g-1", type: "gapDecomposition" } } }]);
+    expect(om.observeSkipCounters()).toEqual({});
+  });
+});
+
+describe("commit 9: no auto-draft under observe, and a walk-built compose is refused whatever mode its pointer claims", () => {
+  test("[MUST-FAIL] autoDraft returns under observe before the recommend, the scenario write and the drafter run", () => {
+    const body = fnBody("const autoDraft = async (): Promise<void> => {", 20000);
+    const guard = body.indexOf('if (observeSkip("auto_draft")) return;');
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(body.indexOf("/v2/activities/recommend"));
+    expect(guard).toBeLessThan(body.indexOf("body: fsWriteBody,"));
+    expect(guard).toBeLessThan(body.indexOf('targetTemplateId: "activity:⟨development-vessel:draft-gap-closing-activity⟩",'));
+  });
+  test("control (learn): autoDraft is unchanged after the guard (its env gate first, then the drafter run)", () => {
+    const body = fnBody("const autoDraft = async (): Promise<void> => {", 20000);
+    expect(body.indexOf('process.env.SUBSTRATE_AUTO_DRAFT_ENABLED === "0"')).toBeLessThan(body.indexOf('observeSkip("auto_draft")'));
+    expect(body).toContain('tags: ["substrate.auto.draft", `auto_draft_for_dispatch:${dispatchId}`],');
+    expect(src).toContain("await autoDraft();");
+  });
+
+  const realFetch = globalThis.fetch;
+  let calls: string[] = [];
+  const stubFetch = () => {
+    calls = [];
+    globalThis.fetch = (async (url: string | URL | Request) => { calls.push(String(url)); return new Response("{}", { status: 200 }); }) as typeof fetch;
+  };
+  afterEach(() => { globalThis.fetch = realFetch; setWalkEgressLearningModeReader(() => undefined); om.resetObserveSkips(); });
+  const send = async (mode: string, shape: string, pointer: Record<string, unknown>): Promise<unknown> => {
+    setWalkEgressLearningModeReader(() => ({ learningMode: mode, dispatchId: `d-${mode}` }));
+    try { await walkEgressFetch(shape, "http://dv/v2/impulses/resolve", { method: "POST", body: JSON.stringify({ impulse: { pointer } }) }); return null; } catch (e) { return e; }
+  };
+  test("[MUST-FAIL] observe: a walk-built compose whose pointer claims learning_mode observe is still refused before fetch", async () => {
+    stubFetch();
+    for (const s of ["feature_compose", "gap_compose"]) {
+      const e = await send("observe", s, { type: s, spec: "s", learning_mode: "observe", land: false });
+      expect(isWalkEgressRefused(e)).toBe(true);
+      expect(String((e as Error)?.message)).toContain("whatever mode its pointer carries");
+      expect(isWalkEgressRefused(await send("observe", "x", { type: `development-vessel:${s}`, learning_mode: "observe" }))).toBe(true);
+    }
+    expect(calls).toEqual([]);
+    // composes are refused, not stamped: the walk's stamp is for gapDecomposition only
+    expect((om as any).observeDecomposeFields?.("feature_compose", "observe")).toEqual({});
+    expect((om as any).observeDecomposeFields?.("gap_compose", "observe")).toEqual({});
+  });
+  test("control (learn): the same compose pointers go out unchanged", async () => {
+    stubFetch();
+    for (const s of ["feature_compose", "gap_compose"]) {
+      expect(await send("learn", s, { type: s, spec: "s", learning_mode: "observe" })).toBeNull();
+      expect(await send("learn", s, { type: s, spec: "s" })).toBeNull();
+    }
+    expect(calls.length).toBe(4);
     expect(om.observeSkipCounters()).toEqual({});
   });
 });

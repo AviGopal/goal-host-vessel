@@ -22,7 +22,7 @@ export type LearningMode = "observe" | "learn";
 export type ObserveSideEffect =
   | "failure_memory" | "reached_command_bank" | "reached_command_evict" | "reach_gate_lesson" | "beta_penalty"
   | "oracle_label" | "gap_write" | "authoring_decision" | "vault_note" | "edit_intent_escalation" | "verifier_recipe"
-  | "child_dispatch" | "alpha_credit" | "artifact_expectation" | "mode_blind_dispatch";
+  | "child_dispatch" | "alpha_credit" | "artifact_expectation" | "mode_blind_dispatch" | "auto_draft";
 
 export function isObserve(mode: unknown): boolean {
   return mode === "observe";
@@ -87,17 +87,25 @@ export function observeEgressRefusal(mode: unknown, shape: string, body: unknown
 export const OBSERVE_MODE_BLIND_SHAPES: ReadonlySet<string> = new Set([
   "gap_to_feature", "apply_proposal_as_patch", "perf_canary_resolve", "patch_with_tools", "goal_execution",
 ]);
-/** Change resolvers that read the pointer's learning_mode (feature_compose, and gap_compose, which runs it), and
- *  development-vessel's gapDecomposition, whose observe run drafts the decomposition and writes no child gap. */
-export const OBSERVE_MODE_READING_SHAPES: ReadonlySet<string> = new Set(["feature_compose", "gap_compose", "gapDecomposition"]);
+/**
+ * Composes a walk may never dispatch under observe, whatever mode its pointer claims. feature_compose (and gap_compose,
+ * which runs it) does read learning_mode, but a walk builds its pointer from pool values and model output, so a
+ * pointer-supplied "observe" is the model's word, not the dispatch's. Refused rather than stamped: a stamped walk
+ * compose would run dry in development-vessel (claim a compose slot, draft, run the suite), which is a different
+ * measurement from the observe edit route's one compose (that route sets the mode itself and does not pass this guard).
+ */
+export const OBSERVE_WALK_REFUSED_COMPOSES: ReadonlySet<string> = new Set(["feature_compose", "gap_compose"]);
+/** Resolvers whose observe run is dry and that an observe walk may run once the walk itself sets the mode
+ *  (observeDecomposeFields): development-vessel's gapDecomposition drafts and writes no child gap. */
+export const OBSERVE_MODE_READING_SHAPES: ReadonlySet<string> = new Set(["gapDecomposition"]);
 
 const bareShape = (t: string): string => t.slice(t.lastIndexOf(":") + 1);
 
 /**
  * The refusal for one walk egress that would hand an observe dispatch's work to a resolver that ignores the mode
- * (pure), or null. A mode-blind resolver is never dispatched; a mode-reading one only when the outgoing pointer itself
- * says learning_mode "observe" (a walk builds its pointer from pool values and model output, so it does not). Either
- * way the step is kept as a would-be op: the refusal names it, and nothing leaves goal-host.
+ * (pure), or null. A mode-blind resolver and a walk-built compose are never dispatched; a mode-reading one only when
+ * the outgoing pointer says learning_mode "observe" (the walk sets it, after the pointer is built). Either way the
+ * step is kept as a would-be op: the refusal names it, and nothing leaves goal-host.
  */
 export function observeModeBlindRefusal(mode: unknown, shape: string, body: unknown): string | null {
   if (!isObserve(mode)) return null;
@@ -107,6 +115,8 @@ export function observeModeBlindRefusal(mode: unknown, shape: string, body: unkn
   const types = [shape, ptr?.["type"], imp?.["type"], b?.["type"]].filter((t): t is string => typeof t === "string").map(bareShape);
   const blind = types.find((t) => OBSERVE_MODE_BLIND_SHAPES.has(t));
   if (blind) return `observe: refused before egress — ${blind} does not read learning_mode, so an observe dispatch keeps it as a would-be op and never dispatches it`;
+  const compose = types.find((t) => OBSERVE_WALK_REFUSED_COMPOSES.has(t));
+  if (compose) return `observe: refused before egress — a walk-built ${compose} is never dispatched under observe, whatever mode its pointer carries (the edit route is the observe compose); kept as a would-be op`;
   const reading = types.find((t) => OBSERVE_MODE_READING_SHAPES.has(t));
   const p = ptr ?? imp ?? b;
   if (reading && p?.["learning_mode"] !== "observe") return `observe: refused before egress — this ${reading} pointer does not carry learning_mode "observe", so it would run as learn; kept as a would-be op`;

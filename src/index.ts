@@ -18630,6 +18630,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
   const autoDraft = async (): Promise<void> => {
     if (process.env.SUBSTRATE_AUTO_DRAFT_ENABLED === "0" || process.env.SUBSTRATE_AUTO_DRAFT_ENABLED === undefined) return;
     if (!goal || targetTemplateId) return;
+    // OBSERVE (observe-mode.ts): no auto-draft — it writes a scenario file and runs the drafter (tagged as learn) to
+    // author and promote a template, all learned state.
+    if (observeSkip("auto_draft")) return;
     const threshold = parseFloat(process.env.SUBSTRATE_AUTO_DRAFT_THRESHOLD ?? "0.3");
     try {
       const preRec = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
