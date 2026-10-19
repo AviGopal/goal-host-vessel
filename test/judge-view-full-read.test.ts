@@ -106,11 +106,15 @@ describe("a deliverable larger than the judge's view is judged on its FULL conte
   }, 20_000);
   test("[MUST-FAIL] (b) every part neutral: abstain:cut-view (ungraded), NOT a not-reached verdict", async () => {
     reset();
+    const before = oracleAbstainCounts()["judge-view-cut"] ?? { decisions: 0, verdicts: 0, abstains: 0 };
     const v = await endOfWalk(LOG(50000)).run();
     expect(v?.abstain?.kind).toBe("cut-view");
     expect(v?.reason).toMatch(/^abstain:cut-view — .* read in full in 3 parts, but every part was neutral \(none supports or refutes the reach\); not graded$/);
     expect(v?.full_read?.parts).toBe(3);
     expect(partCalls).toEqual([1, 2, 3]);
+    const after = oracleAbstainCounts()["judge-view-cut"]!;
+    expect(after.abstains).toBe(before.abstains + 1);
+    expect(after.verdicts).toBe(before.verdicts);
   }, 20_000);
   test("[MUST-FAIL] (c) neutral, refutes, supports: not reached, citing part 2, and part 3 is never read", async () => {
     reset();
@@ -119,6 +123,17 @@ describe("a deliverable larger than the judge's view is judged on its FULL conte
     expect(v?.reached).toBe(false);
     expect(v?.reason).toMatch(/^full-read: part 2\/3 \(chars \d+-\d+ of \d+\) refutes the reach — stub part: the final status says the migration FAILED/);
     expect(partCalls).toEqual([1, 2]);
+  }, 20_000);
+  test("[MUST-FAIL] (R5) the tally counts a full read AFTER its parts: one that ends null is not counted as a verdict (or at all)", async () => {
+    reset();
+    partsDown = true;
+    const before = oracleAbstainCounts()["judge-view-cut"] ?? { decisions: 0, verdicts: 0, abstains: 0 };
+    const v = await endOfWalk(FILLER + " ANSWER-MARK: done.").run();
+    expect(v).toBeNull();
+    expect(partCalls.length).toBeGreaterThan(0);
+    const after = oracleAbstainCounts()["judge-view-cut"] ?? { decisions: 0, verdicts: 0, abstains: 0 };
+    expect(after.verdicts).toBe(before.verdicts);
+    expect(after.decisions).toBe(before.decisions);
   }, 20_000);
   test("a full read is counted as a VERDICT in the judge-view-cut family, not an abstain", async () => {
     reset();

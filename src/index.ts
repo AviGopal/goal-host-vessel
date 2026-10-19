@@ -4436,23 +4436,25 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // over the parts is the verdict (reach-grounding.ts judgeReachInParts). Otherwise it is not graded HOLLOW (no β) and
   // not graded reached: it is its own explicit outcome carrying the cut — NOT null, which is the "verifier
   // unreachable" channel and would re-call the verifier and log an outage.
-  // COUNTED (oracle-abstain tally): a whole view or a full read is a graded decision, a cut one an abstain, so a run can
-  // report how many judge verdicts the deliverable budget removes.
+  // COUNTED (oracle-abstain tally): a whole view is a graded decision, a cut one an abstain, so a run can report how many
+  // judge verdicts the deliverable budget removes. A full read is counted AFTER its parts are read, by its outcome: a
+  // reached / not-reached verdict, an abstain when every part was neutral, and nothing when it ended null.
   if (judgeView?.deliverableCut) {
     const cuts = judgeView.cuts.map((c) => ({ ...c }));
     const maxParts = (await resolveSelectionTuning()).judgeViewMaxParts;
     const parts = judgeView.full ? judgeViewParts(judgeView.full, DELIVERABLE_CAP, maxParts) : null;
     if (judgeView.full && parts) {
-      await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "verdict", goal, "the deliverable did not fit the judge's view; read in full");
       console.log(`[judge-view] FULL READ goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view; reading it whole in ${parts.length} ordered part(s) of ${parts[0]!.total} chars; cuts=${JSON.stringify(cuts).slice(0, 300)}`);
       const full = await llmJudgeReachInParts(goal, producedShapes, taskSummary, judgeView.full, parts, commandEvidence, deliverables ?? writeEvidence?.targets);
       judgeCapture.noteLlmJudge(full);
       const fullRead = { parts: parts.length, chars: parts[0]!.total };
-      if (!full) return null;
+      // NULL: the judge could not be consulted for some part. Not a decision, so not tallied; the walk re-calls the gate.
+      if (!full) { console.log(`[judge-view] FULL READ goal_hash=${goalHashOf(goal)} ended null (a part got no verdict); not tallied`); return null; }
       const { undecided, ...verdict } = full;
       // ALL NEUTRAL: nothing in the deliverable decided the reach. Ungraded (cut-view), never not-reached: a middle part
       // that merely lacks the answer is not evidence the goal failed.
       if (undecided) {
+        await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "abstain", goal, "the deliverable was read in full and every part was neutral; ungraded");
         return {
           reached: false,
           reason: `abstain:cut-view — the deliverable did not fit the judge's view and was read in full in ${parts.length} parts, but every part was neutral (none supports or refutes the reach); not graded`,
@@ -4461,6 +4463,7 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
           full_read: fullRead,
         };
       }
+      await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "verdict", goal, `the deliverable was read in full: ${verdict.reached ? "reached" : "not reached"}`);
       return { ...verdict, full_read: fullRead };
     }
     await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "abstain", goal, "the deliverable did not fit the judge's view; ungraded");
