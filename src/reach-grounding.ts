@@ -48,6 +48,9 @@ export interface ReachJudgeVerdict {
   completion_shapes: string[];
   missing?: string[];
   deterministic: boolean;
+  /** The judge's reading of what the goal is ABOUT: the system answering it, or anything else. Absent when the reply
+   *  named neither. It only ever refuses (judgeReach: a this_system goal whose chain consulted nothing). */
+  subject?: "this_system" | "other";
   /** Set only when a gate that SHADOWS the judge decided (the local-state rule): what the judge said, recorded, never used. */
   judge_verdict_before_pregate?: { reached: boolean | null; reason: string };
 }
@@ -72,7 +75,9 @@ STILL score HOLLOW (reached:false) when the output genuinely fails the intent: n
 
 Then identify the shape(s) characterising the COMPLETION STATE of this goal-direction (a subset of produced shapes, and/or shapes that SHOULD exist at completion but do not yet).
 
-Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
+Also name the goal's SUBJECT: "this_system" when it asks about the system that ran it (its own state, identity, capabilities, files or filesystem, processes, configuration, network or stores), including a goal that says "the filesystem", "your …" or "this system" and names no other system; "other" for general knowledge, a named third party, or the outside world. The subject does not change your reached verdict.
+
+Respond with ONLY JSON: {"reached": boolean, "reason": "<1 sentence>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"], "subject": "this_system" | "other"}`;
   return prompt;
 }
 
@@ -95,6 +100,7 @@ export function parseReachJudgeText(text: unknown): ReachJudgeVerdict | null {
     completion_shapes: Array.isArray(p.completion_shapes) ? p.completion_shapes.map(String) : [],
     missing: Array.isArray(p.missing) ? p.missing.map(String) : [],
     deterministic: false,
+    ...(p.subject === "this_system" || p.subject === "other" ? { subject: p.subject } : {}),
   };
 }
 
@@ -111,7 +117,17 @@ export async function judgeReach(input: ReachJudgeInput, complete: ReachJudgeCom
     return { ...gated, judge_verdict_before_pregate: judgeShadowOf(await judgeModelOnly(input, shadowComplete ?? complete)) };
   }
   if (gated) return gated;
-  return judgeModelOnly(input, complete);
+  // A SELF-QUESTION WITH NO TARGET TO CLASSIFY IT (rule 5 reads the targets; an explanatory question is routed to an
+  // answer shape, so localTargets is empty). The judge's subject names it; whether the chain consulted anything is code.
+  // Subject this_system + nothing consulted ⇒ not reached under rule 5's code, the judge's verdict recorded beside it.
+  const v = await judgeModelOnly(input, complete);
+  if (v?.reached && v.subject === "this_system" && !consultedInRun(input.producedShapes, input.commandEvidence, input.contentDigest)) {
+    return {
+      ...notReached(LOCAL_STATE_CODE, `the judge reads the goal as about this system, and the chain consulted nothing in-run (produced: ${input.producedShapes.join(", ") || "none"}; no registry read; no tool run by the answering model); an answer from model memory describes some other system`),
+      judge_verdict_before_pregate: judgeShadowOf(v),
+    };
+  }
+  return v;
 }
 
 /** The model's own verdict: the prompt and the sanitised reply, with NO grounding gate in front. This is what a shadow
@@ -347,6 +363,22 @@ export function hasLocalRead(producedShapes: string[], commandEvidence?: string,
   return producedShapes.some((s) => isReadRoleShape(s) && !external.has(s)) || REGISTRY_READ_RE.test(commandEvidence ?? "");
 }
 
+/** Did the chain consult ANYTHING in-run? A source shape (hasInRunSource), a command that read the registry, or a tool
+ *  the answering model ran itself: `body.executed_tool_calls` in an LLM writer's envelope (the agentic dispatch wrapper
+ *  runs its tools internally and surfaces no shape; absent means none, as index.ts executedToolCallsOf reads it). An
+ *  LLM writer's segment that is not a whole envelope (cut, or plain text) is unknown, and unknown counts as consulted. */
+export function consultedInRun(producedShapes: string[], commandEvidence?: string, contentDigest?: string): boolean {
+  if (hasInRunSource(producedShapes) || REGISTRY_READ_RE.test(commandEvidence ?? "")) return true;
+  const ranTools = (text: string): boolean => {
+    let o: any;
+    try { o = JSON.parse(text.trim()); } catch { return true; }
+    if (!o || typeof o !== "object") return true;
+    const raw = o.body?.executed_tool_calls ?? o.content?.body?.executed_tool_calls ?? o.executed_tool_calls;
+    return Array.isArray(raw) && raw.length > 0;
+  };
+  return digestSegments(contentDigest ?? "").some((seg) => seg.shape !== null && LLM_WRITER_SHAPES.has(seg.shape) && ranTools(seg.text));
+}
+
 const DAY_MS = 86_400_000;
 const notReached = (code: string, why: string): ReachJudgeVerdict => ({
   reached: false, deterministic: true, completion_shapes: [], reason: `deterministic:${code} — ${why}`,
@@ -367,6 +399,8 @@ const notReached = (code: string, why: string): ReachJudgeVerdict => ({
  *     resolved through discovery by the caller: STRUCTURAL, no word list) and whose chain made no local read
  *     (hasLocalRead). A walk aimed at no local shape is not a local-state question, whatever its words. The judge
  *     is consulted in shadow for this rule (judgeReach).
+ *  After the judge (judgeReach, not here): a reached verdict whose judge names the goal's subject this_system, on a
+ *  chain that consulted nothing in-run (consultedInRun), is not reached under rule 5's code.
  */
 export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJudgeVerdict | null {
   const { goal, producedShapes, now } = input;
