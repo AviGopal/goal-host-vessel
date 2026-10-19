@@ -19583,6 +19583,8 @@ async function handleResolve(req: Request): Promise<Response> {
             targetTemplateId: (body.targetTemplateId ?? body.target_template_id ?? pointer.targetTemplateId ?? pointer.target_template_id),
             parent_execution_id: (body.parent_execution_id ?? pointer.parent_execution_id),
             composition_chain: (body.composition_chain ?? pointer.composition_chain),
+            learning_mode: (body.learning_mode ?? pointer.learning_mode),
+            ablation: (body.ablation ?? pointer.ablation),
       }),
     });
     return handleRunGoal(synthetic);
