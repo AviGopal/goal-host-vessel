@@ -77,8 +77,8 @@ describe("reach grounding: a self-question answered from model memory is not rea
     const base = { reached: true, reason: "ok", completion_shapes: [] };
     expect(parseReachJudgeText(JSON.stringify({ ...base, subject: "this_system" }))?.subject).toBe("this_system");
     expect(parseReachJudgeText(JSON.stringify({ ...base, subject: "other" }))?.subject).toBe("other");
-    expect(parseReachJudgeText(JSON.stringify({ ...base, subject: "THIS SYSTEM!" }))?.subject).toBeUndefined();
-    expect(parseReachJudgeText(JSON.stringify(base))?.subject).toBeUndefined();
+    expect(parseReachJudgeText(JSON.stringify({ ...base, subject: "THIS SYSTEM!" }))?.subject).toBeNull();
+    expect(parseReachJudgeText(JSON.stringify(base))?.subject).toBeNull();
   });
 
   it("control: a general-knowledge question with the same chain (the orbital-path goal) is the judge's call", async () => {
@@ -119,5 +119,43 @@ describe("reach grounding: a self-question answered from model memory is not rea
     expect(consultedInRun(["goal", "dispatch_id", "llm_completion_dispatch"], undefined, `- llm_completion_dispatch: ${cut}`)).toBe(true);
     expect(consultedInRun(["goal", "dispatch_id", "llm_completion_dispatch"], undefined, `- llm_completion_dispatch: ${envelope(UNIX_TREE)}`)).toBe(false);
     expect(consultedInRun(["goal", "dispatch_id", "llm_completion_dispatch"], "- shellResult was produced by RUNNING: `curl -s http://discovery.test.invalid/registry/stats`", `- llm_completion_dispatch: ${envelope(UNIX_TREE)}`)).toBe(true);
+  });
+
+  // MUST-HOLD (qa condition i): general questions answered with no tool run stay the judge's call when the judge reads
+  // them as "other". The same chain as the residual class, so only the subject separates them.
+  const GENERAL: Array<[string, string]> = [
+    ["What is the orbital path from LEO to the moon Io? Distance along the path? The optimal transit delta v?", "A Hohmann transfer to Jupiter, then capture into an orbit near Io."],
+    ["What is the capital of France?", "The capital of France is Paris."],
+    ["Explain TCP slow start", "TCP slow start grows the congestion window exponentially from a small initial value until loss or the slow-start threshold."],
+  ];
+  for (const [goal, answer] of GENERAL) {
+    it(`must-hold: "${goal.slice(0, 40)}" with subject other and no tool run stays judge-graded`, async () => {
+      const v = await judgeReach(oneLlmStep(goal, envelope(answer)), judge({ reached: true, subject: "other" }).complete);
+      expect(v?.reached).toBe(true);
+      expect(v?.deterministic).toBe(false);
+      expect(v?.judge_verdict_before_pregate).toBeUndefined();
+    });
+    it(`RISK, documented: "${goal.slice(0, 40)}" with the judge WRONGLY reading subject this_system is refused (a false refusal the record counts)`, async () => {
+      const v = await judgeReach(oneLlmStep(goal, envelope(answer)), judge({ reached: true, subject: "this_system" }).complete);
+      expect(v?.reached).toBe(false);
+      expect(v?.reason).toMatch(/^deterministic:unsourced-local-state /);
+      expect(v?.subject).toBe("this_system");
+      expect(v?.judge_verdict_before_pregate).toEqual({ reached: true, reason: REASON });
+    });
+  }
+
+  it("must-fail: the verdict records the judge's subject on a reached verdict, on a refusal, and as null when the reply names none (qa condition ii)", async () => {
+    const reached = await judgeReach(oneLlmStep("What is the capital of France?", envelope("Paris.")), judge({ reached: true, subject: "other" }).complete);
+    expect(reached?.reached).toBe(true);
+    expect(reached?.subject).toBe("other");
+    const refused = await judgeReach(oneLlmStep(FS_GOALS[0]!, envelope(UNIX_TREE)), judge({ reached: true, subject: "this_system" }).complete);
+    expect(refused?.reached).toBe(false);
+    expect(refused?.subject).toBe("this_system");
+    const hollow = await judgeReach(oneLlmStep(FS_GOALS[0]!, envelope(UNIX_TREE)), judge({ reached: false, subject: "this_system" }).complete);
+    expect(hollow?.subject).toBe("this_system");
+    const unnamed = await judgeReach(oneLlmStep(FS_GOALS[0]!, envelope(UNIX_TREE)), judge({ reached: true }).complete);
+    expect(unnamed?.reached).toBe(true);
+    expect(unnamed && "subject" in unnamed).toBe(true);
+    expect(unnamed?.subject).toBeNull();
   });
 });

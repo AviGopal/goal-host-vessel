@@ -48,9 +48,11 @@ export interface ReachJudgeVerdict {
   completion_shapes: string[];
   missing?: string[];
   deterministic: boolean;
-  /** The judge's reading of what the goal is ABOUT: the system answering it, or anything else. Absent when the reply
-   *  named neither. It only ever refuses (judgeReach: a this_system goal whose chain consulted nothing). */
-  subject?: "this_system" | "other";
+  /** The judge's reading of what the goal is ABOUT: the system answering it, or anything else; null when the reply named
+   *  neither. Set on every verdict the judge decided (and on the refusal it causes), so the record can count refusals
+   *  of general goals the judge read as this_system. It only ever refuses (judgeReach: a this_system goal whose chain
+   *  consulted nothing). Absent on a verdict a gate decided before the judge. */
+  subject?: "this_system" | "other" | null;
   /** Set only when a gate that SHADOWS the judge decided (the local-state rule): what the judge said, recorded, never used. */
   judge_verdict_before_pregate?: { reached: boolean | null; reason: string };
 }
@@ -100,7 +102,7 @@ export function parseReachJudgeText(text: unknown): ReachJudgeVerdict | null {
     completion_shapes: Array.isArray(p.completion_shapes) ? p.completion_shapes.map(String) : [],
     missing: Array.isArray(p.missing) ? p.missing.map(String) : [],
     deterministic: false,
-    ...(p.subject === "this_system" || p.subject === "other" ? { subject: p.subject } : {}),
+    subject: p.subject === "this_system" || p.subject === "other" ? p.subject : null,
   };
 }
 
@@ -124,6 +126,7 @@ export async function judgeReach(input: ReachJudgeInput, complete: ReachJudgeCom
   if (v?.reached && v.subject === "this_system" && !consultedInRun(input.producedShapes, input.commandEvidence, input.contentDigest)) {
     return {
       ...notReached(LOCAL_STATE_CODE, `the judge reads the goal as about this system, and the chain consulted nothing in-run (produced: ${input.producedShapes.join(", ") || "none"}; no registry read; no tool run by the answering model); an answer from model memory describes some other system`),
+      subject: v.subject,
       judge_verdict_before_pregate: judgeShadowOf(v),
     };
   }
