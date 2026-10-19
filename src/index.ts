@@ -6090,7 +6090,7 @@ async function runGroundedToolLoop(
   }
   return { finalText, groundedOk, executedOk, executed, observations, calledWriteShapes, commandEvidence: commandLines.join("\n"), decisions };
 }
-async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }, walkContext?: FloorWalkContext): Promise<GoalSeekResult | null> {
+async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string; abstain?: boolean }, walkContext?: FloorWalkContext): Promise<GoalSeekResult | null> {
   // CARRY THE DISPATCH ID EXPLICITLY. ufExecuteTool reads it from dispatchContext, which was
   // only ever populated by enterWith in runGoalWithRecovery; on a FEEDBACK-RETRY the floor ran
   // with an empty store and posted bare {type, command} shell pointers (run 12 item 7, commit
@@ -6395,6 +6395,8 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // The not-reached reason, for the caller to carry: the floor is the last thing a dispatch tried, so its reason is
   // the dispatch's (supersede). A verifier that gave no verdict is said as such, so the memory filter skips it.
   if (out && !(verdict?.reached && floorReached)) out.reason = verdict === null ? "floor: reach verifier unreachable — verdict unknown" : `floor ${_floorV.reason_code}: ${String(verdict.reason ?? "").slice(0, 300)}`;
+  // UNGRADED IS NO WRITE: an abstained floor verdict is not a failed floor, so the caller records no path row for it.
+  if (out && verdict?.abstain) out.abstain = true;
   if (executed.length > 0 || groundedOk > 0 || finalText.trim().length > 0) {
     await persistSatisfierTrace({
       id: floorExecId,
@@ -15628,10 +15630,11 @@ async function runGoalWithRecoveryInner(
       if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
-          const _ufOut: { reason?: string } = {};
+          const _ufOut: { reason?: string; abstain?: boolean } = {};
           // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
           const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
-      if (!uf?.reached && opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
+      // An ABSTAINED floor (§9.2) is ungraded: no failed path row (its POST would add failure_delta / thompson_beta).
+      if (!uf?.reached && opts.learningMode !== "observe" && !_ufOut.abstain) void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {
             if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
             // RECORD THE FLOOR'S PATH. This `return` sits above every recordGoalPath call
@@ -16575,6 +16578,8 @@ async function runGoalWithRecoveryInner(
     status = result.trace.status === "failed" ? "failed" : "completed";
     const selId = result.selectedTemplateId;
     reached = false;
+    // THIS attempt's abstain (engineAbstain carries the last one that abstained, for the result).
+    let attemptAbstained = false;
     const producedShapes = [...new Set(((result.trace as { tasks?: Array<{ outputShapes?: string[] }> }).tasks ?? []).flatMap((t) => t.outputShapes ?? []))];
     // A FAILED TRACE CARRIES ITS REASON (B2): the reach gate below only runs on a completed trace, so without this a
     // failed attempt reached the next attempt (classifyFailure), the dispatch record and the failure memory reasonless.
@@ -16633,6 +16638,7 @@ async function runGoalWithRecoveryInner(
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;
         engineAbstain = verdict?.abstain;
+        attemptAbstained = !!verdict?.abstain;
         // PROVENANCE GATE: a run that consumed another execution's impulse did not reach
         // THIS goal. Not reached, not credited, not extracted — and not β-penalised either:
         // the template did not fail, the shared store fed it another run's data.
@@ -16682,7 +16688,8 @@ async function runGoalWithRecoveryInner(
     // single-template attempt wrote a row with empty endpoint_output_shapes AND empty
     // expected_output_shapes — silently un-reconcilable, and indistinguishable from a
     // walk that genuinely planned and produced nothing.
-    if (opts.learningMode !== "observe" && goal && selId) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId), producedShapes, seededOutputShapes ?? []);
+    // An ABSTAINED attempt (§9.2) is ungraded: it writes no path row, as the walk does not (its POST would add failure_delta / thompson_beta).
+    if (opts.learningMode !== "observe" && goal && selId && !attemptAbstained) void recordGoalPath(goal, [selId], reached, tr.durationMs ?? 0, tr.costUsd ?? 0, tierOf(selId), producedShapes, seededOutputShapes ?? []);
     for (const s of producedShapes) c6SeekPool.add(s); // C6: this attempt's produced shapes join the pool
     if (reached || !goal) break;  // reached (the trace is what the ribosome mints) — or no goal to recover toward
       { // cap retries if this dispatch already landed a commit

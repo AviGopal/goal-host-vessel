@@ -132,3 +132,28 @@ describe("control: a deliverable that fits the view is judged exactly as before"
     expect(v?.full_read).toBeUndefined();
   }, 20_000);
 });
+
+// (iii) UNGRADED IS NO WRITE, on every path that can end ungraded. The walk already holds it (judge-view-gate.test.ts
+// pins the β withhold and the two `!walkAbstain` path rows; α, mint and bank sit under reached===true, which an abstain
+// never is). The single-template recovery attempt and the floor did not: each wrote a FAILED path row for an abstained
+// verdict, and that row's POST adds failure_delta / thompson_beta — a β on a verdict nobody graded.
+describe("(iii) a run that ends ungraded writes no α/β and no goal-path row (source)", () => {
+  const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
+  test("control (walk): an abstain withholds β and writes no path row", () => {
+    expect(src).toMatch(/if \(verdict\?\.abstain\) \{\n\s*status = "failed";\n\s*walkBetaWithheld = true;\n\s*\} else if \(verdict && verdict\.reached === false\)/);
+    expect(src.match(/void recordGoalPath\(goal, chain, reached,/g) ?? []).toHaveLength(2);
+    expect(src.match(/!walkAbstain\) void recordGoalPath\(goal, chain, reached,/g) ?? []).toHaveLength(2);
+  });
+  test("[MUST-FAIL] the recovery attempt: an abstained attempt is not penalised and writes no path row", () => {
+    const a = src.indexOf("} else if (verdict?.abstain) {\n          // ABSTAIN (OP-1)");
+    expect(a).toBeGreaterThan(0);
+    expect(src.slice(a, a + 400)).not.toContain("penaliseHollowTemplate");
+    expect(src).toContain("attemptAbstained = !!verdict?.abstain;");
+    expect(src).toContain('if (opts.learningMode !== "observe" && goal && selId && !attemptAbstained) void recordGoalPath(goal, [selId], reached,');
+    expect(src.match(/void recordGoalPath\(goal, \[selId\], reached,/g) ?? []).toHaveLength(1);
+  });
+  test("[MUST-FAIL] the floor: an abstained floor verdict is carried out, and the failed floor row is not written for it", () => {
+    expect(src).toContain("if (out && verdict?.abstain) out.abstain = true;");
+    expect(src).toContain('if (!uf?.reached && opts.learningMode !== "observe" && !_ufOut.abstain) void recordGoalPath(goal, ["universal-tool-fallback"], false,');
+  });
+});

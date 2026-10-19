@@ -11,7 +11,7 @@ const at = (needle: string): number => { const i = INDEX.indexOf(needle); expect
 
 describe("floor reason supersedes the walk's", () => {
   test("[MUST-FAIL on base] the floor hands its not-reached reason out, through the dispatch-context re-entry too", () => {
-    expect(INDEX).toContain("async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string }, walkContext?: FloorWalkContext)");
+    expect(INDEX).toContain("async function universalToolFallback(goal: string, targetShapes: string[], dispatchId?: string, out?: { reason?: string; abstain?: boolean }, walkContext?: FloorWalkContext)");
     expect(INDEX).toContain("() => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext))");
   });
 
