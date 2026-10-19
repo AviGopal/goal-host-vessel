@@ -16,15 +16,17 @@ const reply = (o: unknown) => {
   return Promise.resolve(new Response(JSON.stringify({ content: { body: { content: verdict } }, body: { content: verdict } }), { status: 200, headers: { "Content-Type": "application/json" } }));
 };
 // The stub judge reads only what it is shown: the whole-view judge passes whatever head it sees; a part refutes on the
-// failure marker and supports on the success or answer marker.
+// failure marker, supports on the success or answer marker, and is otherwise NEUTRAL with a reason saying what it lacks
+// (the words the whole-view parser would flip to not-reached). `partsDown`: the judge answers no part (null).
+let partsDown = false;
 function stubFetch(_input: unknown, init?: { body?: unknown }): Promise<Response> {
   const body = typeof init?.body === "string" ? init.body : "";
   if (body.includes(JUDGE_MARK) && body.includes(PARTS_MARK)) {
     const k = Number(body.match(/You are reading PART (\d+) of \d+/)?.[1] ?? 0);
     partCalls.push(k);
-    const refutes = body.includes("FAILED-MARK");
-    const supports = body.includes("migrated cleanly") || body.includes("ANSWER-MARK");
-    return reply({ supports, refutes, reason: refutes ? "stub part: the final status says the migration FAILED" : supports ? "stub part: the report states the outcome" : "stub part: filler only", completion_shapes: supports && !refutes ? ["llm_completion"] : [] });
+    if (partsDown) return Promise.resolve(new Response(JSON.stringify({ error: "stub: judge down" }), { status: 503 }));
+    const verdict = body.includes("FAILED-MARK") ? "refutes" : body.includes("migrated cleanly") || body.includes("ANSWER-MARK") ? "supports" : "neutral";
+    return reply({ verdict, reason: verdict === "refutes" ? "stub part: the final status says the migration FAILED" : verdict === "supports" ? "stub part: the report states the outcome" : "stub part: this part lacks the answer, it is filler only", completion_shapes: verdict === "supports" ? ["llm_completion"] : [] });
   }
   if (body.includes(JUDGE_MARK)) {
     wholeViewCalls++;
@@ -62,7 +64,9 @@ const endOfWalk = (report: string) => {
   const view = buildJudgeView([{ shape: "llm_completion", content: report }], new Set(), new Set(), { full: true });
   return { view, run: () => verifyGoalReached(GOAL, ["goal", "llm_completion"], "walk(1 steps)", view.digest, undefined, undefined, view) };
 };
-const reset = () => { wholeViewCalls = 0; partCalls = []; };
+const reset = () => { wholeViewCalls = 0; partCalls = []; partsDown = false; };
+/** `n` chars of the migration log's filler (neutral to every part). */
+const LOG = (n: number) => "Node log line: step applied, checkpoint written. ".repeat(Math.ceil(n / 50)).slice(0, n);
 
 describe("a deliverable larger than the judge's view is judged on its FULL content", () => {
   test("[MUST-FAIL] (i) refuting content past the cut: NOT reached, graded (not an abstain), citing the refuting part", async () => {
@@ -90,7 +94,34 @@ describe("a deliverable larger than the judge's view is judged on its FULL conte
     expect(v?.full_read?.parts).toBe(2);
     expect(partCalls).toEqual([1, 2]);
   }, 20_000);
+  test("[MUST-FAIL] (a) neutral, neutral, supports: reached, citing part 3 (a middle part that lacks the answer never refutes)", async () => {
+    reset();
+    const { view, run } = endOfWalk(LOG(50000) + " ANSWER-MARK: the migration moved 5 of 5 nodes.");
+    const v = await run();
+    expect(v?.abstain).toBeUndefined();
+    expect(v?.reached).toBe(true);
+    expect(v?.reason).toMatch(/^full-read: all 3 parts read \(\d+ chars\), none refutes, and part 3\/3 \(chars \d+-\d+ of \d+\) supports the reach/);
+    expect(v?.full_read).toEqual({ parts: 3, chars: view.full!.deliverable.length });
+    expect(partCalls).toEqual([1, 2, 3]);
+  }, 20_000);
+  test("[MUST-FAIL] (b) every part neutral: abstain:cut-view (ungraded), NOT a not-reached verdict", async () => {
+    reset();
+    const v = await endOfWalk(LOG(50000)).run();
+    expect(v?.abstain?.kind).toBe("cut-view");
+    expect(v?.reason).toMatch(/^abstain:cut-view — .* read in full in 3 parts, but every part was neutral \(none supports or refutes the reach\); not graded$/);
+    expect(v?.full_read?.parts).toBe(3);
+    expect(partCalls).toEqual([1, 2, 3]);
+  }, 20_000);
+  test("[MUST-FAIL] (c) neutral, refutes, supports: not reached, citing part 2, and part 3 is never read", async () => {
+    reset();
+    const v = await endOfWalk(LOG(30000) + " FAILED-MARK on 3 of 5 nodes. " + LOG(25000) + " ANSWER-MARK: done.").run();
+    expect(v?.abstain).toBeUndefined();
+    expect(v?.reached).toBe(false);
+    expect(v?.reason).toMatch(/^full-read: part 2\/3 \(chars \d+-\d+ of \d+\) refutes the reach — stub part: the final status says the migration FAILED/);
+    expect(partCalls).toEqual([1, 2]);
+  }, 20_000);
   test("a full read is counted as a VERDICT in the judge-view-cut family, not an abstain", async () => {
+    reset();
     const before = oracleAbstainCounts()["judge-view-cut"] ?? { decisions: 0, verdicts: 0, abstains: 0 };
     await endOfWalk(FILLER + " ANSWER-MARK: done.").run();
     const after = oracleAbstainCounts()["judge-view-cut"]!;

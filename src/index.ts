@@ -4447,7 +4447,21 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       console.log(`[judge-view] FULL READ goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view; reading it whole in ${parts.length} ordered part(s) of ${parts[0]!.total} chars; cuts=${JSON.stringify(cuts).slice(0, 300)}`);
       const full = await llmJudgeReachInParts(goal, producedShapes, taskSummary, judgeView.full, parts, commandEvidence, deliverables ?? writeEvidence?.targets);
       judgeCapture.noteLlmJudge(full);
-      return full ? { ...full, full_read: { parts: parts.length, chars: parts[0]!.total } } : null;
+      const fullRead = { parts: parts.length, chars: parts[0]!.total };
+      if (!full) return null;
+      const { undecided, ...verdict } = full;
+      // ALL NEUTRAL: nothing in the deliverable decided the reach. Ungraded (cut-view), never not-reached: a middle part
+      // that merely lacks the answer is not evidence the goal failed.
+      if (undecided) {
+        return {
+          reached: false,
+          reason: `abstain:cut-view — the deliverable did not fit the judge's view and was read in full in ${parts.length} parts, but every part was neutral (none supports or refutes the reach); not graded`,
+          completion_shapes: [],
+          abstain: { kind: "cut-view", cuts },
+          full_read: fullRead,
+        };
+      }
+      return { ...verdict, full_read: fullRead };
     }
     await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "abstain", goal, "the deliverable did not fit the judge's view; ungraded");
     const why = judgeView.deliverablePreClipped ? "it was clipped at capture, so it is not whole in hand"
@@ -4557,7 +4571,7 @@ async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary
  *  ordered part of a deliverable too large for its view (reach-grounding.ts judgeReachInParts). The grounding gates read
  *  the WHOLE deliverable. Parts are judged in order and the read stops at the first refuting part, so a refuted
  *  deliverable costs fewer calls than the part count. */
-async function llmJudgeReachInParts(goal: string, producedShapes: string[], taskSummary: string, full: { deliverable: string; tail: string }, parts: JudgeViewPart[], commandEvidence?: string, targets?: readonly string[]): Promise<GoalReachVerdict | null> {
+async function llmJudgeReachInParts(goal: string, producedShapes: string[], taskSummary: string, full: { deliverable: string; tail: string }, parts: JudgeViewPart[], commandEvidence?: string, targets?: readonly string[]): Promise<(GoalReachVerdict & { undecided?: true }) | null> {
   if (!LLM_VESSEL_ENDPOINT) return null;
   const wholeDigest = [full.deliverable, full.tail].filter(Boolean).join("\n");
   const localTargets = hasLocalRead(producedShapes, commandEvidence, wholeDigest) ? [] : await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
