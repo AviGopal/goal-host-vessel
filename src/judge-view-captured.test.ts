@@ -52,3 +52,21 @@ describe("source: nothing is joined onto the judge view after it is built", () =
     expect(src).toContain("reachContentEntries.set(execId, entries);");
   });
 });
+
+// FULL VIEW OR ABSTAIN: a nested step's output reaches the judge only through this capture, so the capture bound decides
+// whether a deliverable over the view can be read in full. At the view's own width every such deliverable was
+// "clipped at capture" and could only abstain.
+describe("the capture holds a deliverable over the view whole, for the full read", () => {
+  const src = require("node:fs").readFileSync(`${import.meta.dir}/index.ts`, "utf8") as string;
+  test("[MUST-FAIL] the walk's capture is bounded at a memory ceiling of 8 view-widths, not at the view's own width", () => {
+    expect(src).toContain("const REACH_CAPTURE_CAP = DELIVERABLE_CAP * 8;");
+    expect(src).toContain("const entries = capturedPoolEntries(captured.map((imp) => ({ shape: imp.metadata?.shape, content: imp.content })), REACH_CAPTURE_CAP);");
+  });
+  test("captured under that bound, a deliverable over the view is whole in hand at the end-of-walk view", () => {
+    const big = "y".repeat(DELIVERABLE_CAP + 5000);
+    const v = buildJudgeView([{ shape: "llm_completion", content: { producedBy: "activity:x", executionId: "exec_1" } }, ...capturedPoolEntries([{ shape: "llm_completion", content: big }], DELIVERABLE_CAP * 8)], new Set(), new Set(), { full: true });
+    expect(v.deliverableCut).toBe(true);
+    expect(v.deliverablePreClipped).toBe(false);
+    expect(v.full?.deliverable).toBe(`- llm_completion: ${big}`);
+  });
+});

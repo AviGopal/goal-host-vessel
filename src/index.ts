@@ -16932,6 +16932,12 @@ const reachContentDigests = new Map<string, string>();
 // after the view, outside its budget and cut record. The string stays for the engine path.
 const reachContentEntries = new Map<string, PoolEntry[]>();
 const REACH_DIGEST_CAP = 100;
+// The capture's per-entry bound: a MEMORY ceiling (100 executions are held), not the judge's read budget. A nested step's
+// output reaches the judge only through this capture (the pool holds a stub for it), so a bound at the view's own
+// 24,000 made every such deliverable over the view "clipped at capture" and its full read impossible. At 8 view-widths
+// it holds whole anything the shaped part budget (judgeViewMaxParts) reads at up to 8 parts; past it, the clip is
+// recorded as a cut and the verdict abstains, as before.
+const REACH_CAPTURE_CAP = DELIVERABLE_CAP * 8;
 function captureReachDigest(event: unknown): void {
   try {
     const e = event as { type?: string; data?: Record<string, unknown> };
@@ -16945,7 +16951,7 @@ function captureReachDigest(event: unknown): void {
     const captured = outIds
       .map((id) => store.get(id))
       .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp && imp.content !== undefined && imp.content !== null);
-    const entries = capturedPoolEntries(captured.map((imp) => ({ shape: imp.metadata?.shape, content: imp.content })));
+    const entries = capturedPoolEntries(captured.map((imp) => ({ shape: imp.metadata?.shape, content: imp.content })), REACH_CAPTURE_CAP);
     if (entries.length > 0) {
       if (reachContentEntries.size >= REACH_DIGEST_CAP) {
         const first = reachContentEntries.keys().next().value;
