@@ -1,0 +1,134 @@
+// FULL VIEW OR ABSTAIN (reach condition 5), THROUGH THE REAL GATE. A deliverable larger than the judge's 24,000-char
+// view is read WHOLE, in ordered parts, when the end-of-walk view has it in hand; the verdict is the conservative AND
+// over the parts (any refuting part ⇒ not reached) and cites the part that decided it. On the parent sha the view
+// carries no whole copy, so every such deliverable is an abstain:cut-view — ungraded whatever lies past the cut.
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { buildJudgeView, DELIVERABLE_CAP } from "../src/judge-view";
+
+const JUDGE_MARK = "You verify whether a substrate execution REACHED";
+const PARTS_MARK = "ORDERED PARTS";
+const LLM_VESSEL = "http://llm-vessel.test.invalid/resolve";
+const realFetch = globalThis.fetch;
+let wholeViewCalls = 0;
+let partCalls: number[] = [];
+const reply = (o: unknown) => {
+  const verdict = JSON.stringify(o);
+  return Promise.resolve(new Response(JSON.stringify({ content: { body: { content: verdict } }, body: { content: verdict } }), { status: 200, headers: { "Content-Type": "application/json" } }));
+};
+// The stub judge reads only what it is shown: the whole-view judge passes whatever head it sees; a part refutes on the
+// failure marker and supports on the success or answer marker.
+function stubFetch(_input: unknown, init?: { body?: unknown }): Promise<Response> {
+  const body = typeof init?.body === "string" ? init.body : "";
+  if (body.includes(JUDGE_MARK) && body.includes(PARTS_MARK)) {
+    const k = Number(body.match(/You are reading PART (\d+) of \d+/)?.[1] ?? 0);
+    partCalls.push(k);
+    const refutes = body.includes("FAILED-MARK");
+    const supports = body.includes("migrated cleanly") || body.includes("ANSWER-MARK");
+    return reply({ supports, refutes, reason: refutes ? "stub part: the final status says the migration FAILED" : supports ? "stub part: the report states the outcome" : "stub part: filler only", completion_shapes: supports && !refutes ? ["llm_completion"] : [] });
+  }
+  if (body.includes(JUDGE_MARK)) {
+    wholeViewCalls++;
+    return reply({ reached: true, reason: "stub judge: the report reads complete", completion_shapes: ["llm_completion"] });
+  }
+  if (body.includes('"vesselCapability"') && body.includes('"llm_completion"')) {
+    return Promise.resolve(new Response(JSON.stringify({ content: { vessels: [{ id: "llm-test-vessel", endpoint: "http://llm-vessel.test.invalid", resolve_endpoint: LLM_VESSEL, protocol: "http" }] } }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  }
+  return Promise.resolve(new Response(JSON.stringify({ error: "stub: not served" }), { status: 404 }));
+}
+type V = { reached: boolean; reason: string; abstain?: { kind: string }; full_read?: { parts: number; chars: number } } | null;
+let verifyGoalReached: (goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: unknown, judgeView?: unknown) => Promise<V>;
+let oracleAbstainCounts: () => Record<string, { decisions: number; verdicts: number; abstains: number }>;
+const prevRoot = process.env["WORKSPACE_ROOT"];
+const tmpRoot = `${require("node:os").tmpdir()}/judge-view-full-read-${process.pid}`;
+beforeAll(async () => {
+  require("node:fs").mkdirSync(`${tmpRoot}/policies`, { recursive: true });
+  process.env["WORKSPACE_ROOT"] = tmpRoot;
+  globalThis.fetch = stubFetch as unknown as typeof fetch;
+  process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
+  const mod = await import("../src/index");
+  verifyGoalReached = mod.verifyGoalReached as unknown as typeof verifyGoalReached;
+  oracleAbstainCounts = mod.oracleAbstainCounts as unknown as typeof oracleAbstainCounts;
+});
+afterAll(() => {
+  globalThis.fetch = realFetch;
+  if (prevRoot === undefined) delete process.env["WORKSPACE_ROOT"]; else process.env["WORKSPACE_ROOT"] = prevRoot;
+  try { require("node:fs").rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* temp dir */ }
+});
+
+const GOAL = "Summarize the main points of the long node migration log in one report for the operator.";
+const FILLER = "Node log line: step applied, checkpoint written. ".repeat(Math.ceil((DELIVERABLE_CAP + 2000) / 50));
+/** The end-of-walk view of a pool whose only deliverable is `report` (the gate is handed exactly what the walk hands it). */
+const endOfWalk = (report: string) => {
+  const view = buildJudgeView([{ shape: "llm_completion", content: report }], new Set(), new Set(), { full: true });
+  return { view, run: () => verifyGoalReached(GOAL, ["goal", "llm_completion"], "walk(1 steps)", view.digest, undefined, undefined, view) };
+};
+const reset = () => { wholeViewCalls = 0; partCalls = []; };
+
+describe("a deliverable larger than the judge's view is judged on its FULL content", () => {
+  test("[MUST-FAIL] (i) refuting content past the cut: NOT reached, graded (not an abstain), citing the refuting part", async () => {
+    reset();
+    const { view, run } = endOfWalk("Migration report. All nodes migrated cleanly. " + FILLER + " FINAL STATUS: FAILED-MARK on 3 of 5 nodes.");
+    expect(view.deliverableCut).toBe(true);
+    expect(view.digest).not.toContain("FAILED-MARK"); // the cut view alone would read as a clean report
+    const v = await run();
+    expect(v).not.toBeNull();
+    expect(v?.abstain).toBeUndefined();
+    expect(v?.reached).toBe(false);
+    expect(v?.reason).toMatch(/^full-read: part 2\/2 \(chars \d+-\d+ of \d+\) refutes the reach — stub part: the final status says the migration FAILED/);
+    expect(v?.full_read).toEqual({ parts: 2, chars: view.full!.deliverable.length });
+    expect(partCalls).toEqual([1, 2]);
+    expect(wholeViewCalls).toBe(0); // the cut view is never graded as if it were whole
+  }, 20_000);
+  test("[MUST-FAIL] (ii) the answer past the cut: the full read IS judged on it, reached, and the verdict cites that part", async () => {
+    reset();
+    const { view, run } = endOfWalk(FILLER + " ANSWER-MARK: the migration moved 5 of 5 nodes.");
+    expect(view.digest).not.toContain("ANSWER-MARK");
+    const v = await run();
+    expect(v?.abstain).toBeUndefined();
+    expect(v?.reached).toBe(true);
+    expect(v?.reason).toMatch(/^full-read: all 2 parts read \(\d+ chars\), none refutes, and part 2\/2 \(chars \d+-\d+ of \d+\) supports the reach — stub part: the report states the outcome/);
+    expect(v?.full_read?.parts).toBe(2);
+    expect(partCalls).toEqual([1, 2]);
+  }, 20_000);
+  test("a full read is counted as a VERDICT in the judge-view-cut family, not an abstain", async () => {
+    const before = oracleAbstainCounts()["judge-view-cut"] ?? { decisions: 0, verdicts: 0, abstains: 0 };
+    await endOfWalk(FILLER + " ANSWER-MARK: done.").run();
+    const after = oracleAbstainCounts()["judge-view-cut"]!;
+    expect(after.verdicts).toBe(before.verdicts + 1);
+    expect(after.abstains).toBe(before.abstains);
+  }, 20_000);
+});
+
+describe("when the full read is not possible, the verdict stays ungraded (abstain:cut-view) and says why", () => {
+  test("over the shaped part budget (default 4 parts): abstain, no judge call", async () => {
+    reset();
+    const { run } = endOfWalk(FILLER.repeat(5) + " ANSWER-MARK: done.");
+    const v = await run();
+    expect(v?.abstain?.kind).toBe("cut-view");
+    expect(v?.reason).toMatch(/^abstain:cut-view — .* could not be read in full \(it needs more than the 4-part full-read budget\); not graded$/);
+    expect(partCalls).toEqual([]);
+    expect(wholeViewCalls).toBe(0);
+  }, 20_000);
+  test("a view with no whole copy (the interim check's): abstain, as before", async () => {
+    reset();
+    const view = buildJudgeView([{ shape: "llm_completion", content: FILLER + " ANSWER-MARK" }], new Set());
+    const v = await verifyGoalReached(GOAL, ["goal", "llm_completion"], "walk(1 steps)", view.digest, undefined, undefined, view);
+    expect(v?.abstain?.kind).toBe("cut-view");
+    expect(v?.reason).toContain("no whole copy reached the gate");
+    expect(partCalls).toEqual([]);
+  }, 20_000);
+});
+
+describe("control: a deliverable that fits the view is judged exactly as before", () => {
+  test("one whole-view judge call, its verdict and reason unchanged, no full read", async () => {
+    reset();
+    const { view, run } = endOfWalk("Migration report. All nodes migrated cleanly.");
+    expect(view.deliverableCut).toBe(false);
+    const v = await run();
+    expect(wholeViewCalls).toBe(1);
+    expect(partCalls).toEqual([]);
+    expect(v?.reached).toBe(true);
+    expect(v?.reason).toBe("stub judge: the report reads complete");
+    expect(v?.full_read).toBeUndefined();
+  }, 20_000);
+});

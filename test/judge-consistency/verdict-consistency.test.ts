@@ -159,7 +159,7 @@ describe("[WIRING] the reach gate consults it, the system can see it, and the ju
   const index = SRC("index.ts");
   test("inside verifyGoalReached, for a non-deterministic verdict, BEFORE the capture (so the capture records what is returned)", () => {
     const start = index.indexOf("async function verifyGoalReached(");
-    const check = index.indexOf("if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence, deliverables ?? writeEvidence?.targets);", start);
+    const check = index.indexOf("if (v && !isDeterministicVerdict(v) && !v.abstain && !v.full_read) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence, deliverables ?? writeEvidence?.targets);", start);
     const capture = index.indexOf('judgeCapture.captureJudgeInput("reachGate"', start);
     const end = index.indexOf("async function verifyGoalReachedUnrestricted(", start);
     expect(start).toBeGreaterThan(0);

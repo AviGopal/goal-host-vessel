@@ -127,6 +127,99 @@ export async function judgeModelOnly(input: ReachJudgeInput, complete: ReachJudg
   } catch { return null; }
 }
 
+// ── Full read (reach condition 5: full view or abstain) ──────────────────────────────────────────
+
+/** Where one part sits in the whole deliverable (judge-view.ts judgeViewParts). */
+export interface ReachJudgePart { k: number; n: number; from: number; to: number; total: number }
+/** One part's answer: does THIS part show the goal met (supports), or show it not met (refutes)? */
+export interface ReachJudgePartVerdict { supports: boolean; refutes: boolean; reason: string; completion_shapes: string[]; missing: string[] }
+
+/**
+ * The judge's question for ONE ordered part of a deliverable too large for its view. NOT the whole-view prompt: that
+ * one scores a view HOLLOW when it is "materially incomplete", which a middle part read alone always is, and its
+ * parser flips any reason saying "lacks"/"does not contain" to not-reached, the words a judge uses for a part that
+ * does not hold the conclusion. Either way the AND over parts would grade good work hollow and charge it β. So a
+ * part is asked two separate things: does it REFUTE the reach (one refuting part decides), and does it SUPPORT it.
+ */
+export function buildReachJudgePartPrompt(goal: string, producedShapes: string[], taskSummary: string, part: ReachJudgePart, partDigest: string, commandEvidence?: string): string {
+  const cmdSection = commandEvidence
+    ? `\n\nCOMMANDS THAT PRODUCED THE OUTPUT (judge command<->intent alignment; a command that does not accomplish what the goal asks, or merely echoes a literal answer, REFUTES the reach):\n${commandEvidence}`
+    : "";
+  return `You verify whether a substrate execution REACHED its goal. Its deliverable is too large to show at once (${part.total} chars), so it is read in ${part.n} ORDERED PARTS, each judged separately. You are reading PART ${part.k} of ${part.n} (chars ${part.from}-${part.to} of ${part.total}).
+
+GOAL: ${goal}
+
+Produced output impulse shapes: ${JSON.stringify(producedShapes)}
+Task summary: ${taskSummary}
+
+PART ${part.k} of ${part.n} of the produced output CONTENT (followed by the run's evidence lines):
+${partDigest}${cmdSection}
+
+Answer two questions about THIS PART only, judging MEANING, not verbatim text:
+- refutes: does this part show the goal was NOT met? It does when the content here is wrong or contradicts what the goal asks, reports a failure or a result opposite to what is claimed elsewhere, or is an error envelope, a refusal or a bare placeholder where the asked-for content should be. Content that is simply not in this part is NOT a refutation: the other parts are read separately.
+- supports: does this part contain content that substantively accomplishes what the goal asked for? Raw material where the goal asks for a computed or measured value (a count, a total, a length, a checksum) does not support it.
+
+Respond with ONLY JSON: {"supports": boolean, "refutes": boolean, "reason": "<1 sentence naming what in this part decided it>", "completion_shapes": ["<shape>"], "missing": ["<shape not produced but expected>"]}`;
+}
+
+/** Parse one part's reply. Like parseReachJudgeText it whitelists fields and rewrites a model-written "deterministic:"
+ *  reason prefix; unlike it, there is no negation flip (a part's reason names what the part lacks by design). */
+export function parseReachJudgePartText(text: unknown): ReachJudgePartVerdict | null {
+  const m = String(text).match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  const p: any = JSON.parse(m[0]);
+  if (typeof p.supports !== "boolean" || typeof p.refutes !== "boolean") return null;
+  return {
+    supports: p.supports,
+    refutes: p.refutes,
+    reason: String(p.reason ?? "").replace(/^\s*deterministic:/i, "llm-claimed:"),
+    completion_shapes: Array.isArray(p.completion_shapes) ? p.completion_shapes.map(String) : [],
+    missing: Array.isArray(p.missing) ? p.missing.map(String) : [],
+  };
+}
+
+const partAt = (p: ReachJudgePart) => `part ${p.k}/${p.n} (chars ${p.from}-${p.to} of ${p.total})`;
+
+/** The conservative AND over the parts read, in order: any refuting part ⇒ not reached, citing it; else reached only
+ *  if some part supports the reach, citing it. Never deterministic: this is the LLM judge reading more. */
+export function combinePartVerdicts(read: ReadonlyArray<{ part: ReachJudgePart; verdict: ReachJudgePartVerdict }>): ReachJudgeVerdict {
+  const n = read[0]?.part.n ?? 0, total = read[0]?.part.total ?? 0;
+  const refuting = read.find((r) => r.verdict.refutes);
+  const missing = [...new Set(read.flatMap((r) => r.verdict.missing))];
+  if (refuting) return { reached: false, reason: `full-read: ${partAt(refuting.part)} refutes the reach — ${refuting.verdict.reason}`, completion_shapes: [], missing, deterministic: false };
+  const supporting = read.filter((r) => r.verdict.supports);
+  if (supporting.length === 0) return { reached: false, reason: `full-read: all ${n} parts read (${total} chars) and none shows the goal met — ${read[0]?.verdict.reason ?? ""}`, completion_shapes: [], missing, deterministic: false };
+  return {
+    reached: true,
+    reason: `full-read: all ${n} parts read (${total} chars), none refutes, and ${supporting.map((r) => partAt(r.part)).join(", ")} support${supporting.length === 1 ? "s" : ""} the reach — ${supporting[0]!.verdict.reason}`,
+    completion_shapes: [...new Set(supporting.flatMap((r) => r.verdict.completion_shapes))],
+    missing,
+    deterministic: false,
+  };
+}
+
+/** The full read: the grounding gates once over the WHOLE deliverable (input.contentDigest), then each part in order,
+ *  stopping at the first that refutes. null = the judge could not be consulted for some part (the caller's "verdict
+ *  unknown" channel): a verdict over a subset of the parts is not a verdict over the deliverable. */
+export async function judgeReachInParts(input: ReachJudgeInput, parts: ReadonlyArray<ReachJudgePart & { digest: string }>, complete: ReachJudgeComplete): Promise<ReachJudgeVerdict | null> {
+  const now = input.now ?? new Date();
+  const gated = groundingPreGate({ ...input, now });
+  if (gated) return gated;
+  const read: Array<{ part: ReachJudgePart; verdict: ReachJudgePartVerdict }> = [];
+  for (const p of parts) {
+    let verdict: ReachJudgePartVerdict | null;
+    try {
+      const text = await complete(temporalGroundingBlock(now) + buildReachJudgePartPrompt(input.goal, input.producedShapes, input.taskSummary, p, p.digest, input.commandEvidence));
+      if (text === null) return null;
+      verdict = parseReachJudgePartText(text);
+    } catch { return null; }
+    if (!verdict) return null;
+    read.push({ part: { k: p.k, n: p.n, from: p.from, to: p.to, total: p.total }, verdict });
+    if (verdict.refutes) break;
+  }
+  return read.length > 0 ? combinePartVerdicts(read) : null;
+}
+
 /** A shadow verdict as recorded: reached null = the judge could not be consulted. */
 export function judgeShadowOf(v: { reached: boolean; reason?: string } | null): { reached: boolean | null; reason: string } {
   return v ? { reached: v.reached, reason: v.reason ?? "" } : { reached: null, reason: "the judge could not be consulted" };

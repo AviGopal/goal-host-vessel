@@ -316,9 +316,9 @@ import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeShadowOf } from "./reach-grounding";
+import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeReachInParts, judgeShadowOf } from "./reach-grounding";
 import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, observeOffGoalContent, targetSimilarityKey } from "./failure-recall";
-import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, type JudgeCut, type PoolEntry } from "./judge-view";
+import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeViewParts, DELIVERABLE_CAP, type JudgeCut, type JudgeViewPart, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
@@ -1469,12 +1469,16 @@ interface GoalReachVerdict {
   abstain?: GateAbstain;
   /** A deterministic gate that displaced the judge records what the judge said, in SHADOW (never used): the measure of
    *  how often the gate overrides it. Served on the dispatch record and logged in the walk log. */
-  judge_verdict_before_pregate?: JudgeShadow; }
+  judge_verdict_before_pregate?: JudgeShadow;
+  /** The judge read a deliverable larger than its view WHOLE, in `parts` ordered parts of `chars` (reach condition 5). */
+  full_read?: { parts: number; chars: number }; }
 /** An ABSTAIN (REALIGNMENT §9.2). `cut-view`: the judge's view could not hold the deliverable whole. `oracle-abstain`:
  *  the oracle that owns the goal's class declined (not applicable, or its observation was unavailable) and no judge of
  *  MEASURED adequacy exists for that class, so nothing grades it — the walk stays ungraded (no α, no β). */
 // "observe-dry-run" (observe-mode.ts): an observe dispatch's compose ran as a dry run — nothing landed, nothing is graded.
 type GateAbstain = { kind: "cut-view" | "oracle-abstain" | "observe-dry-run"; cuts: JudgeCut[]; family?: string };
+/** What the gate reads of the judge view (judge-view.ts JudgeView): the cut record, and the whole deliverable when it was cut. */
+type GateJudgeView = { deliverableCut: boolean; cuts: JudgeCut[]; full?: { deliverable: string; tail: string }; deliverablePreClipped?: boolean };
 
 // ── Deterministic compute verifier (Residual 2, honest-grade) ───────────────────
 // The LLM reach judge (verifyGoalReached :914) is DELIBERATELY told exact-match is NOT
@@ -3811,14 +3815,16 @@ function noteJudgeShadow(v: GoalReachVerdict, walkEvidence?: { walkLog: string[]
   walkEvidence?.walkLog.push(line);
   if (rec) rec.judge_verdict_before_pregate = { reached: j.reached, reason: j.reason };
 }
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: GateJudgeView, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
   const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables, writeEvidence);
   if (v && v.deterministic !== true) {
     const keep = new Set(deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
     v.completion_shapes = restrictCompletionShapes(v.completion_shapes, new Set(producedShapes), false, keep);
   }
   // JUDGE CONSISTENCY (src/judge/verdict-consistency.ts), before the capture so the capture records what is returned.
-  if (v && !isDeterministicVerdict(v) && !v.abstain) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence, deliverables ?? writeEvidence?.targets);
+  // A FULL READ is not checked here: the consistency key and its samples read `contentDigest`, the CUT view, so two
+  // deliverables sharing their first 24,000 chars would share a key and a cut-view majority would overturn the full read.
+  if (v && !isDeterministicVerdict(v) && !v.abstain && !v.full_read) await reconcileVerdictConsistency(v, goal, producedShapes, taskSummary, contentDigest, commandEvidence, deliverables ?? writeEvidence?.targets);
   if (v) noteJudgeShadow(v, walkEvidence);
   // CAPTURE (closed, src/judge/capture.ts): the reach gate's inputs and its verdict, after the decision.
   judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput({
@@ -3846,7 +3852,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }), v);
   return v;
 }
-async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: { deliverableCut: boolean; cuts: JudgeCut[] }, poolEvidence?: PoolEvidence[], deliverables?: string[], writeEvidence?: WriteArtifactEvidence): Promise<GoalReachVerdict | null> {
+async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: GateJudgeView, poolEvidence?: PoolEvidence[], deliverables?: string[], writeEvidence?: WriteArtifactEvidence): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
   const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
@@ -4424,23 +4430,38 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
       completion_shapes: [],
     };
   }
-  // CUT VIEW ⇒ ABSTAIN (REALIGNMENT §9.2), computed in code from the view's cut record before the
-  // judge is called: a deliverable the view could not hold whole is not graded HOLLOW (no β) and
-  // not graded reached. It is its own explicit outcome carrying the cut — NOT null, which is the
-  // "verifier unreachable" channel and would re-call the verifier and log an outage.
-  // COUNTED (oracle-abstain tally): a whole view is a graded decision, a cut one an abstain, so a run can
+  // FULL VIEW OR ABSTAIN (reach condition 5; REALIGNMENT §9.2), decided in code from the view's cut record before the
+  // judge is called. A deliverable the view could not hold whole is READ WHOLE when the view has it in hand: the judge
+  // reads it in ordered parts under the shaped part budget (selection-tuning judgeViewMaxParts), and the conservative AND
+  // over the parts is the verdict (reach-grounding.ts judgeReachInParts). Otherwise it is not graded HOLLOW (no β) and
+  // not graded reached: it is its own explicit outcome carrying the cut — NOT null, which is the "verifier
+  // unreachable" channel and would re-call the verifier and log an outage.
+  // COUNTED (oracle-abstain tally): a whole view or a full read is a graded decision, a cut one an abstain, so a run can
   // report how many judge verdicts the deliverable budget removes.
-  if (judgeView) await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, judgeView.deliverableCut ? "abstain" : "verdict", goal, "the deliverable did not fit the judge's view; ungraded");
   if (judgeView?.deliverableCut) {
     const cuts = judgeView.cuts.map((c) => ({ ...c }));
-    console.log(`[judge-view] ABSTAIN goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view; cuts=${JSON.stringify(cuts).slice(0, 300)}`);
+    const maxParts = (await resolveSelectionTuning()).judgeViewMaxParts;
+    const parts = judgeView.full ? judgeViewParts(judgeView.full, DELIVERABLE_CAP, maxParts) : null;
+    if (judgeView.full && parts) {
+      await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "verdict", goal, "the deliverable did not fit the judge's view; read in full");
+      console.log(`[judge-view] FULL READ goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view; reading it whole in ${parts.length} ordered part(s) of ${parts[0]!.total} chars; cuts=${JSON.stringify(cuts).slice(0, 300)}`);
+      const full = await llmJudgeReachInParts(goal, producedShapes, taskSummary, judgeView.full, parts, commandEvidence, deliverables ?? writeEvidence?.targets);
+      judgeCapture.noteLlmJudge(full);
+      return full ? { ...full, full_read: { parts: parts.length, chars: parts[0]!.total } } : null;
+    }
+    await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "abstain", goal, "the deliverable did not fit the judge's view; ungraded");
+    const why = judgeView.deliverablePreClipped ? "it was clipped at capture, so it is not whole in hand"
+      : judgeView.full ? `it needs more than the ${maxParts}-part full-read budget`
+      : "no whole copy reached the gate";
+    console.log(`[judge-view] ABSTAIN goal_hash=${goalHashOf(goal)} — the deliverable did not fit the judge's view and could not be read in full (${why}); cuts=${JSON.stringify(cuts).slice(0, 300)}`);
     return {
       reached: false,
-      reason: `abstain:cut-view — the deliverable did not fit the judge's view (${cuts.map((c) => `${c.shape} ${c.shown}/${c.produced} chars`).join(", ").slice(0, 200)}); not graded`,
+      reason: `abstain:cut-view — the deliverable did not fit the judge's view (${cuts.map((c) => `${c.shape} ${c.shown}/${c.produced} chars`).join(", ").slice(0, 200)}) and could not be read in full (${why}); not graded`,
       completion_shapes: [],
       abstain: { kind: "cut-view", cuts },
     };
   }
+  if (judgeView) await noteOracleDecision(JUDGE_VIEW_CUT_FAMILY, "verdict", goal, "the deliverable fit the judge's view");
   const judged = await llmJudgeReach(goal, producedShapes, taskSummary, contentDigest, commandEvidence, undefined, deliverables ?? writeEvidence?.targets);
   judgeCapture.noteLlmJudge(judged);
   // G1 OBSERVE: the judge's verdict stands; record whether G1 agreed (the promotion evidence).
@@ -4531,6 +4552,17 @@ async function llmJudgeReach(goal: string, producedShapes: string[], taskSummary
   // by this dispatch's final verdict. A shadow consultation inside the judge is routed under SHADOW_ROUTE_PREFIX.
   return judgeReach({ goal, producedShapes, taskSummary, contentDigest, commandEvidence, needsInformation: dispatchNeedsInformation(), localTargets },
     reachJudgeCompleteVia(routeKey ?? goalHashOf(goal)), reachJudgeCompleteVia(`${SHADOW_ROUTE_PREFIX}${goalHashOf(goal)}`));
+}
+/** The FULL READ (reach condition 5): the same judge, routing and local-state facts as llmJudgeReach, asked about each
+ *  ordered part of a deliverable too large for its view (reach-grounding.ts judgeReachInParts). The grounding gates read
+ *  the WHOLE deliverable. Parts are judged in order and the read stops at the first refuting part, so a refuted
+ *  deliverable costs fewer calls than the part count. */
+async function llmJudgeReachInParts(goal: string, producedShapes: string[], taskSummary: string, full: { deliverable: string; tail: string }, parts: JudgeViewPart[], commandEvidence?: string, targets?: readonly string[]): Promise<GoalReachVerdict | null> {
+  if (!LLM_VESSEL_ENDPOINT) return null;
+  const wholeDigest = [full.deliverable, full.tail].filter(Boolean).join("\n");
+  const localTargets = hasLocalRead(producedShapes, commandEvidence, wholeDigest) ? [] : await ownLocalTargets(targets ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
+  return judgeReachInParts({ goal, producedShapes, taskSummary, contentDigest: wholeDigest, commandEvidence, needsInformation: dispatchNeedsInformation(), localTargets },
+    parts, reachJudgeCompleteVia(goalHashOf(goal)));
 }
 /** The target shapes in the read role (isReadRoleShape) that THIS substrate's own vessels serve (discovery at
  *  use time, own-substrate rows only, as the floor offers own-only tools). A target only a peer serves is not this system. */
@@ -12741,6 +12773,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       [...poolImpulses.map((imp) => ({ shape: String((imp.metadata as { shape?: string } | undefined)?.shape ?? ""), content: imp.content })), ...capturedEntries],
       terminalShapes,
       target,
+      // The graded verdict: a cut deliverable whole in hand comes with it, to be read in full (the interim check does not ask).
+      { full: true },
     );
     const contentDigest = judgeView.digest;
     try {
