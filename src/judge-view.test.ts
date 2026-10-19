@@ -2,7 +2,7 @@
 // 4,218-char grounded report the parent's view cut at 1,500 chars behind a 7,247-char
 // activity_template catalogue and error rows; the judge rejected it as "missing a coherent report".
 import { describe, expect, test } from "bun:test";
-import { buildJudgeView, restrictCompletionShapes, evidenceLines, isProvenanceStub, DELIVERABLE_CAP } from "./judge-view";
+import { buildJudgeView, restrictCompletionShapes, evidenceLines, isProvenanceStub, capturedPoolEntries, judgeViewParts, DELIVERABLE_CAP, PART_OVERLAP } from "./judge-view";
 
 const REPORT = "Today is Thursday, October 1, 2026. Main headlines:\n" +
   Array.from({ length: 12 }, (_, i) => `${i + 1}. FlyDubai flight dropped 14,125 feet in just 29 seconds (https://www.nbcnews.com/item-${i}). Commentary: ${"a sober note on what this means. ".repeat(8)}`).join("\n");
@@ -107,5 +107,64 @@ describe("restrictCompletionShapes (completion_shapes chosen in code)", () => {
   });
   test("deterministic oracles keep the shapes their code chose", () => {
     expect(restrictCompletionShapes(["bind:memoryNote.body<-llmCompletion"], produced, true)).toEqual(["bind:memoryNote.body<-llmCompletion"]);
+  });
+});
+
+// FULL VIEW OR ABSTAIN (reach condition 5): a cut deliverable that is whole in hand is handed to the gate whole, to be
+// read in ordered parts; one clipped before the view is not, and stays an abstain.
+describe("the whole deliverable, for a full read", () => {
+  const BIG = "head. " + "body line. ".repeat(2600) + "VERDICT: the migration FAILED on 3 of 5 nodes.";
+  test("a cut deliverable whole in hand is returned whole, with the digest's tail, only when asked", () => {
+    const pool = [{ shape: "llm_completion", content: BIG }, { shape: "shellResult", content: "ok" }];
+    const v = buildJudgeView(pool, new Set(), new Set(), { full: true });
+    expect(v.deliverableCut).toBe(true);
+    expect(v.full?.deliverable).toBe(`- llm_completion: ${BIG}`);
+    expect(v.full?.tail).toBe("- shellResult: ok");
+    expect(v.digest.length).toBeLessThan(v.full!.deliverable.length);
+    expect(buildJudgeView(pool, new Set()).full).toBeUndefined();
+  });
+  test("control: a deliverable that fits carries no full copy (the view is already whole)", () => {
+    const v = buildJudgeView([{ shape: "llm_completion", content: "a short report" }], new Set(), new Set(), { full: true });
+    expect(v.deliverableCut).toBe(false);
+    expect(v.full).toBeUndefined();
+  });
+  test("a deliverable clipped at capture is not whole in hand: no full copy, and the view says why", () => {
+    const v = buildJudgeView(capturedPoolEntries([{ shape: "llm_completion", content: BIG }], DELIVERABLE_CAP), new Set(), new Set(), { full: true });
+    expect(v.deliverableCut).toBe(true);
+    expect(v.deliverablePreClipped).toBe(true);
+    expect(v.full).toBeUndefined();
+  });
+  test("a capture-clipped copy of an entry the pool holds whole is folded into it, so the full read is possible", () => {
+    const pool = [{ shape: "llm_completion", content: BIG }, ...capturedPoolEntries([{ shape: "llm_completion", content: BIG }], DELIVERABLE_CAP)];
+    const v = buildJudgeView(pool, new Set(), new Set(), { full: true });
+    expect(v.digest.split("- llm_completion:").length - 1).toBe(1);
+    expect(v.deliverablePreClipped).toBe(false);
+    expect(v.full?.deliverable).toBe(`- llm_completion: ${BIG}`);
+  });
+});
+
+describe("judgeViewParts", () => {
+  const text = Array.from({ length: 6000 }, (_, i) => `l${i}`).join(" ");
+  test("ordered parts of at most the view budget cover the whole deliverable, overlapping, each with the tail", () => {
+    const parts = judgeViewParts({ deliverable: text, tail: "- web_search: t — https://x.test/" })!;
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0]!.from).toBe(0);
+    expect(parts[parts.length - 1]!.to).toBe(text.length);
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]!;
+      expect(p).toMatchObject({ k: i + 1, n: parts.length, total: text.length });
+      expect(p.to - p.from).toBeLessThanOrEqual(DELIVERABLE_CAP);
+      expect(p.digest).toBe(`${text.slice(p.from, p.to)}\n- web_search: t — https://x.test/`);
+      if (i > 0) expect(parts[i - 1]!.to - p.from).toBe(PART_OVERLAP);
+    }
+    expect(judgeViewParts({ deliverable: text, tail: "" })).toEqual(judgeViewParts({ deliverable: text, tail: "" }));
+  });
+  test("over the part budget there is no full read", () => {
+    const n = judgeViewParts({ deliverable: text, tail: "" })!.length;
+    expect(judgeViewParts({ deliverable: text, tail: "" }, DELIVERABLE_CAP, n)).not.toBeNull();
+    expect(judgeViewParts({ deliverable: text, tail: "" }, DELIVERABLE_CAP, n - 1)).toBeNull();
+  });
+  test("control: a deliverable within the budget is one part, itself", () => {
+    expect(judgeViewParts({ deliverable: "short", tail: "" })).toEqual([{ k: 1, n: 1, from: 0, to: 5, total: 5, digest: "short" }]);
   });
 });

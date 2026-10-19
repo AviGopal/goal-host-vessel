@@ -17,6 +17,11 @@
  *      stubs excluded and identical-content entries folded.
  * Every cut is recorded. A deliverable that does not fit is an ABSTAIN (REALIGNMENT §9.2): the judge
  * is not asked to grade a view that does not contain the thing it grades.
+ *
+ * FULL VIEW OR ABSTAIN (reach condition 5). The end-of-walk view also carries the WHOLE deliverable
+ * when it was cut but is whole in hand (`full`), so the gate can read it in ordered parts
+ * (`judgeViewParts`) instead of abstaining. A deliverable clipped before it reached the view is not
+ * whole in hand: it has no `full`, and stays an abstain.
  */
 import { EVIDENCE_SHAPES, ANSWER_SHAPES } from "./reach-date";
 
@@ -30,6 +35,9 @@ export const REST_CAP = 8000;
 /** The deliverable's own budget. Above it the view is cut and the verdict abstains. */
 export const DELIVERABLE_CAP = 24000;
 export const EVIDENCE_LINES_CAP = 40;
+/** Chars each part of a full read repeats from the end of the previous part, so a refutation that straddles a part
+ *  boundary is read whole in one of them. */
+export const PART_OVERLAP = 1000;
 
 /** `produced`: the entry's full rendered length when it was clipped BEFORE reaching the view (the
  *  emit-time capture below). The view records that clip as a cut, so no bound is invisible. */
@@ -37,7 +45,14 @@ export interface PoolEntry { shape: string; content: unknown; produced?: number 
 export interface JudgeCut { shape: string; shown: number; produced: number }
 /** `deliverableShapes`: the shapes the view rendered AS the deliverable — what the judge graded. The walk reads it
  *  to find which step produced the judged artifact (walk-pool.ts judgedArtifactProducers). */
-export interface JudgeView { digest: string; cuts: JudgeCut[]; deliverableCut: boolean; deliverableShapes: string[] }
+export interface JudgeView {
+  digest: string; cuts: JudgeCut[]; deliverableCut: boolean; deliverableShapes: string[];
+  /** Asked for (`opts.full`) and the deliverable was cut but is whole in hand: every deliverable entry uncut, and the
+   *  same evidence/rest tail the digest carries. Absent otherwise. */
+  full?: { deliverable: string; tail: string };
+  /** A deliverable entry was clipped BEFORE the view (the emit-time capture bound): it cannot be read in full here. */
+  deliverablePreClipped: boolean;
+}
 
 /** `{producedBy, executionId}` placeholders a nested template step leaves for outputs the walk store
  *  could not recover: a shape name with no content, which the judge reads as a hollow artefact. */
@@ -121,7 +136,9 @@ export function evidenceLines(c: unknown): string[] {
  *  it saw a third of and nothing abstained. As a deliverable it gets the deliverable budget, and a
  *  cut of it is a deliverable cut. It is rendered as-is (not envelope-unwrapped), so the oracles that
  *  parse a target's structure from the digest still can. */
-export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet<string>, targets: ReadonlySet<string> = new Set()): JudgeView {
+/** `opts.full`: also return the whole deliverable when it is cut (only the end-of-walk site asks: the interim check runs
+ *  on every progressed step, so it abstains on a cut and leaves the full read to the end). */
+export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet<string>, targets: ReadonlySet<string> = new Set(), opts: { full?: boolean } = {}): JudgeView {
   const wanted = (s: string) => deliverableShapes.has(s) || targets.has(s);
   const isDeliverable = (s: string) => deliverableShapes.has(s) || ANSWER_SHAPES.has(s) || targets.has(s);
   const cuts: JudgeCut[] = [];
@@ -132,7 +149,10 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
   const seenUrls = new Set<string>();
   const rest: string[] = [];
   let deliverableCut = false;
+  let deliverablePreClipped = false;
   let deliverableBudget = DELIVERABLE_CAP;
+  const deliverableWhole: string[] = [];
+  const wholeKeys = new Map<string, string[]>();
   for (const { shape, content, produced } of pool) {
     if (!shape || (JUDGE_EXCLUDED_SHAPES.has(shape) && !wanted(shape)) || isProvenanceStub(content)) continue;
     const key = renderContent(content);
@@ -142,13 +162,19 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
     const preClipped = typeof produced === "number" && produced > key.length;
     const full = preClipped ? produced! : key.length;
     if (isDeliverable(shape)) {
+      // A capture-clipped copy of an entry already held WHOLE (the pool's copy of the same output) is that entry
+      // again, not a second deliverable: it would spend budget and mark the view cut over content the view has.
+      if (preClipped && (wholeKeys.get(shape) ?? []).some((k) => k.startsWith(key))) continue;
       // A shape that is a deliverable ONLY because the goal targets it keeps its structure: unwrapping
       // `{path, content}` to bare text erased the `path` the verbatim-read oracle identifies the read by.
       const text = deliverableShapes.has(shape) || ANSWER_SHAPES.has(shape) ? deliverableText(content) : key;
       const shown = text.slice(0, Math.max(0, deliverableBudget));
       if (shown.length < text.length) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: text.length }); }
       else if (preClipped) { deliverableCut = true; cuts.push({ shape, shown: shown.length, produced: produced! }); }
+      if (preClipped) deliverablePreClipped = true;
+      else wholeKeys.set(shape, [...(wholeKeys.get(shape) ?? []), key]);
       deliverableBudget -= shown.length;
+      deliverableWhole.push(`- ${shape}: ${text}`);
       deliverable.push(`- ${shape}: ${shown}`);
       if (!rendered.includes(shape)) rendered.push(shape);
     } else if (EVIDENCE_SHAPES.has(shape)) {
@@ -177,7 +203,29 @@ export function buildJudgeView(pool: PoolEntry[], deliverableShapes: ReadonlySet
   const tail = [...evidence, ...rest].join("\n");
   if (tail.length > REST_CAP) cuts.push({ shape: "*", shown: REST_CAP, produced: tail.length });
   const digest = [deliverable.join("\n"), tail.slice(0, REST_CAP)].filter(Boolean).join("\n");
-  return { digest, cuts, deliverableCut, deliverableShapes: rendered };
+  const full = opts.full && deliverableCut && !deliverablePreClipped ? { deliverable: deliverableWhole.join("\n"), tail: tail.slice(0, REST_CAP) } : undefined;
+  return { digest, cuts, deliverableCut, deliverableShapes: rendered, ...(full ? { full } : {}), deliverablePreClipped };
+}
+
+/** One ordered part of a full read: chars [from, to) of the whole deliverable (`total` chars), as the judge reads it. */
+export interface JudgeViewPart { k: number; n: number; from: number; to: number; total: number; digest: string }
+
+/** The whole deliverable as ordered parts, each at most `cap` chars of it (the view's own deliverable budget) and each
+ *  overlapping the previous by PART_OVERLAP, every part followed by the same evidence/rest tail. Deterministic: the
+ *  same deliverable always splits the same way. null when it needs more than `maxParts` parts — it cannot be read in
+ *  full within the budget, so the verdict stays an abstain. */
+export function judgeViewParts(full: { deliverable: string; tail: string }, cap: number = DELIVERABLE_CAP, maxParts: number = Infinity): JudgeViewPart[] | null {
+  const text = full.deliverable;
+  const step = Math.max(1, cap - PART_OVERLAP);
+  const n = text.length <= cap ? 1 : 1 + Math.ceil((text.length - cap) / step);
+  if (n > maxParts) return null;
+  const parts: JudgeViewPart[] = [];
+  for (let k = 0; k < n; k++) {
+    const from = k * step;
+    const to = Math.min(text.length, from + cap);
+    parts.push({ k: k + 1, n, from, to, total: text.length, digest: [text.slice(from, to), full.tail].filter(Boolean).join("\n") });
+  }
+  return parts;
 }
 
 /** The judge's `completion_shapes`, restricted in code before /reach, recordGoalPath and gap filing
