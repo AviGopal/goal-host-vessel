@@ -3958,15 +3958,25 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
     // vessel's clone (compose-landing-evidence.ts), and the goal's edit, when it names one, must not be refuted on it
     // (verifyEditPostState false). Unconfirmed: fall THROUGH to landedEditOf and the reach gate, which refuse a write
     // goal with no landing. Never a reach on the producer's report alone.
+    // A LANDING IS NOT A REACH (as the landed latch in runGoalWithRecovery): a confirmed landing credits only when the
+    // post-state probe ran and confirmed the edit. Undecided (null: no add/replace symbol it can parse, an unreadable
+    // file, or no goal file on the landing's vessel) is an oracle abstain, with the landing kept in the reason.
     let _composeLanding: { vessel: string; sha: string } | null = null;
+    let _post: boolean | null = null;
     if (favorableCompose) {
       _composeLanding = await confirmComposeLanding(dig);
       const _fm = _composeLanding ? String(goal ?? "").match(/repos\/([\w.-]+)\/[\w./-]+\.\w+/) : null;
-      const _post = _composeLanding && _fm && _fm[1] === _composeLanding.vessel ? await verifyEditPostState(goal, _fm[0], _composeLanding.sha) : null;
+      _post = _composeLanding && _fm && _fm[1] === _composeLanding.vessel ? await verifyEditPostState(goal, _fm[0], _composeLanding.sha) : null;
       if (!_composeLanding || _post === false) {
         console.log(`[goal-host-vessel] favorable-compose: NOT CONFIRMED (${_composeLanding ? `post-state refutes ${_composeLanding.sha.slice(0, 12)}` : "no named sha is on origin/dev"}); falling through to the reach gate`);
         _composeLanding = null;
       }
+    }
+    if (favorableCompose && _composeLanding && _post !== true) {
+      const why = `feature_compose landed ${_composeLanding.sha} on ${_composeLanding.vessel} origin/dev, but the post-state probe could not decide whether the goal's edit holds`;
+      console.log(`[goal-host-vessel] favorable-compose: UNDECIDED (${why}); not credited`);
+      await noteOracleDecision("edit-post-state", "abstain", goal, why);
+      return oracleAbstainVerdict("edit-post-state", why);
     }
     if (favorableCompose && _composeLanding) {
       // STRONG credit (deterministic:true → isSubstanceHonestReach → creditReachedTemplate)
