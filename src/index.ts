@@ -14000,6 +14000,10 @@ function effectTupleOf(shape: string, vesselEndpoint: string | undefined, conten
  * own ceiling when the reply was lost to a timeout, since it may still land; a BUSY refusal
  * gets a single probe) and returns the landed verdict instead. A result that already judged
  * that very commit, or a landing whose requested symbol is absent, is left as it is.
+ * A LANDING IS NOT A REACH: it proves a commit exists, not that the goal's condition holds. The
+ * latch credits only when the post-state probe (verifyEditPostState) ran and confirmed the edit;
+ * when it cannot decide, the landing is recorded and the dispatch is an oracle abstain (no α, no
+ * β, no deterministic label).
  */
 const _dispatchSentCompose = new WeakMap<object, number>();
 /** Dispatches whose gap id was recovered from goal text at admission (recoverGapIdAtAdmission), since process start. */
@@ -14030,6 +14034,15 @@ async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<ty
     console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed but the requested symbol is absent; keeping the unreached verdict`);
     return r;
   }
+  if (postOk !== true) {
+    const why = `${sha} for ${gapId} landed on origin/dev during this dispatch, but the post-state probe could not decide whether the goal's edit holds (the walk reported ${r.status}/reached:${String(r.reached)}: ${String(r.goalReachReason ?? "no reason").slice(0, 160)})`;
+    console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${why}; not credited`);
+    opts.stepSink?.push(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${why}; not credited`);
+    if (r.abstain) return { ...r, goalReachReason: `${String(r.goalReachReason ?? "")} [landed latch: ${why}]` };
+    await noteOracleDecision("edit-post-state", "abstain", goal, why);
+    const v = oracleAbstainVerdict("edit-post-state", why);
+    return { ...r, reached: false, goalReachReason: v.reason, abstain: v.abstain };
+  }
   console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed during this dispatch; the later ${r.status}/reached:${String(r.reached)} verdict does not downgrade it`);
   opts.stepSink?.push(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed during this dispatch; final verdict stays landed`);
   recordDeterministicLabel(goal, `feature_compose:${sha}`, "feature_compose", { reached: true, reason: `deterministic:edit-intent-landed ${sha} (landed latch)`, deterministic: true });
@@ -14039,7 +14052,7 @@ async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<ty
     selectedTemplateId: "feature_compose",
     completionShapes: ["fileEditResult"],
     attempts: r.attempts,
-    goalReachReason: `deterministic:edit-intent-landed — ${sha} for ${gapId} landed on origin/dev during this dispatch${postOk === true ? " (post-state confirms the requested symbol is present)" : ""}; a later step reported ${r.status}/reached:${String(r.reached)} (${String(r.goalReachReason ?? "no reason").slice(0, 200)}), which a landing is not downgraded by`,
+    goalReachReason: `deterministic:edit-intent-landed — ${sha} for ${gapId} landed on origin/dev during this dispatch (post-state confirms the requested edit); a later step reported ${r.status}/reached:${String(r.reached)} (${String(r.goalReachReason ?? "no reason").slice(0, 200)}), which a landing is not downgraded by`,
     reached: true,
     executionId: `feature_compose:${sha}`,
   };
