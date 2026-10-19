@@ -15647,7 +15647,7 @@ async function runGoalWithRecoveryInner(
       if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
         try {
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
-          const _ufOut: { reason?: string; abstain?: boolean } = {};
+          const _ufOut: { reason?: string; abstain?: true } = {};
           // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
           const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
       // An ABSTAINED floor (§9.2) is ungraded: no failed path row (its POST would add failure_delta / thompson_beta).
