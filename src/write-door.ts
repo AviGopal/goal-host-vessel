@@ -102,7 +102,9 @@ export interface WriteDoorContext {
 }
 
 export function callerDeclaresWrite(declared: readonly string[] | null | undefined): boolean {
-  return Array.isArray(declared) && declared.some((s) => isWriteShape(s));
+  // `activity_create_variant` is a change shape, but for admission purposes it's treated as a store write:
+  // declaring it does not grant change admission to the goal. It is still refused if not admitted.
+  return Array.isArray(declared) && declared.some((s) => s !== "activity_create_variant" && isWriteShape(s));
 }
 
 export function admittedChange(ctx: WriteDoorContext): boolean {
