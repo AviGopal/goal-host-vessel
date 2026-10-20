@@ -903,8 +903,11 @@ async function resolveTraceStoreEndpointViaDiscovery(): Promise<string | null> {
   console.log("[goal-host-vessel] trace store discovery dark — falling back to env/localhost default");
   return null;
 }
+// Only the running service asks discovery (import.meta.main): an importer (a test, a lane check) makes no call at load
+// and takes the default the dark-discovery branch already gives. The service resolves here, before the module-scope
+// consumers below (the satisfier sink, GoalHost, the local template adapter) read the value, as it always did.
 const ACTIVITY_API_ENDPOINT = process.env.ACTIVITY_API_ENDPOINT
-  ?? (await resolveTraceStoreEndpointViaDiscovery())
+  ?? (import.meta.main ? await resolveTraceStoreEndpointViaDiscovery() : null)
   ?? "http://127.0.0.1:8080";
 // Producer discovery (the shape-walk's discover-by-shapes producer/candidate lookups)
 // must query where the rich producer corpus LIVES — the LOCAL activity-api — not the
@@ -7665,6 +7668,9 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
 // failure never throws into / slows the walk.
 // OBSERVE (observe-mode.ts): every trace through this sink carries the dispatch's learning_mode:observe tag, so
 // activity-api's insert path grades nothing from an observe dispatch's floor, failed-walk or step traces.
+// Built at load, which is import-safe only with ias-executor-ts 64a7e4b or later: its constructor no longer starts a spool
+// replay (an older one replays the live spool from every importer). The service starts the replay at boot (the main
+// block, through the wrapper's start()), so a backlog a restart left still drains then.
 const satisfierTraceSink = observeTaggingSink(new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? ""), () => dispatchContext.getStore()?.learningMode);
 /**
  * PRODUCER BEFORE CONSUMER (2026-10-07). A walk's satisfier step traces were kept in memory and POSTed only at walk end,
@@ -20330,6 +20336,43 @@ async function drainInterruptedRequeue(): Promise<void> {
   interruptedRequeue.length = 0;
   persistDispatchStore();
 }
+function persistDispatchStore(): void {
+  const snapshot = JSON.stringify([...executionStore.values()]);
+  Bun.write(DISPATCH_STORE_PATH, snapshot).catch((err) => {
+    console.warn("[goal-host-vessel] dispatch store persist failed: " + (err as Error).message);
+  });
+}
+function pruneStore(): void {
+  const byNewest = [...executionStore.entries()].sort((a, b) => b[1].startedAt - a[1].startedAt);
+  for (const [, r] of byNewest.slice(100)) {
+    const d = r as unknown as Record<string, unknown>;
+    if (d["compacted"] === true) continue;
+    d["stateSignature"] = undefined;
+    d["steps"] = [];
+    d["walkLog"] = [];
+    d["poolProvenance"] = [];
+    d["poolEvents"] = [];
+    d["compacted"] = true;
+  }
+  for (const [id] of byNewest.slice(2000)) executionStore.delete(id);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP server
+// ─────────────────────────────────────────────────────────────────────────────
+
+// STEP-1 (route-as-data refactor): the boot sequence is guarded behind import.meta.main so the
+// reach-route functions can be imported by the golden characterization test WITHOUT binding a
+// port, registering into discovery, or starting the discovery loop (any of which would touch a
+// live substrate). Run directly (`bun src/index.ts`) import.meta.main === true -> boot unchanged.
+let server: ReturnType<typeof Bun.serve> | undefined;
+if (import.meta.main) {
+// The trace spool a restart left drains at boot, as it did when every sink replayed on construction. The executor now
+// starts a sink's replay at its first record or start(); an older dist has no start() and replays on construction.
+satisfierTraceSink.start();
+// The dispatch store is the service's: only the service restores it (re-grading interrupted records, posting their
+// oracle labels, scheduling their requeue and resume) and persists it. An importer starts with an empty store and
+// neither reads nor rewrites the file, nor posts to the fleet. Same order as before, ahead of the rest of the boot.
 setTimeout(() => {
   drainInterruptedRequeue().catch((err) => console.warn("[goal-host-vessel] drain error: " + (err as Error).message));
 }, 15000);
@@ -20409,38 +20452,7 @@ try {
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
 } catch { /* first boot or unreadable - start empty */ }
-function persistDispatchStore(): void {
-  const snapshot = JSON.stringify([...executionStore.values()]);
-  Bun.write(DISPATCH_STORE_PATH, snapshot).catch((err) => {
-    console.warn("[goal-host-vessel] dispatch store persist failed: " + (err as Error).message);
-  });
-}
 setInterval(persistDispatchStore, 5000);
-function pruneStore(): void {
-  const byNewest = [...executionStore.entries()].sort((a, b) => b[1].startedAt - a[1].startedAt);
-  for (const [, r] of byNewest.slice(100)) {
-    const d = r as unknown as Record<string, unknown>;
-    if (d["compacted"] === true) continue;
-    d["stateSignature"] = undefined;
-    d["steps"] = [];
-    d["walkLog"] = [];
-    d["poolProvenance"] = [];
-    d["poolEvents"] = [];
-    d["compacted"] = true;
-  }
-  for (const [id] of byNewest.slice(2000)) executionStore.delete(id);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// HTTP server
-// ─────────────────────────────────────────────────────────────────────────────
-
-// STEP-1 (route-as-data refactor): the boot sequence is guarded behind import.meta.main so the
-// reach-route functions can be imported by the golden characterization test WITHOUT binding a
-// port, registering into discovery, or starting the discovery loop (any of which would touch a
-// live substrate). Run directly (`bun src/index.ts`) import.meta.main === true -> boot unchanged.
-let server: ReturnType<typeof Bun.serve> | undefined;
-if (import.meta.main) {
 // The verdict-consistency store exists only on the running service: its root is the directory of the dispatch store
 // this service already keeps (no env read; an importer that is not the service gets no store).
 verdictConsistency.setVerdictConsistencyRoot(dirname(DISPATCH_STORE_PATH));

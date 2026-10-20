@@ -206,13 +206,15 @@ export function observeTraceTags(tags: readonly string[] | undefined, mode: unkn
  * One wrap at the one sink every goal-host-built trace goes through (the floor, the failed walk, satisfier steps,
  * applied writes, the walk composites), so no persist site can forget it. A learn trace is passed through as is.
  */
-export function observeTaggingSink<T>(sink: { record(trace: T): Promise<void> }, readMode: () => unknown): { record(trace: T): Promise<void> } {
+export function observeTaggingSink<T>(sink: { record(trace: T): Promise<void>; start?(): void }, readMode: () => unknown): { record(trace: T): Promise<void>; start(): void } {
   return {
     record(trace: T): Promise<void> {
       const mode = readMode();
       if (!isObserve(mode)) return sink.record(trace);
       return sink.record({ ...trace, tags: observeTraceTags((trace as { tags?: string[] }).tags, mode) } as T);
     },
+    /** Starts the wrapped sink's background work where it has any (a TranslatingTraceSink's spool replay); else nothing. */
+    start(): void { sink.start?.(); },
   };
 }
 
