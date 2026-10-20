@@ -16887,7 +16887,14 @@ if (!LLM_VESSEL_ENDPOINT) {
   }
 }
 
-const llm = createLLMPort(anthropicClient);
+// Made on first use, not at load: createLLMPort throws when neither LLM_VESSEL_ENDPOINT nor a client is configured, and
+// an importer (a test, a lane check, whose child env holds neither) must still load. The first generate() makes the
+// port, so with nothing configured that same createLLMPort error surfaces at execute time, as promised above.
+let llmPort: ReturnType<typeof createLLMPort> | undefined;
+const llm: ReturnType<typeof createLLMPort> = {
+  get lastUsage() { return llmPort?.lastUsage; },
+  generate: async (input) => (llmPort ??= createLLMPort(anthropicClient)).generate(input),
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GoalHost
