@@ -127,7 +127,10 @@ describe("decideEscalationTarget", () => {
   it("CONTROL: an existing src file is an ordinary edit, and a path outside repos/<vessel>/ is left alone", () => {
     expect(decideEscalationTarget("repos/vessel-a/src/a.ts", roots)).toEqual({ kind: "edit" });
     expect(decideEscalationTarget("docs/x.md", roots)).toEqual({ kind: "edit" });
-    expect(decideEscalationTarget("repos/vessel-a/../escape.ts", roots)).toEqual({ kind: "edit" });
+  });
+
+  it("a `..` traversal target is refused (normalised before the scope check)", () => {
+    expect(decideEscalationTarget("repos/vessel-a/../escape.ts", roots).kind).toBe("refuse");
   });
 });
 

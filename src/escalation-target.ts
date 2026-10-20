@@ -19,6 +19,12 @@
  * as every other scope reader does): a scope copy that is missing, unparseable or names nothing
  * must not make the excluded core escalation-editable. The refusal names why each copy failed.
  *
+ * EVERY TARGET IS NORMALISED, THEN SCOPE-CHECKED. A target with a `..` segment is refused (it could name an
+ * excluded file through an open prefix, or leave the repo), and so is an absolute one; `./`, `//` and `.`
+ * segments are collapsed. The scope check then runs on the normalised path for every target, not only
+ * repos/<vessel>/ ones, so an excluded super-repo path (scripts/…) is refused too. A target outside repos/ is also
+ * checked as repos/<target>, so a vessel path written without its repos/ prefix meets its entry.
+ *
  * DIRECTORY EXCEPTIONS: the record's sibling field excluded_path_exceptions lists EXACT files a directory
  * entry does not exclude, with the semantics of development-vessel's autonomyScopeExcludes (gap-policy.ts):
  * excluded iff an exact entry matches, or a directory entry matches and the path is not an exception. An
@@ -29,7 +35,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 export const SCOPE_REL = "scripts/substrate/autonomy-scope.json";
 export const IMAGE_SCOPE_FILE = "/usr/local/share/substrate/super-repo/scripts/substrate/autonomy-scope.json";
@@ -131,12 +137,18 @@ export function decideEscalationTarget(editFile: string, roots: EscalationRoots 
   const scope = readCommittedScopePaths(roots.supers, roots.imageScopeFile, why);
   if (scope === null) return { kind: "refuse", reason: `the committed autonomyScope could not be read (fail closed): ${why.join("; ") || "no scope copy configured"}` };
 
-  const m = /^repos\/([\w.-]+)\/(.+)$/.exec(editFile.replace(/^\.\//, ""));
-  if (!m || m[1] === "." || m[1] === ".." || m[2]!.split("/").some((p) => p === ".." || p === "." || p === "")) return { kind: "edit" };
-  const [, vessel, rel] = m as unknown as [string, string, string];
+  // NORMALISED BEFORE THE SCOPE CHECK, which every target gets (repos/<vessel>/ or not).
+  const raw = String(editFile).trim();
+  if (raw.startsWith("/")) return { kind: "refuse", reason: `${raw} is an absolute path; an escalation target is repo-relative` };
+  if (raw.split("/").includes("..")) return { kind: "refuse", reason: `${raw} has a '..' segment, which could name an excluded file through an open prefix or leave the repo` };
+  const target = posix.normalize(raw).replace(/^(\.\/)+/, "");
+  const entry = scopeEntryFor(target, scope.excluded, scope.exceptions)
+    ?? (target.startsWith("repos/") ? null : scopeEntryFor(`repos/${target}`, scope.excluded, scope.exceptions));
+  if (entry) return { kind: "refuse", reason: `${target} is under the excluded autonomyScope entry ${entry}` };
 
-  const entry = scopeEntryFor(`repos/${vessel}/${rel}`, scope.excluded, scope.exceptions);
-  if (entry) return { kind: "refuse", reason: `repos/${vessel}/${rel} is under the excluded autonomyScope entry ${entry}` };
+  const m = /^repos\/([\w.-]+)\/(.+)$/.exec(target);
+  if (!m || m[1] === "." || m[2]!.split("/").some((p) => p === "." || p === "")) return { kind: "edit" };
+  const [, vessel, rel] = m as unknown as [string, string, string];
 
   const clone = join(roots.clones, vessel);
   if (onOriginDev(clone, rel) !== "absent") return { kind: "edit" };
