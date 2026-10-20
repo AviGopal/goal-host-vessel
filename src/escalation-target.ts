@@ -15,8 +15,9 @@
  * A target under an excluded autonomyScope path is refused before any patch_with_tools call
  * (the lane cannot land it, so the escalation would only spend attempts). The scope is the
  * COMMITTED one, read the way @avigopal/write-containment's readCommittedScope reads it: HEAD of
- * a super-repo clone, then the image copy. An unreadable scope refuses nothing, and makes
- * nothing new either: the escalation then behaves as it did before this module.
+ * a super-repo clone, then the image copy. An unreadable scope REFUSES EVERY TARGET (fail closed,
+ * as every other scope reader does): a scope copy that is missing, unparseable or names nothing
+ * must not make the excluded core escalation-editable. The refusal names why each copy failed.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -55,15 +56,30 @@ function excludedFrom(text: string): string[] | null {
   return excluded.length > 0 || body.unrestricted === true ? excluded : null;
 }
 
-/** The committed excluded paths, or null when no copy can be read. */
-export function readExcludedPaths(supers: readonly string[], imageFile: string): string[] | null {
+/** The committed excluded paths, or null when no copy can be read; `why` gets one reason per copy that could not be. */
+export function readExcludedPaths(supers: readonly string[], imageFile: string, why: string[] = []): string[] | null {
   for (const s of supers) {
-    if (!existsSync(s)) continue;
+    if (!existsSync(s)) { why.push(`${s}: absent`); continue; }
     const r = git(s, ["show", `HEAD:${SCOPE_REL}`]);
-    if (!r.ok) continue;
-    try { const e = excludedFrom(r.out); if (e) return e; } catch { /* next copy */ }
+    if (!r.ok) { why.push(`${s}: HEAD:${SCOPE_REL} unreadable`); continue; }
+    try {
+      const e = excludedFrom(r.out);
+      if (e) return e;
+      why.push(`${s}: names no excluded_paths and is not unrestricted`);
+    } catch (err) {
+      why.push(`${s}: ${(err as Error)?.message ?? String(err)}`);
+      console.warn(`[escalation-target] scope copy HEAD:${SCOPE_REL} in ${s} unreadable: ${(err as Error)?.message ?? String(err)}`);
+    }
   }
-  try { return excludedFrom(readFileSync(imageFile, "utf8")); } catch { return null; }
+  try {
+    const e = excludedFrom(readFileSync(imageFile, "utf8"));
+    if (!e) why.push(`${imageFile}: names no excluded_paths and is not unrestricted`);
+    return e;
+  } catch (err) {
+    why.push(`${imageFile}: ${(err as Error)?.message ?? String(err)}`);
+    console.warn(`[escalation-target] image scope copy ${imageFile} unreadable: ${(err as Error)?.message ?? String(err)}`);
+    return null;
+  }
 }
 
 /** The excluded entry a repo-relative path falls under (`dir/` entries match the tree), or null. */
@@ -84,12 +100,15 @@ function onOriginDev(clone: string, rel: string): "present" | "absent" | "unknow
 }
 
 export function decideEscalationTarget(editFile: string, roots: EscalationRoots = escalationRoots()): EscalationTarget {
+  // FAIL CLOSED: with no readable scope copy, no target (inside repos/ or not) is escalation-editable.
+  const why: string[] = [];
+  const excluded = readExcludedPaths(roots.supers, roots.imageScopeFile, why);
+  if (excluded === null) return { kind: "refuse", reason: `the committed autonomyScope could not be read (fail closed): ${why.join("; ") || "no scope copy configured"}` };
+
   const m = /^repos\/([\w.-]+)\/(.+)$/.exec(editFile.replace(/^\.\//, ""));
   if (!m || m[1] === "." || m[1] === ".." || m[2]!.split("/").some((p) => p === ".." || p === "." || p === "")) return { kind: "edit" };
   const [, vessel, rel] = m as unknown as [string, string, string];
 
-  const excluded = readExcludedPaths(roots.supers, roots.imageScopeFile);
-  if (excluded === null) return { kind: "edit" };
   const entry = scopeEntryFor(`repos/${vessel}/${rel}`, excluded);
   if (entry) return { kind: "refuse", reason: `repos/${vessel}/${rel} is under the excluded autonomyScope entry ${entry}` };
 

@@ -3,7 +3,8 @@
 // tree, which carries no tests. So the caller decides "new" from every place the file could
 // already be — origin/dev in the push clone, the clone's working tree, the runtime tree — and
 // an unknown is never "new": a test that exists on origin/dev must not be re-authored over.
-import { afterAll, describe, expect, it } from "bun:test";
+// The scope fails CLOSED: with no readable copy, every target is refused (no target gets "edit").
+import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,10 +78,50 @@ describe("decideEscalationTarget", () => {
     expect(decideEscalationTarget("repos/vessel-a/src/judge.ts", roots).kind).toBe("refuse");
   });
 
-  it("an unreadable scope refuses nothing and authors nothing new (today's escalation, unchanged)", () => {
-    const blind: EscalationRoots = { ...roots, supers: [], imageScopeFile: join(tmp, "absent.json") };
-    expect(decideEscalationTarget("repos/vessel-x/test/gap-new.test.ts", blind).kind).toBe("edit");
-    expect(decideEscalationTarget("repos/vessel-a/test/gap-new.test.ts", blind).kind).toBe("edit");
+  it("MUST-FAIL (fail closed): with every scope copy unreadable, no target is escalation-editable, and the refusal says why", () => {
+    // Every way a copy can fail: no super configured, a super that is absent, one that is no git clone, one whose HEAD
+    // names no excluded_paths, and an image copy that is absent or does not parse.
+    const notGit = join(tmp, "not-a-clone");
+    mkdirSync(notGit, { recursive: true });
+    const empty = join(tmp, "super-empty");
+    mkdirSync(empty, { recursive: true });
+    git(empty, "init", "-q", "-b", "dev");
+    put(join(empty, "scripts/substrate/autonomy-scope.json"), JSON.stringify({ autonomyScope: { excluded_paths: [] } }));
+    git(empty, "add", "-A");
+    git(empty, "commit", "-qm", "empty scope");
+    const garbled = join(tmp, "garbled-image-scope.json");
+    put(garbled, "{ not json");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const blinds: EscalationRoots[] = [
+        { ...roots, supers: [], imageScopeFile: join(tmp, "absent.json") },
+        { ...roots, supers: [join(tmp, "no-such-super"), notGit, empty], imageScopeFile: garbled },
+      ];
+      const targets = ["repos/vessel-x/test/gap-new.test.ts", "repos/vessel-a/test/gap-new.test.ts", "repos/vessel-a/src/a.ts", "repos/vessel-a/test/existing.test.ts", "docs/x.md", "repos/vessel-a/../escape.ts"];
+      for (const blind of blinds) {
+        for (const t of targets) {
+          const d = decideEscalationTarget(t, blind);
+          expect({ t, kind: d.kind }).toEqual({ t, kind: "refuse" });
+          expect(d.kind === "refuse" ? d.reason : "").toContain("could not be read (fail closed)");
+        }
+      }
+      const d = decideEscalationTarget("repos/vessel-a/src/a.ts", blinds[1]!);
+      const reason = d.kind === "refuse" ? d.reason : "";
+      for (const named of ["no-such-super: absent", "not-a-clone: HEAD:scripts/substrate/autonomy-scope.json unreadable", "super-empty: names no excluded_paths", "garbled-image-scope.json: "]) expect(reason).toContain(named);
+      // The unparseable copy is logged where it is caught.
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("garbled-image-scope.json") && String(c[0]).includes("unreadable"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("CONTROL: a readable image copy (no super clone) decides exactly as the committed super copy does", () => {
+    const image = join(tmp, "image-scope.json");
+    put(image, JSON.stringify({ autonomyScope: { excluded_paths: ["repos/vessel-x/", "repos/vessel-a/src/judge.ts"] } }));
+    const viaImage: EscalationRoots = { ...roots, supers: [], imageScopeFile: image };
+    for (const t of ["repos/vessel-a/test/gap-new.test.ts", "repos/vessel-a/test/existing.test.ts", "repos/vessel-x/test/gap-new.test.ts", "repos/vessel-a/src/judge.ts", "repos/vessel-a/src/a.ts", "docs/x.md"]) {
+      expect({ t, d: decideEscalationTarget(t, viaImage) }).toEqual({ t, d: decideEscalationTarget(t, roots) });
+    }
   });
 
   it("CONTROL: an existing src file is an ordinary edit, and a path outside repos/<vessel>/ is left alone", () => {
