@@ -49,7 +49,7 @@ export const RUNNER_ONLY_POOL_ID_PREFIXES: readonly string[] = ["verdictCorpusWr
 /** Trust-root pool shapes (dev-vessel TRUST_ROOT_POOL_SHAPES). */
 export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set([
   "substrateNodes", "autonomyScope", "spendEnvelope", "calibrationWindow", "scriptRunnerAllowlist",
-  "operatorHold", "posteriorReplayAuthorization", "verdictCorpusWriter", "fedIngressAuthPolicy",
+  "operatorHold", "posteriorReplayAuthorization", "verdictCorpusWriter", "fedIngressAuthPolicy", "daemonAuthPolicy",
 ]);
 
 /** A pool write by its type: the bare name or a vessel-qualified one ("development-vessel:poolImpulse_write"). */

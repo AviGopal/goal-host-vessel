@@ -81,6 +81,13 @@ describe("(b) a trust-root shape is refused before egress", () => {
       { type: "poolImpulse_write", shape: "fedIngressAuthPolicy", body: { mode: "log", same_authority_peers: ["attacker"] } },
     ]) expect([JSON.stringify(body).slice(0, 60), walkEgressRefusal("poolImpulse_write", body)?.startsWith("single-writer")]).toEqual([JSON.stringify(body).slice(0, 60), true]);
   });
+  it("MUST-FAIL: a walk may not write daemonAuthPolicy (the node's VesselDaemon gate mode): by shape, qualified, and by id", () => {
+    for (const body of [
+      { impulse: { pointer: { type: "poolImpulse_write", shape: "daemonAuthPolicy", id: "daemonAuthPolicy", body: { mode: "report" } } } },
+      { impulse: { pointer: { type: "development-vessel:poolImpulse_write", shape: "daemonAuthPolicy" } } },
+      { type: "poolImpulse_write", id: "daemonAuthPolicy", body: { mode: "report" } },
+    ]) expect([JSON.stringify(body).slice(0, 60), walkEgressRefusal("poolImpulse_write", body)?.startsWith("single-writer")]).toEqual([JSON.stringify(body).slice(0, 60), true]);
+  });
   it("every trust-root shape, by shape and by an id equal to the shape name", async () => {
     const res: string[] = [];
     for (const s of [...TRUST_ROOT_POOL_SHAPES].sort()) {
@@ -177,7 +184,7 @@ describe("(d) the lists cannot drift from development-vessel's", () => {
 
   it("the parser reads dev-vessel's form (pinned on a fixture of the pinned sha's declarations)", () => {
     const fixture = [
-      "export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set(['substrateNodes', 'autonomyScope', 'spendEnvelope', 'calibrationWindow', 'scriptRunnerAllowlist', 'operatorHold', 'posteriorReplayAuthorization', 'verdictCorpusWriter', 'fedIngressAuthPolicy']);",
+      "export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set(['substrateNodes', 'autonomyScope', 'spendEnvelope', 'calibrationWindow', 'scriptRunnerAllowlist', 'operatorHold', 'posteriorReplayAuthorization', 'verdictCorpusWriter', 'fedIngressAuthPolicy', 'daemonAuthPolicy']);",
       "export const VERDICT_CORPUS_STATUS_SHAPE = 'verdictCorpusStatus';",
       "export const VERDICT_CORPUS_STATUS_ID = 'verdictCorpusStatus';",
       "export const VERDICT_CORPUS_REFUSAL_SHAPE = 'verdictCorpusWriteRefusal';",
