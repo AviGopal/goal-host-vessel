@@ -19552,8 +19552,8 @@ async function readVerdictCorpusGap(id: string): Promise<import("./judge/corpus-
     return j.body!.gaps!.find((x) => x.id === id) ?? null;
   } catch { return "unreadable"; }
 }
-/** The judge opening state, read at use time: the live autonomyScope record's excluded paths (null = unreadable). */
-async function readLiveScopeExcluded(): Promise<string[] | null> {
+/** The judge opening state, read at use time: the live autonomyScope record's excluded paths and exceptions (null = unreadable). */
+async function readLiveScopeExcluded(): Promise<import("./escalation-target").ScopePaths | null> {
   try {
     const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
       method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
@@ -19561,9 +19561,9 @@ async function readLiveScopeExcluded(): Promise<string[] | null> {
       signal: AbortSignal.timeout(10_000),
     });
     if (!r.ok) return null;
-    const j = (await r.json()) as { body?: { impulses?: Array<{ body?: { excluded_paths?: unknown } }> } };
-    const ep = j.body?.impulses?.[0]?.body?.excluded_paths;
-    return Array.isArray(ep) && ep.every((x) => typeof x === "string") && ep.length > 0 ? (ep as string[]) : null;
+    const j = (await r.json()) as { body?: { impulses?: Array<{ body?: unknown }> } };
+    const { scopeFromRecordBody } = await import("./judge/corpus-activity");
+    return scopeFromRecordBody(j.body?.impulses?.[0]?.body);
   } catch { return null; }
 }
 // A missing or unreadable corpus status holds the ever-red classes (EVERY governed class when the corpus itself is

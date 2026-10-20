@@ -18,6 +18,14 @@
  * a super-repo clone, then the image copy. An unreadable scope REFUSES EVERY TARGET (fail closed,
  * as every other scope reader does): a scope copy that is missing, unparseable or names nothing
  * must not make the excluded core escalation-editable. The refusal names why each copy failed.
+ *
+ * DIRECTORY EXCEPTIONS: the record's sibling field excluded_path_exceptions lists EXACT files a directory
+ * entry does not exclude, with the semantics of development-vessel's autonomyScopeExcludes (gap-policy.ts):
+ * excluded iff an exact entry matches, or a directory entry matches and the path is not an exception. An
+ * exception counts only for an exact file under a directory entry (a directory, glob, `..` or bare basename
+ * excepts nothing), an exact entry wins over an exception, and a file added under the directory later stays
+ * excluded. scopeEntryFor is the one matcher for both goal-host readers: this escalation and the verdict
+ * corpus runner's routeGap (judge/corpus-activity.ts).
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -25,6 +33,9 @@ import { join } from "node:path";
 
 export const SCOPE_REL = "scripts/substrate/autonomy-scope.json";
 export const IMAGE_SCOPE_FILE = "/usr/local/share/substrate/super-repo/scripts/substrate/autonomy-scope.json";
+
+/** The scope as a reader matches it: excluded_paths and the exact-file excluded_path_exceptions. */
+export interface ScopePaths { excluded: string[]; exceptions: string[] }
 
 export type EscalationTarget = { kind: "edit" } | { kind: "new_file" } | { kind: "refuse"; reason: string };
 
@@ -49,21 +60,27 @@ function git(cwd: string, args: string[]): { ok: boolean; out: string } {
   return { ok: r.status === 0, out: String(r.stdout ?? "") };
 }
 
-function excludedFrom(text: string): string[] | null {
-  const body = (JSON.parse(text) as { autonomyScope?: { excluded_paths?: unknown; unrestricted?: unknown } })?.autonomyScope ?? {};
-  const raw = Array.isArray(body.excluded_paths) ? body.excluded_paths : [];
-  const excluded = raw.filter((e): e is string => typeof e === "string" && e.trim().length > 0).map((e) => e.trim().replace(/^\.\//, ""));
-  return excluded.length > 0 || body.unrestricted === true ? excluded : null;
+/** excluded_path_exceptions: exact file paths only; a directory (trailing `/`), a glob or a `..` segment is dropped. */
+export function parseScopeExceptions(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw.filter((e): e is string => typeof e === "string" && e.trim().length > 0).map((e) => e.trim()) : [];
+  return list.filter((e) => !e.endsWith("/") && !/[*?[\]{}!]/.test(e) && !e.split("/").includes(".."));
 }
 
-/** The committed excluded paths, or null when no copy can be read; `why` gets one reason per copy that could not be. */
-export function readExcludedPaths(supers: readonly string[], imageFile: string, why: string[] = []): string[] | null {
+function scopeFrom(text: string): ScopePaths | null {
+  const body = (JSON.parse(text) as { autonomyScope?: { excluded_paths?: unknown; unrestricted?: unknown; excluded_path_exceptions?: unknown } })?.autonomyScope ?? {};
+  const raw = Array.isArray(body.excluded_paths) ? body.excluded_paths : [];
+  const excluded = raw.filter((e): e is string => typeof e === "string" && e.trim().length > 0).map((e) => e.trim().replace(/^\.\//, ""));
+  return excluded.length > 0 || body.unrestricted === true ? { excluded, exceptions: parseScopeExceptions(body.excluded_path_exceptions) } : null;
+}
+
+/** The committed scope, or null when no copy can be read; `why` gets one reason per copy that could not be. */
+export function readCommittedScopePaths(supers: readonly string[], imageFile: string, why: string[] = []): ScopePaths | null {
   for (const s of supers) {
     if (!existsSync(s)) { why.push(`${s}: absent`); continue; }
     const r = git(s, ["show", `HEAD:${SCOPE_REL}`]);
     if (!r.ok) { why.push(`${s}: HEAD:${SCOPE_REL} unreadable`); continue; }
     try {
-      const e = excludedFrom(r.out);
+      const e = scopeFrom(r.out);
       if (e) return e;
       why.push(`${s}: names no excluded_paths and is not unrestricted`);
     } catch (err) {
@@ -72,7 +89,7 @@ export function readExcludedPaths(supers: readonly string[], imageFile: string, 
     }
   }
   try {
-    const e = excludedFrom(readFileSync(imageFile, "utf8"));
+    const e = scopeFrom(readFileSync(imageFile, "utf8"));
     if (!e) why.push(`${imageFile}: names no excluded_paths and is not unrestricted`);
     return e;
   } catch (err) {
@@ -82,11 +99,20 @@ export function readExcludedPaths(supers: readonly string[], imageFile: string, 
   }
 }
 
-/** The excluded entry a repo-relative path falls under (`dir/` entries match the tree), or null. */
-export function scopeEntryFor(rel: string, excluded: readonly string[]): string | null {
+/** The excluded entry a repo-relative path falls under (`dir/` entries match the tree), or null. A directory entry
+ *  skips a path its exceptions name exactly (an exception outside the directory counts for nothing); an exact entry
+ *  never does, and the scan goes on past an excepted directory hit so a later exact entry is still found. */
+export function scopeEntryFor(rel: string, excluded: readonly string[], exceptions: readonly string[] = []): string | null {
+  const strip = (p: string) => p.replace(/^\.\//, "").replace(/^repos\//, "");
+  const excepts = parseScopeExceptions(exceptions).map(strip);
   for (const e of excluded) {
-    if (e.endsWith("/")) { if (rel === e.slice(0, -1) || rel.startsWith(e)) return e; }
-    else if (rel === e) return e;
+    if (e.endsWith("/")) {
+      if (rel === e.slice(0, -1) || rel.startsWith(e)) {
+        const d = strip(e);
+        if (excepts.some((x) => x.startsWith(d) && strip(rel) === x)) continue;
+        return e;
+      }
+    } else if (rel === e) return e;
   }
   return null;
 }
@@ -102,14 +128,14 @@ function onOriginDev(clone: string, rel: string): "present" | "absent" | "unknow
 export function decideEscalationTarget(editFile: string, roots: EscalationRoots = escalationRoots()): EscalationTarget {
   // FAIL CLOSED: with no readable scope copy, no target (inside repos/ or not) is escalation-editable.
   const why: string[] = [];
-  const excluded = readExcludedPaths(roots.supers, roots.imageScopeFile, why);
-  if (excluded === null) return { kind: "refuse", reason: `the committed autonomyScope could not be read (fail closed): ${why.join("; ") || "no scope copy configured"}` };
+  const scope = readCommittedScopePaths(roots.supers, roots.imageScopeFile, why);
+  if (scope === null) return { kind: "refuse", reason: `the committed autonomyScope could not be read (fail closed): ${why.join("; ") || "no scope copy configured"}` };
 
   const m = /^repos\/([\w.-]+)\/(.+)$/.exec(editFile.replace(/^\.\//, ""));
   if (!m || m[1] === "." || m[1] === ".." || m[2]!.split("/").some((p) => p === ".." || p === "." || p === "")) return { kind: "edit" };
   const [, vessel, rel] = m as unknown as [string, string, string];
 
-  const entry = scopeEntryFor(`repos/${vessel}/${rel}`, excluded);
+  const entry = scopeEntryFor(`repos/${vessel}/${rel}`, scope.excluded, scope.exceptions);
   if (entry) return { kind: "refuse", reason: `repos/${vessel}/${rel} is under the excluded autonomyScope entry ${entry}` };
 
   const clone = join(roots.clones, vessel);

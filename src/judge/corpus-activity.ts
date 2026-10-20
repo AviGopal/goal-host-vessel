@@ -18,7 +18,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classify, fidelityCounts, holdsFrom, loadCorpus, replayCase, unreadableCorpusHolds, type CorpusCase, type Hold } from "./corpus-runner";
-import { scopeEntryFor } from "../escalation-target";
+import { parseScopeExceptions, scopeEntryFor, type ScopePaths } from "../escalation-target";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { shapedPolicyPath } from "../shaped-policy-store";
 import { DEFAULT_PERIOD_S, STATUS_SHAPE, everGreenPath, parseEverGreen, type VerdictCorpusStatus } from "./credit-hold";
@@ -84,21 +84,36 @@ export interface GapRoute { to: "operator_review" | "lane"; reason: string; scop
 /**
  * Route a gap by the judge opening state, read at use time from the live autonomyScope record (law 1): an edit
  * site under an excluded entry (the closed core always; src/judge-rules/ until the opening act) goes to operator
- * review; an open one goes to the lane. An unreadable scope routes to operator review (fail closed).
+ * review; an open one goes to the lane. An unreadable scope routes to operator review (fail closed). A file the
+ * record's excluded_path_exceptions lifts out of a directory entry is open (scopeEntryFor, the matcher the
+ * edit-intent escalation uses too). A bare list is excluded_paths with no exceptions.
  */
-export function routeGap(editSite: string | null, excluded: readonly string[] | null): GapRoute {
+export function routeGap(editSite: string | null, scope: readonly string[] | ScopePaths | null): GapRoute {
   if (!editSite) return { to: "operator_review", reason: "no edit site", scope_entry: null };
-  if (excluded === null) return { to: "operator_review", reason: "the autonomy scope could not be read (fail closed)", scope_entry: null };
-  const entry = scopeEntryFor(editSite, excluded);
+  if (scope === null) return { to: "operator_review", reason: "the autonomy scope could not be read (fail closed)", scope_entry: null };
+  const { excluded, exceptions } = Array.isArray(scope) ? { excluded: scope as readonly string[], exceptions: [] } : (scope as ScopePaths);
+  const entry = scopeEntryFor(editSite, excluded, exceptions);
   if (entry) return { to: "operator_review", reason: `the edit site is closed (excluded by ${entry})`, scope_entry: entry };
   return { to: "lane", reason: "the edit site is open to the lane", scope_entry: null };
+}
+
+/**
+ * The live autonomyScope record's body as routeGap reads it: excluded_paths (every entry a string, at least one, else
+ * null: unreadable, fail closed) and its excluded_path_exceptions (exact files only, parseScopeExceptions).
+ */
+export function scopeFromRecordBody(body: unknown): ScopePaths | null {
+  const b = (body && typeof body === "object" ? body : {}) as { excluded_paths?: unknown; excluded_path_exceptions?: unknown };
+  const ep = b.excluded_paths;
+  if (!(Array.isArray(ep) && ep.every((x) => typeof x === "string") && ep.length > 0)) return null;
+  return { excluded: ep as string[], exceptions: parseScopeExceptions(b.excluded_path_exceptions) };
 }
 
 export interface CorpusSinks {
   readPreviousStatus(): Promise<Record<string, unknown> | null>;
   readEverGreen(): Promise<string[] | null>;
-  /** The live autonomyScope excluded paths (the opening state), or null when unreadable. */
-  readScopeExcluded(): Promise<string[] | null>;
+  /** The live autonomyScope (the opening state): its excluded paths and exceptions (or a bare excluded_paths list),
+   *  or null when unreadable. */
+  readScopeExcluded(): Promise<string[] | ScopePaths | null>;
   writeStatus(s: VerdictCorpusStatus): Promise<void>;
   recordReport(report: VerdictCorpusReport): Promise<void>;
   fileGap(g: CorpusGap): Promise<void>;
@@ -146,7 +161,7 @@ export async function runVerdictCorpusActivity(o: { dir: string; node: string; d
   const base = { schema: 1 as const, node: o.node, judge_sha: judgeSourcesSha(), deployed_sha: o.deployedSha, run_at: nowIso, period_s: period, live_shadow: { sampled: 0, mismatched: 0 } };
   let everGreenList: string[] | null = null;
   try { everGreenList = await o.sinks.readEverGreen(); } catch { everGreenList = null; }
-  let excluded: string[] | null = null;
+  let excluded: string[] | ScopePaths | null = null;
   try { excluded = await o.sinks.readScopeExcluded(); } catch { excluded = null; }
   const route = (site: string | null) => routeGap(site, excluded);
   const tally = { written: 0, parked: 0, released: 0, unchanged: 0, left: 0 };
