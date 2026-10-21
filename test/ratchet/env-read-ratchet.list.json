@@ -195,6 +195,11 @@
     "reason": "bus queue cap (IAS name) (read in src/config.ts)"
   },
   {
+    "name": "IDENTITY_VESSEL_URL",
+    "class": "bootstrap",
+    "reason": "peer endpoint: identity-vessel, the fleet's single credential validator, asked by the inbound door (read in src/caller-credential.ts, the byte-for-byte copy of development-vessel's module; already in the shared env every unit loads)"
+  },
+  {
     "name": "LLM_ENDPOINT",
     "class": "bootstrap",
     "reason": "peer endpoint URL: llm resolver (read in src/activities/loopC-vessel-designer.ts)"
@@ -237,7 +242,7 @@
   {
     "name": "METABOB_API_KEY",
     "class": "bootstrap",
-    "reason": "credential/secret: service-to-service API key (read in src/config.ts, src/index.ts, src/llm-router.ts)"
+    "reason": "credential/secret: service-to-service API key (read in src/config.ts, src/index.ts, src/llm-router.ts, src/caller-credential.ts)"
   },
   {
     "name": "MITOSIS_BASE_VESSEL",
