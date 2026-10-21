@@ -27,6 +27,7 @@
  * wherever federation is exposed, fedIngressAuthPolicy must be `enforce`, or anyone who can dial the overlay still
  * reaches this door as the transport.
  */
+import { createHash } from "node:crypto";
 import { identityCredential, isNodeSelfCredential, type CallerCredential } from "./caller-credential";
 
 export const OPERATOR_DIRECT_SCOPE = "operator:direct";
@@ -74,6 +75,37 @@ export function principalLabel(p: Principal): string {
 /** What a dispatch record keeps about its principal. */
 export function principalRecord(p: Principal): { kind: Principal["kind"]; label: string; operator: boolean } {
   return { kind: p.kind, label: principalLabel(p), operator: p.operator };
+}
+
+/** The principal a READ shows: its kind, whether it carried operator authority, and a non-reversible tag of the key. */
+export interface ServedPrincipal { kind: Principal["kind"]; operator: boolean; tag: string | null }
+
+/**
+ * A key's served tag: the first 12 hex of sha256 over its key id, so a reader can tell two dispatches by the same key
+ * apart from two by different keys without the key id being published. Null for the node's own identity and for a
+ * principal recorded without a key id.
+ */
+export function principalTag(label: string): string | null {
+  if (!label.startsWith("key:") || label.startsWith("key:scopes=")) return null;
+  return createHash("sha256").update(label.slice("key:".length)).digest("hex").slice(0, 12);
+}
+
+/**
+ * What a READ of a dispatch record shows about who started it (goalWalkState, activeDispatches, GET /executions/:id):
+ * the label the caller claimed and the principal it ran as. A reader attributes HANDS from these (a human operator
+ * label marks a person's dispatch even when the credential gave it no authority); it is never authority. `operator`
+ * stays the authority field, set only by operatorAuthority. These surfaces are open and federation-reachable, so the
+ * principal is served by kind, authority and a non-reversible tag (principalTag), never by its recorded label, which
+ * names the key id. Null when the record predates the door.
+ */
+export function dispatchAttribution(r: { operator_label?: string; principal?: { kind: Principal["kind"]; label: string; operator: boolean } }): {
+  operator_label: string | null;
+  principal: ServedPrincipal | null;
+} {
+  return {
+    operator_label: r.operator_label ?? null,
+    principal: r.principal ? { kind: r.principal.kind, operator: r.principal.operator, tag: principalTag(r.principal.label) } : null,
+  };
 }
 
 /** The dispatch's operator: the caller's label, only when the credential carries operator authority. */

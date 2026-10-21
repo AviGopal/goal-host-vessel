@@ -345,7 +345,7 @@ import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
-import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, operatorAuthority, inboundAuthCounters, type Principal } from "./inbound-auth";
+import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
 import { setInProcessRunGoal } from "./in-process-dispatch";
 import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, pickConceptDbRow, isOwnSubstrateRow, type ProducerRow } from "./producer-order";
 import type {
@@ -19777,6 +19777,7 @@ async function handleResolve(req: Request): Promise<Response> {
       status: r.status,
       reached: r.reached ?? null,
       operator: r.operator ?? null,
+      ...dispatchAttribution(r),
       trigger: r.trigger ?? null,
       startedAt: r.startedAt,
       selectedTemplateId: r.selectedTemplateId ?? null,
@@ -19822,7 +19823,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, ...dispatchAttribution(rec), executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
   if (type === "poolImpulse_write" && principal) {
@@ -20596,6 +20597,7 @@ server = Bun.serve({
         stage: record.stage ?? null,
         outcome: record.outcome ?? null,
         operator: record.operator ?? null,
+        ...dispatchAttribution(record),
         trigger: record.trigger ?? null,
         goal: record.goal,
         executionId: record.executionId,
