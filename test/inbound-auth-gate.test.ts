@@ -30,7 +30,7 @@ const FORGED_KEY = "inbound-auth-forged-key-fixture";
 process.env.LLM_VESSEL_ENDPOINT ??= "http://127.0.0.1:65535";
 const gh = await import("../src/index");
 const ia = await import("../src/inbound-auth");
-const { handleRunGoal, handleResolve, executionStore, injectedPoolImpulses, pendingSolicitations } = gh;
+const { handleRunGoal, handleResolve, markInboundRemote, executionStore, injectedPoolImpulses, pendingSolicitations } = gh;
 const { __resetCredentialCacheForTests } = await import("../src/caller-credential");
 
 const realFetch = globalThis.fetch;
@@ -76,8 +76,8 @@ const req = (path: string, body: unknown, auth?: string, raw?: string) => new Re
   headers: { "Content-Type": "application/json", "User-Agent": UA, ...(auth ? { Authorization: auth } : {}) },
   body: raw ?? JSON.stringify(body),
 });
-const runGoal = (body: unknown, auth?: string, raw?: string) => handleRunGoal(req("/run-goal", body, auth, raw), "198.51.100.4");
-const resolve = (pointer: Record<string, unknown>, auth?: string) => handleResolve(req("/resolve", { impulse: { pointer } }, auth), "198.51.100.4");
+const runGoal = (body: unknown, auth?: string, raw?: string) => handleRunGoal(markInboundRemote(req("/run-goal", body, auth, raw), "198.51.100.4"));
+const resolve = (pointer: Record<string, unknown>, auth?: string) => handleResolve(markInboundRemote(req("/resolve", { impulse: { pointer } }, auth), "198.51.100.4"));
 
 const RUNNING = "inbound-auth-running-dispatch";
 const SOLICITATION = "inbound-auth-pending-solicitation";
@@ -216,7 +216,7 @@ describe("controls: a keyed request passes the door", () => {
 
 describe("the door is wired where it must be (source pins on index.ts)", () => {
   const src = readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8");
-  const door = src.indexOf("async function runGoalDoor(");
+  const door = src.indexOf("async function handleRunGoal(req: Request): Promise<Response> {");
   it("inbound-auth /run-goal authenticates before the spend-rate window and before any dispatch record", () => {
     expect(door).toBeGreaterThan(0);
     const auth = src.indexOf("authenticateInbound(req.headers, { route: \"/run-goal\"", door);
@@ -228,8 +228,8 @@ describe("the door is wired where it must be (source pins on index.ts)", () => {
   it("inbound-auth goal-host's self-calls run in process as the node's own identity, not over HTTP", () => {
     expect(src).not.toContain('"http://127.0.0.1:" + PORT + "/run-goal"');
     expect(src).not.toMatch(/fetch\(`\$\{GOAL_HOST_ENDPOINT\}\/run-goal`/);
-    expect(src.match(/SELF_PRINCIPAL\)/g)?.length ?? 0).toBeGreaterThanOrEqual(5);
-    expect(src).toContain("setInProcessRunGoal((b) => runGoalAs(b, SELF_PRINCIPAL));");
+    expect(src.match(/runGoalAs\(SELF_PRINCIPAL, /g)?.length ?? 0).toBeGreaterThanOrEqual(5);
+    expect(src).toContain("setInProcessRunGoal((b) => runGoalAs(SELF_PRINCIPAL, b));");
   });
   it("inbound-auth /health carries the refusal counters", () => {
     expect(src).toContain("inbound_auth: inboundAuthCounters(),");

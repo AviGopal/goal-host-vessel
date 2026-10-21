@@ -95,7 +95,8 @@ describe("B3 boot: an interrupted observe dispatch resumes as observe and is not
   };
   test("[MUST-FAIL] the boot resume POST carries the record's learning mode", () => {
     const b = boot();
-    const post = b.indexOf('fetch("http://127.0.0.1:" + PORT + "/run-goal"');
+    // The boot resume runs in process as the node's own identity (src/inbound-auth.ts): no HTTP POST to its own /run-goal.
+    const post = b.indexOf('runGoalAs(SELF_PRINCIPAL, { goal: old.goal');
     expect(post).toBeGreaterThan(0);
     expect(b.slice(post, post + 400)).toContain('tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) })');
   });

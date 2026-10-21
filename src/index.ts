@@ -5214,7 +5214,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   }
   console.log(`[rebind] result for "${shape}": selected=${!!best} candidates=${candidates} refusals: ${Object.entries(refusals).map(([k,n])=>k+"x"+n).join(" ")}`); return best;
 }
-function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } if (observeSkip("child_dispatch")) return; /* OBSERVE (observe-mode.ts): a child dispatch would run as learn */ runGoalAs({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }, SELF_PRINCIPAL).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
+function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } if (observeSkip("child_dispatch")) return; /* OBSERVE (observe-mode.ts): a child dispatch would run as learn */ runGoalAs(SELF_PRINCIPAL, { goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
 // When the structured shape-walk produces a HOLLOW result (an always-succeeds /
@@ -18384,9 +18384,16 @@ async function searchWorkspaceForTerm(
   }
 }
 
-/** POST /run-goal: the inbound door (inbound-auth.ts). `remote` is the socket address, for the refusal hint only. */
-async function handleRunGoal(req: Request, remote?: string | null): Promise<Response> {
-  return runGoalDoor(req, null, remote);
+/**
+ * WHAT THE DOOR KNOWS ABOUT A REQUEST BESIDES ITS HEADERS: the socket address (the server stamps it, for a refusal's
+ * caller hint only) and, for goal-host's own in-process dispatches, the principal they run as. Keyed by the Request
+ * object itself, so only code in this process can put one here: an inbound request carries no way to name a principal.
+ */
+const inboundRequestContext = new WeakMap<Request, { principal?: Principal; remote?: string | null }>();
+/** The server (and tests) stamp an inbound request's socket address. */
+function markInboundRemote(req: Request, remote: string | null): Request {
+  inboundRequestContext.set(req, { remote });
+  return req;
 }
 
 /**
@@ -18394,18 +18401,22 @@ async function handleRunGoal(req: Request, remote?: string | null): Promise<Resp
  * executor): the same handler as /run-goal with the principal given, so no HTTP round trip and no key. `authorization`
  * is carried only where a caller's own header must reach development-vessel (goalDispatchAsync's operator credential).
  */
-function runGoalAs(body: Record<string, unknown>, principal: Principal, authorization?: string | null): Promise<Response> {
-  return runGoalDoor(new Request("http://in-process/run-goal", {
+function runGoalAs(principal: Principal, body: Record<string, unknown>, authorization?: string | null): Promise<Response> {
+  const req = new Request("http://in-process/run-goal", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(authorization ? { Authorization: authorization } : {}) },
     body: JSON.stringify(body),
-  }), principal);
+  });
+  inboundRequestContext.set(req, { principal });
+  return handleRunGoal(req);
 }
 
 // Modules that cannot import this file (executors/vessel-authoring-scenario-executor.ts) dispatch through this.
-setInProcessRunGoal((b) => runGoalAs(b, SELF_PRINCIPAL));
+setInProcessRunGoal((b) => runGoalAs(SELF_PRINCIPAL, b));
 
-async function runGoalDoor(req: Request, inProcess: Principal | null, remote?: string | null): Promise<Response> {
+/** POST /run-goal: the inbound door (inbound-auth.ts) and the dispatch. */
+async function handleRunGoal(req: Request): Promise<Response> {
+  const reqCtx = inboundRequestContext.get(req);
   // Reject new dispatches while draining for a graceful restart (cutover) so the
   // in-flight set can reach zero; the caller retries against the fresh instance.
   if (draining) return Response.json({ error: "goal-host draining for restart — retry", draining: true }, { status: 503 });
@@ -18425,10 +18436,10 @@ async function runGoalDoor(req: Request, inProcess: Principal | null, remote?: s
   // INBOUND AUTH (inbound-auth.ts), FIRST: before the spend-rate window, any dispatch record, or any LLM call, so an
   // unauthenticated request changes nothing here. An in-process self-call carries its principal and is not re-checked.
   let principal: Principal;
-  if (inProcess) {
-    principal = inProcess;
+  if (reqCtx?.principal) {
+    principal = reqCtx.principal;
   } else {
-    const auth = await authenticateInbound(req.headers, { route: "/run-goal", shape: "run-goal", remote, templateId: parsedBody?.targetTemplateId ?? parsedBody?.target_template_id });
+    const auth = await authenticateInbound(req.headers, { route: "/run-goal", shape: "run-goal", remote: reqCtx?.remote, templateId: parsedBody?.targetTemplateId ?? parsedBody?.target_template_id });
     if (!auth.ok) return auth.response;
     principal = auth.principal;
   }
@@ -19516,11 +19527,11 @@ async function runGoalDoor(req: Request, inProcess: Principal | null, remote?: s
               signal: AbortSignal.timeout(8000),
             });
             // Dispatch the real-chain author (async; do not await its completion here).
-            void runGoalAs({
+            void runGoalAs(SELF_PRINCIPAL, {
               goal: `author runtime activity for operator goal: ${goal.slice(0, 80)}`,
               targetTemplateId: "development-vessel:draft-activity-from-pattern",
               variables: { pattern_id: patternId, patterns_dir: "/workspace/patterns", source: "operator_goal_unservable" },
-            }, SELF_PRINCIPAL).catch(() => { /* best-effort */ });
+            }).catch(() => { /* best-effort */ });
             console.log(`[goal-host-vessel] operator_goal_unservable → real-chain author dispatched (pattern ${patternId})`);
           } catch (routeErr) {
             console.warn("[goal-host-vessel] operator_goal_unservable author-route failed:",
@@ -19680,7 +19691,8 @@ async function runVerdictCorpusNow(trigger: string, givenRunId?: string): Promis
   try { return await _verdictCorpusRun; } finally { _verdictCorpusRun = null; }
 }
 
-async function handleResolve(req: Request, remote?: string | null): Promise<Response> {
+async function handleResolve(req: Request): Promise<Response> {
+  const remote = inboundRequestContext.get(req)?.remote;
   let body: Record<string, unknown>;
   try {
     const parsed = await req.json();
@@ -19735,7 +19747,8 @@ async function handleResolve(req: Request, remote?: string | null): Promise<Resp
             ablation: (body.ablation ?? pointer.ablation),
       }),
     });
-    return runGoalDoor(synthetic, principal, remote);
+    inboundRequestContext.set(synthetic, { principal, remote });
+    return handleRunGoal(synthetic);
   }
 
   if (type === "activeDispatches") {
@@ -20385,7 +20398,7 @@ async function drainInterruptedRequeue(): Promise<void> {
         continue;
       }
       executionStore.delete(r.dispatchId);
-      await runGoalAs({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) }, SELF_PRINCIPAL);
+      await runGoalAs(SELF_PRINCIPAL, { goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) });
       console.log("[goal-host-vessel] requeued interrupted dispatch " + r.dispatchId);
       await new Promise((res) => setTimeout(res, 5000));
     } catch (err) {
@@ -20506,7 +20519,7 @@ try {
     const isEditIntentGoal = typeof r.goal === "string" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(r.goal);
     // The resume carries the record's learning mode (observe-mode.ts): an interrupted observe dispatch resumes as observe.
     const isResumeChild = Array.isArray((r as { tags?: string[] }).tags) && ((r as { tags?: string[] }).tags ?? []).some((t) => t.startsWith("resumed_from:"));
-    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { runGoalAs({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }, SELF_PRINCIPAL).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
+    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { runGoalAs(SELF_PRINCIPAL, { goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
     executionStore.set(r.dispatchId, r);
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
@@ -20565,7 +20578,7 @@ server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/run-goal") {
-      return handleRunGoal(req, remote);
+      return handleRunGoal(markInboundRemote(req, remote));
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/executions/")) {
@@ -20621,7 +20634,7 @@ server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/resolve") {
-      return handleResolve(req, remote);
+      return handleResolve(markInboundRemote(req, remote));
     }
 
     if (req.method === "POST" && url.pathname === "/v2/impulses/resolve") {
@@ -20738,6 +20751,7 @@ export {
   handleRunGoal,
   handleResolve,
   runGoalAs,
+  markInboundRemote,
   executionStore,
   injectedPoolImpulses,
   pendingSolicitations,
