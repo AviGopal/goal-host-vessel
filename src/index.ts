@@ -20050,10 +20050,6 @@ async function handleResolve(req: Request): Promise<Response> {
 
 interface DispatchRecord {
   endedAt?: number;
-  /** The caller's own `operator` field, kept as a label only: it carries no authority (inbound-auth.ts). */
-  operator_label?: string;
-  /** Who the dispatch runs as, from the validated credential (inbound-auth.ts principalRecord). Never the key. */
-  principal?: { kind: "node_self" | "key"; label: string; operator: boolean };
   /** The result's named refusal stage (GoalSeekResult.stage), when it has one. */
   stage?: string;
   /** The result's structured non-success kind (GoalSeekResult.outcome), when it has one. */
@@ -20065,6 +20061,10 @@ interface DispatchRecord {
   requeueOf?: string;
   /** The dispatch's body.learning_mode, kept so a requeue after a restart runs in the same mode (observe-mode.ts). */
   learningMode?: "observe" | "learn";
+  /** The caller's own `operator` field, kept as a label only: it carries no authority (inbound-auth.ts). */
+  operator_label?: string;
+  /** Who the dispatch runs as, from the validated credential (inbound-auth.ts principalRecord). Never the key. */
+  principal?: { kind: "node_self" | "key"; label: string; operator: boolean };
   /** An observe dispatch's dry-run compose: verdict and would-be ops (observe-mode.ts ObserveComposeRecord). */
   observe?: ObserveComposeRecord;
   inferenceConfidence?: number | null;
@@ -20725,6 +20725,11 @@ await discoveryLoop.start();
 // ── STEP-1 (route-as-data refactor): additive exports so the golden characterization test can
 // import the pure reach-route functions + the route-as-data scaffold. Export-only, no runtime
 // behavior change (these names are unchanged; call sites inside this module are unaffected).
+// Tests only (test/inbound-auth-gate.test.ts): the stores an inbound-door refusal must leave unchanged. NOT exported as
+// `executionStore` (test/active-dispatches-pagination-loads.test.ts forbids that route). Only the service restores and
+// persists the dispatch store (the main block), so an importer that writes these maps writes no file.
+const __inboundAuthStateForTests = { executionStore, injectedPoolImpulses, pendingSolicitations };
+
 export {
   verifyDeterministicCompute,
   dcNumericCandidates,
@@ -20752,9 +20757,7 @@ export {
   handleResolve,
   runGoalAs,
   markInboundRemote,
-  executionStore,
-  injectedPoolImpulses,
-  pendingSolicitations,
+  __inboundAuthStateForTests,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 

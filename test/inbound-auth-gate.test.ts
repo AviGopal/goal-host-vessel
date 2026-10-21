@@ -15,7 +15,9 @@
 //   - Controls: a keyed request passes the door; a keyed injection lands attributed to its caller, not the walk;
 //     the read types stay open.
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // A loopback literal: the credential module sends keys over plain http only to private hosts.
 const IDENTITY = "http://127.0.0.1:59151";
@@ -28,9 +30,14 @@ const FORGED_KEY = "inbound-auth-forged-key-fixture";
 // src/index.ts guards its HTTP boot behind import.meta.main and makes its LLM port on first use; the endpoint is still set
 // first (no connection is opened), then dynamic-import (as test/authoritative-root.test.ts does).
 process.env.LLM_VESSEL_ENDPOINT ??= "http://127.0.0.1:65535";
+// Only the service restores and persists the dispatch store (src/index.ts main block), so an import writes no file; this
+// file writes fixture dispatches, so the store path is still a temp file, never the live one (the hazard
+// test/active-dispatches-pagination-loads.test.ts names).
+process.env["GOAL_HOST_DISPATCH_STORE_PATH"] = join(mkdtempSync(join(tmpdir(), "inbound-auth-store-")), "goal-host-dispatches.json");
 const gh = await import("../src/index");
 const ia = await import("../src/inbound-auth");
-const { handleRunGoal, handleResolve, markInboundRemote, executionStore, injectedPoolImpulses, pendingSolicitations } = gh;
+const { handleRunGoal, handleResolve, markInboundRemote, __inboundAuthStateForTests } = gh;
+const { executionStore, injectedPoolImpulses, pendingSolicitations } = __inboundAuthStateForTests;
 const { __resetCredentialCacheForTests } = await import("../src/caller-credential");
 
 const realFetch = globalThis.fetch;
