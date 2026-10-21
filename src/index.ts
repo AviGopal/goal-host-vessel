@@ -7618,6 +7618,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
         endpoint_output_shapes: producedOutputShapes,
         expected_output_shapes: expectedOutputShapes,
         success: reached,
+        reached: reached,
         duration_ms: Math.round(durationMs) || 0,
         cost_usd: costUsd || peekDispatchUsage(dispatchContext.getStore()?.dispatchId).costUsd || 0,
         inference_confidence: inferredTargetDecisionCache.get(goalHashOf(goalText))?.confidence ?? null,
