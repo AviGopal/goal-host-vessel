@@ -98,6 +98,28 @@ describe("MUST-FAIL: the pin sees an off-path copy", () => {
   });
 });
 
+describe("a re-framed walk's origin reaches the live reach gate and its capture", () => {
+  test("the re-framing retry hands the goal's own targets to the re-framed walk", () => {
+    const i = SRC.indexOf(`noteRouteTaken(walk.routeAround, "reframe");`);
+    expect(i).toBeGreaterThan(-1);
+    const call = SRC.slice(i, SRC.indexOf("});", SRC.indexOf("runGoalAsPoolWalk(goal, {", i)));
+    expect(call).toContain("expectedOutputShapes: altShapes,");
+    expect(call).toContain("reframedFrom: Array.isArray(goalTargetDecision.shapes) ? goalTargetDecision.shapes.map((sh) => String(sh)) : undefined,");
+  });
+  test("the walk's write evidence carries it, and the reach site hands that evidence to judge.reachGate", () => {
+    const i = SRC.indexOf("const walkWriteEvidence = (): WriteArtifactEvidence => {");
+    expect(i).toBeGreaterThan(-1);
+    expect(SRC.slice(i, SRC.indexOf("\n  };", i))).toContain("...(opts.reframedFrom && opts.reframedFrom.length > 0 ? { reframedFrom: [...opts.reframedFrom] } : {})");
+    expect(SRC).toContain("judge.reachGate(judgeInputs.reachInput({ goal, writeEvidence, ");
+  });
+  test("the reach gate's capture records the same origin, never a constant null", () => {
+    const f = SRC.indexOf("async function verifyGoalReached(");
+    const body = SRC.slice(f, SRC.indexOf("async function verifyGoalReachedUnrestricted(", f));
+    expect(body).toContain("reframedFrom: writeEvidence?.reframedFrom && writeEvidence.reframedFrom.length > 0 ? [...writeEvidence.reframedFrom] : null,");
+    expect(body).not.toContain("reframedFrom: null,");
+  });
+});
+
 describe("the gate's landing is the shared landedEditOf, and the replay's landed is what the gate was handed", () => {
   test("the reach gate computes landedEdit with landedEditOf and hands landedEdit || writeEvidence.landed to the entry", () => {
     const i = SRC.indexOf("async function verifyGoalReachedUnrestricted(");

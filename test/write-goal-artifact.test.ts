@@ -124,6 +124,27 @@ describe("item 1b: a re-framed walk is judged on the goal's own targets, unfilte
   });
 });
 
+describe("item 1c: the live reach-gate input carries the re-frame origin (judge/inputs.ts reachInput)", () => {
+  const RECORD_GOAL = "Keep what was learned from yesterday's broken deploy as a concept in the graph.";
+  // The walk's write evidence exactly as walkWriteEvidence builds it for a walk re-framed from [concept_write].
+  const liveReframed = { persistedWrites: ["memoryNote_write"], targets: ["memoryNote_write"], postReachSink: true, reframedFrom: ["concept_write"] };
+  test("POSITIVE CONTROL: a re-framed walk's reachInput carries reframed_from and the goal's own targets, and the gate hollows it", () => {
+    const i = reachInput({ goal: RECORD_GOAL, writeEvidence: liveReframed, targets: liveReframed.targets, deliverables: liveReframed.targets, landed: false });
+    expect([i.reframed_from, i.original_targets, i.targets_seen_by_walk]).toEqual([["concept_write"], ["concept_write"], ["memoryNote_write"]]);
+    const v = judge.reachGate(i);
+    expect([v.hollow, v.hollow_class, v.deterministic]).toEqual([true, "reframed-target", true]);
+    const ok = judge.reachGate(reachInput({ goal: RECORD_GOAL, writeEvidence: { ...liveReframed, persistedWrites: ["concept_write"] }, targets: liveReframed.targets, landed: false }));
+    expect(ok.hollow).toBe(false);
+  });
+  test("NEGATIVE CONTROL: a walk that was not re-framed carries reframed_from:null and its targets as before", () => {
+    const targets = ["substrateGap_write"];
+    const i = reachInput({ goal: "File a gap recording that the review stage stalled.", writeEvidence: { persistedWrites: ["substrateGap_write"], targets, postReachSink: true }, targets, landed: false });
+    expect([i.reframed_from, i.original_targets]).toEqual([null, ["substrateGap_write"]]);
+    expect(reachInput({ goal: RECORD_GOAL, writeEvidence: { ...liveReframed, reframedFrom: [] }, targets: liveReframed.targets, landed: false }).reframed_from).toBeNull();
+    expect(reachInput({ goal: RECORD_GOAL, writeEvidence: { ...liveReframed, reframedFrom: null }, targets: liveReframed.targets, landed: false }).reframed_from).toBeNull();
+  });
+});
+
 describe("item 2: a write/call success claim with zero tools and zero writes is hollow by construction", () => {
   test("(b) a plan text claiming a write and (c) a generic 0-tool claim are claims", () => {
     expect(claimsWriteSucceeded(PLAN_FINAL_TEXT)).toBe(true);
