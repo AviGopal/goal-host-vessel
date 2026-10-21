@@ -1,4 +1,4 @@
-// COPY, NAMED DEBT. Source: development-vessel src/lib/caller-credential.ts at commit 8b32196e36b09cef53566a8e3cd35f50419960bc.
+// COPY, NAMED DEBT. Source: development-vessel src/lib/caller-credential.ts at commit 0d42c330f0afd994176a91e9aceab99dbd190ba5.
 // goal-host-vessel has no shared package to import the fleet's credential check from, so it carries this module byte
 // for byte until a shared package replaces both copies. Do not edit below the marker: test/caller-credential-golden
 // .test.ts pins those bytes to the shared table test/fixtures/caller-credential-cases.json, which is identical in both
@@ -217,14 +217,16 @@ export async function identityCredential(authHeader: string | undefined, opts: {
 // targets: left open, an unauthenticated caller could have it re-post any gated write to this
 // route with the vessel's credential. dispatch_goal is here for the same reason: it forwards the goal
 // to goal-host /run-goal with this vessel's fleet key, so left open, an unauthenticated caller starts
-// a walk (an edit-intent goal included) as this vessel.
+// a walk (an edit-intent goal included) as this vessel. feature_compose and gap_to_feature draft, verify
+// and land code changes through this vessel's in-process cutover: left open, any caller starts a
+// compose (and could claim `directed`, which the route now derives only from an operator credential).
 export const MUTATING_PRIMITIVES: ReadonlySet<string> = new Set([
   "fs_write", "fs_edit",
   "git_add", "git_commit", "git_push", "git_branch_create",
   "gh_pr_create", "gh_pr_merge", "gh_repo_create",
   "patch_with_tools", "apply_proposal_as_patch",
   "systemd_restart", "pull_cutover", "surrealdb_import", "activate_substrate_script", "vessel_mitosis_cutover",
-  "http_fetch", "dispatch_goal",
+  "http_fetch", "dispatch_goal", "feature_compose", "gap_to_feature",
 ]);
 
 /** Whether a pointer of this type writes, and so must carry an authenticated credential. */
