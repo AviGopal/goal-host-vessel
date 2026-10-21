@@ -14,6 +14,8 @@ export interface WriteArtifactEvidence {
   postReachSink?: boolean;
   /** Which judge site this is (neutral: walk). */
   surface?: "walk" | "floor" | "recovery";
+  /** A re-framed walk only: the goal's own targets it was re-framed FROM (neutral: absent, not re-framed). */
+  reframedFrom?: readonly string[] | null;
 }
 
 export function reachInput(a: {
@@ -27,14 +29,17 @@ export function reachInput(a: {
   producedShapes?: readonly string[];
   digest?: string | null;
 }): ReachGateInput {
+  // A re-framed walk's targets are the re-framed ones; the goal's own targets, before re-framing, are
+  // what it was re-framed from, so they are the original targets the rule holds the walk to.
+  const reframedFrom = a.writeEvidence.reframedFrom && a.writeEvidence.reframedFrom.length > 0 ? [...a.writeEvidence.reframedFrom] : null;
   return {
     schema: JUDGE_INPUT_SCHEMA,
     entry: "reachGate",
     goal: a.goal,
-    original_targets: [...(a.inferredTargets ?? a.deliverables ?? a.targets)],
+    original_targets: [...(reframedFrom ?? a.inferredTargets ?? a.deliverables ?? a.targets)],
     deliverables: a.deliverables ? [...a.deliverables] : null,
     targets_seen_by_walk: [...a.targets],
-    reframed_from: null,
+    reframed_from: reframedFrom,
     evidence: { ...neutralEvidence(), persisted_writes: [...a.writeEvidence.persistedWrites], landed: a.landed, post_reach_sink: a.writeEvidence.postReachSink === true, produced_shapes: [...(a.producedShapes ?? [])] },
     surface: a.writeEvidence.surface ?? "walk",
     digest_excerpt: a.digest ? a.digest.slice(0, 2000) : null,

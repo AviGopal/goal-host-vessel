@@ -3837,7 +3837,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
     originalTargets: inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? null,
     deliverables: deliverables ?? null,
     targetsSeenByWalk: writeEvidence?.targets ?? deliverables ?? null,
-    reframedFrom: null,
+    reframedFrom: writeEvidence?.reframedFrom && writeEvidence.reframedFrom.length > 0 ? [...writeEvidence.reframedFrom] : null,
     persistedWrites: writeEvidence?.persistedWrites ?? null,
     landed: writeEvidence?.landed ?? null,
     // The gate's EFFECTIVE landed value, exactly as writeGoalArtifactGate is handed it.
@@ -8696,6 +8696,9 @@ async function runGoalAsPoolWalkBody(
     /** Caller-owned, dispatch-wide record of executions whose arm a walk WITHHELD β for (execution id -> reason).
      *  Walks only add to it; every POST /reach for an execution named in it carries beta_withheld. */
     betaWithheld?: Map<string, string>;
+    /** A RE-FRAMED walk only: the goal's own target shapes it was re-framed FROM. Carried on the walk's write
+     *  evidence, so the reach gate (judge entry reachGate) holds the re-framed walk to the goal's own targets. */
+    reframedFrom?: readonly string[];
     /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
     suppressSatisfierShapes?: string[];
     /** FEEDBACK EDGE (hill-climb retry): the prior attempt's reach verdict reason, injected into the
@@ -9431,7 +9434,7 @@ async function runGoalAsPoolWalkBody(
     const seen = new Set<string>([...producedShapes, ...terminalShapes, ...target]);
     for (const k of verifiedWrites) if (k.startsWith("satisfier:")) seen.add(k.slice("satisfier:".length));
     const persistedWrites = [...seen].filter((sh) => isMutationShape(sh) && (appliedWrites.appliedCount(sh) > 0 || verifiedWrites.has(`satisfier:${sh}`)));
-    return { persistedWrites, targets: [...terminalShapes, ...target], postReachSink: true };
+    return { persistedWrites, targets: [...terminalShapes, ...target], postReachSink: true, ...(opts.reframedFrom && opts.reframedFrom.length > 0 ? { reframedFrom: [...opts.reframedFrom] } : {}) };
   };
   /** Bumped on every rawResolve, so a caller can tell whether lastRawResolveReason is about ITS
    *  resolve or a previous shape's (vesselResolveShape can return null before resolving at all). */
@@ -15549,6 +15552,7 @@ async function runGoalWithRecoveryInner(
             compositionChain: opts.compositionChain,
             expectedOutputShapes: altShapes,
             terminalOutputShapes: undefined,
+            reframedFrom: Array.isArray(goalTargetDecision.shapes) ? goalTargetDecision.shapes.map((sh) => String(sh)) : undefined,
             carryFrom: walk.carry,
             surface: opts.surface,
             stepSink: opts.stepSink,
