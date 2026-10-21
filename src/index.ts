@@ -345,6 +345,8 @@ import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
+import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, operatorAuthority, inboundAuthCounters, type Principal } from "./inbound-auth";
+import { setInProcessRunGoal } from "./in-process-dispatch";
 import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, pickConceptDbRow, isOwnSubstrateRow, type ProducerRow } from "./producer-order";
 import type {
   EventSink,
@@ -5212,7 +5214,7 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   }
   console.log(`[rebind] result for "${shape}": selected=${!!best} candidates=${candidates} refusals: ${Object.entries(refusals).map(([k,n])=>k+"x"+n).join(" ")}`); return best;
 }
-function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } if (observeSkip("child_dispatch")) return; /* OBSERVE (observe-mode.ts): a child dispatch would run as learn */ fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }) }).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
+function escalateNoProducerToInvestigation(goal: string, confidence: number | null): void { if (/^investigate and decompose/i.test(goal)) { return; } if (observeSkip("child_dispatch")) return; /* OBSERVE (observe-mode.ts): a child dispatch would run as learn */ runGoalAs({ goal: "investigate and decompose goal: " + goal, tags: ["escalated_from:no_producer"] }, SELF_PRINCIPAL).catch((e) => console.warn("[escalate-investigation] self-dispatch failed: " + (e as Error).message)); console.log("[goal-host-vessel] no-producer-across-alternatives (inference confidence=" + String(confidence) + ") - routed to investigate-and-decompose"); }
 
 // ── UNIVERSAL TOOL-ENABLED FALLBACK (2026-07-11) ────────────────────────────
 // When the structured shape-walk produces a HOLLOW result (an always-succeeds /
@@ -11522,8 +11524,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     injectedPoolImpulses.delete(wid);
     for (const inj of queued) {
       producedShapes.add(inj.shape);
-      poolImpulses.push(mkImpulse(inj.shape, inj.content, inj.summary ?? `human-contributed impulse (${inj.shape})`));
-      tap(`[goal-host-vessel] walk(${opts.surface}): human-injected impulse added to pool shape=${inj.shape}`);
+      poolImpulses.push(mkImpulse(inj.shape, inj.content, inj.summary ?? `human-contributed impulse (${inj.shape})`, inj.producedBy ? { producedBy: inj.producedBy } : undefined));
+      tap(`[goal-host-vessel] walk(${opts.surface}): human-injected impulse added to pool shape=${inj.shape} by=${inj.producedBy ?? "unattributed"}`);
     }
   };
   // ADDITIVE WALK (V8; output-shapes step 2, agentic-floor D P6): a retry / re-frame starts from the
@@ -16783,7 +16785,7 @@ async function runGoalWithRecoveryInner(
             opts.variables.human_input = sol.answer;
             const lastTried = excluded.pop()!;
             nextTarget = lastTried;
-            tap(`[goal-host-vessel] ${opts.surface}: human answered solicitation — retrying ${lastTried} with human_input context`);
+            tap(`[goal-host-vessel] ${opts.surface}: human answered solicitation (by ${sol.answeredBy ?? "unattributed"}) — retrying ${lastTried} with human_input context`);
             continue;
           }
           if (sol) tap(`[goal-host-vessel] ${opts.surface}: human solicitation outcome=${sol.outcome} — proceeding to honest failure`);
@@ -18382,7 +18384,28 @@ async function searchWorkspaceForTerm(
   }
 }
 
-async function handleRunGoal(req: Request): Promise<Response> {
+/** POST /run-goal: the inbound door (inbound-auth.ts). `remote` is the socket address, for the refusal hint only. */
+async function handleRunGoal(req: Request, remote?: string | null): Promise<Response> {
+  return runGoalDoor(req, null, remote);
+}
+
+/**
+ * goal-host dispatching IN PROCESS (requeue, resume, escalation, the unserved-goal author, the vessel-authoring
+ * executor): the same handler as /run-goal with the principal given, so no HTTP round trip and no key. `authorization`
+ * is carried only where a caller's own header must reach development-vessel (goalDispatchAsync's operator credential).
+ */
+function runGoalAs(body: Record<string, unknown>, principal: Principal, authorization?: string | null): Promise<Response> {
+  return runGoalDoor(new Request("http://in-process/run-goal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(authorization ? { Authorization: authorization } : {}) },
+    body: JSON.stringify(body),
+  }), principal);
+}
+
+// Modules that cannot import this file (executors/vessel-authoring-scenario-executor.ts) dispatch through this.
+setInProcessRunGoal((b) => runGoalAs(b, SELF_PRINCIPAL));
+
+async function runGoalDoor(req: Request, inProcess: Principal | null, remote?: string | null): Promise<Response> {
   // Reject new dispatches while draining for a graceful restart (cutover) so the
   // in-flight set can reach zero; the caller retries against the fresh instance.
   if (draining) return Response.json({ error: "goal-host draining for restart — retry", draining: true }, { status: 503 });
@@ -18390,14 +18413,27 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // walks retryably so in-flight falls to zero before the restart; running walks continue.
   const quiesceRefused = quiesceRefusal();
   if (quiesceRefused) return quiesceRefused;
-  let body: Record<string, unknown>;
+  let parsedBody: Record<string, unknown> | null = null;
+  let parseError: string | null = null;
   try {
     const parsed = await req.json();
     if (typeof parsed !== "object" || parsed === null) throw new Error("body must be an object");
-    body = parsed as Record<string, unknown>;
+    parsedBody = parsed as Record<string, unknown>;
   } catch (err) {
-    return Response.json({ error: (err as Error).message }, { status: 400 });
+    parseError = (err as Error).message;
   }
+  // INBOUND AUTH (inbound-auth.ts), FIRST: before the spend-rate window, any dispatch record, or any LLM call, so an
+  // unauthenticated request changes nothing here. An in-process self-call carries its principal and is not re-checked.
+  let principal: Principal;
+  if (inProcess) {
+    principal = inProcess;
+  } else {
+    const auth = await authenticateInbound(req.headers, { route: "/run-goal", shape: "run-goal", remote, templateId: parsedBody?.targetTemplateId ?? parsedBody?.target_template_id });
+    if (!auth.ok) return auth.response;
+    principal = auth.principal;
+  }
+  if (!parsedBody) return Response.json({ error: parseError ?? "body must be an object" }, { status: 400 });
+  const body: Record<string, unknown> = parsedBody;
 
   // ONE canonical goal text from ingress on (goal-intent.ts canonicalGoalText): every goal-text predicate downstream
   // reads the same typography-folded string, so "don’t" and "don't" route alike.
@@ -18529,7 +18565,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
           return undefined;
         }));
   const _routingInput = rawGoal === undefined || goal === undefined ? null : _routeRec.finish(rawGoal, goal);
-  const operator = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
+  // The body's `operator` is a LABEL the caller claims (operator_label on the record). Operator AUTHORITY (trigger
+  // "operator", operatorOrigin, the operator trace tag, the vault WHY note, the operator-goal-unserved gap) comes only
+  // from a credential carrying "operator:direct" or "admin" (inbound-auth.ts operatorAuthority); the node's own key never.
+  const operatorLabel = typeof body.operator === "string" && body.operator.length > 0 ? body.operator : undefined;
+  const operator = operatorAuthority(operatorLabel, principal);
 
   // A GOAL WITH A COLLAPSED INTERPOLATION IS NOT ANSWERABLE — REFUSE IT AT THE DOOR.
   //
@@ -18752,7 +18792,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
     // arrived on rather than serializing trigger:null (an unattributable dispatch).
     return "run-goal";
   })();
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}), ...(learningMode ? { learningMode } : {}) };
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(operatorLabel ? { operator_label: operatorLabel } : {}), principal: principalRecord(principal), ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}), ...(learningMode ? { learningMode } : {}) };
   judgeCapture.attachRoutingInput(record, _routingInput);
   executionStore.set(dispatchId, record);
   persistDispatchStore();
@@ -19476,15 +19516,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
               signal: AbortSignal.timeout(8000),
             });
             // Dispatch the real-chain author (async; do not await its completion here).
-            void fetch(`${GOAL_HOST_ENDPOINT}/run-goal`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `ApiKey ${process.env.METABOB_API_KEY ?? ""}` },
-              body: JSON.stringify({
-                goal: `author runtime activity for operator goal: ${goal.slice(0, 80)}`,
-                targetTemplateId: "development-vessel:draft-activity-from-pattern",
-                variables: { pattern_id: patternId, patterns_dir: "/workspace/patterns", source: "operator_goal_unservable" },
-              }),
-            }).catch(() => { /* best-effort */ });
+            void runGoalAs({
+              goal: `author runtime activity for operator goal: ${goal.slice(0, 80)}`,
+              targetTemplateId: "development-vessel:draft-activity-from-pattern",
+              variables: { pattern_id: patternId, patterns_dir: "/workspace/patterns", source: "operator_goal_unservable" },
+            }, SELF_PRINCIPAL).catch(() => { /* best-effort */ });
             console.log(`[goal-host-vessel] operator_goal_unservable → real-chain author dispatched (pattern ${patternId})`);
           } catch (routeErr) {
             console.warn("[goal-host-vessel] operator_goal_unservable author-route failed:",
@@ -19644,7 +19680,7 @@ async function runVerdictCorpusNow(trigger: string, givenRunId?: string): Promis
   try { return await _verdictCorpusRun; } finally { _verdictCorpusRun = null; }
 }
 
-async function handleResolve(req: Request): Promise<Response> {
+async function handleResolve(req: Request, remote?: string | null): Promise<Response> {
   let body: Record<string, unknown>;
   try {
     const parsed = await req.json();
@@ -19664,16 +19700,28 @@ async function handleResolve(req: Request): Promise<Response> {
 
   const type = (body.type as string | undefined) ?? (pointer.type as string | undefined);
 
-  if (type === "goal_dispatch_async" || type === "goalDispatchAsync") {
+  // INBOUND AUTH (inbound-auth.ts): every type that dispatches or writes needs a credential identity validates, checked
+  // before the handler touches anything. Reads (activeDispatches, goalWalkState, the policies, ...) stay open.
+  let principal: Principal | null = null;
+  if (typeof type === "string" && GATED_RESOLVE_TYPES.has(type)) {
+    const auth = await authenticateInbound(req.headers, { route: "/resolve", shape: type, remote, templateId: body.target_template_id ?? body.targetTemplateId ?? pointer.target_template_id ?? pointer.targetTemplateId });
+    if (!auth.ok) return auth.response;
+    principal = auth.principal;
+  }
+
+  if ((type === "goal_dispatch_async" || type === "goalDispatchAsync") && principal) {
     // Async dispatch over the federation ingress: enqueue via the SAME async path as
     // /run-goal and return the dispatchId immediately (fast — fits the ingress forward
     // cap, unlike synchronous goal_execution which runs the whole goal). Lets a remote
     // vault dispatch a goal over the relay; results stream back over the WS sync.
     const g = typeof body.goal === "string" ? body.goal : (typeof pointer.goal === "string" ? pointer.goal : undefined);
     if (!g) return Response.json({ error: "goal is required for goalDispatchAsync" }, { status: 400 });
+    // In process, as the validated principal; the caller's own Authorization rides along so an operator-scoped
+    // dispatch still forwards it to development-vessel (operator-credential.ts), which it lost on this path before.
+    const _authz = req.headers.get("authorization");
     const synthetic = new Request("http://local/run-goal", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(_authz ? { Authorization: _authz } : {}) },
       body: JSON.stringify({
         goal: g,
         variables: (body.variables ?? pointer.variables ?? {}),
@@ -19687,7 +19735,7 @@ async function handleResolve(req: Request): Promise<Response> {
             ablation: (body.ablation ?? pointer.ablation),
       }),
     });
-    return handleRunGoal(synthetic);
+    return runGoalDoor(synthetic, principal, remote);
   }
 
   if (type === "activeDispatches") {
@@ -19764,7 +19812,7 @@ async function handleResolve(req: Request): Promise<Response> {
       body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
     });
   }
-  if (type === "poolImpulse_write") {
+  if (type === "poolImpulse_write" && principal) {
     const wid = (typeof body.dispatchId === "string" ? body.dispatchId : undefined)
       ?? (typeof pointer.dispatchId === "string" ? pointer.dispatchId : undefined);
     const shape = (typeof body.shape === "string" ? body.shape : undefined)
@@ -19777,11 +19825,12 @@ async function handleResolve(req: Request): Promise<Response> {
     if (!rec) return Response.json({ resolved: false, shape: "poolImpulse_write", error: "dispatch not found" }, { status: 404 });
     if (rec.status !== "running") return Response.json({ resolved: false, shape: "poolImpulse_write", error: `dispatch is ${rec.status}, not running` }, { status: 409 });
     const q = injectedPoolImpulses.get(wid) ?? [];
-    q.push({ shape, content: content ?? null, summary });
+    // PROVENANCE: the impulse is the caller's, never the walk's own production (mkImpulse's default "goal-host-walk").
+    q.push({ shape, content: content ?? null, summary, producedBy: principalLabel(principal) });
     injectedPoolImpulses.set(wid, q);
     return Response.json({ resolved: true, shape: "poolImpulse_write", body: { queued: q.length, dispatchId: wid } });
   }
-  if (type === "solicitationHeartbeat_write") {
+  if (type === "solicitationHeartbeat_write" && principal) {
     const sid = (typeof body.solicitationId === "string" ? body.solicitationId : undefined)
       ?? (typeof pointer.solicitationId === "string" ? pointer.solicitationId : undefined);
     if (!sid) return Response.json({ resolved: false, shape: "solicitationHeartbeat_write", error: "solicitationId is required" }, { status: 400 });
@@ -19791,7 +19840,7 @@ async function handleResolve(req: Request): Promise<Response> {
     sol.deadlineAt = Math.min(Date.now() + SOLICITATION_HEARTBEAT_EXTENSION_MS, sol.maxDeadlineAt);
     return Response.json({ resolved: true, shape: "solicitationHeartbeat_write", body: { solicitationId: sid, deadlineAt: sol.deadlineAt, maxDeadlineAt: sol.maxDeadlineAt } });
   }
-  if (type === "solicitationResponse_write") {
+  if (type === "solicitationResponse_write" && principal) {
     const sid = (typeof body.solicitationId === "string" ? body.solicitationId : undefined)
       ?? (typeof pointer.solicitationId === "string" ? pointer.solicitationId : undefined);
     const outcome = (typeof body.outcome === "string" ? body.outcome : undefined)
@@ -19803,6 +19852,7 @@ async function handleResolve(req: Request): Promise<Response> {
     if (!sol || sol.outcome !== "pending") return Response.json({ resolved: false, shape: "solicitationResponse_write", error: "no pending solicitation with that id" }, { status: 404 });
     sol.outcome = outcome as "answered" | "declined" | "insufficient_context";
     sol.answer = "answer" in body ? body.answer : (pointer as Record<string, unknown>)["answer"];
+    sol.answeredBy = principalLabel(principal);
     return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome: sol.outcome } });
   }
   if (type === "fleetActivityFeed") { return Response.json({ resolved: true, shape: "fleetActivityFeed", body: await buildFleetActivityFeedBody() }); }
@@ -19987,6 +20037,10 @@ async function handleResolve(req: Request): Promise<Response> {
 
 interface DispatchRecord {
   endedAt?: number;
+  /** The caller's own `operator` field, kept as a label only: it carries no authority (inbound-auth.ts). */
+  operator_label?: string;
+  /** Who the dispatch runs as, from the validated credential (inbound-auth.ts principalRecord). Never the key. */
+  principal?: { kind: "node_self" | "key"; label: string; operator: boolean };
   /** The result's named refusal stage (GoalSeekResult.stage), when it has one. */
   stage?: string;
   /** The result's structured non-success kind (GoalSeekResult.outcome), when it has one. */
@@ -20290,7 +20344,7 @@ const executionStore = new Map<string, DispatchRecord>();
 // Pool insertion (poolImpulse_write): human-contributed impulses queued per
 // dispatchId; the running walk drains this queue at the top of each iteration.
 // Strictly additive — injected shapes unlock candidates on the next rescan.
-const injectedPoolImpulses = new Map<string, Array<{ shape: string; content: unknown; summary?: string }>>();
+const injectedPoolImpulses = new Map<string, Array<{ shape: string; content: unknown; summary?: string; producedBy?: string }>>();
 // Human-solicitation (WS5): pending solicitations awaiting a human answer.
 // Populated by solicitHumanInput (recovery loop); a present human vault answers
 // via solicitationResponse_write; typing in the answer card sends
@@ -20306,6 +20360,8 @@ interface PendingSolicitation {
   maxDeadlineAt: number;
   outcome: "pending" | "answered" | "declined" | "insufficient_context" | "timeout";
   answer?: unknown;
+  /** Who answered (inbound-auth.ts principalLabel), recorded in the walk log beside the retry it grants. */
+  answeredBy?: string;
   composing: boolean;
 }
 const pendingSolicitations = new Map<string, PendingSolicitation>();
@@ -20329,11 +20385,7 @@ async function drainInterruptedRequeue(): Promise<void> {
         continue;
       }
       executionStore.delete(r.dispatchId);
-      await fetch("http://127.0.0.1:" + PORT + "/run-goal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) })
-      });
+      await runGoalAs({ goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) }, SELF_PRINCIPAL);
       console.log("[goal-host-vessel] requeued interrupted dispatch " + r.dispatchId);
       await new Promise((res) => setTimeout(res, 5000));
     } catch (err) {
@@ -20454,7 +20506,7 @@ try {
     const isEditIntentGoal = typeof r.goal === "string" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(r.goal);
     // The resume carries the record's learning mode (observe-mode.ts): an interrupted observe dispatch resumes as observe.
     const isResumeChild = Array.isArray((r as { tags?: string[] }).tags) && ((r as { tags?: string[] }).tags ?? []).some((t) => t.startsWith("resumed_from:"));
-    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { fetch("http://127.0.0.1:" + PORT + "/run-goal", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
+    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { runGoalAs({ goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }, SELF_PRINCIPAL).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
     executionStore.set(r.dispatchId, r);
   }
   console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
@@ -20465,8 +20517,10 @@ setInterval(persistDispatchStore, 5000);
 verdictConsistency.setVerdictConsistencyRoot(dirname(DISPATCH_STORE_PATH));
 server = Bun.serve({
   port: PORT,
-  async fetch(req) {
+  async fetch(req, srv) {
     const url = new URL(req.url);
+    // The socket address, for an inbound-auth refusal's caller hint only (never an identity).
+    const remote = (() => { try { return srv.requestIP(req)?.address ?? null; } catch { return null; } })();
 
     if (req.method === "GET" && url.pathname === "/health") {
       return Response.json({
@@ -20505,11 +20559,13 @@ server = Bun.serve({
         // The executor's task-level drops (ias-executor-ts writeDoorTaskCounters); null on a dist that predates the door.
         write_door_ias_task: (iasExecutor as unknown as { writeDoorTaskCounters?: () => unknown }).writeDoorTaskCounters?.() ?? null,
         observe_skips: observeSkipCounters(),
+        // Inbound door refusals (src/inbound-auth.ts), in total and by caller hint. Never anything about a key.
+        inbound_auth: inboundAuthCounters(),
       });
     }
 
     if (req.method === "POST" && url.pathname === "/run-goal") {
-      return handleRunGoal(req);
+      return handleRunGoal(req, remote);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/executions/")) {
@@ -20565,7 +20621,7 @@ server = Bun.serve({
     }
 
     if (req.method === "POST" && url.pathname === "/resolve") {
-      return handleResolve(req);
+      return handleResolve(req, remote);
     }
 
     if (req.method === "POST" && url.pathname === "/v2/impulses/resolve") {
@@ -20679,6 +20735,12 @@ export {
   isDeterministicVerdict,
   dispatchContext,
   readGapByIdForOracle,
+  handleRunGoal,
+  handleResolve,
+  runGoalAs,
+  executionStore,
+  injectedPoolImpulses,
+  pendingSolicitations,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
 

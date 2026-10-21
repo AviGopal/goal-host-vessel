@@ -1,6 +1,7 @@
 import { vesselAuthoringScenarioQueueConsumer } from "../consumers/vessel-authoring-scenario-queue-consumer";
 import type { GoalTask } from "../types/goal-compose";
 import { Config } from "../config";
+import { inProcessRunGoal } from "../in-process-dispatch";
 
 export interface VesselScaffoldDispatchResult {
   consumer: string;
@@ -99,27 +100,33 @@ export async function executeVesselAuthoringScenarioConsumer(
     pr_body: string;
   };
 
-  // Step 5: http_fetch POST to /run-goal
-  const goalUrl = overrideUrl ?? `${Config.goalHostEndpoint}/run-goal`;
-  await fetch(goalUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      goal: "development-vessel:scaffold-and-publish-vessel",
-      vessel_name: llmResult.vessel_name,
-      port: llmResult.port,
-      advertised_shapes_literal: llmResult.advertised_shapes_literal,
-      description: llmResult.description,
-      commit_message: llmResult.commit_message,
-      pr_title: llmResult.pr_title,
-      pr_body: llmResult.pr_body,
-      cwd: "/workspace",
-      owner: "metabob",
-      repo: "metabob-devbob",
-      base_branch: "dev",
-      target_branch: `substrate-authored/${llmResult.vessel_name}-scaffold`,
-    }),
-  });
+  // Step 5: dispatch the scaffold. goal-host's own /run-goal is called IN PROCESS (in-process-dispatch.ts): over HTTP
+  // it would be refused by the inbound door. An override URL is a caller's choice and is POSTed as before, with no key.
+  const scaffoldBody = {
+    goal: "development-vessel:scaffold-and-publish-vessel",
+    vessel_name: llmResult.vessel_name,
+    port: llmResult.port,
+    advertised_shapes_literal: llmResult.advertised_shapes_literal,
+    description: llmResult.description,
+    commit_message: llmResult.commit_message,
+    pr_title: llmResult.pr_title,
+    pr_body: llmResult.pr_body,
+    cwd: "/workspace",
+    owner: "metabob",
+    repo: "metabob-devbob",
+    base_branch: "dev",
+    target_branch: `substrate-authored/${llmResult.vessel_name}-scaffold`,
+  };
+  const local = overrideUrl ? null : inProcessRunGoal();
+  if (local) {
+    await local(scaffoldBody);
+  } else {
+    await fetch(overrideUrl ?? `${Config.goalHostEndpoint}/run-goal`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(scaffoldBody),
+    });
+  }
 
   return buildVesselScaffoldDispatchResult();
 }
