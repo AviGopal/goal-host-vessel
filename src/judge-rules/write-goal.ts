@@ -135,11 +135,30 @@ export function writeGoalArtifactGate(goal: string, ev: WriteArtifactEvidence): 
 }
 
 /**
+ * A RE-FRAMED WALK IS JUDGED ON THE GOAL'S OWN TARGETS. When the walk was re-framed (`reframed_from`
+ * set) and the goal's original targets, unfiltered, include a mutation shape, only a landed sha or a
+ * persisted write of one of THOSE targets reaches it. A write of a re-framed target (a memory note for
+ * a goal that asked for a concept) is the re-framing's artifact, not the goal's. This reads the
+ * original targets because the re-framed `targets_seen_by_walk`, once the post-reach-sink filter drops
+ * the prose sinks, can be empty, and an empty target list reads as no write intent at all.
+ */
+export function reframedTargetMissed(input: ReachGateInput): boolean {
+  const from = input.reframed_from ?? [];
+  if (from.length === 0) return false;
+  const original = new Set([...(input.original_targets ?? []), ...from].filter(isMutationShape));
+  if (original.size === 0) return false;
+  if (input.evidence.landed) return false;
+  return !input.evidence.persisted_writes.some((w) => original.has(w));
+}
+
+/**
  * The reach-gate decision on a judge-input record. `reached: true` means THIS rule does not hollow the
  * verdict (the later layers decide); `reached: false` is a hollow the core returns as the verdict.
- * The gate classifies on the targets the judge site resolved (`targets_seen_by_walk`).
+ * A re-framed walk is first held to the goal's original targets (reframedTargetMissed); otherwise the
+ * gate classifies on the targets the judge site resolved (`targets_seen_by_walk`).
  */
 export function reachGate(input: ReachGateInput): RuleVerdict {
+  if (reframedTargetMissed(input)) return { reached: false, hollow_class: "reframed-target", reason_code: "reframed-target", deterministic: true };
   const g = writeGoalArtifactGate(input.goal, {
     persistedWrites: input.evidence.persisted_writes,
     targets: input.targets_seen_by_walk,

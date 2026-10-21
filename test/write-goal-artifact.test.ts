@@ -18,6 +18,7 @@ import { shortcutAllowed } from "../src/judge-rules/floor";
 import { claimsWriteSucceeded, floorCompletionShapes, zeroToolWriteClaim } from "../src/judge/floor-clamps";
 import * as judge from "../src/judge/entries";
 import { reachInput, shortcutInput } from "../src/judge/inputs";
+import { JUDGE_INPUT_SCHEMA, neutralEvidence, type ReachGateInput } from "../src/judge/records";
 
 const MECHANISM_CHANGE_GOAL = "Some learned procedures fail every time, the failures are already on record, and they are still chosen first. Make that record stop them being chosen, and let selection fall back to a procedure that works.";
 const STALL_NOTICE_GOAL = "A queue of the system's own work items can stop moving at any stage and nothing notices except a person reading logs. Make the system notice by itself when a stage stops advancing and treat that as a work item of its own. Whatever it adds must fire on flow stopping, not on backlog size.";
@@ -94,6 +95,32 @@ describe("item 1: a change/write goal counts as reached only with an artifact", 
   });
   test("a note edit names a prose destination, so the note write IS its artifact", () => {
     expect(writeGoalArtifactGate("Update my notes with today's findings", { persistedWrites: ["write_note"], targets: [] }).hollow).toBe(false);
+  });
+});
+
+describe("item 1b: a re-framed walk is judged on the goal's own targets, unfiltered", () => {
+  // A record goal re-framed from its own target (concept_write) to a memory note: the class of corpus case 0005.
+  const RECORD_GOAL = "Keep what was learned from yesterday's broken deploy as a concept in the graph.";
+  const reframed = (persisted: string[], over: Partial<ReachGateInput> = {}): ReachGateInput => ({
+    schema: JUDGE_INPUT_SCHEMA, entry: "reachGate", goal: RECORD_GOAL,
+    original_targets: ["concept_write"], deliverables: null, targets_seen_by_walk: ["memoryNote_write"], reframed_from: ["concept_write"],
+    evidence: { ...neutralEvidence(), persisted_writes: persisted, post_reach_sink: true },
+    surface: "walk", digest_excerpt: null, ...over,
+  });
+  test("a write of the re-framed target only -> HOLLOW reframed-target, deterministic, and the core renders the reason", () => {
+    const v = judge.reachGate(reframed(["memoryNote_write"]));
+    expect([v.hollow, v.hollow_class, v.reason_code, v.deterministic, v.fell_back]).toEqual([true, "reframed-target", "reframed-target", true, false]);
+    expect(v.reason).toBe("deterministic:reframed-target — the walk was re-framed from [concept_write] and reached only a re-framed target; the goal's own target was never produced");
+    expect(judge.reachGate(reframed([])).hollow_class).toBe("reframed-target");
+  });
+  test("NEGATIVE CONTROL: the re-framed walk persisted the ORIGINAL target, or landed -> not hollowed here", () => {
+    expect(judge.reachGate(reframed(["concept_write"])).hollow).toBe(false);
+    expect(judge.reachGate(reframed(["memoryNote_write", "concept_write"])).hollow).toBe(false);
+    expect(judge.reachGate(reframed([], { evidence: { ...neutralEvidence(), landed: true, post_reach_sink: true } })).hollow).toBe(false);
+  });
+  test("NEGATIVE CONTROL: no re-framing, or a re-framed read goal with no mutation target, is left to the existing gate", () => {
+    expect(judge.reachGate(reframed(["memoryNote_write"], { reframed_from: null })).hollow).toBe(false);
+    expect(judge.reachGate(reframed([], { goal: "Summarise what changed in the walk budget over the last week", original_targets: ["summary_report"], reframed_from: ["summary_report"], targets_seen_by_walk: ["llm_completion"] })).hollow).toBe(false);
   });
 });
 
