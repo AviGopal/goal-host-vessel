@@ -48,6 +48,13 @@ const REAL = await import("../../src/judge-rules/index");
 export const GATE_REVERTED: ReplayOverrides = { rules: { reachGate: () => passV, floorDecide: (i) => REAL.floorDecide(i as never), floorShortcutAllowed: (i) => REAL.floorShortcutAllowed(i), reframeAccept: (i) => REAL.reframeAccept(i) } };
 
 const green = corpus.cases.filter((c) => c.status_at_append === "green");
+/**
+ * RETIRED: cases recorded known_red at append whose fix has since landed, so they replay GREEN today. A case's
+ * status_at_append is the record of its append, sealed by the manifest's hash chain and never rewritten; what
+ * retires a fixed case live is the gate's ever-green record (classify / everRedCases), not an edit of the case.
+ * Each id here must be known_red by record AND green today (asserted below), so a regression of its fix is red.
+ */
+const RETIRED: readonly string[] = ["0005-reframed-target-write"];
 const isSeed = (c: CorpusCase) => !c.control && c.provenance.source !== "harness-scenario";
 
 describe("MUST-FAIL: every green seed is red under the mutant that reinstates its false positive", () => {
@@ -58,6 +65,10 @@ describe("MUST-FAIL: every green seed is red under the mutant that reinstates it
   for (const c of green.filter(isSeed)) test(`${c.id} is red under LOOSEN`, () => {
     expect(replayCase(c).outcome).toBe("green");
     expect([c.id, replayCase(c, LOOSEN).outcome]).toEqual([c.id, "red"]);
+  });
+  for (const id of RETIRED) test(`retired ${id} is green today and red under LOOSEN`, () => {
+    const c = byId.get(id)!;
+    expect([id, replayCase(c).outcome, replayCase(c, LOOSEN).outcome]).toEqual([id, "green", "red"]);
   });
   for (const c of green.filter((x) => x.control)) test(`control ${c.id} is red under TIGHTEN, or (a charge control) under LOOSEN`, () => {
     const m = c.expect.credit === "charged" ? LOOSEN : TIGHTEN;
@@ -81,12 +92,13 @@ describe("MUST-FAIL: every green seed is red under the mutant that reinstates it
     const wrapped: ReplayOverrides = { rules: { reachGate: (i) => REAL.reachGate(i), floorDecide: (i) => REAL.floorDecide(i as never), floorShortcutAllowed: (i) => REAL.floorShortcutAllowed(i), reframeAccept: (i) => REAL.reframeAccept(i) } };
     expect(green.filter((c) => replayCase(c, wrapped).outcome !== "green").map((c) => c.id)).toEqual([]);
   });
-  test("the known-red seeds are red today by record (S5 reframed target, S7 repeat-write credit, 17 floor rows)", () => {
+  test("the known-red seeds are red today by record (S7 repeat-write credit, 17 floor rows); the RETIRED ones (S5 reframed target) are known_red by record and green today", () => {
     const kr = corpus.cases.filter((c) => c.status_at_append === "known_red").map((c) => c.id);
     expect(kr).toContain("0005-reframed-target-write");
     expect(kr).toContain("0011-repeat-write-refusal-charged");
     expect(kr.filter((id) => byId.get(id)!.class === "floor-unverified-reach").length).toBe(17);
-    for (const id of kr) expect([id, replayCase(byId.get(id)!).outcome]).toEqual([id, "red"]);
+    for (const id of RETIRED) expect([id, kr.includes(id)]).toEqual([id, true]);
+    for (const id of kr) expect([id, replayCase(byId.get(id)!).outcome]).toEqual([id, RETIRED.includes(id) ? "green" : "red"]);
   });
 });
 
@@ -175,16 +187,18 @@ describe("compare and classify", () => {
 });
 
 describe("M13: append-check refuses a wrong status_at_append", () => {
-  const withCorpus = (mutate: (d: string) => void) => {
+  /** Runs the append check on a copy of the corpus: from the appended case when `mutate` appends one (as the CLI's
+   *  append-check --from <n> does), else from the first case. */
+  const withCorpus = (mutate: (d: string) => number | void) => {
     const d = mkdtempSync(join(tmpdir(), "vc-ac-"));
     try {
       cpSync(join(DIR, "MANIFEST.jsonl"), join(d, "MANIFEST.jsonl"));
       cpSync(join(DIR, "cases"), join(d, "cases"), { recursive: true });
-      mutate(d);
-      return appendCheck(d, 1);
+      const from = mutate(d);
+      return appendCheck(d, typeof from === "number" ? from : 1);
     } finally { rmSync(d, { recursive: true, force: true }); }
   };
-  const append = (d: string, c: CorpusCase) => {
+  const append = (d: string, c: CorpusCase): number => {
     const lines = readFileSync(join(d, "MANIFEST.jsonl"), "utf8").trimEnd().split("\n");
     const last = JSON.parse(lines[lines.length - 1]!);
     const n = last.n + 1;
@@ -196,11 +210,18 @@ describe("M13: append-check refuses a wrong status_at_append", () => {
     const sha = sha256Hex(bytes);
     lines.push(JSON.stringify({ n, id, path, case_sha256: sha, fidelity: cc.provenance.fidelity, prev: last.link, link: chainLink(last.link, n, id, sha) }));
     writeFileSync(join(d, "MANIFEST.jsonl"), lines.join("\n") + "\n");
+    return n;
   };
-  test("positive control: the corpus as committed passes", () => { expect(withCorpus(() => {})).toEqual({ ok: true, mismatches: [] }); });
+  test("positive control: the corpus as committed observes every case's status_at_append, except each RETIRED case, reported as observed green", () => {
+    expect(withCorpus(() => {})).toEqual({ ok: RETIRED.length === 0, mismatches: RETIRED.map((id) => `${id}: appended as known_red, observed green`) });
+  });
+  test("positive control: a green case appended as green passes the append check", () => {
+    expect(withCorpus((d) => append(d, { ...byId.get("0001-plan-text-as-change")!, status_at_append: "green" }))).toEqual({ ok: true, mismatches: [] });
+  });
   test("a red case appended as green is refused", () => {
-    const r = withCorpus((d) => append(d, { ...byId.get("0005-reframed-target-write")!, status_at_append: "green" }));
+    const r = withCorpus((d) => append(d, { ...byId.get("0011-repeat-write-refusal-charged")!, status_at_append: "green" }));
     expect(r.ok).toBe(false);
+    expect(r.mismatches.length).toBe(1);
     expect(r.mismatches.join("\n")).toContain("appended as green, observed known_red");
   });
   test("a green case appended as known_red is refused", () => {
@@ -224,7 +245,8 @@ describe("the runner activity", () => {
     const st = await runVerdictCorpusActivity({ dir: DIR, node: "t", deployedSha: null, trigger: "test", nowMs: Date.parse("2026-10-12T00:00:00Z"), sinks: s });
     expect(st.state).toBe("ok");
     expect(st.flips).toEqual([]);
-    expect(st.known_red.length).toBe(corpus.cases.filter((c) => c.status_at_append !== "green").length);
+    expect(st.known_red.length).toBe(corpus.cases.filter((c) => c.status_at_append !== "green" && !RETIRED.includes(c.id)).length);
+    for (const id of RETIRED) expect([id, st.green.includes(id)]).toEqual([id, true]);
     expect(out.reports).toBe(1);
     expect(out.gaps.map((g) => g.id).sort()).toEqual(st.known_red.map((id) => `verdict-corpus-red-${id}`).sort());
     for (const g of out.gaps) {
@@ -270,7 +292,8 @@ describe("the runner activity", () => {
     for (const id of ids) expect([id, ids.filter((x) => x.includes(id)).length]).toEqual([id, 1]);
   });
   test("the class1 falsifier check is red while its case is red and green when it is green", () => {
-    expect(checkCase(DIR, "0005-reframed-target-write").green).toBe(false);
+    expect(checkCase(DIR, "0015-floor-row-01-citation-only").green).toBe(false);
+    for (const id of RETIRED) expect([id, checkCase(DIR, id).green]).toEqual([id, true]);
     expect(checkCase(DIR, "0001-plan-text-as-change").green).toBe(true);
     expect(checkCase(DIR, "9999-no-such-case")).toMatchObject({ green: false, outcome: "no_such_case" });
   });
@@ -315,7 +338,7 @@ describe("MUST-FAIL: the runner re-derives each of its gaps' disposition on EVER
       fileGap: async (g) => { if (plan === planGapWrite) st.write(g); else if (plan(st.rows.get(g.id) ?? null, g).write) st.write(g); },
     } });
   };
-  const ruleGap = "verdict-corpus-red-0005-reframed-target-write"; // its edit site is under src/judge-rules/
+  const ruleGap = "verdict-corpus-red-0015-floor-row-01-citation-only"; // its edit site is under src/judge-rules/
   const coreGap = "verdict-corpus-red-0011-repeat-write-refusal-charged"; // its edit site is the closed core
   test("parked before the opening, eligible on the FIRST pass after its site opens, parked again if it closes", async () => {
     const st = store();
