@@ -63,6 +63,66 @@
   },
   "routes": [
     {
+      "id": "default:identity-operator-key",
+      "method": "POST",
+      "url": "/v1/auth/resolve",
+      "body": [
+        "verdict-diff-operator-key"
+      ],
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true,
+          "data": {
+            "authenticated": true,
+            "keyId": "verdict-diff-operator",
+            "scopes": [
+              "read",
+              "write",
+              "operator:direct"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "default:identity-caller-key",
+      "method": "POST",
+      "url": "/v1/auth/resolve",
+      "body": [
+        "verdict-diff-caller-key"
+      ],
+      "respond": {
+        "status": 200,
+        "json": {
+          "success": true,
+          "data": {
+            "authenticated": true,
+            "keyId": "verdict-diff-caller",
+            "scopes": [
+              "read",
+              "write"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "default:identity-refuse",
+      "method": "POST",
+      "url": "/v1/auth/resolve",
+      "respond": {
+        "status": 401,
+        "json": {
+          "success": false,
+          "error": {
+            "code": "AUTHENTICATION_FAILED",
+            "message": "verdict-diff: unknown key"
+          }
+        }
+      }
+    },
+    {
       "id": "default:bus-publish",
       "url": "/v2/events/publish",
       "respond": {

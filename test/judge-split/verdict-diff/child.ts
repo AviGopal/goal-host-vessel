@@ -52,6 +52,11 @@ for (const p of ["/workspace", "/vessels"]) {
 }
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+/** The fixture credential the child presents on the requests it drives. The stubbed identity (fleet-defaults.json,
+ *  route default:identity-caller-key) authenticates it as an ordinary key: read and write, no operator scope. A step's
+ *  own headers override it (the operator-credential scenarios). */
+const FIXTURE_CREDENTIAL = "ApiKey verdict-diff-caller-key";
+const callerCredential = (): Record<string, string> => ({ Authorization: FIXTURE_CREDENTIAL });
 interface Respond { status?: number; json?: Json; text?: string; llm?: string; throw?: string; headers?: Record<string, string> }
 interface Route {
   id: string;
@@ -642,7 +647,7 @@ async function main(): Promise<void> {
     const reqStart = requests.length;
     const entry: Record<string, unknown> = { step: i + 1, op: step.op, label: step.label ?? null };
     if (step.op === "runGoal") {
-      const req = new Request("http://goal-host.test.invalid/run-goal", { method: "POST", headers: { "Content-Type": "application/json", ...(step.headers ?? {}) }, body: JSON.stringify(step.body ?? {}) });
+      const req = new Request("http://goal-host.test.invalid/run-goal", { method: "POST", headers: { "Content-Type": "application/json", ...callerCredential(), ...(step.headers ?? {}) }, body: JSON.stringify(step.body ?? {}) });
       const r = await drivePromise(mod.__vd_handleRunGoal(req), phase);
       const res = r.value;
       const json = res ? await res.json().catch(() => null) : null;
@@ -659,7 +664,7 @@ async function main(): Promise<void> {
     } else if (step.op === "resolve") {
       const body = JSON.parse(JSON.stringify(step.body ?? {}).split("$last").join(lastDispatch ?? ""));
       if (typeof body["dispatchId"] === "string" && body["dispatchId"]) lastDispatch = body["dispatchId"] as string;
-      const req = new Request("http://goal-host.test.invalid/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const req = new Request("http://goal-host.test.invalid/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...callerCredential() }, body: JSON.stringify(body) });
       const r = await drivePromise(mod.__vd_handleResolve(req), phase);
       await settle(step.settleMs ?? 60_000);
       const json = r.value ? await r.value.json().catch(() => null) : null;

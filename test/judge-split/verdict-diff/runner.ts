@@ -61,6 +61,11 @@ export function childEnv(ws: string, extra: Record<string, string> = {}): Record
     // the same on both trees; disabling it keeps every LLM call a single recorded request.
     LLM_ROUTER_DISABLED: "1",
     GOAL_HOST_VESSEL_API_KEY: "verdict-diff-key",
+    // THE INBOUND DOOR (src/inbound-auth.ts) authenticates /run-goal and the dispatching /resolve types by asking
+    // identity. Identity is a stubbed service like every other here: this loopback literal (no DNS lookup) is answered
+    // by the fetch stub from fleet-defaults.json, which authenticates the child's fixture credential (child.ts) and
+    // the operator scenarios' key, and refuses anything else. The door's code is unchanged.
+    IDENTITY_VESSEL_URL: "http://127.0.0.1:59190",
     ANTHROPIC_API_KEY: "verdict-diff-unused",
     VESSEL_ID: "goal-host-vessel",
     GOAL_HOST_VESSEL_ID: "goal-host-vessel",
