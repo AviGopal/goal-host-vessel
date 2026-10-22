@@ -68,11 +68,8 @@ export function failureFeedbackText(exact: readonly RecallRecord[], near: readon
   const rank = (a: RecallRecord, b: RecallRecord) => Number(b.deterministic) - Number(a.deterministic) || b.at.localeCompare(a.at);
   const lines: string[] = [];
   for (const r of [...exact].sort(rank).slice(0, 3)) lines.push(`- (this exact goal, ${r.at.slice(0, 16)}, producer ${r.pick ?? "?"}) ${r.reason}`);
-  // Other-goal lessons are normally shown only when the verdict was deterministic (an LLM-judged hollow on another goal is
-  // weak signal). But if there are no deterministic failures AT ALL for this goal (neither exact nor near), an LLM-judged
-  // near-miss is better than no lesson, so they are included as a fallback.
-  const hasDeterministic = exact.some((r) => r.deterministic) || near.some((r) => r.deterministic);
-  for (const r of near.filter((x) => !hasDeterministic || x.deterministic)) lines.push(differentGoalLessonLine(r));
+  // Other-goal lessons only when the verdict was deterministic: an LLM-judged hollow on a different goal is too weak to steer this one.
+  for (const r of near.filter((x) => x.deterministic)) lines.push(differentGoalLessonLine(r));
   return lines.join("\n");
 }
 
