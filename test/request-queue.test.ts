@@ -239,3 +239,46 @@ describe("request queue: origin and abstention", () => {
     expect(q.isUnknown(await q.leaseRequest(A, OFFER))).toBe(true);
   });
 });
+
+describe("request queue: the grantor's downtime is not the holder's death", () => {
+  it("request-queue after a restart longer than the liveness grace, the boot grace keeps a held lease for its live holder", async () => {
+    await enq();
+    const l = grant(await q.leaseRequest(A, OFFER));
+    now += 10 * 60_000; // goal-host was down ten minutes; the holder kept trying a closed port
+    expect(await q.graceHeldLeasesAfterBoot()).toBe(1);
+    await q.sweepRequests();
+    expect(await q.renewLease(A, l.lease_id, l.attempt)).toMatchObject({ renewed: true });
+    expect(await q.leaseRequest(B, OFFER)).toEqual({ lease: null });
+  });
+});
+
+describe("request queue: a dispatch records who initiated it", () => {
+  const records = new Map<string, { initiator?: q.RequestOrigin; principal?: { kind: string } }>([["op-1", { initiator: "operator" }], ["sys-1", { initiator: "system" }]]);
+  const ctx = (over: Partial<Parameters<typeof q.dispatchInitiator>[1]> = {}) => ({ heldRequeue: (_: string) => undefined, recordOf: (id: string) => records.get(id), ...over });
+  const SELF = { kind: "node_self" as const, inProcess: true };
+  it("request-queue a keyed dispatch is operator-initiated and goal-host's own is the system's", () => {
+    expect(q.dispatchInitiator({ kind: "key" }, ctx())).toBe("operator");
+    expect(q.dispatchInitiator({ kind: "node_self" }, ctx())).toBe("system");
+    expect(q.dispatchInitiator(SELF, ctx())).toBe("system");
+  });
+  it("request-queue a requeue or resume keeps the original dispatch's initiator", () => {
+    expect(q.dispatchInitiator(SELF, ctx({ requeueOf: "op-1", heldRequeue: (id) => (id === "op-1" ? "operator" : undefined) }))).toBe("operator");
+    expect(q.dispatchInitiator(SELF, ctx({ tags: ["resumed_from:op-1"] }))).toBe("operator");
+  });
+  it("request-queue a caller's tags never borrow an initiator", () => {
+    expect(q.dispatchInitiator({ kind: "key" }, ctx({ tags: ["resumed_from:sys-1"], requeueOf: "sys-1", heldRequeue: () => "system" }))).toBe("operator");
+  });
+});
+
+describe("request queue: wiring at dispatch creation", () => {
+  it("request-queue handleRunGoal stamps every new dispatch record with dispatchInitiator's answer", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
+    const door = src.indexOf("async function handleRunGoal(req: Request): Promise<Response> {");
+    const rec = src.indexOf("const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: \"running\"", door);
+    expect(door).toBeGreaterThan(0);
+    expect(rec).toBeGreaterThan(door);
+    const between = src.slice(door, rec);
+    expect(between).toContain("const initiator = requestQueue.dispatchInitiator(principal, {");
+    expect(src.slice(rec, src.indexOf("\n", rec))).toContain("principal: principalRecord(principal), initiator,");
+  });
+});

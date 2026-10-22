@@ -18883,16 +18883,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // WHO INITIATED IT (request-queue.ts ORIGIN): a key is an operator act, node-self is the system's. goal-host's own
   // requeue and resume continue a dispatch, so they keep its initiator: the requeue's from the record the drain held,
   // the resume's from the record it names. Only an in-process self-call inherits; a body's tags or variables never set it.
-  const initiator: requestQueue.RequestOrigin = (() => {
-    if (principal.inProcess) {
-      const held = requeueId ? requeueInitiators.get(requeueId) : undefined;
-      if (held) { requeueInitiators.delete(requeueId); return held; }
-      const rf = (Array.isArray(tags) ? tags : []).find((t) => typeof t === "string" && t.startsWith("resumed_from:"));
-      const inherited = rf ? requestQueue.dispatchOriginOf(executionStore.get(rf.slice("resumed_from:".length))) : null;
-      if (inherited) return inherited;
-    }
-    return principal.kind === "key" ? "operator" : "system";
-  })();
+  const initiator = requestQueue.dispatchInitiator(principal, {
+    requeueOf: requeueId, tags,
+    heldRequeue: (id) => { const h = requeueInitiators.get(id); requeueInitiators.delete(id); return h; },
+    recordOf: (id) => executionStore.get(id),
+  });
   const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(operatorLabel ? { operator_label: operatorLabel } : {}), principal: principalRecord(principal), initiator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}), ...(learningMode ? { learningMode } : {}) };
   judgeCapture.attachRoutingInput(record, _routingInput);
   executionStore.set(dispatchId, record);
@@ -20698,9 +20693,10 @@ setInterval(persistDispatchStore, 5000);
 // this service already keeps (no env read; an importer that is not the service gets no store).
 verdictConsistency.setVerdictConsistencyRoot(dirname(DISPATCH_STORE_PATH));
 // The resolver request queue is the service's too, beside the dispatch store (request-queue.ts). The sweep settles what
-// time and the walks decided (lapsed holders, deadlines, ended walks) with no traffic, from boot on.
+// time and the walks decided (lapsed holders, deadlines, ended walks) with no traffic, from boot on; first, held leases
+// get one liveness grace from boot, so this process's own downtime is not counted as their holders' death.
 requestQueue.setRequestQueueRoot(dirname(DISPATCH_STORE_PATH));
-void requestQueue.sweepRequests();
+void requestQueue.graceHeldLeasesAfterBoot().then(() => requestQueue.sweepRequests());
 setInterval(() => { void requestQueue.sweepRequests(); }, 15_000);
 server = Bun.serve({
   port: PORT,

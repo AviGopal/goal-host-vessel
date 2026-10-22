@@ -284,6 +284,24 @@ export function dispatchOriginOf(rec: { initiator?: unknown; principal?: { kind?
   return k === "key" ? "operator" : k === "node_self" ? "system" : null;
 }
 
+/** Who initiated a NEW dispatch (index.ts handleRunGoal, at record creation): a key is an operator act, node-self the
+ *  system's. goal-host's own requeue and resume continue a dispatch, so they keep its initiator: the requeue's from the
+ *  record the drain held, the resume's from the record its resumed_from: tag names. Only an in-process self-call
+ *  inherits; a caller's tags or variables never set it. */
+export function dispatchInitiator(
+  p: { kind: "node_self" | "key"; inProcess?: boolean },
+  ctx: { requeueOf?: string; tags?: unknown; heldRequeue: (id: string) => RequestOrigin | undefined; recordOf: (id: string) => Parameters<typeof dispatchOriginOf>[0] },
+): RequestOrigin {
+  if (p.inProcess) {
+    const held = ctx.requeueOf ? ctx.heldRequeue(ctx.requeueOf) : undefined;
+    if (held) return held;
+    const rf = (Array.isArray(ctx.tags) ? ctx.tags : []).find((t): t is string => typeof t === "string" && t.startsWith("resumed_from:"));
+    const inherited = rf ? dispatchOriginOf(ctx.recordOf(rf.slice("resumed_from:".length))) : null;
+    if (inherited) return inherited;
+  }
+  return p.kind === "key" ? "operator" : "system";
+}
+
 export const goalHashOfRequest = (goal: string): string => createHash("sha256").update(goal.trim()).digest("hex").slice(0, 16);
 
 /** The request as a resolver sees it: what to do, what was tried, what it needs, and by when. */
@@ -481,3 +499,32 @@ export async function withRequestSettlement<T>(id: string, fn: () => Promise<T>,
 
 /** The service's interval and boot sweep. */
 export async function sweepRequests(): Promise<void> { await op(() => ({ result: null, changed: false })); }
+
+/**
+ * THE GRANTOR'S OWN DOWNTIME IS NOT THE HOLDER'S DEATH. While goal-host restarts, a live holder renews against a closed
+ * port; a restart longer than the liveness grace would otherwise lapse every held lease as holder_gone at the first
+ * sweep, and the holder's answer would come back late. So the service, once at boot and before its first sweep, counts
+ * every held lease as renewed now: each holder gets one full grace from boot to renew. Its work bound (until) and the
+ * request deadline are untouched. Returns the number of leases re-armed.
+ */
+export async function graceHeldLeasesAfterBoot(): Promise<number | { unknown: true; reason: string }> {
+  return withQueueLock(async () => {
+    try {
+      const s = await loadStore();
+      const now = deps.now();
+      let n = 0;
+      for (const r of s.requests) {
+        if (r.status === "settled") continue;
+        const a = activeAttempt(r);
+        if (a && a.renewed_at < now) { a.renewed_at = now; n += 1; }
+      }
+      if (n > 0) { await saveStore(s); console.log(`[request-queue] boot: ${n} held lease(s) given one liveness grace from now (the grantor was down, not the holders)`); }
+      return n;
+    } catch (err) {
+      counts.unknown += 1;
+      const reason = err instanceof StoreUnknown ? err.message : `boot grace failed: ${String((err as Error)?.message ?? err).slice(0, 160)}`;
+      console.warn(`[request-queue] abstain: ${reason}`);
+      return { unknown: true as const, reason };
+    }
+  });
+}
