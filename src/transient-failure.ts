@@ -27,5 +27,7 @@ export function isTransientFailure(reason: string | null | undefined, status?: n
   // refused for its REQUEST and must not be retried verbatim. Text decides only when no
   // response arrived (transport errors carry no status).
   if (typeof status === "number" && Number.isFinite(status)) return isTransientHttpStatus(status);
+  // Treat AbortError (timeout) as transient, matching the pattern for timeout.
+  if (reason && typeof reason === "object" && (reason as any).name === "AbortError") return true;
   return typeof reason === "string" && TRANSIENT_FAILURE_PATTERN.test(reason);
 }
