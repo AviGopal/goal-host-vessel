@@ -25,9 +25,14 @@ export interface OracleLabelRow {
   sample_draw_id?: string;
   /**
    * Stamped by activity-api's label writer from the SERVER-VALIDATED credential of a human label
-   * (migration 219); never caller-settable there. Rows written before that carry none.
+   * (migration 219); never caller-settable there. Rows written before that carry none. A signed-in
+   * person's label (activity-api isPersonSessionPrincipal, migration 227) names the person instead of
+   * a key: user_id, caller_type "session", the surface's actor_key_id and the token's aud.
    */
-  labeled_by_principal?: { key_id?: unknown; auth_type?: unknown; scopes?: unknown } | null;
+  labeled_by_principal?: {
+    key_id?: unknown; auth_type?: unknown; scopes?: unknown;
+    user_id?: unknown; caller_type?: unknown; actor_key_id?: unknown; aud?: unknown;
+  } | null;
 }
 
 /**
@@ -35,15 +40,26 @@ export interface OracleLabelRow {
  * human_reported disagreement gap, so it is acted on only when activity-api stamped it with a
  * principal whose validated scopes carry the human-verdict scope ("verdict:human", or "admin" as
  * the interim fallback until a verdict-scoped operator key is issued), attributable by key id.
- * The scope names match activity-api's src/routes/goal-verification-label-write.ts. Anything
- * else (no stamp, a malformed stamp, a stamp without the scope) is NOT a human verdict: it is
- * ignored, counted, and logged. Fail closed: every row written before the stamp existed is ignored.
+ * The scope names match activity-api's src/routes/goal-verification-label-write.ts.
+ * A PERSON is the other human-verdict principal: a stamp with caller_type "session" and a user_id,
+ * which activity-api writes only for a person signed in on a surface whose on-behalf-of token was
+ * validated by identity for that node's label write (never from the pointer). It needs no key id
+ * and no scope: the person, not a key, is the provenance.
+ * Anything else (no stamp, a malformed stamp, a stamp without the scope, a "session" stamp with no
+ * user) is NOT a human verdict: it is ignored, counted, and logged. Fail closed: every row written
+ * before the stamp existed is ignored.
  */
 export const HUMAN_VERDICT_SCOPE = "verdict:human";
 export const ADMIN_SCOPE = "admin";
+export function isPersonPrincipal(label: OracleLabelRow | undefined): boolean {
+  const p = label?.labeled_by_principal;
+  if (!p || typeof p !== "object") return false;
+  return p.caller_type === "session" && typeof p.user_id === "string" && p.user_id.trim().length > 0;
+}
 export function hasHumanVerdictPrincipal(label: OracleLabelRow | undefined): boolean {
   const p = label?.labeled_by_principal;
   if (!p || typeof p !== "object") return false;
+  if (isPersonPrincipal(label)) return true;
   if (typeof p.key_id !== "string" || p.key_id.trim().length === 0) return false;
   const scopes = Array.isArray(p.scopes) ? p.scopes : [];
   return scopes.includes(HUMAN_VERDICT_SCOPE) || scopes.includes(ADMIN_SCOPE);
