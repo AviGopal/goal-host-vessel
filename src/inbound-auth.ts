@@ -38,6 +38,8 @@ export const GATED_RESOLVE_TYPES: ReadonlySet<string> = new Set([
   "goal_execution", "activity_execution",
   "goalDispatchAsync", "goal_dispatch_async",
   "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write",
+  // The resolver request queue (request-queue.ts): a lease grant and its renewal are writes, held by the credential.
+  "requestLease", "requestLease_renew",
   "verdictCorpusRun",
 ]);
 

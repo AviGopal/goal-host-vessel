@@ -345,7 +345,8 @@ import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
-import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
+import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
+import * as requestQueue from "./request-queue";
 import { setInProcessRunGoal } from "./in-process-dispatch";
 import { orderProducers, buildShapeProducerCache, pickProducerRoute, dialsOwnEndpoint, urlOrigin, pickConceptDbRow, isOwnSubstrateRow, type ProducerRow } from "./producer-order";
 import type {
@@ -1215,7 +1216,7 @@ export function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "verdictCorpusRun", "verdictConsistency"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "verdictCorpusRun", "verdictConsistency", "requestLease", "requestLease_renew", "resolverRequest"] as const;
 const VERSION = "0.1.0";
 const _dupOwnerFiled = new Set<string>();
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
@@ -16790,7 +16791,7 @@ async function runGoalWithRecoveryInner(
             opts.variables.human_input = sol.answer;
             const lastTried = excluded.pop()!;
             nextTarget = lastTried;
-            tap(`[goal-host-vessel] ${opts.surface}: human answered solicitation (by ${sol.answeredBy ?? "unattributed"}) — retrying ${lastTried} with human_input context`);
+            tap(`[goal-host-vessel] ${opts.surface}: human answered solicitation (by ${sol.answeredBy ?? "unattributed"}${sol.leaseProvenance ? `; lease ${sol.leaseProvenance.lease_id} attempt ${sol.leaseProvenance.attempt} request ${sol.leaseProvenance.request_id} origin ${sol.leaseProvenance.origin}` : ""}) — retrying ${lastTried} with human_input context`);
             continue;
           }
           if (sol) tap(`[goal-host-vessel] ${opts.surface}: human solicitation outcome=${sol.outcome} — proceeding to honest failure`);
@@ -16829,11 +16830,8 @@ async function solicitHumanInput(goal: string, evidenceMarkdown: string, dispatc
     }
   } catch { /* no discovery, no solicitation */ }
   if (!producer || typeof producer.endpoint !== "string" || !producer.endpoint) return null;
-  const sid = crypto.randomUUID();
   const advertised = typeof producer.resolve_timeout_ms === "number" && producer.resolve_timeout_ms > 0 ? producer.resolve_timeout_ms : 120_000;
   const now = Date.now();
-  const sol: PendingSolicitation = { solicitationId: sid, dispatchId, goal, createdAt: now, deadlineAt: now + advertised, maxDeadlineAt: now + SOLICITATION_MAX_WAIT_MS, outcome: "pending", composing: false };
-  pendingSolicitations.set(sid, sol);
   const questionMarkdown = [
     "## The substrate needs your input",
     "",
@@ -16849,27 +16847,101 @@ async function solicitHumanInput(goal: string, evidenceMarkdown: string, dispatc
     "",
     "Answer in the card, or decline (\"not now\"), or mark it as lacking the context you would need.",
   ].join("\n");
-  try {
+  // THE DURABLE REQUEST (request-queue.ts). The question is also a request on this node's queue, so it survives a
+  // restart and an agent offering a present person can lease it (requestLease). A requeued walk asking again for the same
+  // dispatch and goal re-attaches: a settled answer it has not taken is returned at once, an open request is waited on
+  // with no second card. Its origin is the dispatch's own recorded initiator; with no dispatch record to read it from, or
+  // no store on this process (an importer), the solicitation runs as before, in memory only (abstain on unknown).
+  const _rec = dispatchId ? executionStore.get(dispatchId) : undefined;
+  const _origin = requestQueue.dispatchOriginOf(_rec);
+  let durable: requestQueue.ResolverRequest | null = null;
+  let reattachedOpen = false;
+  if (_origin && requestQueue.requestQueuePath()) {
+    const q = await requestQueue.enqueueRequest({
+      dispatch_id: dispatchId ?? null, origin: _origin, dispatcher: _rec?.principal?.label ?? "node-self", goal, shape: "human_input",
+      description: questionMarkdown, inputs: { evidence_markdown: evidenceMarkdown }, required: { capabilities: ["person_present"], scopes: [] },
+      deadline: now + SOLICITATION_MAX_WAIT_MS,
+    });
+    if (!requestQueue.isUnknown(q)) { durable = q.request; reattachedOpen = q.attached && q.request.status !== "settled"; }
+  }
+  const sid = durable?.id ?? crypto.randomUUID();
+  const sol: PendingSolicitation = { solicitationId: sid, dispatchId, goal, createdAt: now, deadlineAt: now + advertised, maxDeadlineAt: durable ? durable.deadline : now + SOLICITATION_MAX_WAIT_MS, outcome: "pending", composing: false };
+  if (durable && durable.status === "settled") {
+    takeSettledRequest(sol, durable);
+    console.log(`[goal-host-vessel] solicitation ${sid} re-attached: its request was settled ${durable.outcome} while this walk was away`);
+    recordResolverAnswer(sol, durable);
+    return sol;
+  }
+  pendingSolicitations.set(sid, sol);
+  if (!reattachedOpen) try {
     const r = await fetch(`${producer.endpoint.replace(/\/+$/, "")}${asResolvePath(producer.resolve_endpoint)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
       body: JSON.stringify({ type: "human_input", pointer: { type: "human_input", solicitation_id: sid, dispatch_id: dispatchId ?? null, question_markdown: questionMarkdown, timeout_ms: advertised, respond_via: { shape: "solicitationResponse_write", heartbeat_shape: "solicitationHeartbeat_write" } } }),
       signal: AbortSignal.timeout(20_000),
     });
-    if (!r.ok) { pendingSolicitations.delete(sid); return null; }
+    if (!r.ok) { pendingSolicitations.delete(sid); if (durable) await requestQueue.settleRequestById(sid, "error", "solicitation_post_refused"); return null; }
     try { await r.body?.cancel(); } catch { /* ignore */ }
   } catch {
     pendingSolicitations.delete(sid);
+    if (durable) await requestQueue.settleRequestById(sid, "error", "solicitation_post_failed");
     return null;
   }
-  console.log(`[goal-host-vessel] solicitation ${sid} posted to human_input producer (advertised timeout ${advertised}ms, cap ${SOLICITATION_MAX_WAIT_MS}ms)`);
-  while (Date.now() < sol.deadlineAt && sol.outcome === "pending") {
-    await new Promise((res) => setTimeout(res, 2_000));
+  console.log(`[goal-host-vessel] solicitation ${sid} ${reattachedOpen ? "re-attached to its open request" : "posted to human_input producer"} (advertised timeout ${advertised}ms, cap ${SOLICITATION_MAX_WAIT_MS}ms)`);
+  const wait = async (): Promise<PendingSolicitation> => {
+    while (Date.now() < sol.deadlineAt && sol.outcome === "pending") {
+      await new Promise((res) => setTimeout(res, 2_000));
+      if (!durable || sol.outcome !== "pending") continue;
+      // The durable request answers too: an agent's lease-bound answer settles it; a live lease is a resolver at work,
+      // which extends the wait as a person's composition heartbeat does.
+      const d = await requestQueue.readRequest(sid);
+      if (!d || requestQueue.isUnknown(d)) continue;
+      if (d.status === "settled") { takeSettledRequest(sol, d); durable = d; break; }
+      if (d.status === "leased") { sol.composing = true; sol.deadlineAt = Math.min(Date.now() + SOLICITATION_HEARTBEAT_EXTENSION_MS, sol.maxDeadlineAt); }
+    }
+    if (sol.outcome === "pending") sol.outcome = "timeout";
+    return sol;
+  };
+  try {
+    // EVERY REQUEST SETTLES: the waiter's end (an answer, a decline, its timeout, or a throw) settles the request.
+    if (durable) await requestQueue.withRequestSettlement(sid, wait, (s) => (s.outcome === "pending" ? "timeout" : s.outcome), (s) => (s.outcome === "answered" && !s.leaseProvenance ? { answer: s.answer, ...(s.answeredBy ? { answered_by: s.answeredBy } : {}) } : {}));
+    else await wait();
+  } finally {
+    pendingSolicitations.delete(sid);
   }
-  if (sol.outcome === "pending") sol.outcome = "timeout";
-  pendingSolicitations.delete(sid);
-  console.log(`[goal-host-vessel] solicitation ${sid} outcome=${sol.outcome}${sol.composing ? " (composition heartbeats were received)" : ""}`);
+  if (durable) recordResolverAnswer(sol, durable);
+  console.log(`[goal-host-vessel] solicitation ${sid} outcome=${sol.outcome}${sol.composing ? " (composition heartbeats were received)" : ""}${sol.leaseProvenance ? ` (lease ${sol.leaseProvenance.lease_id} attempt ${sol.leaseProvenance.attempt}, origin ${sol.leaseProvenance.origin})` : ""}`);
   return sol;
+}
+
+/** A settled request as the waiter's outcome: a holder's resolved/partial answer or a person's answer is "answered"
+ *  (with its server-stamped provenance and binding when lease-bound); a decline or missing context is the person's; a
+ *  request that ended any other way (withdrawn, expired, an error) is a timeout for the walk. */
+function takeSettledRequest(sol: PendingSolicitation, d: requestQueue.ResolverRequest): void {
+  const o = d.outcome;
+  if (o === "resolved" || o === "partial" || o === "answered") {
+    sol.outcome = "answered";
+    sol.answer = d.answer;
+    sol.answeredBy = d.answered_by;
+    if (d.lease_provenance) sol.leaseProvenance = d.lease_provenance;
+    if (d.answer_binding) sol.answerBinding = d.answer_binding;
+  } else if (o === "declined" || o === "insufficient_context") sol.outcome = o;
+  else sol.outcome = "timeout";
+}
+
+/** DOWNSTREAM PROVENANCE: the answer the walk takes is recorded on its dispatch record (resolverAnswers), with the
+ *  lease provenance and the answer_id goal-host stamped from its own lease record, never from a caller. */
+function recordResolverAnswer(sol: PendingSolicitation, d: requestQueue.ResolverRequest): void {
+  if (sol.outcome !== "answered" || !sol.dispatchId) return;
+  const rec = executionStore.get(sol.dispatchId);
+  if (!rec) return;
+  const entry: ResolverAnswerRecord = {
+    request_id: d.id, outcome: d.outcome ?? "answered", at: new Date().toISOString(),
+    answered_by_tag: sol.answeredBy ? principalTag(sol.answeredBy) : null,
+    lease_provenance: sol.leaseProvenance ?? null, answer_id: sol.answerBinding?.answer_id ?? null,
+  };
+  (rec.resolverAnswers ??= []).push(entry);
+  persistDispatchStore();
 }
 // Proxy resolver timeout (ms). Default 240s — must accommodate LLM-heavy
 // dispatches (sonnet on ~45K-token inputs can take 90-180s) while staying
@@ -18808,7 +18880,20 @@ async function handleRunGoal(req: Request): Promise<Response> {
     // arrived on rather than serializing trigger:null (an unattributable dispatch).
     return "run-goal";
   })();
-  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(operatorLabel ? { operator_label: operatorLabel } : {}), principal: principalRecord(principal), ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}), ...(learningMode ? { learningMode } : {}) };
+  // WHO INITIATED IT (request-queue.ts ORIGIN): a key is an operator act, node-self is the system's. goal-host's own
+  // requeue and resume continue a dispatch, so they keep its initiator: the requeue's from the record the drain held,
+  // the resume's from the record it names. Only an in-process self-call inherits; a body's tags or variables never set it.
+  const initiator: requestQueue.RequestOrigin = (() => {
+    if (principal.inProcess) {
+      const held = requeueId ? requeueInitiators.get(requeueId) : undefined;
+      if (held) { requeueInitiators.delete(requeueId); return held; }
+      const rf = (Array.isArray(tags) ? tags : []).find((t) => typeof t === "string" && t.startsWith("resumed_from:"));
+      const inherited = rf ? requestQueue.dispatchOriginOf(executionStore.get(rf.slice("resumed_from:".length))) : null;
+      if (inherited) return inherited;
+    }
+    return principal.kind === "key" ? "operator" : "system";
+  })();
+  const record: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "running", goal: typeof goal === "string" ? goal : undefined, reached: null, operator, ...(operatorLabel ? { operator_label: operatorLabel } : {}), principal: principalRecord(principal), initiator, ...(trigger ? { trigger } : {}), ...(requeueId ? { requeuedAt: Date.now(), requeueOf: requeueId } : {}), ...(learningMode ? { learningMode } : {}) };
   judgeCapture.attachRoutingInput(record, _routingInput);
   executionStore.set(dispatchId, record);
   persistDispatchStore();
@@ -19828,7 +19913,7 @@ async function handleResolve(req: Request): Promise<Response> {
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, ...dispatchAttribution(rec), executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, ...dispatchAttribution(rec), executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null, resolverAnswers: rec.resolverAnswers ?? [] },
     });
   }
   if (type === "poolImpulse_write" && principal) {
@@ -19859,6 +19944,51 @@ async function handleResolve(req: Request): Promise<Response> {
     sol.deadlineAt = Math.min(Date.now() + SOLICITATION_HEARTBEAT_EXTENSION_MS, sol.maxDeadlineAt);
     return Response.json({ resolved: true, shape: "solicitationHeartbeat_write", body: { solicitationId: sid, deadlineAt: sol.deadlineAt, maxDeadlineAt: sol.maxDeadlineAt } });
   }
+  // THE RESOLVER REQUEST QUEUE (request-queue.ts). An agent leases work by what it offers, renews while it works, and
+  // answers ONCE per (lease_id, attempt) through solicitationResponse_write v2 (the form that names a lease_id). The
+  // holder is the validated credential's principal, never a body field; the answer's provenance is stamped here from the
+  // stored lease, never carried by the caller. An unknown store answers unknown and grants nothing.
+  const _rqField = (k: string): unknown => (k in body ? body[k] : (pointer as Record<string, unknown>)[k]);
+  const _rqStrings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+  if (type === "requestLease" && principal) {
+    const _inst = _rqField("holder_instance");
+    const r = await requestQueue.leaseRequest({ label: principalLabel(principal), scopes: principal.scopes }, { capabilities: _rqStrings(_rqField("capabilities")), shapes: _rqStrings(_rqField("shapes")), holder_instance: typeof _inst === "string" ? _inst : null });
+    if (requestQueue.isUnknown(r)) return Response.json({ resolved: false, shape: "requestLease", body: { lease: null, unknown: true, reason: r.reason } });
+    return Response.json({ resolved: true, shape: "requestLease", body: r });
+  }
+  if (type === "requestLease_renew" && principal) {
+    const lid = _rqField("lease_id");
+    const att = Number(_rqField("attempt"));
+    if (typeof lid !== "string" || !lid || !Number.isInteger(att)) return Response.json({ resolved: false, shape: "requestLease_renew", error: "lease_id and an integer attempt are required" }, { status: 400 });
+    const r = await requestQueue.renewLease({ label: principalLabel(principal), scopes: principal.scopes }, lid, att);
+    if (requestQueue.isUnknown(r)) return Response.json({ resolved: false, shape: "requestLease_renew", body: { renewed: false, unknown: true, reason: r.reason } });
+    return Response.json({ resolved: r.renewed, shape: "requestLease_renew", body: r });
+  }
+  if (type === "solicitationResponse_write" && principal && typeof _rqField("lease_id") === "string") {
+    const lid = _rqField("lease_id") as string;
+    const att = Number(_rqField("attempt"));
+    const out = _rqField("outcome");
+    if (!lid || !Number.isInteger(att) || typeof out !== "string" || !(requestQueue.ANSWER_OUTCOMES as readonly string[]).includes(out)) {
+      return Response.json({ resolved: false, shape: "solicitationResponse_write", error: `lease_id, an integer attempt and outcome (${requestQueue.ANSWER_OUTCOMES.join("|")}) are required` }, { status: 400 });
+    }
+    const _reason = _rqField("reason");
+    const r = await requestQueue.answerLease({ label: principalLabel(principal), scopes: principal.scopes }, {
+      lease_id: lid, attempt: att, outcome: out as requestQueue.AnswerOutcome, ...(typeof _reason === "string" ? { reason: _reason } : {}),
+      answer: _rqField("answer"), evidence: _rqField("evidence"), guidance_used: _rqField("guidance_used"), guidance_proposal: _rqField("guidance_proposal"), request_gaps: _rqField("request_gaps"),
+    });
+    if (requestQueue.isUnknown(r)) return Response.json({ resolved: false, shape: "solicitationResponse_write", body: { accepted: false, unknown: true, reason: r.reason } });
+    return Response.json({ resolved: r.accepted, shape: "solicitationResponse_write", body: r }, { status: r.accepted ? 200 : 409 });
+  }
+  // resolverRequest: the queue's records, READ-ONLY and open like goalWalkState: by request_id, lease_id or dispatch_id.
+  // Served without the question, inputs or answer (workspace content), and holders by principalTag, never the key id.
+  if (type === "resolverRequest") {
+    const q = { request_id: _rqField("request_id"), lease_id: _rqField("lease_id"), dispatch_id: _rqField("dispatch_id") };
+    const _q = Object.fromEntries(Object.entries(q).filter(([, v]) => typeof v === "string" && v)) as { request_id?: string; lease_id?: string; dispatch_id?: string };
+    if (Object.keys(_q).length === 0) return Response.json({ resolved: false, shape: "resolverRequest", error: "request_id, lease_id or dispatch_id is required" }, { status: 400 });
+    const r = await requestQueue.readRequests(_q);
+    if (requestQueue.isUnknown(r)) return Response.json({ resolved: false, shape: "resolverRequest", body: { requests: [], unknown: true, reason: r.reason } });
+    return Response.json({ resolved: true, shape: "resolverRequest", body: { requests: r.map(requestQueue.servedRequest) } });
+  }
   if (type === "solicitationResponse_write" && principal) {
     const sid = (typeof body.solicitationId === "string" ? body.solicitationId : undefined)
       ?? (typeof pointer.solicitationId === "string" ? pointer.solicitationId : undefined);
@@ -19868,6 +19998,12 @@ async function handleResolve(req: Request): Promise<Response> {
       return Response.json({ resolved: false, shape: "solicitationResponse_write", error: "solicitationId and outcome (answered|declined|insufficient_context) are required" }, { status: 400 });
     }
     const sol = pendingSolicitations.get(sid);
+    if (!sol) {
+      // AFTER A RESTART the waiter is gone, but the request is durable (request-queue.ts): the person's answer settles it,
+      // and the requeued walk re-attaches to it and takes the answer. A live pending solicitation is answered as below.
+      const _d = await requestQueue.settleRequestById(sid, outcome as "answered" | "declined" | "insufficient_context", "solicitation_v1", { answer: "answer" in body ? body.answer : (pointer as Record<string, unknown>)["answer"], answered_by: principalLabel(principal) });
+      if (!requestQueue.isUnknown(_d) && _d.settled) return Response.json({ resolved: true, shape: "solicitationResponse_write", body: { solicitationId: sid, outcome } });
+    }
     if (!sol || sol.outcome !== "pending") return Response.json({ resolved: false, shape: "solicitationResponse_write", error: "no pending solicitation with that id" }, { status: 404 });
     sol.outcome = outcome as "answered" | "declined" | "insufficient_context";
     sol.answer = "answer" in body ? body.answer : (pointer as Record<string, unknown>)["answer"];
@@ -19942,7 +20078,7 @@ async function handleResolve(req: Request): Promise<Response> {
   }
         if (type !== "goal_execution" && type !== "activity_execution") {
     return Response.json(
-      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write, solicitationResponse_write, solicitationHeartbeat_write` },
+      { error: `unknown shape '${type}'; supported: goal_execution, activity_execution, activeDispatches, goalWalkState, poolImpulse_write, solicitationResponse_write, solicitationHeartbeat_write, requestLease, requestLease_renew, resolverRequest` },
       { status: 404 },
     );
   }
@@ -20054,6 +20190,17 @@ async function handleResolve(req: Request): Promise<Response> {
 // polls for up to ~270s then exits (systemd restarts it); the goal continues async.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** One resolver answer on a dispatch record. `answered_by_tag` is principalTag of the answering key (null for
+ *  node-self), never the key id. */
+interface ResolverAnswerRecord {
+  request_id: string;
+  outcome: string;
+  at: string;
+  answered_by_tag: string | null;
+  lease_provenance: requestQueue.LeaseProvenance | null;
+  /** The answer binding's id from the lease record (request-queue.ts AnswerBinding), null for a person's v1 answer. */
+  answer_id: string | null;
+}
 interface DispatchRecord {
   endedAt?: number;
   /** The result's named refusal stage (GoalSeekResult.stage), when it has one. */
@@ -20071,6 +20218,13 @@ interface DispatchRecord {
   operator_label?: string;
   /** Who the dispatch runs as, from the validated credential (inbound-auth.ts principalRecord). Never the key. */
   principal?: { kind: "node_self" | "key"; label: string; operator: boolean };
+  /** Who initiated this dispatch: "system" (node-self) or "operator" (a key), set once at creation from the principal; a
+   *  requeue or resume of a dispatch keeps its original initiator (request-queue.ts ORIGIN). Never from a body. */
+  initiator?: requestQueue.RequestOrigin;
+  /** Each resolver answer this walk took from its request queue, with its server-stamped lease provenance
+   *  (request-queue.ts LeaseProvenance) or null for a person's answer by solicitationId. Served by goalWalkState and
+   *  GET /executions/:id. */
+  resolverAnswers?: ResolverAnswerRecord[];
   /** An observe dispatch's dry-run compose: verdict and would-be ops (observe-mode.ts ObserveComposeRecord). */
   observe?: ObserveComposeRecord;
   inferenceConfidence?: number | null;
@@ -20360,6 +20514,8 @@ async function closeAuthoringDecisions(goalText: string): Promise<void> {
 
 // Cap store at 100 records to prevent unbounded growth across long uptime.
 const executionStore = new Map<string, DispatchRecord>();
+// The request queue revokes a request whose walk ended (request-queue.ts sweepStore); no record is unknown, never ended.
+requestQueue.setRequestQueueDispatchReader((id) => { const r = executionStore.get(id); return !r ? "unknown" : r.status === "running" ? "running" : "ended"; });
 // Pool insertion (poolImpulse_write): human-contributed impulses queued per
 // dispatchId; the running walk drains this queue at the top of each iteration.
 // Strictly additive — injected shapes unlock candidates on the next rescan.
@@ -20382,6 +20538,9 @@ interface PendingSolicitation {
   /** Who answered (inbound-auth.ts principalLabel), recorded in the walk log beside the retry it grants. */
   answeredBy?: string;
   composing: boolean;
+  /** A lease-bound answer's provenance and binding, stamped from the request queue's lease record (request-queue.ts). */
+  leaseProvenance?: requestQueue.LeaseProvenance;
+  answerBinding?: requestQueue.AnswerBinding;
 }
 const pendingSolicitations = new Map<string, PendingSolicitation>();
 const SOLICITATION_HEARTBEAT_EXTENSION_MS = 90_000;
@@ -20392,6 +20551,8 @@ const SOLICITATION_MAX_WAIT_MS = 30 * 60 * 1000;
 // drain persists the store). The default is unchanged, so the live vessel keeps the same file.
 const DISPATCH_STORE_PATH = process.env["GOAL_HOST_DISPATCH_STORE_PATH"] ?? "/workspace/goal-host-dispatches.json";
 const interruptedRequeue: DispatchRecord[] = [];
+/** The initiator of a dispatch the drain is requeueing, held from its old record to its new one (see `initiator`). */
+const requeueInitiators = new Map<string, requestQueue.RequestOrigin>();
 async function drainInterruptedRequeue(): Promise<void> {
   for (const r of interruptedRequeue) {
     try {
@@ -20403,6 +20564,8 @@ async function drainInterruptedRequeue(): Promise<void> {
         if (!r.selectedTemplateId) r.selectedTemplateId = "interrupted:none";
         continue;
       }
+      const _init = requestQueue.dispatchOriginOf(r);
+      if (_init) requeueInitiators.set(r.dispatchId, _init);
       executionStore.delete(r.dispatchId);
       await runGoalAs(SELF_PRINCIPAL, { goal: r.goal, variables: { requeue_dispatch_id: r.dispatchId }, dispatchId: r.dispatchId, ...(r.learningMode ? { learning_mode: r.learningMode } : {}) });
       console.log("[goal-host-vessel] requeued interrupted dispatch " + r.dispatchId);
@@ -20534,6 +20697,11 @@ setInterval(persistDispatchStore, 5000);
 // The verdict-consistency store exists only on the running service: its root is the directory of the dispatch store
 // this service already keeps (no env read; an importer that is not the service gets no store).
 verdictConsistency.setVerdictConsistencyRoot(dirname(DISPATCH_STORE_PATH));
+// The resolver request queue is the service's too, beside the dispatch store (request-queue.ts). The sweep settles what
+// time and the walks decided (lapsed holders, deadlines, ended walks) with no traffic, from boot on.
+requestQueue.setRequestQueueRoot(dirname(DISPATCH_STORE_PATH));
+void requestQueue.sweepRequests();
+setInterval(() => { void requestQueue.sweepRequests(); }, 15_000);
 server = Bun.serve({
   port: PORT,
   async fetch(req, srv) {
@@ -20580,6 +20748,7 @@ server = Bun.serve({
         observe_skips: observeSkipCounters(),
         // Inbound door refusals (src/inbound-auth.ts), in total and by caller hint. Never anything about a key.
         inbound_auth: inboundAuthCounters(),
+        request_queue: requestQueue.requestQueueCounters(),
       });
     }
 
@@ -20615,6 +20784,7 @@ server = Bun.serve({
         learning: record.learning ?? null,
         cost: (record as { cost?: unknown }).cost ?? null,
         targetSelection: record.targetSelection ?? null,
+        resolverAnswers: record.resolverAnswers ?? [],
         // THE ANSWER. This response is built KEY BY KEY, and every key not named here is
         // dropped silently — no error, no warning, no failing test, because omitting an
         // optional field is legal. answerBody was missing, so the human surface rendered a
@@ -20764,6 +20934,7 @@ export {
   handleResolve,
   runGoalAs,
   markInboundRemote,
+  solicitHumanInput,
   __inboundAuthStateForTests,
 };
 export type { ClassRow, SelectorId, Enumerated, SelParams, LabelCtx, OwnMatch, ShellCtx, SelectorDef };
