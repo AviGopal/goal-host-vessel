@@ -251,6 +251,7 @@ import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
+import { singleFileTargetLine } from "./edit-intent-target";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
@@ -14942,7 +14943,7 @@ async function runGoalWithRecoveryInner(
             "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
             earlyAllFiles.length > 1
               ? `Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${earlyAllFiles.join(", ")}`
-              : `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${earlyEditFile}`,
+              : singleFileTargetLine(earlyEditFile, opts.variables), // a check-supply goal CREATES its check file (edit-intent-target.ts)
             "The change MUST typecheck.",
             "",
             `GOAL: ${goalForRouting}`,
@@ -15878,7 +15879,7 @@ async function runGoalWithRecoveryInner(
                   "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
                   allEditFiles.length > 1
                     ? `Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${allEditFiles.join(", ")}`
-                    : `Target file — EDIT IT IN PLACE: emit \`edit\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${editFile}`,
+                    : singleFileTargetLine(editFile, opts.variables),   // see the early-route sibling above
                   "The change MUST typecheck.",
                   "",
                   `GOAL: ${goal}`,
