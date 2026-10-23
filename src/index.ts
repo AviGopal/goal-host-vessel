@@ -8790,6 +8790,9 @@ async function runGoalAsPoolWalkBody(
   // that caused it — which is exactly the kind of behaviour law 1 says must be observable and
   // learnable rather than frozen at process start.
   const MAX_STEPS = (await resolveSelectionTuning()).maxWalkSteps;
+  // How many consecutive steps without pool progress end the walk: the walk budget's (the shaped `walkBudget`,
+  // recorded default 2), read where every other walk budget is, so a walk that keeps stopping short can widen it.
+  const MAX_NO_PROGRESS_STEPS = await shapedBudget("max_no_progress_steps", 2, 1, 40);
   // Terminal emit targets to DEFER until intermediates are produced (composition).
   const terminalShapes = new Set<string>(writeDoorShapes(opts.terminalOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
   // OBSERVE (observe-mode.ts): an observe dispatch's walk targets no gap write (dropped and recorded, like the write door).
@@ -12264,14 +12267,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
         console.log(`[goal-host-vessel] walk(${opts.surface}): HORIZONTAL bundle for "${T}" — ran ${K} producers in parallel, ${producedCount} produced new shapes (OR-edge discovery)`);
         const progressed = producedShapes.size > beforeBundle;
-        if (!progressed) {
-          consecutiveNoProgress++;
-          if (consecutiveNoProgress >= 2) {
-            console.log(`[goal-host-vessel] walk(${opts.surface}): 2 consecutive no-progress steps — stopping`);
-            break;
-          }
-        } else {
-          consecutiveNoProgress = 0;
+        // The walk's ONE continuation decision (walk-continuation.ts), the same as the single-pick step's below. The
+        // step ceiling stays the loop's own condition (MAX_STEPS), so it is not passed here.
+        const _bundleCont = decideContinuation({ producedShape: "", noProgressCount: consecutiveNoProgress, terminationReason: null, satisfiesTarget: false, madeProgress: progressed, maxNoProgressSteps: MAX_NO_PROGRESS_STEPS, maxWalkSteps: Number.POSITIVE_INFINITY, stepIndex: chain.length - 1 });
+        consecutiveNoProgress = _bundleCont.noProgressCount;
+        if (_bundleCont.terminationReason) {
+          console.log(`[goal-host-vessel] walk(${opts.surface}): ${_bundleCont.terminationReason} — stopping`);
+          break;
         }
         continue; // the bundle WAS this step's progress; skip the single-pick path
       }
@@ -12689,17 +12691,21 @@ If one of those sibling shapes is the action that would create what the goal ask
     });
     const progressed = producedShapes.size > beforeSize;
     tap(`[goal-host-vessel] walk(${opts.surface}): step ${chain.length} ran ${pick.id} status=${trace.status} new_shapes=${producedShapes.size - beforeSize} pool=${producedShapes.size} chain=${chainExecIds.length}`);
-    if (target.size > 0 && !_stepNew.some((s) => target.has(s))) continue;
+    // The walk's ONE continuation decision (walk-continuation.ts), for targeted and untargeted walks alike. The target
+    // test used to `continue` ABOVE the no-progress counter, so a targeted walk never counted a step and ran to
+    // MAX_STEPS; now it only skips the interim reach check when the step produced no target shape. The step ceiling
+    // stays the loop's own condition, so the last step still gets its reach check.
+    const _targetProduced = _stepNew.find((s) => target.has(s)) ?? "";
+    const _cont = decideContinuation({ producedShape: _targetProduced, noProgressCount: consecutiveNoProgress, terminationReason: null, satisfiesTarget: _targetProduced.length > 0, madeProgress: progressed, maxNoProgressSteps: MAX_NO_PROGRESS_STEPS, maxWalkSteps: Number.POSITIVE_INFINITY, stepIndex: chain.length - 1 });
+    consecutiveNoProgress = _cont.noProgressCount;
+    if (_cont.terminationReason) {
+      console.log(`[goal-host-vessel] walk(${opts.surface}): ${_cont.terminationReason} — stopping`);
+      walkTerminationReason = _cont.terminationReason;
+      break;
+    }
+    if (target.size > 0 && !_cont.accepted) continue;
 
-    if (!progressed) {
-      consecutiveNoProgress++;
-      if (consecutiveNoProgress >= 2) {
-        console.log(`[goal-host-vessel] walk(${opts.surface}): 2 consecutive no-progress steps — stopping`);
-        walkTerminationReason = "no pool progress for 2 consecutive steps";
-        break;
-      }
-    } else {
-      consecutiveNoProgress = 0;
+    if (progressed) {
       // HONEST-REACH GUARD (gap-multistage-pipeline-collapses-to-hollow-green): for a
       // derive->emit / multi-target goal, do NOT run the early-reach check until the
       // derivation-split TERMINAL shapes are genuinely produced. Otherwise the interim
