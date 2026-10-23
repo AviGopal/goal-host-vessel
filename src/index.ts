@@ -7330,7 +7330,8 @@ async function creditReachedTemplate(activityId: string, reason: string, goalTex
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) console.warn(`[goal-host-vessel] alpha-credit REJECTED (${res.status}) for '${activityId}' — no posterior row exists for this pick; credit not applied`);
-    return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: res.ok ? 0 : 1 };
+    // A rejected credit POST wrote nothing: neither α nor β moved, so the delta says so (it said dBeta:1).
+    return { templateId: activityId, dAlpha: res.ok ? 2 : 0, dBeta: 0 };
   } catch (e) {
     // A SWALLOWED CREDIT IS A REACH THAT TEACHES NOTHING, AND THIS CATCH SAID NOTHING.
     //
@@ -7345,7 +7346,8 @@ async function creditReachedTemplate(activityId: string, reason: string, goalTex
     // failure under a success message is harder to find than a silent failure alone.
     console.warn(`[goal-host-vessel] alpha-credit LOST for '${activityId}' — the feedback POST to ${ACTIVITY_API_ENDPOINT} threw (${(e as Error)?.message ?? String(e)}); this reach earned nothing and the arm learns nothing from it`);
   }
-  return { templateId: activityId, dAlpha: 0, dBeta: 1 };
+  // A thrown credit POST wrote nothing either: no α and no β.
+  return { templateId: activityId, dAlpha: 0, dBeta: 0 };
 }
 // Per-goal learning (2026-06-22). Record goal -> path -> reach into
 // goal_execution_paths (keyed by goal_hash), so the SAME goal — whether from
@@ -13179,11 +13181,13 @@ If one of those sibling shapes is the action that would create what the goal ask
           declined: _declined?.class ?? null,
         }), { beta: walkBetaWithheld ? "withheld" : "charged", withheld_why: walkBetaWithheld ? (_noOracle ? "no-oracle-for-goal-class" : _withheldWhy) : null, alpha_was_reachable: _alphaWasReachable });
 
+        // Whether the penalty below actually wrote β (its own delta): observe, a credit hold or a rejected POST does not.
+        let _hollowBetaApplied = false;
         if (_declined) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — its own answer DECLINED (${_declined.class}: ${_declined.reason.slice(0, 160)}); a correct refusal is not a hollow`);
         } else if (!_noOracle && !_betaWithheldForSymmetry) {
           if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
-          else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal));
+          else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal).then((d) => { _hollowBetaApplied = d.dBeta > 0; return d; }));
         } else if (_noOracle) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
         } else {
@@ -13239,7 +13243,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_hc && _hc.trim().length > 0) tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW-CONTENT ${_hs} (${_hc.length} chars) = ${_hc.slice(0, 400)}`);
           }
         } catch { /* observability only — never break the verdict path */ }
-        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : _betaWithheldForCulpability ? `β WITHHELD (${lastPick} did not produce the judged artifact; producer: ${_producerIds})` : `β-penalised last pick ${lastPick}`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)} goal_hash=${goalHashOf(goal)}`);
+        tap(`[goal-host-vessel] walk(${opts.surface}): HOLLOW — ${verdict.reason}; ${_noOracle ? "β WITHHELD (no oracle owns this class)" : _betaWithheldForSymmetry ? `β WITHHELD (α was structurally unreachable for ${lastPick} — symmetric abstention, not a penalty)` : _betaWithheldForCulpability ? `β WITHHELD (${lastPick} did not produce the judged artifact; producer: ${_producerIds})` : _hollowBetaApplied ? `β-penalised last pick ${lastPick}` : `β NOT applied to last pick ${lastPick} (observe, a credit hold, or the penalty POST was rejected)`}. completion_shapes=${JSON.stringify(verdict.completion_shapes)} goal_hash=${goalHashOf(goal)}`);
         // LEAF→AUTHORING ESCALATION (precise path): the reach-gate names the
         // shapes the goal needed but the walk could not produce. If any such
         // shape has NO live resolver (a true CAPABILITY gap — not a selection
@@ -16777,8 +16781,9 @@ async function runGoalWithRecoveryInner(
         } else if (verdict && verdict.reached === false) {
           status = "failed";
           goalReachReason = verdict.reason;
-          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached", goal));
-          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; β-penalised. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
+          let _penApplied = false;
+          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(selId, verdict.reason ?? "goal not reached", goal).then((d) => { _penApplied = d.dBeta > 0; return d; }));
+          tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: HOLLOW via ${selId} — ${verdict.reason}; ${_penApplied ? "β-penalised" : "β NOT applied (observe, a credit hold, or the penalty POST was rejected)"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
         } else if (verdict && verdict.reached === true) {
           tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: REACHED via ${selId} — ${verdict.reason ?? "no reason given"}. completion_shapes=${JSON.stringify(verdict.completion_shapes)}`);
           if (isSubstanceHonestReach(verdict)) { opts.learningSink?.alphaBetaDelta.push(await creditReachedTemplate(selId, verdict.reason ?? "goal reached", goal as string)); }  // symmetric alpha-credit (mirror of penaliseHollowTemplate) — deterministic/landed reaches only, never LLM-yes
