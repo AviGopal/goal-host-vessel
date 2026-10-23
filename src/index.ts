@@ -253,6 +253,7 @@ import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome }
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
 import { singleFileTargetLine } from "./edit-intent-target";
 import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } from "./refusal-decline";
+import { conceptRecallPointer } from "./concept-recall-pointer";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
@@ -1419,7 +1420,11 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
   // minutes. Only successful, non-empty results are cached — a null (could-not-ask) is never
   // cached, so an outage still reads as an outage and never masquerades as an empty store.
   const _cacheKey = `${query}::${limit}::${JSON.stringify(filters)}`;
-  const _hit = _recallCache.get(_cacheKey);
+  // A RECALL INSIDE A DISPATCH NAMES ITS EXECUTION (concept-recall-pointer.ts), so concept-db can credit what this
+  // execution recalled. A cache hit sends nothing, so such a recall reads fresh (and still fills the cache); a recall
+  // with no dispatch context keeps its cache hits.
+  const _recallExecId = dispatchContext.getStore()?.dispatchId;
+  const _hit = _recallExecId ? undefined : _recallCache.get(_cacheKey);
   const _ttl = await shapedBudget("recall_cache_ttl_ms", 600_000, 30_000, 3_600_000);
   if (_hit && Date.now() - _hit.at < _ttl) return _hit.rows;
   // SAY WHY RECALL FAILED. Every failure here returned a bare null, and the one caller turns that
@@ -1452,7 +1457,7 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
     const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { pointer: { type: "concept", query, limit, ...filters } } }),
+      body: JSON.stringify({ impulse: { pointer: conceptRecallPointer(query, limit, filters, _recallExecId) } }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r.ok) {
