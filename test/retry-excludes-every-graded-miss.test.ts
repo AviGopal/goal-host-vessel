@@ -6,6 +6,7 @@
 //
 //   [MUST-FAIL] two graded misses on X (bare and floor-wrapped) -> the third attempt avoids X.
 //   [MUST-FAIL] a graded miss on X then a no-artifact miss on Y -> both are avoided.
+//   [MUST-FAIL] deterministic:judge-rules-refused is a graded verdict too: its targets are avoided (pinned positively).
 //   [CONTROL]   a newer record that is not a verdict ends the run; an unanchored mention is not a verdict; nothing to
 //               avoid is [] — and a goal that reached has no records since (recallGoalFailures), so it avoids nothing.
 import { describe, expect, it } from "bun:test";
@@ -36,6 +37,15 @@ describe("a retry avoids the targets of every graded miss", () => {
       { at: "2026-10-24T10:00:00Z", reason: "deterministic:wrong-compute-answer — 41, expected 42", targets: ["shellResult"] },
       { at: "2026-10-24T10:05:00Z", reason: NA, targets: ["gitCommitResult"] },
     ])].sort()).toEqual(["gitCommitResult", "shellResult"]);
+  });
+
+  it("[MUST-FAIL] a judge-rules-refused verdict is a graded miss: its targets are now avoided too", () => {
+    // The example retry-avoids-every-failed-target's control used for "another kind of failure" before R:181: the run
+    // used to end at it; it is a graded verdict now, so it continues the run and its targets are excluded.
+    expect([...FT.targetsToAvoid([
+      { at: "2026-10-16T10:00:00Z", reason: NA, targets: ["gitCommitResult"] },
+      { at: "2026-10-16T10:05:00Z", reason: "deterministic:judge-rules-refused — x", targets: ["gitStatusResult"] },
+    ])].sort()).toEqual(["gitCommitResult", "gitStatusResult"]);
   });
 
   it("[CONTROL] a newer non-verdict record ends the run; an unanchored mention is no verdict; no records avoid nothing", async () => {
