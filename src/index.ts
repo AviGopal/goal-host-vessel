@@ -252,6 +252,7 @@ import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, in
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
 import { singleFileTargetLine } from "./edit-intent-target";
+import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } from "./refusal-decline";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
@@ -7818,6 +7819,8 @@ async function persistFailedWalkTrace(
   reachReason: string | undefined,
   targetShapes: string[],
   termination: string,
+  // A refused dispatch (refusal-decline.ts): the row says declined:<class>, so it is neither credited nor blamed.
+  decline: RefusalDecline | null = null,
 ): Promise<string> {
   const execId = `walk-satisfier-failed-${goalHashOf(goal)}-${Date.now()}`;
   const produced = completionShapes ?? [];
@@ -7842,7 +7845,7 @@ async function persistFailedWalkTrace(
     })),
     costUsd: 0,
     durationMs: 0,
-    tags: ["dispatcher_used:goal-host"],
+    tags: declinedTags(["dispatcher_used:goal-host"], decline),
     metadata: {
       satisfier: true,
       walk_failed: true,
@@ -7852,6 +7855,7 @@ async function persistFailedWalkTrace(
       target_shapes: targetShapes,
       produced_shapes: produced,
       walk_log: walkLog.slice(-80).map((l) => l.slice(0, 500)),
+      ...declineMetadata(decline),
     },
   } as ExecutionTrace);
   return execId;
@@ -8828,7 +8832,7 @@ async function runGoalAsPoolWalkBody(
     const _metaNotValue = /\b(length|how long|number of characters|char count|presence|whether .* (?:is )?set|is .* set|exists|does .* exist|hash|sha|fingerprint|last \d|first \d|redact|masked?)\b/.test(_g);
     if (_asksValue && _namesSecret && !_metaNotValue) {
       tap(`[goal-host-vessel] ${opts.surface}: SECRET-EXTRACTION REFUSED (pre-execution) — goal asks to reveal a secret/credential VALUE; failing honestly + safely, no command synthesized (the substrate does not exfiltrate secrets). goal_hash=${goalHashOf(goal)}`);
-      return { result: null, status: "failed", selectedTemplateId: "secret-extraction-refused", completionShapes: null, attempts: 0, reached: false, goalReachReason: "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated." };
+      return { result: null, status: "failed", selectedTemplateId: "secret-extraction-refused", completionShapes: null, attempts: 0, reached: false, outcome: { kind: "refused", refuse_class: "secret_extraction" }, goalReachReason: "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated." };
     }
   }
   // Resolved from the policy volume at USE TIME (law 1), env kept as the middle tier so no
@@ -18591,6 +18595,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
       const outcome: DispatchOutcome = { kind: "refused", refuse_class: "spend_rate", retry_after_s: rateDecision!.retry_after_s };
       const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal: rawGoal, selectedTemplateId: "spend-rate-refused", goalReachReason: reason, outcome };
       executionStore.set(dispatchId, refusalRec);
+      // DECLINED, on the record (refusal-decline.ts): one ungraded row, not awaited, so the 429 is not delayed.
+      void persistFailedWalkTrace(rawGoal, [], null, reason, [], "refused-at-entry", declineOfOutcome(outcome, reason)).then((id) => { refusalRec.executionId = id; }, () => {});
       console.warn(`[goal-host-vessel] /run-goal: SPEND-RATE REFUSED at handler entry (no LLM call) goal_hash=${goalHashOf(rawGoal)}: ${rateRefusal}`);
       return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason, outcome, retry_after_s: outcome.retry_after_s }, { status: 429, headers: { "Retry-After": String(outcome.retry_after_s) } });
     }
@@ -18775,8 +18781,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
     if (_asksValue && _namesSecret && !_metaNotValue) {
       const dispatchId = crypto.randomUUID();
       const reason = "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated.";
-      const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal, selectedTemplateId: "secret-extraction-refused", goalReachReason: reason };
+      const outcome: DispatchOutcome = { kind: "refused", refuse_class: "secret_extraction" };
+      const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal, selectedTemplateId: "secret-extraction-refused", goalReachReason: reason, outcome };
       executionStore.set(dispatchId, refusalRec);
+      // DECLINED, on the record (refusal-decline.ts): one ungraded row (goal hash only, never the goal text), not awaited.
+      void persistFailedWalkTrace(goal, [], null, reason, [], "refused-at-entry", declineOfOutcome(outcome, reason)).then((id) => { refusalRec.executionId = id; }, () => {});
       console.log(`[goal-host-vessel] /run-goal: SECRET-EXTRACTION REFUSED at handler entry (no dispatch, terminal) goal_hash=${goalHashOf(goal)}`);
       return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason }, { status: 200 });
     }
@@ -19425,8 +19434,13 @@ async function handleRunGoal(req: Request): Promise<Response> {
       } else if (seek.reached !== true) {
         const _goalStr = String(goal ?? "");
         const _targetShapes = (typeof goal === "string" ? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes : undefined) ?? [];
+        // A REFUSAL IS DECLINED (refusal-decline.ts): the seek's own refused outcome, else the needs-information outcome
+        // the record takes below (the same pure read, made here so the row is written with it).
+        const _decline = declineOfOutcome(seek.outcome ?? needsInformationOutcome(unboundByDispatch.get(String(variables?.dispatch_id ?? record.dispatchId ?? "")), false), seek.goalReachReason);
         try {
-          record.executionId = await persistFailedWalkTrace(_goalStr, walkStepSink, seek.completionShapes, seek.goalReachReason, _targetShapes, seek.abstain ? "walk-abstained" : "walk-terminated-unreached");
+          record.executionId = await persistFailedWalkTrace(_goalStr, walkStepSink, seek.completionShapes, seek.goalReachReason, _targetShapes, seek.abstain ? "walk-abstained" : "walk-terminated-unreached", _decline);
+          // and its walk-complete /reach carries the withhold, as the satisfier decline's does
+          if (_decline) betaWithheld.set(record.executionId, "declined");
         } catch {
           record.executionId = `goal-seek:no-trace:${goalHashOf(_goalStr)}`;
         }
