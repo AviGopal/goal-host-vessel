@@ -269,7 +269,7 @@ import { consensusSymbols } from "./goal-file-resolution";
 import { emptyResultSetReason } from "./empty-result-set";
 import { resolveReportBody } from "./resolve-report-body";
 import { decideContinuation } from "./walk-continuation.js";
-import { pickSatisfierProducer, satisfierProvenBad } from "./satisfier-pick.js";
+import { pickSatisfierProducer, pickComposeOwner, satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
 import { SHADOW_ROUTE_PREFIX, transportHopHeaders, routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
@@ -1218,7 +1218,22 @@ export function deliverReachVerdict(
 
 const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "requestLease", "requestLease_renew", "resolverRequest", "verdictCorpusRun", "verdictConsistency"] as const;
 const VERSION = "0.1.0";
-const _dupOwnerFiled = new Set<string>();
+/** Each of several compose owners' free slots, from its own composeOwnership PLACEMENT answer (the read the placement
+ *  rule already makes: {targets} on the pointer; development-vessel compose-placement.ts). Written onto the row as
+ *  `compose_free` (null: no answer, or no capacity reported). Only asked when there is a choice to make. */
+async function readComposeFreeSlots(owners: Array<{ endpoint?: unknown; resolve_endpoint?: string; compose_free?: number | null }>, targets: string[]): Promise<void> {
+  if (owners.length < 2) return;
+  await Promise.all(owners.map(async (r) => {
+    r.compose_free = null;
+    try {
+      const u = `${String(r.endpoint ?? "").replace(/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
+      const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership", targets } } }), signal: AbortSignal.timeout(3_000) });
+      const j = await res.json() as { body?: { placement?: { capacity?: { free?: unknown } | null } }; content?: { placement?: { capacity?: { free?: unknown } | null } } };
+      const free = (j?.body ?? j?.content)?.placement?.capacity?.free;
+      if (typeof free === "number" && Number.isFinite(free)) r.compose_free = free;
+    } catch { /* an owner that does not answer reports no free slot */ }
+  }));
+}
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 // CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
 // Leaving it declared but unused invites the next call site to reach for it again, and
@@ -14915,26 +14930,13 @@ async function runGoalWithRecoveryInner(
               }));
             }
             const earlyOwners = earlyRows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(earlyTargetVessel));
-            if (earlyOwners.length > 1 && !_dupOwnerFiled.has(earlyTargetVessel) && !observeSkip("gap_write")) { // OBSERVE: no gap
-              _dupOwnerFiled.add(earlyTargetVessel);
-              const claimants = earlyOwners.map((r) => String(r.vesselId ?? ""));
-              void fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-                body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
-                  id: `compose-ownership-duplicate-${earlyTargetVessel}`,
-                  category: "attempt_consequence",
-                  source: "substrate_detected",
-                  status: "open",
-                  detected_at: new Date().toISOString(),
-                  summary: `Two or more composers claim ${earlyTargetVessel} (${claimants.join(", ")})\u003a each holds a push clone for it, so both can land on its origin/dev. Remove the clone from all but one node's SUBSTRATE_PUSH_VESSELS.`,
-                  classification_metadata: { claimants, vessel: earlyTargetVessel },
-                } } } }),
-                signal: AbortSignal.timeout(5_000),
-              }).then((r) => { if (!r.ok) tap(`[goal-host-vessel] duplicate-owner gap write failed: HTTP ${r.status}`); }).catch((e) => tap(`[goal-host-vessel] duplicate-owner gap write failed: ${(e as Error).message}`));
-            }
-            const earlyV = earlyOwners.length === 1 ? earlyOwners[0] : pickSatisfierProducer(earlyRows);
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ${earlyOwners.length === 1 ? `routed by ownership → ${earlyOwners[0]!.vesselId}` : 'routed by pick'}`);
+            // SEVERAL OWNERS ARE ALLOWED (REALIGNMENT §4, user ruling: several owners, serialised by the landing lease).
+            // Who owns a repo is development-vessel's decision (its gap policy's owned vessels, answered as
+            // composeOwnership); goal-host no longer keeps its own rule that a second owner is a defect to file. Among
+            // several owners the one with free compose slots takes the edit (pickComposeOwner).
+            await readComposeFreeSlots(earlyOwners, earlyAllFiles);
+            const earlyV = earlyOwners.length > 0 ? pickComposeOwner(earlyOwners, (r) => (r as { compose_free?: number | null }).compose_free ?? null) : pickSatisfierProducer(earlyRows);
+            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ${earlyOwners.length === 1 ? `routed by ownership → ${earlyOwners[0]!.vesselId}` : earlyOwners.length > 1 ? `routed by owner capacity → ${String(earlyV?.vesselId ?? "?")} (free ${earlyOwners.map((r) => `${String(r.vesselId ?? "?")}=${(r as { compose_free?: number | null }).compose_free ?? "?"}`).join(",")})` : 'routed by pick'}`);
             if (earlyV?.endpoint) {
               earlyComposeUrl = `${earlyV.endpoint.replace(/\/+$/, "")}${asResolvePath(earlyV.resolve_endpoint)}`;
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose producer resolved via discovery → ${earlyComposeUrl}`);
@@ -15892,8 +15894,10 @@ async function runGoalWithRecoveryInner(
                 }));
               }
               const owners = rows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(targetVessel));
-              const v = owners.length === 1 ? owners[0] : pickSatisfierProducer(rows);
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ${owners.length === 1 ? `routed by ownership → ${owners[0]!.vesselId}` : 'routed by pick'}`);
+              // Several owners: the one with free compose slots (pickComposeOwner), as at the early site.
+              await readComposeFreeSlots(owners, allEditFiles);
+              const v = owners.length > 0 ? pickComposeOwner(owners, (r) => (r as { compose_free?: number | null }).compose_free ?? null) : pickSatisfierProducer(rows);
+              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ${owners.length === 1 ? `routed by ownership → ${owners[0]!.vesselId}` : owners.length > 1 ? `routed by owner capacity → ${String(v?.vesselId ?? "?")} (free ${owners.map((r) => `${String(r.vesselId ?? "?")}=${(r as { compose_free?: number | null }).compose_free ?? "?"}`).join(",")})` : 'routed by pick'}`);
               if (v?.endpoint) {
                 composeUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
                 tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);

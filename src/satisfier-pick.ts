@@ -61,3 +61,20 @@ export function pickSatisfierProducer(
   }
   return best ?? pool[0];
 }
+
+/**
+ * WHICH OF A REPO'S COMPOSE OWNERS TAKES AN EDIT (REALIGNMENT §4, law 11). Several owners may compose one repo; the
+ * landing lease serialises their landings (development-vessel owns that decision: its gap policy's owned vessels, its
+ * composeOwnership answer). The pick among them used to be capacity-blind: priority over every row, so a full owner
+ * took the edit while another owner sat idle, and the edit came back BUSY. `freeSlots` is each owner's free compose
+ * slots as its own composeOwnership placement answer reported them (null: unobservable). One owner is today's route;
+ * among several, the most free slots wins (ties by the existing priority pick); none observably free keeps the
+ * priority pick among the owners, whose BUSY is the same non-attempt as before. Pure.
+ */
+export function pickComposeOwner<T extends SatisfierProducer>(owners: T[], freeSlots: (o: T) => number | null): T | undefined {
+  if (owners.length <= 1) return owners[0];
+  const free = owners.map((o) => ({ o, n: freeSlots(o) })).filter((x): x is { o: T; n: number } => typeof x.n === "number" && x.n > 0);
+  if (free.length === 0) return pickSatisfierProducer(owners) as T | undefined;
+  const most = Math.max(...free.map((x) => x.n));
+  return pickSatisfierProducer(free.filter((x) => x.n === most).map((x) => x.o)) as T | undefined;
+}

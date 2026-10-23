@@ -69,7 +69,6 @@ describe("each side effect asks observeSkip first", () => {
     expect(firstLines("async function fileMissingVerifierGap(", 2)).toContain('if (observeSkip("gap_write")) return;');
     expect(src).toContain('if (_reachVerdict && !observeSkip("gap_write")) {');
     expect(src).toContain('if (observeSkip("gap_write")) return; // OBSERVE (observe-mode.ts): the case is kept, no gap is seeded');
-    expect(src).toContain('if (earlyOwners.length > 1 && !_dupOwnerFiled.has(earlyTargetVessel) && !observeSkip("gap_write")) {');
     expect(src).toContain('if (isOperator && isUnservable && typeof goal === "string" && !observeSkip("gap_write")) {');
     expect(fnBody("async function emitAuthoringDecision(", 400)).toContain('if (observeSkip("authoring_decision")) return;');
     expect(firstLines("async function closeAuthoringDecisions(", 2)).toContain('if (observeSkip("authoring_decision")) return;');
