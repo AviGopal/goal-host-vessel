@@ -13134,11 +13134,11 @@ If one of those sibling shapes is the action that would create what the goal ask
           declined: _declined?.class ?? null,
         }), { beta: walkBetaWithheld ? "withheld" : "charged", withheld_why: walkBetaWithheld ? (_noOracle ? "no-oracle-for-goal-class" : _withheldWhy) : null, alpha_was_reachable: _alphaWasReachable });
 
-        if (!_declined && !_noOracle && !_betaWithheldForSymmetry) {
+        if (_declined) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — its own answer DECLINED (${_declined.class}: ${_declined.reason.slice(0, 160)}); a correct refusal is not a hollow`);
+        } else if (!_noOracle && !_betaWithheldForSymmetry) {
           if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
           else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal));
-        } else if (_declined) {
-          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — its own answer DECLINED (${_declined.class}: ${_declined.reason.slice(0, 160)}); a correct refusal is not a hollow`);
         } else if (_noOracle) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
         } else {

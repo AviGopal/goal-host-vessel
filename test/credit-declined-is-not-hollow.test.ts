@@ -63,14 +63,16 @@ describe("MUST-FAIL: a satisfier's correct refusal is declined, not charged", ()
   });
 
   test("the walk makes no /v2/activities/feedback penalty call for a decline", () => {
-    // the one penaliseHollowTemplate call in the branch sits under a guard a decline fails
+    // the branch has one penaliseHollowTemplate call, and a decline never reaches it
     expect(branch.split("penaliseHollowTemplate(").length - 1).toBe(1);
-    const guard = branch.indexOf("if (!_declined && !_noOracle && !_betaWithheldForSymmetry) {");
+    // a decline takes the first arm, which only logs; the penalty sits in the arm after it
+    const declinedArm = branch.indexOf("if (_declined) {\n          tap(");
+    const guard = branch.indexOf("} else if (!_noOracle && !_betaWithheldForSymmetry) {");
     const call = branch.indexOf("penaliseHollowTemplate(lastPick,");
-    const declinedArm = branch.indexOf("} else if (_declined) {");
-    expect(guard).toBeGreaterThan(-1);
+    expect(declinedArm).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(declinedArm);
     expect(call).toBeGreaterThan(guard);
-    expect(declinedArm).toBeGreaterThan(call);
+    expect(branch.slice(declinedArm, guard)).not.toContain("penaliseHollowTemplate(");
   });
 
   test("the durable trace carries declined:<class> and the decliner's reason", () => {
