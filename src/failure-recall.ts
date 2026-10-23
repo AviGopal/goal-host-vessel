@@ -68,8 +68,9 @@ export function failureFeedbackText(exact: readonly RecallRecord[], near: readon
   const rank = (a: RecallRecord, b: RecallRecord) => Number(b.deterministic) - Number(a.deterministic) || b.at.localeCompare(a.at);
   const lines: string[] = [];
   for (const r of [...exact].sort(rank).slice(0, 3)) lines.push(`- (this exact goal, ${r.at.slice(0, 16)}, producer ${r.pick ?? "?"}) ${r.reason}`);
-  // Other-goal lessons only when the verdict was deterministic: an LLM-judged hollow on a different goal is too weak to steer this one.
-  for (const r of near.filter((x) => x.deterministic)) lines.push(differentGoalLessonLine(r));
+  // Other-goal lessons are also ranked. Deterministic (alpha) verdicts are preferred, but non-deterministic (beta)
+  // ones are included as a fallback to steer away from repeated failures when no alpha signal is available.
+  for (const r of [...near].sort(rank)) lines.push(differentGoalLessonLine(r));
   return lines.join("\n");
 }
 
