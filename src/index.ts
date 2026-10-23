@@ -18595,8 +18595,6 @@ async function handleRunGoal(req: Request): Promise<Response> {
       const outcome: DispatchOutcome = { kind: "refused", refuse_class: "spend_rate", retry_after_s: rateDecision!.retry_after_s };
       const refusalRec: DispatchRecord = { dispatchId, startedAt: Date.now(), status: "failed", reached: false, goal: rawGoal, selectedTemplateId: "spend-rate-refused", goalReachReason: reason, outcome };
       executionStore.set(dispatchId, refusalRec);
-      // DECLINED, on the record (refusal-decline.ts): one ungraded row, not awaited, so the 429 is not delayed.
-      void persistFailedWalkTrace(rawGoal, [], null, reason, [], "refused-at-entry", declineOfOutcome(outcome, reason)).then((id) => { refusalRec.executionId = id; }, () => {});
       console.warn(`[goal-host-vessel] /run-goal: SPEND-RATE REFUSED at handler entry (no LLM call) goal_hash=${goalHashOf(rawGoal)}: ${rateRefusal}`);
       return Response.json({ dispatchId, status: "failed", reached: false, refused: true, goalReachReason: reason, outcome, retry_after_s: outcome.retry_after_s }, { status: 429, headers: { "Retry-After": String(outcome.retry_after_s) } });
     }
