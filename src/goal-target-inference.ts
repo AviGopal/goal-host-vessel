@@ -270,7 +270,31 @@ const _COMPOSITION_WRITE_CLAUSE = /\b(?:write|writes|writing|save|saves|saving|r
 function _shapeToPhrase(s: string): string {
   return s.replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().trim();
 }
+// -- Deterministic concept-id read route (2026-10-23)
+// A goal that names a concept by its ID should route directly to a concept read shape.
+function deterministicConceptReadRoute(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  // Matches concept_... identifiers, e.g. "concept_MO2GKBFm-zzA"
+  const CONCEPT_ID_REGEX = /\bconcept_[A-Za-z0-9_-]{6,}/i;
+  if (!CONCEPT_ID_REGEX.test(goal)) {
+    return null;
+  }
+
+  const targetShape = knownShapes.includes("concept") ? "concept"
+    : knownShapes.includes("conceptSearch") ? "conceptSearch"
+    : null;
+
+  if (targetShape) {
+    // High confidence because it's a specific identifier pattern.
+    return { shapes: [targetShape], confidence: 0.95, alternatives: [] };
+  }
+
+  return null;
+}
+
 function deterministicCompositionAsk(goal: string, knownShapes: string[]): GoalTargetDecision | null {
+  const conceptIdDecision = deterministicConceptReadRoute(goal, knownShapes);
+  if (conceptIdDecision) return conceptIdDecision;
+
   const wm = _COMPOSITION_WRITE_CLAUSE.exec(goal);
   if (!wm) return null;
   // WRITE_CLAUSE confirms a persist-verb + sink-noun within 48 chars. The ACTUAL sink
