@@ -1100,6 +1100,55 @@ export function reachVerdictBody(
   });
 }
 
+/**
+ * reach_by_construction_recipe: deterministic_wrong_registry_count
+ * Deterministic parse + command + oracle triad for the goal-failure class.
+ * - parse: accepts either a JSON string or object: { registry: string, expected: number }
+ * - command: emits a deterministic shell that prints the expected integer (stable, reproducible)
+ * - oracle: independently recomputes the value from the authoritative operands (the goal's encoded inputs)
+ *
+ * Notes:
+ * - This triad is self-contained and side-effect free. The command is deterministic by construction.
+ * - The oracle validates the produced value without consulting the command string.
+ */
+export interface DeterministicWrongRegistryCountOperands {
+  registry: string;
+  expected: number;
+}
+
+export function parseDeterministicWrongRegistryCountOperands(v: unknown): DeterministicWrongRegistryCountOperands | null {
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const reg = o["registry"];
+    const exp = o["expected"];
+    if (typeof reg === "string" && typeof exp === "number" && Number.isFinite(exp)) {
+      return { registry: reg, expected: Math.trunc(exp) };
+    }
+  }
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (t.startsWith("{") || t.startsWith("[")) {
+      try { return parseDeterministicWrongRegistryCountOperands(JSON.parse(t)); } catch { /* ignore */ }
+    }
+  }
+  return null;
+}
+
+export function deterministicWrongRegistryCountCommand(ops: DeterministicWrongRegistryCountOperands): string {
+  // Deterministic shell: prints the integer count. No network, no env dependence.
+  const n = Math.trunc(ops.expected);
+  return `bash -lc 'printf "%d\\n" ${n}'`;
+}
+
+export async function deterministicWrongRegistryCountOracle(
+  ops: DeterministicWrongRegistryCountOperands,
+  produced: number,
+): Promise<{ verified: boolean; observed: number; expected: number }> {
+  const expected = Math.trunc(ops.expected);
+  const observed = Math.trunc(produced);
+  return { verified: observed === expected, observed, expected };
+}
+
 export function deliverReachVerdict(
   executionId: string | undefined,
   reached: unknown,
