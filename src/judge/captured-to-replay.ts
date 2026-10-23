@@ -188,6 +188,7 @@ export function capturedToReplay(rec: unknown, entryHint?: string | null, delive
         last_pick_produced_judged_artifact: need.bool("input.last_pick_produced_judged_artifact", ci.last_pick_produced_judged_artifact),
         // history is carried but not read by the decision; captured null (the trace-store read is not made yet) is []
         history: Array.isArray(ci.history) ? ci.history.map((h) => ({ attempt: h.attempt, write_shape: h.write_shape, refusal: h.refusal })) : [],
+        ...(typeof ci.declined === "string" && ci.declined ? { declined: ci.declined } : {}),
       };
       out = { ok: true, entry, input, llm: null, upstream_unknown: null };
       break;

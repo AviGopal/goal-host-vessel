@@ -99,7 +99,7 @@ export function reframeInput(a: {
   };
 }
 
-export function creditInput(a: { templateClass: string; deterministic: boolean; noOracle: boolean; consumedInChain: number; lastPickProducedJudgedArtifact: boolean }): CreditOnHollowInput {
+export function creditInput(a: { templateClass: string; deterministic: boolean; noOracle: boolean; consumedInChain: number; lastPickProducedJudgedArtifact: boolean; declined?: string | null }): CreditOnHollowInput {
   return {
     schema: JUDGE_INPUT_SCHEMA,
     entry: "creditOnHollow",
@@ -109,6 +109,7 @@ export function creditInput(a: { templateClass: string; deterministic: boolean; 
     edit_effect_reach: false,
     last_pick_produced_judged_artifact: a.lastPickProducedJudgedArtifact,
     history: [],
+    ...(a.declined ? { declined: a.declined } : {}),
   };
 }
 

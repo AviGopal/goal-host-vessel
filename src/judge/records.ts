@@ -104,6 +104,8 @@ export interface CreditOnHollowInput {
   last_pick_produced_judged_artifact: boolean;
   /** The K most recent attempts of the same template, newest last. Neutral value: []. */
   history: CreditAttempt[];
+  /** The last pick's own answer declined, with this class (credit-decision.ts satisfierDeclineClass). Absent: it did not. */
+  declined?: string | null;
 }
 
 export type JudgeInput = ReachGateInput | FloorVerdictInput | FloorShortcutInput | ReframeAcceptInput | CompletionShapesInput | CreditOnHollowInput;
@@ -266,4 +268,6 @@ export interface CapturedCreditOnHollowInput {
   template_id: string;
   /** Additive. */
   no_oracle: boolean;
+  /** Additive: the decline class, present only when the last pick's answer declined. */
+  declined?: string;
 }

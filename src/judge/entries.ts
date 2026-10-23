@@ -254,3 +254,5 @@ export function completionShapes(input: CompletionShapesInput): string[] {
 export function creditOnHollow(input: CreditOnHollowInput): CreditOnHollowDecision {
   return creditDecision(input);
 }
+/** Whether the last pick's own answer declined (the creditOnHollow `declined` input). */
+export { satisfierDeclineClass, type SatisfierDecline } from "./credit-decision";

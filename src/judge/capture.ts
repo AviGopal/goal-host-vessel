@@ -362,6 +362,7 @@ export function creditOnHollowInput(a: {
   editEffectReach: boolean | null;
   lastPickProducedJudgedArtifact: boolean;
   noOracle: boolean;
+  declined?: string | null;
 }): CreditOnHollowInput {
   return {
     template_id_class: templateIdClassOf(a.templateId),
@@ -372,6 +373,7 @@ export function creditOnHollowInput(a: {
     last_pick_produced_judged_artifact: a.lastPickProducedJudgedArtifact,
     no_oracle: a.noOracle,
     history: null,
+    ...(a.declined ? { declined: a.declined } : {}),
   };
 }
 

@@ -13052,6 +13052,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       // set in the not-reached branch, read at the durable persist. null ⇒ the durable trace keeps its own chain.
       let walkChainCarrier: { durable: string[]; composite: string[] } | null = null;
       let walkBetaWithheld = false;
+      // The last pick's own answer DECLINED (judge.satisfierDeclineClass), for the durable trace's declined:<class> tag.
+      let walkDeclined: judge.SatisfierDecline | null = null;
       // Why β was withheld, for the durable trace: the abstain below, or the not-reached branch's record entry.
       let walkBetaWithheldReason: string | null = verdict?.abstain ? "verdict-abstain" : null;
       if (verdict) recordDeterministicLabel(goal, lastExecId, lastPick || undefined, verdict);
@@ -13103,14 +13105,19 @@ If one of those sibling shapes is the action that would create what the goal ask
         // the SAME verdict — a deterministic verdict still penalises normally, and so does any
         // chain that actually formed an edge. It removes an asymmetry; it does not soften
         // grading.
+        // A DECLINE IS NOT A HOLLOW (design ruling: reached / failed / declined). A satisfier whose own answer refused
+        // (needs_information, an armDecomposition refusal) is withheld β, and its durable trace says declined:<class>.
+        const _declined = String(lastPick ?? "").startsWith("satisfier:") ? judge.satisfierDeclineClass(poolImpulses.find((i) => (i.metadata as { producedBy?: unknown }).producedBy === lastPick)?.content) : null;
+        walkDeclined = _declined;
         // The decision itself is the closed judge entry creditOnHollow (src/judge/credit-decision.ts).
-        const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput({ templateClass: String(lastPick ?? ""), deterministic: isDeterministicVerdict(verdict), noOracle: _noOracle, consumedInChain: consumedInChain.size, lastPickProducedJudgedArtifact: _culpability.culpable }));
+        const _creditOnHollow = judge.creditOnHollow(judgeInputs.creditInput({ templateClass: String(lastPick ?? ""), deterministic: isDeterministicVerdict(verdict), noOracle: _noOracle, consumedInChain: consumedInChain.size, lastPickProducedJudgedArtifact: _culpability.culpable, declined: _declined?.class ?? null }));
         const _alphaWasReachable = _creditOnHollow.alpha_reachable;
         const _betaWithheldForSymmetry = _creditOnHollow.withheld === "alpha-unreachable-non-deterministic-no-edge";
         const _betaWithheldForCulpability = !_noOracle && !_betaWithheldForSymmetry && !_culpability.culpable;
-        const _withheldWhy = _noOracle ? "no-oracle-for-goal-class" : _betaWithheldForSymmetry ? "alpha-unreachable-non-deterministic-no-edge" : "not-producer-of-judged-artifact";
+        const _withheldWhy = _declined ? "declined" : _noOracle ? "no-oracle-for-goal-class" : _betaWithheldForSymmetry ? "alpha-unreachable-non-deterministic-no-edge" : "not-producer-of-judged-artifact";
         walkBetaWithheld = _noOracle || _betaWithheldForSymmetry;
         if (_betaWithheldForCulpability) walkBetaWithheld = true;
+        if (_declined) walkBetaWithheld = true;
         // Recorded HERE, from the same decision, so every later /reach for this execution (the
         // walk-complete patch arrives after any fallback step) carries the withhold, whatever the
         // trace kind. Two reasons, two tokens: a missing verifier and a missing edge are different gaps.
@@ -13124,11 +13131,14 @@ If one of those sibling shapes is the action that would create what the goal ask
           editEffectReach: null,
           lastPickProducedJudgedArtifact: _culpability.culpable,
           noOracle: _noOracle,
+          declined: _declined?.class ?? null,
         }), { beta: walkBetaWithheld ? "withheld" : "charged", withheld_why: walkBetaWithheld ? (_noOracle ? "no-oracle-for-goal-class" : _withheldWhy) : null, alpha_was_reachable: _alphaWasReachable });
 
-        if (!_noOracle && !_betaWithheldForSymmetry) {
+        if (!_declined && !_noOracle && !_betaWithheldForSymmetry) {
           if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
           else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal));
+        } else if (_declined) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — its own answer DECLINED (${_declined.class}: ${_declined.reason.slice(0, 160)}); a correct refusal is not a hollow`);
         } else if (_noOracle) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — no deterministic oracle owns this goal class; the gap is the missing verifier, not the pathway`);
         } else {
@@ -13709,6 +13719,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         };
         // Untagged is not enough: activity-api's insert path blamed a failed ungraded trace β=1 anyway. Say so on the trace.
         if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
+        // A DECLINE, queryable: activity-api's isReachInapplicable reads declined:<class>; the decliner's reason rides in metadata.
+        if (!reached && walkDeclined) { durableTrace.tags = [...(durableTrace.tags ?? []).filter((t) => !t.startsWith("declined:")), `declined:${walkDeclined.class}`]; durableTrace.metadata = { ...(durableTrace.metadata ?? {}), decline: { class: walkDeclined.class, reason_text: walkDeclined.reason, decliner_id: String(lastPick) } }; }
         // AWAITED (OP-1): the walk-complete /reach for this execution is delivered after the walk returns, so a
         // fire-and-forget insert raced it and /reach matched no row in ~24% of satisfier-last walks (diag-1c).
         // BOUNDED BY THE SHAPED FLUSH DEADLINE (qa): the sink alone bounds it only by postWithRetry — 3 attempts of
