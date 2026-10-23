@@ -149,7 +149,8 @@ export interface JudgeInputRecord {
   llm: RecordedLlmJudge;
   ports: RecordedPorts;
   verdict: Json;
-  /** How many times this entry was decided on this dispatch; the record kept is the last one. */
+  /** How many times this entry was decided on this dispatch; judge_input.<entry> is the last one (earlier reachGate
+   *  records are kept in judge_input_superseded). */
   calls: number;
   capped?: boolean;
 }
@@ -188,6 +189,10 @@ export interface RoutingInputRecord {
 
 export interface JudgeCaptureMetadata {
   judge_input?: Partial<Record<JudgeEntry, JudgeInputRecord>>;
+  /** Additive: every EARLIER reachGate record of this dispatch, oldest first (judge_input.reachGate is the latest), so a
+   *  later gate call (the floor's, after a reaching walk) never erases an earlier one. Absent until a second reachGate
+   *  capture. Bounded by CAPTURE_SUPERSEDED_CAP_BYTES: the oldest are dropped first, and counted in `dropped`. */
+  judge_input_superseded?: { reachGate: JudgeInputRecord[]; dropped: number };
   routing_input?: RoutingInputRecord;
   /** Present when the dispatch's capture total was cut to its cap: what was cut and the size before the cut. */
   capture_truncated?: CaptureTruncation;

@@ -7,7 +7,8 @@
 // returned. A recorded run becomes a corpus case without re-running anything.
 //
 // WHERE IT GOES. Onto the dispatch's own record (`metadata.judge_input.<entry>` and
-// `metadata.routing_input`), the same record GET /executions/:id serves (with ?include=metadata) and the
+// `metadata.routing_input`; every earlier reachGate record of the dispatch in `metadata.judge_input_superseded`),
+// the same record GET /executions/:id serves (with ?include=metadata) and the
 // dispatch store persists. Nothing here performs I/O: no fetch, no file read, no clock, no randomness,
 // no env read. A capture is synchronous and runs AFTER the decision it records, from values the decision
 // already computed, so it cannot change any decision.
@@ -37,6 +38,8 @@ export const ROUTING_INPUT_SCHEMA = 1;
 export const CAPTURE_RECORD_CAP_BYTES = 32 * 1024;
 /** The per-DISPATCH cap: every judge_input entry and the routing_input together, serialized. */
 export const CAPTURE_DISPATCH_CAP_BYTES = 16 * 1024;
+/** The cap on a dispatch's superseded reachGate records together, serialized; the oldest are dropped first and counted. */
+export const CAPTURE_SUPERSEDED_CAP_BYTES = 16 * 1024;
 /** The per-read cap on a routing read's recorded text (characters); a cut read is marked and makes its record capped. */
 export const CAPTURE_READ_CAP_CHARS = 4 * 1024;
 /** Every truncated string or array carries this marker. */
@@ -443,6 +446,9 @@ export function captureJudgeInput(entry: JudgeEntry, input: () => object, verdic
     capRecord(rec as unknown as Record<string, unknown>);
     t.metadata ??= {};
     t.metadata.judge_input ??= {};
+    // EVERY reach-gate write is kept: the record this one replaces moves to judge_input_superseded (oldest first), so
+    // a floor gate after a reaching walk no longer erases the walk's graded record.
+    if (entry === "reachGate" && prior) keepSuperseded(t.metadata, prior);
     t.metadata.judge_input[entry] = rec;
     capDispatchTotal(t.metadata);
     if (entry === "reachGate") p.lastReachGate = rec;
@@ -454,6 +460,13 @@ export function captureJudgeInput(entry: JudgeEntry, input: () => object, verdic
       try { const p = pendingOf(t); p.llm = { consulted: false, judge: null }; p.citation = []; } catch { /* nothing pending to forget */ }
     }
   }
+}
+
+/** Append a replaced reachGate record to the dispatch's superseded list, within CAPTURE_SUPERSEDED_CAP_BYTES. */
+function keepSuperseded(meta: JudgeCaptureMetadata, prior: JudgeInputRecord): void {
+  const s = (meta.judge_input_superseded ??= { reachGate: [], dropped: 0 });
+  s.reachGate.push(prior);
+  while (s.reachGate.length > 1 && byteLen(JSON.stringify(s)) > CAPTURE_SUPERSEDED_CAP_BYTES) { s.reachGate.shift(); s.dropped++; }
 }
 
 // ── routing capture ─────────────────────────────────────────────────────────────────────────────
