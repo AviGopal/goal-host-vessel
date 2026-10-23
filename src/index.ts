@@ -4912,9 +4912,9 @@ function recallGoalFailures(goalText: string, targets: readonly string[] | null 
   const exact = exactFailuresSince(goalFailureMemory.get(hash) ?? [], since(hash));
   return { exact, near: nearFailures(goalFailureMemory, hash, targets, since) };
 }
-/** The targets a retry of this goal must not choose again: every target of the unbroken run of LATEST "no artifact on
- *  the target" (write-goal-no-artifact) failures since its last reach (src/failed-targets.ts targetsToAvoid). Any other
- *  latest verdict, or a reach since, excludes nothing (CHANGE-35 / A2b-minimal; reuses the failure memory, no second store). */
+/** The targets a retry of this goal must not choose again: every target of the unbroken run of LATEST graded misses
+ *  since its last reach (src/failed-targets.ts targetsToAvoid). A latest failure that is not a verdict, or a reach
+ *  since, excludes nothing (CHANGE-35 / A2b-minimal; reuses the failure memory, no second store). */
 /** This goal class's recorded paths (activity-api GET /v2/goal-paths?goal_text=, keyed by its own hashGoal): the target
  *  set each path ran under and its reach counters, for target inference's selection (A2b-proper). FAIL-OPEN: an
  *  unreadable store is no posterior, i.e. today's choice. The read is ordered best-first, so a class with more rows than

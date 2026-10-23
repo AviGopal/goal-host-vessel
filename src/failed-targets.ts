@@ -1,9 +1,11 @@
 /**
  * WHICH TARGETS A RETRY MUST NOT CHOOSE AGAIN (CHANGE-35 / A2b-minimal, repaired). Given the goal's exact failure records
- * since its last reach, the targets of the UNBROKEN RUN of latest "no artifact on the target" (write-goal-no-artifact)
- * failures: attempt 3 after X then Y failed avoids both. A newer failure of any other kind ends the run (its lesson is
- * not "wrong target"); a reach since has already removed the older records (recallGoalFailures).
- * The first version used only the LATEST failure, so a third attempt went back to the first failed target.
+ * since its last reach, the targets of the UNBROKEN RUN of latest GRADED misses (GRADED_VERDICT_REASON, below): attempt 3
+ * after X then Y failed avoids both. A newer failure that is not a verdict ends the run (nothing was judged about the
+ * targets); a reach since has already removed the older records (recallGoalFailures).
+ * The first version used only the LATEST failure, so a third attempt went back to the first failed target. The second
+ * continued only over "no artifact on the target" (NO_ARTIFACT_REASON), so two misses graded by any other class on X
+ * left the third attempt free to choose X again (REALIGNMENT R:181).
  */
 export interface FailedTargetRecord { at: string; reason: string; targets?: string[] }
 
@@ -15,7 +17,7 @@ export const NO_ARTIFACT_REASON = /^(?:floor floor:upstream-not-reached: )?deter
 export function targetsToAvoid(exact: readonly FailedTargetRecord[]): string[] {
   const out: string[] = [];
   for (const r of [...exact].sort((a, b) => b.at.localeCompare(a.at))) {
-    if (!NO_ARTIFACT_REASON.test(r.reason)) break;
+    if (!GRADED_VERDICT_REASON.test(r.reason)) break;
     for (const t of r.targets ?? []) if (!out.includes(t)) out.push(t);
   }
   return out;

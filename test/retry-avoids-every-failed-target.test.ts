@@ -60,7 +60,7 @@ describe("a retry avoids every target it failed on", () => {
     expect(FT.targetsToAvoid([])).toEqual([]);
     expect(FT.targetsToAvoid([
       { at: "2026-10-16T10:00:00Z", reason: NA, targets: ["gitCommitResult"] },
-      { at: "2026-10-16T10:05:00Z", reason: "deterministic:judge-rules-refused — x", targets: ["gitStatusResult"] },
+      { at: "2026-10-16T10:05:00Z", reason: "llm: the answer does not report the status", targets: ["gitStatusResult"] },
     ])).toEqual([]);
     expect(FT.targetsToAvoid([
       { at: "2026-10-16T09:00:00Z", reason: "llm: not reached", targets: ["shellResult"] },
