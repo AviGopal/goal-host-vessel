@@ -47,6 +47,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -56,7 +97,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -68,7 +109,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -80,7 +121,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -97,7 +138,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -114,7 +155,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -131,7 +172,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -140,6 +181,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement advancing admitted",
             "type": "concept"
@@ -151,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -160,6 +202,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement",
             "type": "concept"
@@ -171,7 +214,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=The%20system's%20own%20improvement%20lane%20can%20stall%20at%20any%20stage%20%E2%80%94%20a%20gap%20waits%20to%20be%20armed%2C%20admitted%2C%20composed%2C%20landed%2C%20settled%20or%20reverted%2C%20and%20nothing%20advances%20%E2%80%94%20and%20nothing%20in%20the%20system%20notices%3B%20only%20an%20operator%20does.%20Make%20the%20system%20notice%2C%20by%20itself%2C%20when%20any%20stage%20of%20its%20own%20lane%20stops%20advancing%2C%20and%20treat%20that%20as%20its%20own%20gap.&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -179,8 +257,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3872,
-        "sha256": "9f02a3a9dbf2f43ed8b88b91150f2443bf505b6e747c26e72d07ed1149b166ff",
+        "chars": 4412,
+        "sha256": "0e839b4e51186dad707ea7d779d31da08e3d87a41ae10c1a057d1992029aed58",
         "type": "llm_completion"
       },
       "headers": {},
@@ -188,7 +266,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 11,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -204,7 +282,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "aapi:goal-path-recommend",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -220,87 +298,9 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
-      "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "poolImpulse",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 14,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "limit": 20,
-          "status": "open",
-          "type": "poolImpulse"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 15,
-      "status": 404,
-      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "include_scores": true,
-        "limit": 50,
-        "mode": "backward",
-        "required_shapes": [
-          "goal",
-          "dispatch_id"
-        ]
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:discover-by-shapes",
-      "seq": 16,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
-    },
-    {
-      "auth": true,
-      "body": {
-        "exclude_activities": [],
-        "expected_output_shapes": [],
-        "goal": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
-        "impulse_shapes": [
-          "goal",
-          "dispatch_id"
-        ],
-        "limit": 12,
-        "min_success_rate": 0,
-        "task_description": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap."
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:recommend",
       "seq": 17,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -384,7 +384,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "llm_completion_dispatch",
+          "shape": "poolImpulse",
           "type": "vesselCapability"
         }
       },
@@ -401,6 +401,84 @@
       "auth": true,
       "body": {
         "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 23,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 24,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exclude_activities": [],
+        "expected_output_shapes": [],
+        "goal": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap."
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 25,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 26,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
           "shape": "walkBudget",
           "type": "vesselCapability"
         }
@@ -410,7 +488,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 23,
+      "seq": 27,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -427,7 +505,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 28,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -435,8 +513,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 3994,
-        "sha256": "2764ff25cf6d2f827a3ed6fc33dccf8d0f4774591ddc0f1d3cd76080041058aa",
+        "chars": 2870,
+        "sha256": "f2710e3b3cde2c4caf2c8755bcaef99fb5a071e4b4510d62efe3d074e7aae7bf",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -444,7 +522,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "floor:answer",
-      "seq": 25,
+      "seq": 29,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -454,7 +532,7 @@
         "pointer": {
           "activity_id": "universal-tool-fallback",
           "confidence": 0.98,
-          "execution_id": "universal-tool-fallback-768bd710-1791633600125",
+          "execution_id": "universal-tool-fallback-768bd710-1791633600145",
           "goal": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
           "labeler": "deterministic",
           "notes": "deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
@@ -467,7 +545,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 26,
+      "seq": 30,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -477,11 +555,52 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-768bd710-1791633600125",
+        "execution_id": "universal-tool-fallback-768bd710-1791633600145",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
-          "tasks": []
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
         },
         "failure_mode": {
           "reason": "deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
@@ -515,13 +634,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-768bd710-1791633600125"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 27,
+      "seq": 31,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -538,7 +657,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 28,
+      "seq": 32,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -557,7 +676,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 29,
+      "seq": 33,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -570,10 +689,11 @@
         "expected_output_shapes": [],
         "goal_category": "meta",
         "goal_text": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
-        "inference_confidence": 0.9,
+        "inference_confidence": null,
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -582,7 +702,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 30,
+      "seq": 34,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -592,7 +712,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-failed-768bd710-1791633600150",
+        "execution_id": "walk-satisfier-failed-768bd710-1791633600170",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -640,7 +760,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -680,7 +800,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but borrowed pathway (another goal's shape-signature match) for a change/write goal; walking instead",
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -720,7 +840,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but borrowed pathway (another goal's shape-signature match) for a change/write goal; walking instead",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -760,7 +880,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -800,7 +920,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=768bd710",
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -840,7 +960,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=768bd710",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -880,7 +1000,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -916,6 +1036,86 @@
               "success": false,
               "task_id": "walk-step-8",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-9",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-10",
+              "toolCalls": []
             }
           ]
         },
@@ -934,13 +1134,15 @@
           "walk_failed": true,
           "walk_log": [
             "[walk-concepts] no concepts recalled for goal_hash=768bd710 (terms tried: improvement,advancing,admitted)",
-            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
             "[goal-host-vessel] /run-goal: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but borrowed pathway (another goal's shape-signature match) for a change/write goal; walking instead",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
             "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=768bd710",
+            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=768bd710",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+            "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it"
           ]
         },
         "output_impulse_shapes": [],
@@ -957,13 +1159,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-failed-768bd710-1791633600150"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 31,
+      "seq": 35,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -971,7 +1173,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-failed-768bd710-1791633600150",
+        "execution_id": "walk-satisfier-failed-768bd710-1791633600170",
         "goal_hash": "768bd710",
         "reached": false,
         "reason": "GoalHost.runGoal: no template id returned for goal \"The system's own improvement lane can stall at any stage — a gap waits to be arm\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -981,7 +1183,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 32,
+      "seq": 36,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     }
@@ -1001,29 +1203,34 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "floor,refused :: [log] [goal-host-vessel] /run-goal: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but borrowed pathway (another goal's shape-signature match) for a change/write goal; walking instead",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=768bd710",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=768bd710",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=768bd710 targetShapes=[]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand)] source=hand",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=768bd710 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=768bd710 verdictNull=false reached=false groundedOk=0 finalTextLen=108",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-768bd710-1791633600125 reached=false tools=0/0 — this run is now gradable",
+        "landed,floor :: [log] [goal-host-vessel] floor: decision goalHash=768bd710 reached=false rule=floor:upstream-not-reached judge=\"deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a ",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-768bd710-1791633600145 reached=false tools=0/0 — this run is now gradable",
+        "landed,floor,reached :: [log] [goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of it",
         "floor :: [log] [goal-host-vessel] /run-goal: known-reaching path head universal-tool-fallback is a satisfier pseudo-id, not a template -- NOT pinning it; deferring to shape-directed selection (pathway_steps=1 proven=10/10 signature=7dae833af19b717d)"
       ],
       "op": "runGoal",
       "record": {
         "error": "GoalHost.runGoal: no template id returned for goal \"The system's own improvement lane can stall at any stage — a gap waits to be arm\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
-        "executionId": "walk-satisfier-failed-768bd710-1791633600150",
+        "executionId": "walk-satisfier-failed-768bd710-1791633600170",
         "executionPath": "fresh_derivation",
+        "goalReachReason": "GoalHost.runGoal: no template id returned for goal \"The system's own improvement lane can stall at any stage — a gap waits to be arm\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633600085,
+            "at": 1791633600105,
             "failed_producers": [],
             "goal_hash": "768bd710",
             "kind": "no_target",
@@ -1040,7 +1247,7 @@
             "termination": "opportunistic walk found no applicable pick (empty inferred target)"
           },
           {
-            "at": 1791633600105,
+            "at": 1791633600125,
             "failed_producers": [],
             "goal_hash": "768bd710",
             "kind": "no_target",
@@ -1063,7 +1270,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-failed-768bd710-1791633600150",
+            "execution_id": "walk-satisfier-failed-768bd710-1791633600170",
             "goal_hash": "768bd710",
             "reached": false,
             "reason": "GoalHost.runGoal: no template id returned for goal \"The system's own improvement lane can stall at any stage — a gap waits to be arm\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -1082,13 +1289,15 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=768bd710 (terms tried: improvement,advancing,admitted)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] /run-goal: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but borrowed pathway (another goal's shape-signature match) for a change/write goal; walking instead",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=768bd710",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=768bd710",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+        "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change, and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it"
       ]
     }
   ]

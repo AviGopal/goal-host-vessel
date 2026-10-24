@@ -48,6 +48,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -57,7 +98,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -69,7 +110,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -81,7 +122,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -98,7 +139,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -115,7 +156,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -132,7 +173,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -141,6 +182,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "thinkpad dollars launch",
             "type": "concept"
@@ -152,7 +194,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -161,6 +203,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "thinkpad",
             "type": "concept"
@@ -172,7 +215,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=What%20was%20the%20launch%20list%20price%20of%20the%20ThinkPad%20X1%20Carbon%20Gen%209%20in%20US%20dollars%3F&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -180,8 +258,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3593,
-        "sha256": "aab596810b3b42a9f943898407b5e61cbab63134bbe40b72218594c9e084b60b",
+        "chars": 4133,
+        "sha256": "077c4fca6fda0c2e16630c2e33e316fea1802af817b3d06589c7dc253ce08eab",
         "type": "llm_completion"
       },
       "headers": {},
@@ -189,7 +267,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 11,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -205,7 +283,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -221,87 +299,9 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
-      "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "poolImpulse",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 14,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "limit": 20,
-          "status": "open",
-          "type": "poolImpulse"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 15,
-      "status": 404,
-      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "include_scores": true,
-        "limit": 50,
-        "mode": "backward",
-        "required_shapes": [
-          "goal",
-          "dispatch_id"
-        ]
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:discover-by-shapes",
-      "seq": 16,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
-    },
-    {
-      "auth": true,
-      "body": {
-        "exclude_activities": [],
-        "expected_output_shapes": [],
-        "goal": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
-        "impulse_shapes": [
-          "goal",
-          "dispatch_id"
-        ],
-        "limit": 12,
-        "min_success_rate": 0,
-        "task_description": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?"
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:recommend",
       "seq": 17,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -385,7 +385,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "llm_completion_dispatch",
+          "shape": "poolImpulse",
           "type": "vesselCapability"
         }
       },
@@ -402,6 +402,84 @@
       "auth": true,
       "body": {
         "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 23,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 24,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exclude_activities": [],
+        "expected_output_shapes": [],
+        "goal": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 25,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 26,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
           "shape": "walkBudget",
           "type": "vesselCapability"
         }
@@ -411,7 +489,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 23,
+      "seq": 27,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -428,7 +506,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 28,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -436,8 +514,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 3744,
-        "sha256": "1e3a22b66d931604e4b84d47d7518aa869432ede63bdb105a49ba9b65b68649f",
+        "chars": 2620,
+        "sha256": "5381f1b0ea84f46bc13b54d07d5a190bcb68ad85f4f60032960df0aaa41c4202",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -445,7 +523,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "floor:answer",
-      "seq": 25,
+      "seq": 29,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -453,8 +531,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:reach_verification",
-        "chars": 3532,
-        "sha256": "a527a4cb0448b0215b85b0861ac776fb6ed64cd113ebb30eda322d0ea8b55d74",
+        "chars": 4002,
+        "sha256": "e785252d21086c62e42294add0551c823b4b3879970306eca7175b16559cd584",
         "type": "llm_completion"
       },
       "headers": {},
@@ -462,7 +540,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "judge",
-      "seq": 26,
+      "seq": 30,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -472,11 +550,52 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-7bde8381-1791633600130",
+        "execution_id": "universal-tool-fallback-7bde8381-1791633600150",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
-          "tasks": []
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
         },
         "failure_mode": {
           "reason": "states a price",
@@ -510,13 +629,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-7bde8381-1791633600130"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 27,
+      "seq": 31,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -533,7 +652,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 28,
+      "seq": 32,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -549,7 +668,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 29,
+      "seq": 33,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -562,10 +681,11 @@
         "expected_output_shapes": [],
         "goal_category": "meta",
         "goal_text": "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?",
-        "inference_confidence": 0.9,
+        "inference_confidence": null,
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -574,7 +694,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 30,
+      "seq": 34,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -590,7 +710,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 31,
+      "seq": 35,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -609,7 +729,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 32,
+      "seq": 36,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -619,7 +739,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-failed-7bde8381-1791633600160",
+        "execution_id": "walk-satisfier-failed-7bde8381-1791633600180",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -667,7 +787,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7bde8381\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -707,7 +827,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7bde8381\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -747,7 +867,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -787,7 +907,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=7bde8381",
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -827,7 +947,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=7bde8381",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -867,7 +987,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -903,6 +1023,86 @@
               "success": false,
               "task_id": "walk-step-7",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-8",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:fabricated-tool-transcript: states a price",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-9",
+              "toolCalls": []
             }
           ]
         },
@@ -921,12 +1121,14 @@
           "walk_failed": true,
           "walk_log": [
             "[walk-concepts] no concepts recalled for goal_hash=7bde8381 (terms tried: thinkpad,dollars,launch)",
-            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7bde8381\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7bde8381\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
             "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=7bde8381",
+            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=7bde8381",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+            "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:fabricated-tool-transcript: states a price"
           ]
         },
         "output_impulse_shapes": [],
@@ -943,13 +1145,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-failed-7bde8381-1791633600160"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 33,
+      "seq": 37,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -957,7 +1159,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-failed-7bde8381-1791633600160",
+        "execution_id": "walk-satisfier-failed-7bde8381-1791633600180",
         "goal_hash": "7bde8381",
         "reached": false,
         "reason": "GoalHost.runGoal: no template id returned for goal \"What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -967,7 +1169,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 34,
+      "seq": 38,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     }
@@ -987,29 +1189,34 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=7bde8381",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=7bde8381",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=7bde8381 targetShapes=[]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand)] source=hand",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=7bde8381 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=7bde8381 verdictNull=false reached=true groundedOk=0 finalTextLen=125",
         "floor :: [log] [goal-host-vessel] floor: FABRICATED TOOL TRANSCRIPT goalHash=7bde8381 — the answer narrates a tool call/response but ZERO tools executed; refusing the reach",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-7bde8381-1791633600130 reached=false tools=0/0 — this run is now gradable",
+        "floor :: [log] [goal-host-vessel] floor: decision goalHash=7bde8381 reached=false rule=floor:fabricated-tool-transcript judge=\"states a price\" tools=0/0",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-7bde8381-1791633600150 reached=false tools=0/0 — this run is now gradable",
+        "floor,reached :: [log] [goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:fabricated-tool-transcript: states a price",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)"
       ],
       "op": "runGoal",
       "record": {
         "error": "GoalHost.runGoal: no template id returned for goal \"What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
-        "executionId": "walk-satisfier-failed-7bde8381-1791633600160",
+        "executionId": "walk-satisfier-failed-7bde8381-1791633600180",
         "executionPath": "fresh_derivation",
+        "goalReachReason": "GoalHost.runGoal: no template id returned for goal \"What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633600085,
+            "at": 1791633600105,
             "failed_producers": [],
             "goal_hash": "7bde8381",
             "kind": "no_target",
@@ -1026,7 +1233,7 @@
             "termination": "opportunistic walk found no applicable pick (empty inferred target)"
           },
           {
-            "at": 1791633600105,
+            "at": 1791633600125,
             "failed_producers": [],
             "goal_hash": "7bde8381",
             "kind": "no_target",
@@ -1049,7 +1256,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-failed-7bde8381-1791633600160",
+            "execution_id": "walk-satisfier-failed-7bde8381-1791633600180",
             "goal_hash": "7bde8381",
             "reached": false,
             "reason": "GoalHost.runGoal: no template id returned for goal \"What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -1067,12 +1274,14 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=7bde8381 (terms tried: thinkpad,dollars,launch)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7bde8381\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7bde8381\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=7bde8381",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=7bde8381",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+        "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:fabricated-tool-transcript: states a price"
       ]
     }
   ]

@@ -57,6 +57,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -66,7 +107,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -78,7 +119,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "aapi:template",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/templates/tmpl-explain"
     },
@@ -90,7 +131,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "aapi:template",
-      "seq": 5,
+      "seq": 7,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/templates/tmpl-explain"
     },
@@ -107,7 +148,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "producer:template-task",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -115,12 +156,12 @@
       "auth": true,
       "body": {
         "cost_usd": 0,
-        "duration_ms": 70,
+        "duration_ms": 80,
         "execution_id": "exec_y9nyvr27",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
-            "disc:llm_completion_dispatch_njpw2tu7"
+            "disc:llm_completion_dispatch_b306p6sj"
           ],
           "tasks": [
             {
@@ -134,7 +175,7 @@
                 }
               ],
               "description": "explain the goal",
-              "duration_ms": 10,
+              "duration_ms": 20,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -160,7 +201,7 @@
                 "filesModified": []
               },
               "output_impulse_ids": [
-                "disc:llm_completion_dispatch_njpw2tu7"
+                "disc:llm_completion_dispatch_b306p6sj"
               ],
               "output_shapes": [
                 "llm_completion_dispatch"
@@ -171,7 +212,7 @@
               "result": {
                 "metadata": {
                   "output_impulse_ids": [
-                    "disc:llm_completion_dispatch_njpw2tu7"
+                    "disc:llm_completion_dispatch_b306p6sj"
                   ],
                   "resolver_id": "llm_completion_dispatch"
                 },
@@ -211,13 +252,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_y9nyvr27"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 7,
+      "seq": 9,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -241,9 +282,21 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 8,
+      "seq": 10,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 11,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/tuning-params/lifecycle.subscriber_trace_mode"
     },
     {
       "auth": true,
@@ -254,7 +307,7 @@
         ],
         "cost_usd": 0,
         "duration_ms": 180,
-        "execution_id": "exec_b306p6sj",
+        "execution_id": "exec_bb6avl3o",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -483,13 +536,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_b306p6sj"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 9,
+      "seq": 12,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -501,7 +554,7 @@
           "exec_dmfa38n7"
         ],
         "cost_usd": 0,
-        "duration_ms": 210,
+        "duration_ms": 215,
         "execution_id": "exec_fy1eiiqt",
         "execution_trace": {
           "filesModified": [],
@@ -731,13 +784,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_fy1eiiqt"
+        "idempotency-key": "idem-3"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 10,
+      "seq": 13,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -761,7 +814,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 11,
+      "seq": 14,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -769,8 +822,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:reach_verification",
-        "chars": 3056,
-        "sha256": "ea7b5911e8c3b946cee58fb2247cb4f1fb677760501d417a8f70e2bcd6ad2b8a",
+        "chars": 3511,
+        "sha256": "5512231bc4a673f78ee91ad7b305c0deb344015bf421cebaec835854b6724c6d",
         "type": "llm_completion"
       },
       "headers": {},
@@ -778,7 +831,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "judge",
-      "seq": 12,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -790,7 +843,7 @@
           "exec_eulzkdx9"
         ],
         "cost_usd": 0,
-        "duration_ms": 255,
+        "duration_ms": 250,
         "execution_id": "exec_6q20xd3k",
         "execution_trace": {
           "filesModified": [],
@@ -1020,13 +1073,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_6q20xd3k"
+        "idempotency-key": "idem-4"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 13,
+      "seq": 16,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1056,7 +1109,7 @@
                 }
               ],
               "description": "Find activities that can validate the just-completed task's outputs.",
-              "duration_ms": 60,
+              "duration_ms": 55,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1304,13 +1357,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_d8f22w97"
+        "idempotency-key": "idem-5"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 14,
+      "seq": 17,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1334,26 +1387,9 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 15,
+      "seq": 18,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "goal": "Explain why the sky looks blue during the day",
-          "type": "goal_path_sha"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 16,
-      "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -1363,8 +1399,8 @@
           "exec_eulzkdx9"
         ],
         "cost_usd": 0,
-        "duration_ms": 260,
-        "execution_id": "exec_d6jurtme",
+        "duration_ms": 250,
+        "execution_id": "exec_ahxhk7l1",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -1593,34 +1629,15 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_d6jurtme"
+        "idempotency-key": "idem-6"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 17,
+      "seq": 19,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
-    },
-    {
-      "auth": true,
-      "body": {
-        "completion_shapes": [
-          "llm_completion_dispatch"
-        ],
-        "execution_id": "exec_y9nyvr27",
-        "goal_hash": "d6f170dc",
-        "reached": true
-      },
-      "headers": {},
-      "kind": "sink",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:reach",
-      "seq": 18,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     },
     {
       "auth": true,
@@ -1642,7 +1659,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 19,
+      "seq": 20,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -1653,7 +1670,7 @@
           "exec_y9nyvr27"
         ],
         "cost_usd": 0,
-        "duration_ms": 500,
+        "duration_ms": 490,
         "execution_id": "exec_dmfa38n7",
         "execution_trace": {
           "filesModified": [],
@@ -1736,7 +1753,7 @@
                 }
               ],
               "description": "Phase 20.3 pool-selection pre-check: for each missing shape, query currentImpulseShapes (from lifecycle payload) to find existing pool candidates matching shape + predicate. When candidates exist, dispatches impulse_pool_selection to rank them by impulse_relevance Thompson posteriors. When no candidates exist, returns {no_pool_candidates:true} gracefully. Runs in parallel with select_or_produce (both depend on prepare_pool); their outputs together feed agent_fill_fallback and escalate_unbindable.",
-              "duration_ms": 0,
+              "duration_ms": 5,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1819,7 +1836,7 @@
                 }
               ],
               "description": "Per-shape producer discovery iterating over lifecycle.missingShapes. Runs after pool_precheck; dispatches producer_selection for shapes that have no existing pool candidates (complementary to pool_precheck which covers shapes that already have candidates).",
-              "duration_ms": 20,
+              "duration_ms": 10,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -2035,49 +2052,15 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_dmfa38n7"
+        "idempotency-key": "idem-7"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 20,
+      "seq": 21,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "unaccounted_landing_scan",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 21,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "unaccounted_landing_scan",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 22,
-      "status": 404,
-      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -2087,7 +2070,7 @@
           "exec_dmfa38n7"
         ],
         "cost_usd": 0,
-        "duration_ms": 425,
+        "duration_ms": 395,
         "execution_id": "exec_bspponl5",
         "execution_trace": {
           "filesModified": [],
@@ -2106,7 +2089,7 @@
                 }
               ],
               "description": "Find activities that can validate the just-completed task's outputs.",
-              "duration_ms": 75,
+              "duration_ms": 65,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -2354,13 +2337,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_bspponl5"
+        "idempotency-key": "idem-8"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 23,
+      "seq": 22,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -2384,7 +2367,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 23,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -2395,12 +2378,12 @@
           "exec_d8f22w97"
         ],
         "cost_usd": 0,
-        "duration_ms": 595,
+        "duration_ms": 565,
         "execution_id": "exec_eulzkdx9",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
-            "iter_0h79xe6w",
+            "iter_3esh56sm",
             "iter_8f8c8wnt"
           ],
           "tasks": [
@@ -2415,7 +2398,7 @@
                 }
               ],
               "description": "Cheap deterministic synthesise: wrap same-named template variables in memo-pointer impulses for any inputShape that's currently missing from the pool.",
-              "duration_ms": 30,
+              "duration_ms": 40,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -2475,7 +2458,7 @@
                 }
               ],
               "description": "Phase 20.3 pool-selection pre-check: for each missing shape, query currentImpulseShapes (from lifecycle payload) to find existing pool candidates matching shape + predicate. When candidates exist, dispatches impulse_pool_selection to rank them by impulse_relevance Thompson posteriors. When no candidates exist, returns {no_pool_candidates:true} gracefully. Runs in parallel with select_or_produce (both depend on prepare_pool); their outputs together feed agent_fill_fallback and escalate_unbindable.",
-              "duration_ms": 5,
+              "duration_ms": 10,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -2501,7 +2484,7 @@
                 "filesModified": []
               },
               "output_impulse_ids": [
-                "iter_0h79xe6w"
+                "iter_3esh56sm"
               ],
               "output_shapes": [
                 "pool_precheck_result"
@@ -2537,7 +2520,7 @@
               "result": {
                 "metadata": {
                   "output_impulse_ids": [
-                    "iter_0h79xe6w"
+                    "iter_3esh56sm"
                   ],
                   "resolver_id": "iteration"
                 },
@@ -2560,7 +2543,7 @@
                 }
               ],
               "description": "Per-shape producer discovery iterating over lifecycle.missingShapes. Runs after pool_precheck; dispatches producer_selection for shapes that have no existing pool candidates (complementary to pool_precheck which covers shapes that already have candidates).",
-              "duration_ms": 20,
+              "duration_ms": 5,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -2776,13 +2759,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_eulzkdx9"
+        "idempotency-key": "idem-9"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 25,
+      "seq": 24,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -2794,12 +2777,12 @@
           "exec_dmfa38n7"
         ],
         "cost_usd": 0,
-        "duration_ms": 365,
-        "execution_id": "exec_3esh56sm",
+        "duration_ms": 350,
+        "execution_id": "exec_q0qxky4t",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
-            "resolve:discoverByShapesQuery_mzy7ddd0"
+            "resolve:discoverByShapesQuery_kxp2r6o4"
           ],
           "tasks": [
             {
@@ -2807,13 +2790,13 @@
               "consumed_from_task_ids": [],
               "consumed_provenance": [
                 {
-                  "impulse_id": "lifecycle:lifecycle:task:completed_q0qxky4t",
+                  "impulse_id": "lifecycle:lifecycle:task:completed_0h79xe6w",
                   "origin": "declared",
                   "producer_execution_id": null
                 }
               ],
               "description": "Find activities that can validate the just-completed task's outputs.",
-              "duration_ms": 70,
+              "duration_ms": 55,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -2823,12 +2806,12 @@
                   "dirty": false
                 },
                 "impulses": [
-                  "lifecycle:lifecycle:task:completed_q0qxky4t"
+                  "lifecycle:lifecycle:task:completed_0h79xe6w"
                 ],
                 "variables": {}
               },
               "input_impulse_ids": [
-                "lifecycle:lifecycle:task:completed_q0qxky4t"
+                "lifecycle:lifecycle:task:completed_0h79xe6w"
               ],
               "input_shapes": [
                 "lifecycle:task:completed"
@@ -2839,7 +2822,7 @@
                 "filesModified": []
               },
               "output_impulse_ids": [
-                "resolve:discoverByShapesQuery_mzy7ddd0"
+                "resolve:discoverByShapesQuery_kxp2r6o4"
               ],
               "output_shapes": [
                 "validator_candidates"
@@ -2863,7 +2846,7 @@
               "result": {
                 "metadata": {
                   "output_impulse_ids": [
-                    "resolve:discoverByShapesQuery_mzy7ddd0"
+                    "resolve:discoverByShapesQuery_kxp2r6o4"
                   ],
                   "resolver_id": "impulse-resolve"
                 },
@@ -3061,13 +3044,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_3esh56sm"
+        "idempotency-key": "idem-10"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 26,
+      "seq": 25,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -3079,7 +3062,7 @@
           "exec_eulzkdx9"
         ],
         "cost_usd": 0,
-        "duration_ms": 340,
+        "duration_ms": 315,
         "execution_id": "exec_poojmn5f",
         "execution_trace": {
           "filesModified": [],
@@ -3103,7 +3086,7 @@
                 }
               ],
               "description": "Find activities that can validate the just-completed task's outputs.",
-              "duration_ms": 80,
+              "duration_ms": 55,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -3353,13 +3336,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_poojmn5f"
+        "idempotency-key": "idem-11"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 27,
+      "seq": 26,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -3376,7 +3359,7 @@
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
-            "resolve:discoverByShapesQuery_nuyerrbl"
+            "resolve:discoverByShapesQuery_duwy9wnm"
           ],
           "tasks": [
             {
@@ -3390,7 +3373,7 @@
                 }
               ],
               "description": "Find activities that can validate the just-completed task's outputs.",
-              "duration_ms": 35,
+              "duration_ms": 30,
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -3416,7 +3399,7 @@
                 "filesModified": []
               },
               "output_impulse_ids": [
-                "resolve:discoverByShapesQuery_nuyerrbl"
+                "resolve:discoverByShapesQuery_duwy9wnm"
               ],
               "output_shapes": [
                 "validator_candidates"
@@ -3440,7 +3423,7 @@
               "result": {
                 "metadata": {
                   "output_impulse_ids": [
-                    "resolve:discoverByShapesQuery_nuyerrbl"
+                    "resolve:discoverByShapesQuery_duwy9wnm"
                   ],
                   "resolver_id": "impulse-resolve"
                 },
@@ -3638,15 +3621,85 @@
         }
       },
       "headers": {
-        "idempotency-key": "exec_p7nxxpji"
+        "idempotency-key": "idem-12"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 28,
+      "seq": 27,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "Explain why the sky looks blue during the day",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 28,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "llm_completion_dispatch"
+        ],
+        "execution_id": "exec_y9nyvr27",
+        "goal_hash": "d6f170dc",
+        "reached": true
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:reach",
+      "seq": 29,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 30,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "unaccounted_landing_scan",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 31,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     }
   ],
   "scenario": "template-pinned-reached",
@@ -3712,13 +3765,13 @@
           "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces",
-          "POST /v2/activities/execution-traces/reach",
           "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces",
-          "POST /v2/activities/execution-traces"
+          "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach"
         ],
         "status": "completed"
       },

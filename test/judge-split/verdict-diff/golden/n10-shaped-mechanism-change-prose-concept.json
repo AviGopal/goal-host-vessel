@@ -48,6 +48,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -57,7 +98,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -69,7 +110,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -81,7 +122,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -98,7 +139,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -115,7 +156,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -132,7 +173,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -141,6 +182,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "procedures evidence recorded",
             "type": "concept"
@@ -152,7 +194,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -161,6 +203,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "procedures",
             "type": "concept"
@@ -172,7 +215,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=Some%20of%20the%20system's%20learned%20procedures%20fail%20every%20time%2C%20and%20the%20evidence%20that%20they%20fail%20is%20already%20recorded%2C%20yet%20the%20system%20keeps%20choosing%20them.%20Make%20that%20evidence%20stop%20the%20system%20choosing%20them%2C%20and%20let%20it%20fall%20back%20to%20the%20way%20that%20works.&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -180,8 +258,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3773,
-        "sha256": "e20489a151b5cc798811a158e7ed5ddfe6a0619f0d49a3f13be27ef87e786814",
+        "chars": 4313,
+        "sha256": "990707a03e210a67bf4980e1d87c45dea7b8a4f1445c61ce0b782f67dd79f48d",
         "type": "llm_completion"
       },
       "headers": {},
@@ -189,7 +267,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 11,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -208,7 +286,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -224,7 +302,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 17,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -241,7 +319,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 14,
+      "seq": 18,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -259,7 +337,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 15,
+      "seq": 19,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -271,7 +349,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 16,
+      "seq": 20,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -283,7 +361,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 17,
+      "seq": 21,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -293,6 +371,9 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:concept_write",
+            "goal_target_shapes": [
+              "concept_write"
+            ],
             "type": "thompson_posterior"
           }
         }
@@ -302,7 +383,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 18,
+      "seq": 22,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -321,7 +402,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 19,
+      "seq": 23,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -340,7 +421,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 20,
+      "seq": 24,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -349,6 +430,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "concept_write pointer payload",
             "type": "concept"
@@ -360,7 +442,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 21,
+      "seq": 25,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -369,7 +451,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2614,
-        "sha256": "630e16b028225aaa65a64344b6d66354a4c45774d5083a37ca4ae60fd648c695",
+        "sha256": "1d4a420140ebe4b65089f51d09dc0e38fd31f6d1cd51b9748b4e42d685631a15",
         "type": "llm_completion"
       },
       "headers": {},
@@ -377,7 +459,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:arg-extraction",
-      "seq": 22,
+      "seq": 26,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -398,7 +480,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-write",
-      "seq": 23,
+      "seq": 27,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -407,7 +489,7 @@
       "body": {
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-write-1-1791633600115",
+        "execution_id": "walk-satisfier-write-1-1791633600135",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -491,13 +573,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-write-1-1791633600115"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 24,
+      "seq": 28,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -514,7 +596,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 25,
+      "seq": 29,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -534,7 +616,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-readback",
-      "seq": 26,
+      "seq": 30,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -544,7 +626,7 @@
         "pointer": {
           "activity_id": "satisfier:concept_write",
           "confidence": 0.98,
-          "execution_id": "walk-satisfier-1-1791633600130",
+          "execution_id": "walk-satisfier-1-1791633600150",
           "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
           "labeler": "deterministic",
           "notes": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
@@ -557,9 +639,48 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 27,
+      "seq": 31,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "activity_id": "satisfier:concept_write",
+        "direction": "negative",
+        "intensity": 2,
+        "reason": "hollow completion (goal not reached): deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persiste"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:feedback",
+      "seq": 32,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/feedback"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "conceptData": {
+            "content": "reach-gate hollow class deterministic_write_goal_no_artifact: hollow completion of this class; prefer content-bearing goal-shaped producers class_token=some",
+            "shape": "reach_gate_lesson",
+            "source_type": "reach_gate_lesson",
+            "summary": "reach-gate lesson: deterministic_write_goal_no_artifact"
+          },
+          "type": "concept_create_write"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-write",
+      "seq": 33,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -567,7 +688,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-1-1791633600130",
+        "execution_id": "walk-satisfier-1-1791633600150",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
@@ -627,6 +748,9 @@
         },
         "input_impulse_shapes": [],
         "metadata": {
+          "goal_target_shapes": [
+            "concept_write"
+          ],
           "satisfier": true,
           "shape": "concept_write"
         },
@@ -641,8 +765,7 @@
           "dispatch:00000000-0000-4000-8000-000000000001",
           "satellite:non_terminal",
           "satisfier_shape:concept_write",
-          "beta_withheld:true",
-          "beta_withheld_reason:alpha-unreachable-non-deterministic-no-edge"
+          "reached:false"
         ],
         "template_id": "satisfier:concept_write",
         "tokens": {
@@ -652,13 +775,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-1-1791633600130"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 28,
+      "seq": 34,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -675,7 +798,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 29,
+      "seq": 35,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -692,7 +815,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 30,
+      "seq": 36,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -713,6 +836,7 @@
         "path_activities": [
           "satisfier:concept_write"
         ],
+        "reached": false,
         "success": false,
         "tools_used": [
           "concept-db.test.invalid|concept_write|write|"
@@ -724,7 +848,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 31,
+      "seq": 37,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -742,7 +866,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 32,
+      "seq": 38,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -754,7 +878,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 33,
+      "seq": 39,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -766,7 +890,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 34,
+      "seq": 40,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -776,6 +900,9 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:concept_write",
+            "goal_target_shapes": [
+              "concept_write"
+            ],
             "type": "thompson_posterior"
           }
         }
@@ -785,7 +912,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 35,
+      "seq": 41,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -804,7 +931,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 36,
+      "seq": 42,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -823,7 +950,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 37,
+      "seq": 43,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -832,6 +959,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "concept_write pointer payload",
             "type": "concept"
@@ -843,7 +971,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 38,
+      "seq": 44,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -852,7 +980,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2614,
-        "sha256": "4f4345ff1008e32f9b1a7120312dbff7447e366c3e7a584f9b7d5d91b3c2bdcd",
+        "sha256": "d1ce1d87f04d7af3e988ce1ca8647ce0e11ac8339ed5316dfeb9798f7191276d",
         "type": "llm_completion"
       },
       "headers": {},
@@ -860,7 +988,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:arg-extraction",
-      "seq": 39,
+      "seq": 45,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -881,7 +1009,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-write",
-      "seq": 40,
+      "seq": 46,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -890,7 +1018,7 @@
       "body": {
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-write-2-1791633600200",
+        "execution_id": "walk-satisfier-write-2-1791633600230",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -974,13 +1102,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-write-2-1791633600200"
+        "idempotency-key": "idem-3"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 41,
+      "seq": 47,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -997,7 +1125,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 42,
+      "seq": 48,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1017,7 +1145,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-readback",
-      "seq": 43,
+      "seq": 49,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -1027,7 +1155,7 @@
         "pointer": {
           "activity_id": "satisfier:concept_write",
           "confidence": 0.98,
-          "execution_id": "walk-satisfier-1-1791633600215",
+          "execution_id": "walk-satisfier-1-1791633600245",
           "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
           "labeler": "deterministic",
           "notes": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
@@ -1040,9 +1168,48 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 44,
+      "seq": 50,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "activity_id": "satisfier:concept_write",
+        "direction": "negative",
+        "intensity": 2,
+        "reason": "hollow completion (goal not reached): deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persiste"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:feedback",
+      "seq": 51,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/feedback"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "conceptData": {
+            "content": "reach-gate hollow class deterministic_write_goal_no_artifact: hollow completion of this class; prefer content-bearing goal-shaped producers class_token=some",
+            "shape": "reach_gate_lesson",
+            "source_type": "reach_gate_lesson",
+            "summary": "reach-gate lesson: deterministic_write_goal_no_artifact"
+          },
+          "type": "concept_create_write"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-write",
+      "seq": 52,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -1050,7 +1217,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-1-1791633600215",
+        "execution_id": "walk-satisfier-1-1791633600245",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
@@ -1110,6 +1277,9 @@
         },
         "input_impulse_shapes": [],
         "metadata": {
+          "goal_target_shapes": [
+            "concept_write"
+          ],
           "satisfier": true,
           "shape": "concept_write"
         },
@@ -1124,8 +1294,7 @@
           "dispatch:00000000-0000-4000-8000-000000000001",
           "satellite:non_terminal",
           "satisfier_shape:concept_write",
-          "beta_withheld:true",
-          "beta_withheld_reason:alpha-unreachable-non-deterministic-no-edge"
+          "reached:false"
         ],
         "template_id": "satisfier:concept_write",
         "tokens": {
@@ -1135,13 +1304,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-1-1791633600215"
+        "idempotency-key": "idem-4"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 45,
+      "seq": 53,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1158,7 +1327,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 46,
+      "seq": 54,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1175,7 +1344,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 47,
+      "seq": 55,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1196,6 +1365,7 @@
         "path_activities": [
           "satisfier:concept_write"
         ],
+        "reached": false,
         "success": false,
         "tools_used": [
           "concept-db.test.invalid|concept_write|write|"
@@ -1207,7 +1377,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 48,
+      "seq": 56,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -1225,7 +1395,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 49,
+      "seq": 57,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -1237,7 +1407,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 50,
+      "seq": 58,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -1249,7 +1419,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 51,
+      "seq": 59,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -1259,6 +1429,9 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:concept_write",
+            "goal_target_shapes": [
+              "concept_write"
+            ],
             "type": "thompson_posterior"
           }
         }
@@ -1268,7 +1441,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 52,
+      "seq": 60,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -1291,7 +1464,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 53,
+      "seq": 61,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1319,7 +1492,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 54,
+      "seq": 62,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -1341,7 +1514,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 55,
+      "seq": 63,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1363,7 +1536,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 56,
+      "seq": 64,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1385,7 +1558,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 57,
+      "seq": 65,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1401,7 +1574,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 58,
+      "seq": 66,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -1428,9 +1601,43 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 59,
+      "seq": 67,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 68,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 69,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -1445,7 +1652,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 60,
+      "seq": 70,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1462,7 +1669,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 61,
+      "seq": 71,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1481,7 +1688,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 62,
+      "seq": 72,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -1498,7 +1705,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 63,
+      "seq": 73,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1515,7 +1722,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 64,
+      "seq": 74,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1532,7 +1739,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 65,
+      "seq": 75,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -1540,8 +1747,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 4424,
-        "sha256": "d641e1f546414c9f2a621097b3741f960384ca6ded60838e89575ccbb66914c5",
+        "chars": 4186,
+        "sha256": "2ecfcb23fa26ebb3f2f39e1ddbbb891cce3847161ee178008bb14f01a5f43664",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -1549,7 +1756,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 66,
+      "seq": 76,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -1566,17 +1773,15 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 67,
+      "seq": 77,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
       "body": {
-        "beta_withheld": true,
-        "beta_withheld_reason": "alpha-unreachable-non-deterministic-no-edge",
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-1-1791633600215",
+        "execution_id": "walk-satisfier-1-1791633600245",
         "goal_hash": "7f511a64",
         "reached": false,
         "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it"
@@ -1586,7 +1791,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 68,
+      "seq": 78,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     },
@@ -1605,6 +1810,7 @@
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -1613,7 +1819,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 69,
+      "seq": 79,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     }
@@ -1633,20 +1839,21 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [rebind] outcome selected=no candidates=0",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=7f511a64 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
-        "beta-withheld,reached :: [log] [goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:concept_write — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising woul",
-        "landed,hollow,beta-withheld :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; ",
-        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=7f511a64",
+        "landed,hollow :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; ",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=7f511a64",
+        "no-pick :: [log] [rebind] outcome selected=no candidates=0",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=7f511a64 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
-        "beta-withheld,reached :: [log] [goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:concept_write — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising woul",
-        "landed,hollow,beta-withheld :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; ",
+        "landed,hollow :: [log] [goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; ",
         "mint :: [log] [goal-host-vessel] /run-goal: hollow satisfier verdict for \"concept_write\" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [concept_write] have no producer or constructible payload; terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[concept_write] failed_producers=0 ()",
         "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [concept_write]",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=7f511a64 targetShapes=[\"concept_write\"]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand), concept_write(write)] source=hand",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "floor :: [log] [goal-host-vessel] floor: dispatch FAILED http=404 iter=0 — 4xx is a channel fault; loop aborts with no observations",
         "floor :: [log] [goal-host-vessel] floor: exit=empty_loop goalHash=7f511a64"
@@ -1656,12 +1863,23 @@
         "attemptCount": 1,
         "attempts": 1,
         "completionShapes": [],
-        "executionId": "walk-satisfier-1-1791633600215",
+        "executionId": "walk-satisfier-1-1791633600245",
         "executionPath": "satisfier",
         "goalReachReason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
         "inferenceConfidence": 0.9,
         "learning": {
-          "alphaBetaDelta": [],
+          "alphaBetaDelta": [
+            {
+              "dAlpha": 0,
+              "dBeta": 2,
+              "templateId": "satisfier:concept_write"
+            },
+            {
+              "dAlpha": 0,
+              "dBeta": 2,
+              "templateId": "satisfier:concept_write"
+            }
+          ],
           "gapsFiled": [],
           "goalPathRecorded": true,
           "oracleLabelWritten": false
@@ -1669,7 +1887,7 @@
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633600300,
+            "at": 1791633600350,
             "failed_producers": [],
             "goal_hash": "7f511a64",
             "kind": "stall",
@@ -1693,15 +1911,11 @@
       },
       "step": 1,
       "verdict": {
-        "betaWithheld": [
-          "walk-satisfier-1-1791633600215"
-        ],
+        "betaWithheld": [],
         "reachDeliveries": [
           {
-            "beta_withheld": true,
-            "beta_withheld_reason": "alpha-unreachable-non-deterministic-no-edge",
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-1-1791633600215",
+            "execution_id": "walk-satisfier-1-1791633600245",
             "goal_hash": "7f511a64",
             "reached": false,
             "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it"
@@ -1713,11 +1927,15 @@
           "POST /v2/impulses/resolve concept_write",
           "POST /v2/activities/execution-traces",
           "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/feedback",
+          "POST /resolve concept_create_write",
           "POST /v2/activities/execution-traces",
           "POST /v2/goal-paths",
           "POST /v2/impulses/resolve concept_write",
           "POST /v2/activities/execution-traces",
           "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/feedback",
+          "POST /resolve concept_create_write",
           "POST /v2/activities/execution-traces",
           "POST /v2/goal-paths",
           "POST /v2/activities/execution-traces/reach",
@@ -1727,17 +1945,17 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=7f511a64 (terms tried: procedures,evidence,recorded)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7f511a64\",\"inferred_target_shapes\":[\"concept_write\"],\"confidence\":0.9,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7f511a64\",\"inferred_target_shapes\":[\"concept_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
         "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"concept_write\" directly (connected vessel resolve) — no bridge needed",
-        "[goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:concept_write — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising would let this arm only ever lose; the gap is the missing producer→consumer edge, not the pathway",
-        "[goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it; β WITHHELD (α was structurally unreachable for satisfier:concept_write — symmetric abstention, not a penalty). completion_shapes=[] goal_hash=7f511a64",
-        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=7f511a64",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it; β-penalised last pick satisfier:concept_write. completion_shapes=[] goal_hash=7f511a64",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=7f511a64",
         "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
         "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"concept_write\" directly (connected vessel resolve) — no bridge needed",
-        "[goal-host-vessel] walk(/run-goal): NOT REACHED but β WITHHELD for satisfier:concept_write — α was structurally unreachable for this verdict (non-deterministic, and consumedInChain=0, which every satisfier pick is), so penalising would let this arm only ever lose; the gap is the missing producer→consumer edge, not the pathway",
-        "[goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it; β WITHHELD (α was structurally unreachable for satisfier:concept_write — symmetric abstention, not a penalty). completion_shapes=[] goal_hash=7f511a64",
+        "[goal-host-vessel] walk(/run-goal): HOLLOW — deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it; β-penalised last pick satisfier:concept_write. completion_shapes=[] goal_hash=7f511a64",
         "[goal-host-vessel] /run-goal: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes",
+        "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
         "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [concept_write] have no producer or constructible payload; terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[concept_write] failed_producers=0 ()",
         "[dispatch] execution_path=satisfier attempt_count=1"

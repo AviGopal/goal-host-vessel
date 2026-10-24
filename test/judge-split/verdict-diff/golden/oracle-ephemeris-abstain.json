@@ -47,6 +47,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -56,7 +97,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -68,7 +109,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -80,7 +121,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -97,7 +138,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -114,7 +155,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -131,7 +172,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -140,6 +181,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "distance earth right",
             "type": "concept"
@@ -151,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -160,6 +202,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "distance",
             "type": "concept"
@@ -171,7 +214,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=What%20is%20the%20distance%20from%20Earth%20to%20Io%20right%20now%20in%20AU%3F&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "What is the distance from Earth to Io right now in AU?",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -179,8 +257,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3570,
-        "sha256": "db45820f1332d21f1426e2ac90b7ef4e3a9d08efe49446eb865e57934bc5c7ba",
+        "chars": 4110,
+        "sha256": "c50368588b717e6dd2341c0a92da9e54fd132a814b65a7a9c961d912d7c34401",
         "type": "llm_completion"
       },
       "headers": {},
@@ -188,7 +266,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 11,
+      "seq": 15,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -196,8 +274,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3570,
-        "sha256": "db45820f1332d21f1426e2ac90b7ef4e3a9d08efe49446eb865e57934bc5c7ba",
+        "chars": 4110,
+        "sha256": "c50368588b717e6dd2341c0a92da9e54fd132a814b65a7a9c961d912d7c34401",
         "type": "llm_completion"
       },
       "headers": {},
@@ -205,7 +283,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 12,
+      "seq": 16,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -213,8 +291,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3570,
-        "sha256": "db45820f1332d21f1426e2ac90b7ef4e3a9d08efe49446eb865e57934bc5c7ba",
+        "chars": 4110,
+        "sha256": "c50368588b717e6dd2341c0a92da9e54fd132a814b65a7a9c961d912d7c34401",
         "type": "llm_completion"
       },
       "headers": {},
@@ -222,7 +300,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 17,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -238,7 +316,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 14,
+      "seq": 18,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -254,87 +332,9 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 15,
-      "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "poolImpulse",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 16,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "limit": 20,
-          "status": "open",
-          "type": "poolImpulse"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 17,
-      "status": 404,
-      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "include_scores": true,
-        "limit": 50,
-        "mode": "backward",
-        "required_shapes": [
-          "goal",
-          "dispatch_id"
-        ]
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:discover-by-shapes",
-      "seq": 18,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
-    },
-    {
-      "auth": true,
-      "body": {
-        "exclude_activities": [],
-        "expected_output_shapes": [],
-        "goal": "What is the distance from Earth to Io right now in AU?",
-        "impulse_shapes": [
-          "goal",
-          "dispatch_id"
-        ],
-        "limit": 12,
-        "min_success_rate": 0,
-        "task_description": "What is the distance from Earth to Io right now in AU?"
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:recommend",
       "seq": 19,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -418,7 +418,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "llm_completion_dispatch",
+          "shape": "poolImpulse",
           "type": "vesselCapability"
         }
       },
@@ -435,6 +435,84 @@
       "auth": true,
       "body": {
         "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 25,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 26,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exclude_activities": [],
+        "expected_output_shapes": [],
+        "goal": "What is the distance from Earth to Io right now in AU?",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "What is the distance from Earth to Io right now in AU?"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 27,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 28,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
           "shape": "walkBudget",
           "type": "vesselCapability"
         }
@@ -444,7 +522,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 25,
+      "seq": 29,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -461,7 +539,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 26,
+      "seq": 30,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -469,8 +547,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 3721,
-        "sha256": "8c414ff78d387a9db2b7132214fbd082ec9246603debcbffa41ef956eec1b1e4",
+        "chars": 2921,
+        "sha256": "e28914375fef185fbad6d62b639d6c14a135b5a9d40650b4e2153b7da6fa3d03",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -478,7 +556,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "floor:answer",
-      "seq": 27,
+      "seq": 31,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -488,7 +566,7 @@
         "pointer": {
           "activity_id": "universal-tool-fallback",
           "confidence": 0.98,
-          "execution_id": "universal-tool-fallback-626685e2-1791633601335",
+          "execution_id": "universal-tool-fallback-626685e2-1791633601355",
           "goal": "What is the distance from Earth to Io right now in AU?",
           "labeler": "deterministic",
           "notes": "deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (produced: universal_fallback_result); an answer from model memory cannot be current",
@@ -501,7 +579,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 28,
+      "seq": 32,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -511,11 +589,52 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-626685e2-1791633601335",
+        "execution_id": "universal-tool-fallback-626685e2-1791633601355",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
-          "tasks": []
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
         },
         "failure_mode": {
           "reason": "deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (produced: universal_fallback_result); an answer from model memory cannot be current",
@@ -549,13 +668,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-626685e2-1791633601335"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 29,
+      "seq": 33,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -572,7 +691,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 30,
+      "seq": 34,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -588,7 +707,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 31,
+      "seq": 35,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -605,6 +724,7 @@
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -613,7 +733,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 32,
+      "seq": 36,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -629,7 +749,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 33,
+      "seq": 37,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -648,7 +768,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 34,
+      "seq": 38,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -658,7 +778,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-failed-626685e2-1791633601370",
+        "execution_id": "walk-satisfier-failed-626685e2-1791633601390",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -706,7 +826,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"626685e2\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -746,7 +866,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"626685e2\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -786,7 +906,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -826,7 +946,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=626685e2",
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -866,7 +986,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=626685e2",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -906,7 +1026,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -942,6 +1062,86 @@
               "success": false,
               "task_id": "walk-step-7",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-8",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (produced: universal_fallback_result); an answer from model memory cannot be current",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-9",
+              "toolCalls": []
             }
           ]
         },
@@ -960,12 +1160,14 @@
           "walk_failed": true,
           "walk_log": [
             "[walk-concepts] no concepts recalled for goal_hash=626685e2 (terms tried: distance,earth,right)",
-            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"626685e2\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"626685e2\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
             "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=626685e2",
+            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=626685e2",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+            "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (produced: universal_fallback_result); an answer from model memory cannot be current"
           ]
         },
         "output_impulse_shapes": [],
@@ -982,13 +1184,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-failed-626685e2-1791633601370"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 35,
+      "seq": 39,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -996,7 +1198,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-failed-626685e2-1791633601370",
+        "execution_id": "walk-satisfier-failed-626685e2-1791633601390",
         "goal_hash": "626685e2",
         "reached": false,
         "reason": "GoalHost.runGoal: no template id returned for goal \"What is the distance from Earth to Io right now in AU?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -1006,7 +1208,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 36,
+      "seq": 40,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     }
@@ -1026,28 +1228,33 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=626685e2",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=626685e2",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=626685e2 targetShapes=[]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand)] source=hand",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=626685e2 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=626685e2 verdictNull=false reached=false groundedOk=0 finalTextLen=40",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-626685e2-1791633601335 reached=false tools=0/0 — this run is now gradable",
+        "floor :: [log] [goal-host-vessel] floor: decision goalHash=626685e2 reached=false rule=floor:upstream-not-reached judge=\"deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (pr",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-626685e2-1791633601355 reached=false tools=0/0 — this run is now gradable",
+        "floor,reached :: [log] [goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (produced: universal_fal",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)"
       ],
       "op": "runGoal",
       "record": {
         "error": "GoalHost.runGoal: no template id returned for goal \"What is the distance from Earth to Io right now in AU?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
-        "executionId": "walk-satisfier-failed-626685e2-1791633601370",
+        "executionId": "walk-satisfier-failed-626685e2-1791633601390",
         "executionPath": "fresh_derivation",
+        "goalReachReason": "GoalHost.runGoal: no template id returned for goal \"What is the distance from Earth to Io right now in AU?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633601295,
+            "at": 1791633601315,
             "failed_producers": [],
             "goal_hash": "626685e2",
             "kind": "no_target",
@@ -1064,7 +1271,7 @@
             "termination": "opportunistic walk found no applicable pick (empty inferred target)"
           },
           {
-            "at": 1791633601315,
+            "at": 1791633601335,
             "failed_producers": [],
             "goal_hash": "626685e2",
             "kind": "no_target",
@@ -1087,7 +1294,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-failed-626685e2-1791633601370",
+            "execution_id": "walk-satisfier-failed-626685e2-1791633601390",
             "goal_hash": "626685e2",
             "reached": false,
             "reason": "GoalHost.runGoal: no template id returned for goal \"What is the distance from Earth to Io right now in AU?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -1106,12 +1313,14 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=626685e2 (terms tried: distance,earth,right)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"626685e2\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"626685e2\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=626685e2",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=626685e2",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+        "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:unsourced-current-information — the goal asks for current information and the chain consulted no source in-run (produced: universal_fallback_result); an answer from model memory cannot be current"
       ]
     }
   ]

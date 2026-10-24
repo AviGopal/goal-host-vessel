@@ -10,7 +10,7 @@
   "harness": {
     "aborted": null,
     "pendingTimers": 0,
-    "timerFires": 6,
+    "timerFires": 11,
     "virtualMsElapsed": 15000
   },
   "intervalsRegistered": 8,
@@ -48,6 +48,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -57,7 +98,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -69,7 +110,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -81,7 +122,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -98,7 +139,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -115,7 +156,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -132,7 +173,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -141,6 +182,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement advancing admitted",
             "type": "concept"
@@ -152,7 +194,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -161,6 +203,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement",
             "type": "concept"
@@ -172,7 +215,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=The%20system's%20own%20improvement%20lane%20can%20stall%20at%20any%20stage%20%E2%80%94%20a%20gap%20waits%20to%20be%20armed%2C%20admitted%2C%20composed%2C%20landed%2C%20settled%20or%20reverted%2C%20and%20nothing%20advances%20%E2%80%94%20and%20nothing%20in%20the%20system%20notices%3B%20only%20an%20operator%20does.%20Make%20the%20system%20notice%2C%20by%20itself%2C%20when%20any%20stage%20of%20its%20own%20lane%20stops%20advancing%2C%20and%20treat%20that%20as%20its%20own%20gap.&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -180,8 +258,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3872,
-        "sha256": "9f02a3a9dbf2f43ed8b88b91150f2443bf505b6e747c26e72d07ed1149b166ff",
+        "chars": 4412,
+        "sha256": "0e839b4e51186dad707ea7d779d31da08e3d87a41ae10c1a057d1992029aed58",
         "type": "llm_completion"
       },
       "headers": {},
@@ -189,7 +267,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 11,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -208,7 +286,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -224,7 +302,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 17,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -241,7 +319,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 14,
+      "seq": 18,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -259,7 +337,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 15,
+      "seq": 19,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -271,7 +349,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 16,
+      "seq": 20,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -283,7 +361,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 17,
+      "seq": 21,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -293,6 +371,9 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:substrateGap_write",
+            "goal_target_shapes": [
+              "substrateGap_write"
+            ],
             "type": "thompson_posterior"
           }
         }
@@ -302,7 +383,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 18,
+      "seq": 22,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -321,7 +402,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 19,
+      "seq": 23,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -340,7 +421,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 20,
+      "seq": 24,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -349,6 +430,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "substrateGap_write pointer payload",
             "type": "concept"
@@ -360,7 +442,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 21,
+      "seq": 25,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -369,7 +451,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2707,
-        "sha256": "2498bb88c99277228bb12ef75c3ff8da2fe56a19df368f60ec30da234a9d0047",
+        "sha256": "174f2f94b4ae90a86f6d04ff3907c9a19e13cfe3e110dd7c5d582e047556aedc",
         "type": "llm_completion"
       },
       "headers": {},
@@ -377,7 +459,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 22,
+      "seq": 26,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -386,7 +468,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2707,
-        "sha256": "2498bb88c99277228bb12ef75c3ff8da2fe56a19df368f60ec30da234a9d0047",
+        "sha256": "174f2f94b4ae90a86f6d04ff3907c9a19e13cfe3e110dd7c5d582e047556aedc",
         "type": "llm_completion"
       },
       "headers": {},
@@ -394,7 +476,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 23,
+      "seq": 27,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -403,7 +485,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2707,
-        "sha256": "2498bb88c99277228bb12ef75c3ff8da2fe56a19df368f60ec30da234a9d0047",
+        "sha256": "174f2f94b4ae90a86f6d04ff3907c9a19e13cfe3e110dd7c5d582e047556aedc",
         "type": "llm_completion"
       },
       "headers": {},
@@ -411,7 +493,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 28,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -430,7 +512,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:gap-write",
-      "seq": 25,
+      "seq": 29,
       "status": 200,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -439,7 +521,7 @@
       "body": {
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-write-1-1791633601325",
+        "execution_id": "walk-satisfier-write-1-1791633601345",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -524,13 +606,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-write-1-1791633601325"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 26,
+      "seq": 30,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -547,7 +629,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 27,
+      "seq": 31,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -556,7 +638,7 @@
       "body": {
         "caller": "goal-host:action_shape_selection",
         "chars": 1651,
-        "sha256": "2d72d3b17c9c10d56824a424eb6ccc2109722ebe71546b48b3d47d6167fc8be4",
+        "sha256": "14f04b9bf6922d75fba8327e06deb20613917c9df69de52bd67d4d1265bc95b5",
         "type": "llm_completion"
       },
       "headers": {},
@@ -564,7 +646,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 28,
+      "seq": 32,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -573,7 +655,7 @@
       "body": {
         "caller": "goal-host:action_shape_selection",
         "chars": 1651,
-        "sha256": "2d72d3b17c9c10d56824a424eb6ccc2109722ebe71546b48b3d47d6167fc8be4",
+        "sha256": "14f04b9bf6922d75fba8327e06deb20613917c9df69de52bd67d4d1265bc95b5",
         "type": "llm_completion"
       },
       "headers": {},
@@ -581,7 +663,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 29,
+      "seq": 33,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -590,7 +672,7 @@
       "body": {
         "caller": "goal-host:action_shape_selection",
         "chars": 1651,
-        "sha256": "2d72d3b17c9c10d56824a424eb6ccc2109722ebe71546b48b3d47d6167fc8be4",
+        "sha256": "14f04b9bf6922d75fba8327e06deb20613917c9df69de52bd67d4d1265bc95b5",
         "type": "llm_completion"
       },
       "headers": {},
@@ -598,7 +680,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 30,
+      "seq": 34,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -621,7 +703,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 31,
+      "seq": 35,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -649,7 +731,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 32,
+      "seq": 36,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -671,7 +753,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 33,
+      "seq": 37,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -693,7 +775,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 34,
+      "seq": 38,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -715,7 +797,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 35,
+      "seq": 39,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -731,7 +813,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 36,
+      "seq": 40,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -758,9 +840,43 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 37,
+      "seq": 41,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 42,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 43,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -775,7 +891,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 38,
+      "seq": 44,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -792,7 +908,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 39,
+      "seq": 45,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -811,7 +927,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 40,
+      "seq": 46,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -828,7 +944,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 41,
+      "seq": 47,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -845,7 +961,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 42,
+      "seq": 48,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -862,7 +978,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 43,
+      "seq": 49,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -870,8 +986,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 4527,
-        "sha256": "3325d805f3ced6e381b11f5a58a80e00d706660b076cfcdca85c763cd857ddb0",
+        "chars": 3412,
+        "sha256": "9a2747c20000c0f7fd59a5af2b71fc70ac40b59d2f3db3923a1b177ccf6cef19",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -879,7 +995,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "floor:answer",
-      "seq": 44,
+      "seq": 50,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -889,7 +1005,7 @@
         "pointer": {
           "activity_id": "universal-tool-fallback",
           "confidence": 0.98,
-          "execution_id": "universal-tool-fallback-768bd710-1791633602620",
+          "execution_id": "universal-tool-fallback-768bd710-1791633602650",
           "goal": "The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
           "labeler": "deterministic",
           "notes": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
@@ -902,7 +1018,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 45,
+      "seq": 51,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -912,11 +1028,52 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-768bd710-1791633602620",
+        "execution_id": "universal-tool-fallback-768bd710-1791633602650",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
-          "tasks": []
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
         },
         "failure_mode": {
           "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
@@ -952,13 +1109,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-768bd710-1791633602620"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 46,
+      "seq": 52,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -975,7 +1132,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 47,
+      "seq": 53,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -994,7 +1151,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 48,
+      "seq": 54,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -1013,6 +1170,7 @@
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -1021,7 +1179,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 49,
+      "seq": 55,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -1037,7 +1195,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 50,
+      "seq": 56,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1061,26 +1219,9 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 51,
+      "seq": 57,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
-    },
-    {
-      "auth": false,
-      "body": {
-        "goal": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
-        "tags": [
-          "escalated_from:no_producer"
-        ]
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 52,
-      "status": 404,
-      "url": "http://127.0.0.1:18999/run-goal"
     },
     {
       "auth": true,
@@ -1088,7 +1229,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-failed-768bd710-1791633602660",
+        "execution_id": "walk-satisfier-failed-768bd710-1791633602685",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -1136,7 +1277,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[]}",
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1176,7 +1317,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1216,7 +1357,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] walk: write \"substrateGap_write\" claimed success but effect NOT independently readable — treating as non-persistence",
+              "description": "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1256,7 +1397,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
+              "description": "[goal-host-vessel] walk: write \"substrateGap_write\" claimed success but effect NOT independently readable — treating as non-persistence",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1296,7 +1437,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+              "description": "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1336,7 +1477,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[dispatch] execution_path=fresh_derivation attempt_count=0",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -1372,6 +1513,126 @@
               "success": false,
               "task_id": "walk-step-7",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-8",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-9",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[dispatch] execution_path=fresh_derivation attempt_count=0",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-10",
+              "toolCalls": []
             }
           ]
         },
@@ -1392,11 +1653,14 @@
           "walk_failed": true,
           "walk_log": [
             "[walk-concepts] no concepts recalled for goal_hash=768bd710 (terms tried: improvement,advancing,admitted)",
-            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[]}",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
             "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
             "[goal-host-vessel] walk: write \"substrateGap_write\" claimed success but effect NOT independently readable — treating as non-persistence",
+            "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
             "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
             "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+            "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
             "[dispatch] execution_path=fresh_derivation attempt_count=0"
           ]
         },
@@ -1414,13 +1678,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-failed-768bd710-1791633602660"
+        "idempotency-key": "idem-3"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 53,
+      "seq": 58,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1428,7 +1692,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-failed-768bd710-1791633602660",
+        "execution_id": "walk-satisfier-failed-768bd710-1791633602685",
         "goal_hash": "768bd710",
         "reached": false,
         "reason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk"
@@ -1438,7 +1702,1535 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 54,
+      "seq": 59,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000002",
+            "limit": 5,
+            "query": "investigate improvement decompose",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 60,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000002",
+            "limit": 5,
+            "query": "investigate",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 61,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 62,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=investigate%20and%20decompose%20goal%3A%20The%20system's%20own%20improvement%20lane%20can%20stall%20at%20any%20stage%20%E2%80%94%20a%20gap%20waits%20to%20be%20armed%2C%20admitted%2C%20composed%2C%20landed%2C%20settled%20or%20reverted%2C%20and%20nothing%20advances%20%E2%80%94%20and%20nothing%20in%20the%20system%20notices%3B%20only%20an%20operator%20does.%20Make%20the%20system%20notice%2C%20by%20itself%2C%20when%20any%20stage%20of%20its%20own%20lane%20stops%20advancing%2C%20and%20treat%20that%20as%20its%20own%20gap.&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000002",
+            "include_global": true,
+            "limit": 12,
+            "query": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 63,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:goal_target_inference",
+        "chars": 4444,
+        "sha256": "951f815ea2b17d2db06ae1f84a8f5e68f88a296373004a064e4eda74c85ca3f3",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "llm:target-inference",
+      "seq": 64,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exploit_threshold": 0.9,
+        "goal_category": "meta",
+        "goal_text": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "target_shapes": [
+          "substrateGap_write"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-recommend",
+      "seq": 65,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "pathwayReusePolicy"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 66,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 67,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 68,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 69,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "fleet:registry-shapes",
+      "seq": 70,
+      "status": 200,
+      "url": "http://discovery.test.invalid/registry/shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "activity_id": "satisfier:substrateGap_write",
+            "goal_target_shapes": [
+              "substrateGap_write"
+            ],
+            "type": "thompson_posterior"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 71,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "substrateGap_write",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 72,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "substrateGap_write",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 73,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000002",
+            "limit": 3,
+            "query": "substrateGap_write pointer payload",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 74,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2739,
+        "sha256": "dce9bb774e94e003c52d29985ad25155e83de08cd95026ac75e294b9a532355d",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 75,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2739,
+        "sha256": "dce9bb774e94e003c52d29985ad25155e83de08cd95026ac75e294b9a532355d",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 76,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2739,
+        "sha256": "dce9bb774e94e003c52d29985ad25155e83de08cd95026ac75e294b9a532355d",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 77,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "dispatch_id": "00000000-0000-4000-8000-000000000002",
+            "type": "substrateGap_write"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:gap-write",
+      "seq": 78,
+      "status": 200,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-write-2-1791633603990",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "apply substrateGap_write via http://dev-vessel.test.invalid (walk site satisfier-direct, attempt 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [
+                "substrateGap_write"
+              ],
+              "resolver_id": "substrateGap_write",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "substrateGap_write"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "write-apply",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "attempt": 1,
+          "endpoint": "http://dev-vessel.test.invalid",
+          "satisfier": true,
+          "shape": "substrateGap_write",
+          "site": "satisfier-direct",
+          "terminal": false,
+          "write_applied": true
+        },
+        "output_impulse_shapes": [
+          "substrateGap_write"
+        ],
+        "status": "success",
+        "success": true,
+        "tags": [
+          "escalated_from:no_producer",
+          "dispatcher_used:goal-host",
+          "dispatch:00000000-0000-4000-8000-000000000002",
+          "satellite:non_terminal",
+          "satisfier_shape:substrateGap_write",
+          "write_applied",
+          "write_site:satisfier-direct"
+        ],
+        "template_id": "satisfier:substrateGap_write",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "idem-4"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 79,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "bodyHonestyPolicy",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 80,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1683,
+        "sha256": "0cfd20114e8cfb50c7f82c29f9696e7e216c9b841295f160a4f9ba4820093fad",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 81,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1683,
+        "sha256": "0cfd20114e8cfb50c7f82c29f9696e7e216c9b841295f160a4f9ba4820093fad",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 82,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1683,
+        "sha256": "0cfd20114e8cfb50c7f82c29f9696e7e216c9b841295f160a4f9ba4820093fad",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 83,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "substrateGap_write"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 84,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "substrateGap_write"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "substrateGap_write"
+        ],
+        "goal": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap."
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 85,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "substrateGap_write"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "substrateGap_write"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 86,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "substrateGap_write"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "substrateGap_write"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 87,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "substrateGap_write"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "substrateGap_write"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 88,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "type": "learning_transfer_report"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 89,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "available_shapes": [
+              "goal",
+              "dispatch_id"
+            ],
+            "execution_id": "00000000-0000-4000-8000-000000000002",
+            "goal": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+            "max_attempts": 3,
+            "shape": "substrateGap_write",
+            "type": "author_producer"
+          },
+          "type": "author_producer"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 90,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 91,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 92,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "substrateGap_write",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 93,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "substrateGap_write",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 94,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "substrateGap_write",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 95,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 96,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 97,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 98,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "caller": "goal-host:floor_tool_loop",
+        "chars": 3444,
+        "sha256": "ac3b3128bb29344965f23a137b16d58bcdf2e463fb1b8645d7e8c26439c48448",
+        "type": "llm_completion_dispatch"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "floor:answer",
+      "seq": 99,
+      "status": 200,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "activity_id": "universal-tool-fallback",
+          "confidence": 0.98,
+          "execution_id": "universal-tool-fallback-e06990bc-1791633605295",
+          "goal": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+          "labeler": "deterministic",
+          "notes": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+          "type": "goal_verification_label_write",
+          "verdict": "not_achieved"
+        }
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:label-write",
+      "seq": 100,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "universal-tool-fallback-e06990bc-1791633605295",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "authored_answer": true,
+          "final_text": "Plan: augment each gap with a last_advanced_at stamp, add a stagnation detector to the joint observer, and file a 'stagnation' gap when a stage has not advanced. Since I cannot see the output, it's likely that the actual call to substrateGap_write was successful. I have demonstrated how such a stagnation gap would be created.",
+          "final_text_len": 327,
+          "floor": true,
+          "goal_hash": "e06990bc",
+          "grounded_reads": 0,
+          "reach_reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+          "target_shapes": [
+            "substrateGap_write"
+          ],
+          "tools_ok": 0,
+          "tools_total": 0
+        },
+        "output_impulse_shapes": [],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host",
+          "reached:false"
+        ],
+        "template_id": "universal-tool-fallback",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "idem-5"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 101,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "goal": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+          "type": "goal_path_sha"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 102,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exploit_threshold": 0.9,
+        "goal_category": "meta",
+        "goal_text": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "target_shapes": [
+          "substrateGap_write"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-recommend",
+      "seq": 103,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "endpoint_output_shapes": [],
+        "expected_output_shapes": [
+          "substrateGap_write"
+        ],
+        "goal_category": "meta",
+        "goal_text": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "inference_confidence": 0.9,
+        "path_activities": [
+          "universal-tool-fallback"
+        ],
+        "reached": false,
+        "success": false,
+        "walk_tier": "universal_tool_fallback"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:goal-path-record",
+      "seq": 104,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "type": "pathwayReusePolicy"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 105,
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "substrateGap_write"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "substrateGap_write"
+        ],
+        "goal": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap.",
+        "limit": 6,
+        "min_success_rate": 0,
+        "task_description": "investigate and decompose goal: The system's own improvement lane can stall at any stage — a gap waits to be armed, admitted, composed, landed, settled or reverted, and nothing advances — and nothing in the system notices; only an operator does. Make the system notice, by itself, when any stage of its own lane stops advancing, and treat that as its own gap."
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 106,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "composition_chain": [],
+        "cost_usd": 0,
+        "duration_ms": 0,
+        "execution_id": "walk-satisfier-failed-e06990bc-1791633605330",
+        "execution_trace": {
+          "filesModified": [],
+          "impulsesCreated": [],
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[walk-concepts] no concepts recalled for goal_hash=e06990bc (terms tried: investigate,improvement,decompose)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-1",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-2",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"e06990bc\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-3",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-4",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] walk: write \"substrateGap_write\" claimed success but effect NOT independently readable — treating as non-persistence",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-5",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-6",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-7",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-8",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-9",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[dispatch] execution_path=fresh_derivation attempt_count=0",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-10",
+              "toolCalls": []
+            }
+          ]
+        },
+        "failure_mode": {
+          "reason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk",
+          "type": "execution_error"
+        },
+        "input_impulse_shapes": [],
+        "metadata": {
+          "goal_hash": "e06990bc",
+          "produced_shapes": [],
+          "reach_reason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk",
+          "satisfier": true,
+          "target_shapes": [
+            "substrateGap_write"
+          ],
+          "termination_reason": "walk-terminated-unreached",
+          "walk_failed": true,
+          "walk_log": [
+            "[walk-concepts] no concepts recalled for goal_hash=e06990bc (terms tried: investigate,improvement,decompose)",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"e06990bc\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
+            "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
+            "[goal-host-vessel] walk: write \"substrateGap_write\" claimed success but effect NOT independently readable — treating as non-persistence",
+            "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
+            "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
+            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+            "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
+            "[dispatch] execution_path=fresh_derivation attempt_count=0"
+          ]
+        },
+        "output_impulse_shapes": [],
+        "status": "failure",
+        "success": false,
+        "tags": [
+          "dispatcher_used:goal-host"
+        ],
+        "template_id": "satisfier:goal-host-walk-failed",
+        "tokens": {
+          "cache": 0,
+          "input": 0,
+          "output": 0
+        }
+      },
+      "headers": {
+        "idempotency-key": "idem-6"
+      },
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:trace-write",
+      "seq": 107,
+      "status": 201,
+      "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [],
+        "execution_id": "walk-satisfier-failed-e06990bc-1791633605330",
+        "goal_hash": "e06990bc",
+        "reached": false,
+        "reason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk"
+      },
+      "headers": {},
+      "kind": "sink",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:reach",
+      "seq": 108,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     }
@@ -1458,15 +3250,35 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
         "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [substrateGap_write]",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=768bd710 targetShapes=[\"substrateGap_write\"]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand), substrateGap_write(write)] source=hand",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=768bd710 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=768bd710 verdictNull=false reached=false groundedOk=0 finalTextLen=327",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-768bd710-1791633602620 reached=false tools=0/0 — this run is now gradable",
+        "landed,floor :: [log] [goal-host-vessel] floor: decision goalHash=768bd710 reached=false rule=floor:upstream-not-reached judge=\"deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is rea",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-768bd710-1791633602650 reached=false tools=0/0 — this run is now gradable",
+        "landed,floor,reached :: [log] [goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed",
+        "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
+        "no-pick :: [log] [goal-host-vessel] /run-goal: no candidate produces target shapes [substrateGap_write] — honest no-producer failure",
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
+        "no-pick :: [log] [rebind] outcome selected=no candidates=0",
+        "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
+        "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+        "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [substrateGap_write]",
+        "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=e06990bc targetShapes=[\"substrateGap_write\"]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand), substrateGap_write(write)] source=hand",
+        "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
+        "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=e06990bc — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
+        "floor :: [log] [goal-host-vessel] floor: verdict goalHash=e06990bc verdictNull=false reached=false groundedOk=0 finalTextLen=327",
+        "landed,floor :: [log] [goal-host-vessel] floor: decision goalHash=e06990bc reached=false rule=floor:upstream-not-reached judge=\"deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is rea",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-e06990bc-1791633605295 reached=false tools=0/0 — this run is now gradable",
+        "landed,floor,reached :: [log] [goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: no candidate produces target shapes [substrateGap_write] — honest no-producer failure"
       ],
@@ -1475,7 +3287,7 @@
         "attemptCount": 0,
         "attempts": 0,
         "completionShapes": null,
-        "executionId": "walk-satisfier-failed-768bd710-1791633602660",
+        "executionId": "walk-satisfier-failed-768bd710-1791633602685",
         "executionPath": "fresh_derivation",
         "goalReachReason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk",
         "inferenceConfidence": 0.9,
@@ -1488,7 +3300,7 @@
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633602590,
+            "at": 1791633602620,
             "failed_producers": [
               {
                 "producer": "satisfier:substrateGap_write",
@@ -1523,8 +3335,15 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-failed-768bd710-1791633602660",
+            "execution_id": "walk-satisfier-failed-768bd710-1791633602685",
             "goal_hash": "768bd710",
+            "reached": false,
+            "reason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk"
+          },
+          {
+            "completion_shapes": [],
+            "execution_id": "walk-satisfier-failed-e06990bc-1791633605330",
+            "goal_hash": "e06990bc",
             "reached": false,
             "reason": "no template produces the inferred target shapes [substrateGap_write]; capability gap filed by the walk"
           }
@@ -1538,17 +3357,27 @@
           "POST /v2/activities/execution-traces",
           "POST /v2/goal-paths",
           "POST /v2/activities/execution-traces",
+          "POST /v2/activities/execution-traces/reach",
+          "POST /v2/impulses/resolve substrateGap_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/impulses/resolve goal_verification_label_write",
+          "POST /v2/activities/execution-traces",
+          "POST /v2/goal-paths",
+          "POST /v2/activities/execution-traces",
           "POST /v2/activities/execution-traces/reach"
         ],
         "status": "failed"
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=768bd710 (terms tried: improvement,advancing,admitted)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"768bd710\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
         "[goal-host-vessel] walk: write \"substrateGap_write\" claimed success but effect NOT independently readable — treating as non-persistence",
+        "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
         "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [substrateGap_write] have no producer or constructible payload; terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[substrateGap_write] failed_producers=1 (satisfier:substrateGap_write: resolver returned nothing)",
+        "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:write-goal-no-artifact — the goal asks for a change (targets [substrateGap_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; this run persisted no write and landed nothing, so a plan or prose answer cannot reach it",
         "[dispatch] execution_path=fresh_derivation attempt_count=0"
       ]
     }

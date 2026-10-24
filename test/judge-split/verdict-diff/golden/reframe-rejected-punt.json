@@ -9,7 +9,7 @@
   "harness": {
     "aborted": null,
     "pendingTimers": 0,
-    "timerFires": 13,
+    "timerFires": 11,
     "virtualMsElapsed": 15000
   },
   "intervalsRegistered": 8,
@@ -47,6 +47,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -56,7 +97,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -68,7 +109,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -80,7 +121,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -97,7 +138,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -114,7 +155,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -131,7 +172,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -140,6 +181,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "migration assemble briefing",
             "type": "concept"
@@ -151,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -160,6 +202,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "migration",
             "type": "concept"
@@ -171,7 +214,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=Assemble%20a%20short%20briefing%20on%20why%20vessels%20restart%20after%20a%20schema%20migration&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "Assemble a short briefing on why vessels restart after a schema migration",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -179,8 +257,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3616,
-        "sha256": "36780bc78171c4b725d984c6c6c7fb68973139c8381af1eda92b78828ed10d99",
+        "chars": 4156,
+        "sha256": "e9d9ef128be69ffded39f3f1b6ff72ad4afb34a4541188e73ccfcac301c1a0c9",
         "type": "llm_completion"
       },
       "headers": {},
@@ -188,7 +266,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 11,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -207,7 +285,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -223,7 +301,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 17,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -240,7 +318,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 14,
+      "seq": 18,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -258,7 +336,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 15,
+      "seq": 19,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -270,7 +348,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 16,
+      "seq": 20,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -282,7 +360,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 17,
+      "seq": 21,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -292,6 +370,9 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:shellResult",
+            "goal_target_shapes": [
+              "shellResult"
+            ],
             "type": "thompson_posterior"
           }
         }
@@ -301,7 +382,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 18,
+      "seq": 22,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -320,7 +401,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 19,
+      "seq": 23,
       "status": 404,
       "url": "http://local-tools.test.invalid/v2/impulses/resolve"
     },
@@ -339,7 +420,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 20,
+      "seq": 24,
       "status": 404,
       "url": "http://local-tools.test.invalid/v2/impulses/resolve"
     },
@@ -348,6 +429,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "shellResult pointer payload",
             "type": "concept"
@@ -359,7 +441,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 21,
+      "seq": 25,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -376,7 +458,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 22,
+      "seq": 26,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -385,7 +467,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 6157,
-        "sha256": "adf5c98508d581d9da7bf8894f8fa00178e3b936eb336408650fd53cc23bca6b",
+        "sha256": "24bc98b5ff9e2ac6640d1bf19069f0660af0c6b14f621e904471a96ea6ddd4cb",
         "type": "llm_completion"
       },
       "headers": {},
@@ -393,7 +475,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 23,
+      "seq": 27,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -402,7 +484,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 6157,
-        "sha256": "adf5c98508d581d9da7bf8894f8fa00178e3b936eb336408650fd53cc23bca6b",
+        "sha256": "24bc98b5ff9e2ac6640d1bf19069f0660af0c6b14f621e904471a96ea6ddd4cb",
         "type": "llm_completion"
       },
       "headers": {},
@@ -410,7 +492,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 28,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -419,7 +501,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 6157,
-        "sha256": "adf5c98508d581d9da7bf8894f8fa00178e3b936eb336408650fd53cc23bca6b",
+        "sha256": "24bc98b5ff9e2ac6640d1bf19069f0660af0c6b14f621e904471a96ea6ddd4cb",
         "type": "llm_completion"
       },
       "headers": {},
@@ -427,7 +509,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 25,
+      "seq": 29,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -447,7 +529,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 26,
+      "seq": 30,
       "status": 404,
       "url": "http://local-tools.test.invalid/v2/impulses/resolve"
     },
@@ -463,101 +545,11 @@
       },
       "headers": {},
       "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 27,
-      "status": 404,
-      "url": "http://local-tools.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "impulse": {
-          "pointer": {
-            "limit": 3,
-            "query": "shellResult pointer payload",
-            "type": "concept"
-          }
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:concept-recall",
-      "seq": 28,
-      "status": 200,
-      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": false,
-      "body": {
-        "caller": "goal-host:pointer_arg_extraction",
-        "chars": 7586,
-        "sha256": "009f5cf13baf329c2e28b79bdc5aec4bc1725811140ab6ca0374527109baae2f",
-        "type": "llm_completion"
-      },
-      "headers": {},
-      "kind": "llm",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 29,
-      "status": 404,
-      "url": "http://llm.test.invalid/resolve"
-    },
-    {
-      "auth": false,
-      "body": {
-        "caller": "goal-host:pointer_arg_extraction",
-        "chars": 7586,
-        "sha256": "009f5cf13baf329c2e28b79bdc5aec4bc1725811140ab6ca0374527109baae2f",
-        "type": "llm_completion"
-      },
-      "headers": {},
-      "kind": "llm",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 30,
-      "status": 404,
-      "url": "http://llm.test.invalid/resolve"
-    },
-    {
-      "auth": false,
-      "body": {
-        "caller": "goal-host:pointer_arg_extraction",
-        "chars": 7586,
-        "sha256": "009f5cf13baf329c2e28b79bdc5aec4bc1725811140ab6ca0374527109baae2f",
-        "type": "llm_completion"
-      },
-      "headers": {},
-      "kind": "llm",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
       "seq": 31,
       "status": 404,
-      "url": "http://llm.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "impulse": {
-          "pointer": {
-            "shape": "shellResult",
-            "type": "resolver_schema"
-          }
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 32,
-      "status": 404,
       "url": "http://local-tools.test.invalid/v2/impulses/resolve"
     },
     {
@@ -565,6 +557,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "shellResult pointer payload",
             "type": "concept"
@@ -576,7 +569,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 33,
+      "seq": 32,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -584,8 +577,25 @@
       "auth": false,
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
-        "chars": 6380,
-        "sha256": "3912677586cd03ea9aa1355746fdc0696afe414f6af1939185491b4434470648",
+        "chars": 7586,
+        "sha256": "9bf24f1bbc038cba8cd5c37e068ae8c7709baaf8a6744ef0ed5b4b1710166741",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 33,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 7586,
+        "sha256": "9bf24f1bbc038cba8cd5c37e068ae8c7709baaf8a6744ef0ed5b4b1710166741",
         "type": "llm_completion"
       },
       "headers": {},
@@ -601,8 +611,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
-        "chars": 6380,
-        "sha256": "3912677586cd03ea9aa1355746fdc0696afe414f6af1939185491b4434470648",
+        "chars": 7586,
+        "sha256": "9bf24f1bbc038cba8cd5c37e068ae8c7709baaf8a6744ef0ed5b4b1710166741",
         "type": "llm_completion"
       },
       "headers": {},
@@ -617,9 +627,9 @@
     {
       "auth": false,
       "body": {
-        "caller": "goal-host:pointer_arg_extraction",
-        "chars": 6380,
-        "sha256": "3912677586cd03ea9aa1355746fdc0696afe414f6af1939185491b4434470648",
+        "caller": "goal-host:action_shape_selection",
+        "chars": 1222,
+        "sha256": "3bc1a2ea486eb167501da98269c95962db4dcb9ad038de4035680394ab549e43",
         "type": "llm_completion"
       },
       "headers": {},
@@ -636,7 +646,7 @@
       "body": {
         "caller": "goal-host:action_shape_selection",
         "chars": 1222,
-        "sha256": "01f6aaec83311173fd7d9a26882e5eeb242dcac0d6b8c4aee03a96717de1e52b",
+        "sha256": "3bc1a2ea486eb167501da98269c95962db4dcb9ad038de4035680394ab549e43",
         "type": "llm_completion"
       },
       "headers": {},
@@ -653,7 +663,7 @@
       "body": {
         "caller": "goal-host:action_shape_selection",
         "chars": 1222,
-        "sha256": "01f6aaec83311173fd7d9a26882e5eeb242dcac0d6b8c4aee03a96717de1e52b",
+        "sha256": "3bc1a2ea486eb167501da98269c95962db4dcb9ad038de4035680394ab549e43",
         "type": "llm_completion"
       },
       "headers": {},
@@ -662,23 +672,6 @@
       "phase": "step1:runGoal",
       "route": "unmatched",
       "seq": 38,
-      "status": 404,
-      "url": "http://llm.test.invalid/resolve"
-    },
-    {
-      "auth": false,
-      "body": {
-        "caller": "goal-host:action_shape_selection",
-        "chars": 1222,
-        "sha256": "01f6aaec83311173fd7d9a26882e5eeb242dcac0d6b8c4aee03a96717de1e52b",
-        "type": "llm_completion"
-      },
-      "headers": {},
-      "kind": "llm",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 39,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -701,7 +694,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 40,
+      "seq": 39,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -729,9 +722,31 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 41,
+      "seq": 40,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "shellResult"
+        ],
+        "include_scores": true,
+        "limit": 50,
+        "mode": "forward",
+        "required_shapes": [
+          "shellResult"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 41,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
     {
       "auth": true,
@@ -780,28 +795,6 @@
     {
       "auth": true,
       "body": {
-        "completion_shapes": [
-          "shellResult"
-        ],
-        "include_scores": true,
-        "limit": 50,
-        "mode": "forward",
-        "required_shapes": [
-          "shellResult"
-        ]
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:discover-by-shapes",
-      "seq": 44,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
-    },
-    {
-      "auth": true,
-      "body": {
         "impulse": {
           "type": "learning_transfer_report"
         }
@@ -811,7 +804,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 45,
+      "seq": 44,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -838,9 +831,43 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 46,
+      "seq": 45,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 46,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "author_composed_capability",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 47,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -855,7 +882,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 47,
+      "seq": 48,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -872,7 +899,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 48,
+      "seq": 49,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -890,7 +917,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 49,
+      "seq": 50,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -902,7 +929,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 50,
+      "seq": 51,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -914,7 +941,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 51,
+      "seq": 52,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -924,26 +951,10 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:obsidian_dispatch_goal",
+            "goal_target_shapes": [
+              "obsidian_dispatch_goal"
+            ],
             "type": "thompson_posterior"
-          }
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 52,
-      "status": 404,
-      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "impulse": {
-          "pointer": {
-            "shape": "obsidian_dispatch_goal",
-            "type": "resolver_schema"
           }
         }
       },
@@ -954,7 +965,7 @@
       "route": "unmatched",
       "seq": 53,
       "status": 404,
-      "url": "http://obsidian.test.invalid/v2/impulses/resolve"
+      "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -980,6 +991,26 @@
       "body": {
         "impulse": {
           "pointer": {
+            "shape": "obsidian_dispatch_goal",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 55,
+      "status": 404,
+      "url": "http://obsidian.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "obsidian_dispatch_goal pointer payload",
             "type": "concept"
@@ -991,7 +1022,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 55,
+      "seq": 56,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -1000,24 +1031,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2457,
-        "sha256": "240aae2bfb6df09e7fa4bbe1f82fb64a61fc6208e3dc8ce12f3a60c5a9ff5543",
-        "type": "llm_completion"
-      },
-      "headers": {},
-      "kind": "llm",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 56,
-      "status": 404,
-      "url": "http://llm.test.invalid/resolve"
-    },
-    {
-      "auth": false,
-      "body": {
-        "caller": "goal-host:pointer_arg_extraction",
-        "chars": 2457,
-        "sha256": "240aae2bfb6df09e7fa4bbe1f82fb64a61fc6208e3dc8ce12f3a60c5a9ff5543",
+        "sha256": "aeea824604f5a4214dabe7306ec8b2e1a2928d47a1990868670abb869d5ab931",
         "type": "llm_completion"
       },
       "headers": {},
@@ -1034,7 +1048,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2457,
-        "sha256": "240aae2bfb6df09e7fa4bbe1f82fb64a61fc6208e3dc8ce12f3a60c5a9ff5543",
+        "sha256": "aeea824604f5a4214dabe7306ec8b2e1a2928d47a1990868670abb869d5ab931",
         "type": "llm_completion"
       },
       "headers": {},
@@ -1043,6 +1057,23 @@
       "phase": "step1:runGoal",
       "route": "unmatched",
       "seq": 58,
+      "status": 404,
+      "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "caller": "goal-host:pointer_arg_extraction",
+        "chars": 2457,
+        "sha256": "aeea824604f5a4214dabe7306ec8b2e1a2928d47a1990868670abb869d5ab931",
+        "type": "llm_completion"
+      },
+      "headers": {},
+      "kind": "llm",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 59,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -1061,7 +1092,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "obsidian:dispatch",
-      "seq": 59,
+      "seq": 60,
       "status": 200,
       "url": "http://obsidian.test.invalid/v2/impulses/resolve"
     },
@@ -1078,7 +1109,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 60,
+      "seq": 61,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1086,8 +1117,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:reach_verification",
-        "chars": 3162,
-        "sha256": "55ca81f8fcbb98fbcef1f2f582b77265963b2ad637e2dab120bd90d38904f802",
+        "chars": 3632,
+        "sha256": "9e8294d6089cd06d3419f21c7efb4e7d73d82881ac6f424c76ae21148115ed84",
         "type": "llm_completion"
       },
       "headers": {},
@@ -1095,7 +1126,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "judge",
-      "seq": 61,
+      "seq": 62,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -1105,7 +1136,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-1-1791633606300",
+        "execution_id": "walk-satisfier-1-1791633605105",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
@@ -1165,6 +1196,9 @@
         },
         "input_impulse_shapes": [],
         "metadata": {
+          "goal_target_shapes": [
+            "obsidian_dispatch_goal"
+          ],
           "satisfier": true,
           "shape": "obsidian_dispatch_goal"
         },
@@ -1188,13 +1222,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-1-1791633606300"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 62,
+      "seq": 63,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1211,7 +1245,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 63,
+      "seq": 64,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1228,23 +1262,6 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 64,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "unaccounted_landing_scan",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
       "seq": 65,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
@@ -1253,7 +1270,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "walkBudget",
+          "shape": "unaccounted_landing_scan",
           "type": "vesselCapability"
         }
       },
@@ -1295,8 +1312,25 @@
       "kind": "read",
       "method": "POST",
       "phase": "step1:runGoal",
-      "route": "unmatched",
+      "route": "fleet:vesselCapability",
       "seq": 68,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 69,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -1304,8 +1338,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 3740,
-        "sha256": "5eb800bcb7c6e3f39c78aa9b552025a0dd4950e413a8773d068d25e908b437e3",
+        "chars": 2618,
+        "sha256": "94aa297a7afbc2f84ae448e829e5e578882d6652a54e56be2d8f01b2f76c4c58",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -1313,7 +1347,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "floor:answer",
-      "seq": 69,
+      "seq": 70,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -1321,8 +1355,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:reach_verification",
-        "chars": 3446,
-        "sha256": "3445705b1397959653c2b46adb9d8211b4d9cafaa19fd1c0b6a721633d366f38",
+        "chars": 3916,
+        "sha256": "b0d7bd50a177f9c1d4e95983dd0a07d60643dfa1ddf7f4d9f09e33f377b6bda2",
         "type": "llm_completion"
       },
       "headers": {},
@@ -1330,7 +1364,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "judge",
-      "seq": 70,
+      "seq": 71,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -1340,11 +1374,52 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-807f52f0-1791633606350",
+        "execution_id": "universal-tool-fallback-807f52f0-1791633605155",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
-          "tasks": []
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
         },
         "failure_mode": {
           "reason": "handed to the human",
@@ -1380,13 +1455,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-807f52f0-1791633606350"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 71,
+      "seq": 72,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1403,7 +1478,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 72,
+      "seq": 73,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1411,7 +1486,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "universal-tool-fallback-807f52f0-1791633606350",
+        "execution_id": "universal-tool-fallback-807f52f0-1791633605155",
         "goal_hash": "807f52f0",
         "reached": true,
         "reason": "handed to the human"
@@ -1421,7 +1496,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 73,
+      "seq": 74,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     },
@@ -1438,7 +1513,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 74,
+      "seq": 75,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1455,7 +1530,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 75,
+      "seq": 76,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     }
@@ -1475,11 +1550,13 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [rebind] outcome selected=no candidates=0",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [shellResult] have no producer or constructible payload; terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[shellResult] failed_producers=1 (satisfier:shellResult: {\"error\":\"verdict-diff: not served\"})",
         "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [shellResult]",
+        "reframe :: [log] [goal-host-vessel] /run-goal: walk: reframe candidates in order [[\"obsidian_dispatch_goal\"]] (budget 3)",
         "reframe,no-pick :: [log] [goal-host-vessel] /run-goal: walk: re-framing to alternative target shapes [\"obsidian_dispatch_goal\"] after no-pick/hollow termination",
         "no-pick :: [log] [rebind] outcome selected=no candidates=0",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=807f52f0 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
@@ -1487,14 +1564,16 @@
         "landed,credit :: [log] [goal-host-vessel] walk: WITHHELD alpha-credit for satisfier:obsidian_dispatch_goal — no in-chain producer-to-consumer edge and no landed sha",
         "reframe :: [log] [goal-host-vessel] /run-goal: walk: reframe REJECTED — punt-only hand-off []; original goal NOT reached (fails closed)",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=807f52f0 targetShapes=[\"shellResult\"]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand)] source=hand",
         "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=807f52f0 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=807f52f0 verdictNull=false reached=true groundedOk=0 finalTextLen=24",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-807f52f0-1791633606350 reached=true tools=0/0 — this run is now gradable",
+        "floor :: [log] [goal-host-vessel] floor: decision goalHash=807f52f0 reached=true rule=floor:reached judge=\"handed to the human\" tools=0/0",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-807f52f0-1791633605155 reached=true tools=0/0 — this run is now gradable",
         "reached :: [log] [goal-host-vessel] universal ReAct fallback REACHED goal (0 grounded read(s), 0/0 tool(s) OK)",
         "floor :: [log] [goal-host-vessel] recordGoalPath (floor reach) shapes=[] goal=\"Assemble a short briefing on why vessels restart after a sch\"",
-        "floor :: [log] [goal-host-vessel] reach-patch ok (walk-complete): universal-tool-fallback-807f52f0-1791633606350 reached=true rows=1 attempts=1",
+        "floor :: [log] [goal-host-vessel] reach-patch ok (walk-complete): universal-tool-fallback-807f52f0-1791633605155 reached=true rows=1 attempts=1",
         "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)"
       ],
       "op": "runGoal",
@@ -1503,7 +1582,7 @@
         "attemptCount": 1,
         "attempts": 1,
         "completionShapes": [],
-        "executionId": "universal-tool-fallback-807f52f0-1791633606350",
+        "executionId": "universal-tool-fallback-807f52f0-1791633605155",
         "executionPath": "universal_tool_fallback",
         "goalReachReason": "handed to the human",
         "grounded": false,
@@ -1511,13 +1590,13 @@
         "learning": {
           "alphaBetaDelta": [],
           "gapsFiled": [],
-          "goalPathRecorded": true,
+          "goalPathRecorded": false,
           "oracleLabelWritten": false
         },
         "reached": true,
         "routeArounds": [
           {
-            "at": 1791633605035,
+            "at": 1791633603840,
             "failed_producers": [
               {
                 "producer": "satisfier:shellResult",
@@ -1554,7 +1633,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "universal-tool-fallback-807f52f0-1791633606350",
+            "execution_id": "universal-tool-fallback-807f52f0-1791633605155",
             "goal_hash": "807f52f0",
             "reached": true,
             "reason": "handed to the human"
@@ -1571,10 +1650,14 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=807f52f0 (terms tried: migration,assemble,briefing)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"807f52f0\",\"inferred_target_shapes\":[\"shellResult\"],\"confidence\":0.6,\"alternatives\":[[\"obsidian_dispatch_goal\"]]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"807f52f0\",\"inferred_target_shapes\":[\"shellResult\"],\"confidence\":0.6,\"alternatives\":[[\"obsidian_dispatch_goal\"]],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] walk(/run-goal): executor \"shellResult\" STILL a command FAILURE after 1 self-correction attempt(s) (the command produced no result) — refusing to satisfy with a failed/empty command; grading reach honestly (no hollow green)",
+        "[goal-host-vessel] walk(/run-goal): satisfier \"shellResult\" arg-correction SKIPPED — the executor self-correction already refused it",
+        "[goal-host-vessel] walk(/run-goal): composite authoring (missing_target) found no chain: no vessel serves author_composed_capability",
         "[goal-host-vessel] /run-goal: walk: no pick — missing shapes [shellResult] have no producer or constructible payload; terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[shellResult] failed_producers=1 (satisfier:shellResult: {\"error\":\"verdict-diff: not served\"})",
+        "[goal-host-vessel] /run-goal: walk: reframe candidates in order [[\"obsidian_dispatch_goal\"]] (budget 3)",
         "[goal-host-vessel] /run-goal: walk: re-framing to alternative target shapes [\"obsidian_dispatch_goal\"] after no-pick/hollow termination",
         "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
         "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"obsidian_dispatch_goal\" directly (connected vessel resolve) — no bridge needed",

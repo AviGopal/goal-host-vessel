@@ -47,6 +47,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -56,7 +97,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -68,7 +109,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -80,7 +121,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -97,7 +138,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -114,7 +155,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -131,7 +172,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -140,6 +181,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement stalled compose",
             "type": "concept"
@@ -151,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -160,6 +202,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement",
             "type": "concept"
@@ -171,7 +214,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=Is%20there%20an%20open%20gap%20for%20the%20stalled%20compose%20stage%20of%20the%20improvement%20lane%3F&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "Is there an open gap for the stalled compose stage of the improvement lane?",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -179,8 +257,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3620,
-        "sha256": "ba9d0a751bac7b5a0759ef197bd621fc5e2240f1746e0826ed511775bc9dcf17",
+        "chars": 4160,
+        "sha256": "38cf350b285c29b325c3830d600a29add1f5707f56fc0cf5f63f6e13421f6485",
         "type": "llm_completion"
       },
       "headers": {},
@@ -188,7 +266,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 11,
+      "seq": 15,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -204,7 +282,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -220,87 +298,9 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
-      "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "poolImpulse",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 14,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "limit": 20,
-          "status": "open",
-          "type": "poolImpulse"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 15,
-      "status": 404,
-      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "include_scores": true,
-        "limit": 50,
-        "mode": "backward",
-        "required_shapes": [
-          "goal",
-          "dispatch_id"
-        ]
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:discover-by-shapes",
-      "seq": 16,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
-    },
-    {
-      "auth": true,
-      "body": {
-        "exclude_activities": [],
-        "expected_output_shapes": [],
-        "goal": "Is there an open gap for the stalled compose stage of the improvement lane?",
-        "impulse_shapes": [
-          "goal",
-          "dispatch_id"
-        ],
-        "limit": 12,
-        "min_success_rate": 0,
-        "task_description": "Is there an open gap for the stalled compose stage of the improvement lane?"
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:recommend",
       "seq": 17,
-      "status": 200,
-      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+      "status": 404,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -384,7 +384,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "llm_completion_dispatch",
+          "shape": "poolImpulse",
           "type": "vesselCapability"
         }
       },
@@ -401,6 +401,84 @@
       "auth": true,
       "body": {
         "pointer": {
+          "limit": 20,
+          "status": "open",
+          "type": "poolImpulse"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 23,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "include_scores": true,
+        "limit": 50,
+        "mode": "backward",
+        "required_shapes": [
+          "goal",
+          "dispatch_id"
+        ]
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:discover-by-shapes",
+      "seq": 24,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
+    },
+    {
+      "auth": true,
+      "body": {
+        "exclude_activities": [],
+        "expected_output_shapes": [],
+        "goal": "Is there an open gap for the stalled compose stage of the improvement lane?",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "Is there an open gap for the stalled compose stage of the improvement lane?"
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 25,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 26,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
           "shape": "walkBudget",
           "type": "vesselCapability"
         }
@@ -410,7 +488,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 23,
+      "seq": 27,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -427,7 +505,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 28,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -435,8 +513,8 @@
       "auth": true,
       "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 3742,
-        "sha256": "ff52cedbf11573e679d1d1433ec5b8b8f94df7c0bf1382e3f4683b5e10a1dfe4",
+        "chars": 2618,
+        "sha256": "a15deb44b0d195efbbd8af2d2c8afe31b911313483aaa6f8b754e2a799646601",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -444,7 +522,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "floor:answer",
-      "seq": 25,
+      "seq": 29,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -452,8 +530,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:reach_verification",
-        "chars": 3566,
-        "sha256": "95bae2a0bcf760fdee8ff562da173e0250c85b5dad8187fc2f1e0b6898de720d",
+        "chars": 4036,
+        "sha256": "87557e0a41fc997f94b09c0d7b3904904eff3fd2ec42f9087bbdd98c2b532db0",
         "type": "llm_completion"
       },
       "headers": {},
@@ -461,7 +539,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "judge",
-      "seq": 26,
+      "seq": 30,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -471,7 +549,7 @@
         "pointer": {
           "activity_id": "universal-tool-fallback",
           "confidence": 0.98,
-          "execution_id": "universal-tool-fallback-4794be4e-1791633600130",
+          "execution_id": "universal-tool-fallback-4794be4e-1791633600150",
           "goal": "Is there an open gap for the stalled compose stage of the improvement lane?",
           "labeler": "deterministic",
           "notes": "deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote nothing (was: confirms the gap exists)",
@@ -484,7 +562,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 27,
+      "seq": 31,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -494,11 +572,52 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "universal-tool-fallback-4794be4e-1791633600130",
+        "execution_id": "universal-tool-fallback-4794be4e-1791633600150",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
-          "tasks": []
+          "tasks": [
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "controller: final answer (turn 1)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "llm_completion_dispatch",
+              "resolver_tier": "llm",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "llm_completion_dispatch"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "floor-decision-0",
+              "toolCalls": []
+            }
+          ]
         },
         "failure_mode": {
           "reason": "deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote nothing (was: confirms the gap exists)",
@@ -532,13 +651,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "universal-tool-fallback-4794be4e-1791633600130"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 28,
+      "seq": 32,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -555,7 +674,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 29,
+      "seq": 33,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -571,7 +690,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 30,
+      "seq": 34,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -584,10 +703,11 @@
         "expected_output_shapes": [],
         "goal_category": "meta",
         "goal_text": "Is there an open gap for the stalled compose stage of the improvement lane?",
-        "inference_confidence": 0.9,
+        "inference_confidence": null,
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -596,7 +716,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 31,
+      "seq": 35,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     },
@@ -612,7 +732,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 32,
+      "seq": 36,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -631,7 +751,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 33,
+      "seq": 37,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -641,7 +761,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-failed-4794be4e-1791633600165",
+        "execution_id": "walk-satisfier-failed-4794be4e-1791633600185",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -689,7 +809,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"4794be4e\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -729,7 +849,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"4794be4e\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -769,7 +889,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -809,7 +929,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=4794be4e",
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -849,7 +969,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
+              "description": "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=4794be4e",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -889,7 +1009,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "description": "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -925,6 +1045,86 @@
               "success": false,
               "task_id": "walk-step-7",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-8",
+              "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote nothing (was: confirms the gap exists)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-9",
+              "toolCalls": []
             }
           ]
         },
@@ -943,12 +1143,14 @@
           "walk_failed": true,
           "walk_log": [
             "[walk-concepts] no concepts recalled for goal_hash=4794be4e (terms tried: improvement,stalled,compose)",
-            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"4794be4e\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"4794be4e\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
             "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=4794be4e",
+            "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=4794be4e",
             "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+            "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+            "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote nothing (was: confirms the gap exists)"
           ]
         },
         "output_impulse_shapes": [],
@@ -965,13 +1167,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-failed-4794be4e-1791633600165"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 34,
+      "seq": 38,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -979,7 +1181,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-failed-4794be4e-1791633600165",
+        "execution_id": "walk-satisfier-failed-4794be4e-1791633600185",
         "goal_hash": "4794be4e",
         "reached": false,
         "reason": "GoalHost.runGoal: no template id returned for goal \"Is there an open gap for the stalled compose stage of the improvement lane?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -989,7 +1191,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 35,
+      "seq": 39,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     }
@@ -1009,29 +1211,34 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=4794be4e",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=4794be4e",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=4794be4e targetShapes=[]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand)] source=hand",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=4794be4e — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "floor :: [log] [goal-host-vessel] floor: verdict goalHash=4794be4e verdictNull=false reached=true groundedOk=0 finalTextLen=128",
         "floor :: [log] [goal-host-vessel] floor: ZERO-TOOL WRITE CLAIM goalHash=4794be4e — the answer asserts a write/call succeeded but ZERO tools executed and nothing was written; refusing the reach",
-        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-4794be4e-1791633600130 reached=false tools=0/0 — this run is now gradable",
+        "floor :: [log] [goal-host-vessel] floor: decision goalHash=4794be4e reached=false rule=floor:upstream-not-reached judge=\"deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote no",
+        "floor :: [log] [goal-host-vessel] floor: persisted execution universal-tool-fallback-4794be4e-1791633600150 reached=false tools=0/0 — this run is now gradable",
+        "floor,reached :: [log] [goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote nothing (was: confirms ",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)"
       ],
       "op": "runGoal",
       "record": {
         "error": "GoalHost.runGoal: no template id returned for goal \"Is there an open gap for the stalled compose stage of the improvement lane?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
-        "executionId": "walk-satisfier-failed-4794be4e-1791633600165",
+        "executionId": "walk-satisfier-failed-4794be4e-1791633600185",
         "executionPath": "fresh_derivation",
+        "goalReachReason": "GoalHost.runGoal: no template id returned for goal \"Is there an open gap for the stalled compose stage of the improvement lane?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step.",
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633600085,
+            "at": 1791633600105,
             "failed_producers": [],
             "goal_hash": "4794be4e",
             "kind": "no_target",
@@ -1048,7 +1255,7 @@
             "termination": "opportunistic walk found no applicable pick (empty inferred target)"
           },
           {
-            "at": 1791633600105,
+            "at": 1791633600125,
             "failed_producers": [],
             "goal_hash": "4794be4e",
             "kind": "no_target",
@@ -1071,7 +1278,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-failed-4794be4e-1791633600165",
+            "execution_id": "walk-satisfier-failed-4794be4e-1791633600185",
             "goal_hash": "4794be4e",
             "reached": false,
             "reason": "GoalHost.runGoal: no template id returned for goal \"Is there an open gap for the stalled compose stage of the improvement lane?\" (fallback_tier=null). Pass opts.targetTemplateId to bypass the recommend step."
@@ -1090,12 +1297,14 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=4794be4e (terms tried: improvement,stalled,compose)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"4794be4e\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"4794be4e\",\"inferred_target_shapes\":[],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=4794be4e",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=4794be4e",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
-        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()"
+        "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
+        "[goal-host-vessel] /run-goal: floor: NOT REACHED — floor floor:upstream-not-reached: deterministic:zero-tool-write-claim — the answer asserts a write or a call succeeded, but this run executed 0 tools and wrote nothing (was: confirms the gap exists)"
       ]
     }
   ]

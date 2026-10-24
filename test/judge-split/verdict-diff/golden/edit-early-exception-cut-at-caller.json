@@ -11,7 +11,7 @@
     "aborted": null,
     "pendingTimers": 0,
     "timerFires": 41,
-    "virtualMsElapsed": 1084685
+    "virtualMsElapsed": 1084715
   },
   "intervalsRegistered": 8,
   "requests": [
@@ -48,6 +48,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -57,7 +98,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -69,7 +110,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -81,7 +122,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -98,7 +139,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -115,7 +156,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -132,7 +173,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -141,6 +182,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "verdict_diff_marker constant quiesce",
             "type": "concept"
@@ -152,7 +194,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -161,6 +203,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "verdict_diff_marker",
             "type": "concept"
@@ -172,7 +215,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=Add%20a%20constant%20VERDICT_DIFF_MARKER%20to%20repos%2Fgoal-host-vessel%2Fsrc%2Fquiesce.ts%20that%20names%20the%20harness&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "Add a constant VERDICT_DIFF_MARKER to repos/goal-host-vessel/src/quiesce.ts that names the harness",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -180,8 +258,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3614,
-        "sha256": "aa1c86d5c2c1aef628f73057facbcdbd5853844c2b5f1cc46a055b685ed15f99",
+        "chars": 4154,
+        "sha256": "8621ae12566373ac29a9698a9d7ebe323e602de3a78b218bf7e9828f7a8f1a25",
         "type": "llm_completion"
       },
       "headers": {},
@@ -189,7 +267,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 11,
+      "seq": 15,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -197,8 +275,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3614,
-        "sha256": "aa1c86d5c2c1aef628f73057facbcdbd5853844c2b5f1cc46a055b685ed15f99",
+        "chars": 4154,
+        "sha256": "8621ae12566373ac29a9698a9d7ebe323e602de3a78b218bf7e9828f7a8f1a25",
         "type": "llm_completion"
       },
       "headers": {},
@@ -206,7 +284,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 12,
+      "seq": 16,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -214,8 +292,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3614,
-        "sha256": "aa1c86d5c2c1aef628f73057facbcdbd5853844c2b5f1cc46a055b685ed15f99",
+        "chars": 4154,
+        "sha256": "8621ae12566373ac29a9698a9d7ebe323e602de3a78b218bf7e9828f7a8f1a25",
         "type": "llm_completion"
       },
       "headers": {},
@@ -223,7 +301,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 17,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -240,7 +318,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 14,
+      "seq": 18,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -250,7 +328,7 @@
         "impulse": {
           "pointer": {
             "authoring_execution_id": "00000000-0000-4000-8000-000000000001",
-            "directed": true,
+            "directed": false,
             "gap": {
               "category": "edit_intent_route",
               "classification_metadata": {
@@ -273,7 +351,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "dev:feature_compose",
-      "seq": 15,
+      "seq": 19,
       "status": "throw:The operation timed out.",
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -289,7 +367,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 90,
+      "seq": 94,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -305,9 +383,43 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 91,
+      "seq": 95,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 96,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 97,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -322,7 +434,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 92,
+      "seq": 98,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -340,7 +452,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 93,
+      "seq": 99,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -358,7 +470,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 94,
+      "seq": 100,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -378,7 +490,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 95,
+      "seq": 101,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -401,7 +513,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 96,
+      "seq": 102,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -418,7 +530,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 97,
+      "seq": 103,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -436,7 +548,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 98,
+      "seq": 104,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -456,7 +568,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 99,
+      "seq": 105,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -479,7 +591,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 100,
+      "seq": 106,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -496,7 +608,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 104,
+      "seq": 110,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -506,7 +618,7 @@
         "impulse": {
           "pointer": {
             "authoring_execution_id": "00000000-0000-4000-8000-000000000001",
-            "directed": true,
+            "directed": false,
             "gap": {
               "category": "edit_intent_route",
               "classification_metadata": {
@@ -529,7 +641,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "dev:feature_compose",
-      "seq": 105,
+      "seq": 111,
       "status": 200,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -550,98 +662,13 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 108,
+      "seq": 114,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "obsidian:write_note",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 112,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
     }
   ],
   "scenario": "edit-early-exception-cut-at-caller",
   "spawns": [
-    {
-      "argv": [
-        "git",
-        "-C",
-        "/workspace/git/vessels/goal-host-vessel",
-        "fetch",
-        "--quiet",
-        "origin",
-        "dev"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 16
-    },
-    {
-      "argv": [
-        "git",
-        "-C",
-        "/workspace/git/vessels/goal-host-vessel",
-        "log",
-        "origin/dev",
-        "-n",
-        "20",
-        "--since=2026-10-10T11:59:59Z",
-        "--fixed-strings",
-        "--grep=route-edit-095e1639",
-        "--format=%H%x1f%ct%x1f%B%x1e"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 17
-    },
-    {
-      "argv": [
-        "git",
-        "-C",
-        "/workspace/git/vessels/goal-host-vessel",
-        "fetch",
-        "--quiet",
-        "origin",
-        "dev"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 18
-    },
-    {
-      "argv": [
-        "git",
-        "-C",
-        "/workspace/git/vessels/goal-host-vessel",
-        "log",
-        "origin/dev",
-        "-n",
-        "20",
-        "--since=2026-10-10T11:59:59Z",
-        "--fixed-strings",
-        "--grep=route-edit-095e1639",
-        "--format=%H%x1f%ct%x1f%B%x1e"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 19
-    },
     {
       "argv": [
         "git",
@@ -1837,22 +1864,6 @@
         "git",
         "-C",
         "/workspace/git/vessels/goal-host-vessel",
-        "log",
-        "origin/dev",
-        "-1",
-        "--format=%H",
-        "--grep=route-edit-095e1639"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 101
-    },
-    {
-      "argv": [
-        "git",
-        "-C",
-        "/workspace/git/vessels/goal-host-vessel",
         "fetch",
         "--quiet",
         "origin",
@@ -1861,7 +1872,7 @@
       "exitCode": 128,
       "phase": "step1:runGoal",
       "rule": "unmatched",
-      "seq": 102
+      "seq": 90
     },
     {
       "argv": [
@@ -1880,7 +1891,41 @@
       "exitCode": 128,
       "phase": "step1:runGoal",
       "rule": "unmatched",
-      "seq": 103
+      "seq": 91
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/workspace/git/vessels/goal-host-vessel",
+        "fetch",
+        "--quiet",
+        "origin",
+        "dev"
+      ],
+      "exitCode": 128,
+      "phase": "step1:runGoal",
+      "rule": "unmatched",
+      "seq": 92
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/workspace/git/vessels/goal-host-vessel",
+        "log",
+        "origin/dev",
+        "-n",
+        "20",
+        "--since=2026-10-10T11:59:59Z",
+        "--fixed-strings",
+        "--grep=route-edit-095e1639",
+        "--format=%H%x1f%ct%x1f%B%x1e"
+      ],
+      "exitCode": 128,
+      "phase": "step1:runGoal",
+      "rule": "unmatched",
+      "seq": 93
     },
     {
       "argv": [
@@ -1892,19 +1937,6 @@
         "-1",
         "--format=%H",
         "--grep=route-edit-095e1639"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 106
-    },
-    {
-      "argv": [
-        "git",
-        "-C",
-        "<WS>",
-        "show",
-        "HEAD:scripts/substrate/autonomy-scope.json"
       ],
       "exitCode": 128,
       "phase": "step1:runGoal",
@@ -1916,22 +1948,6 @@
         "git",
         "-C",
         "/workspace/git/vessels/goal-host-vessel",
-        "log",
-        "origin/dev",
-        "-1",
-        "--format=%H",
-        "--grep=route-edit-095e1639"
-      ],
-      "exitCode": 128,
-      "phase": "step1:runGoal",
-      "rule": "unmatched",
-      "seq": 109
-    },
-    {
-      "argv": [
-        "git",
-        "-C",
-        "/workspace/git/vessels/goal-host-vessel",
         "fetch",
         "--quiet",
         "origin",
@@ -1940,7 +1956,7 @@
       "exitCode": 128,
       "phase": "step1:runGoal",
       "rule": "unmatched",
-      "seq": 110
+      "seq": 108
     },
     {
       "argv": [
@@ -1959,7 +1975,86 @@
       "exitCode": 128,
       "phase": "step1:runGoal",
       "rule": "unmatched",
-      "seq": 111
+      "seq": 109
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/workspace/git/vessels/goal-host-vessel",
+        "log",
+        "origin/dev",
+        "-1",
+        "--format=%H",
+        "--grep=route-edit-095e1639"
+      ],
+      "exitCode": 128,
+      "phase": "step1:runGoal",
+      "rule": "unmatched",
+      "seq": 112
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "<WS>",
+        "show",
+        "HEAD:scripts/substrate/autonomy-scope.json"
+      ],
+      "exitCode": 0,
+      "phase": "step1:runGoal",
+      "rule": "git:committed-autonomy-scope",
+      "seq": 113
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/workspace/git/vessels/goal-host-vessel",
+        "log",
+        "origin/dev",
+        "-1",
+        "--format=%H",
+        "--grep=route-edit-095e1639"
+      ],
+      "exitCode": 128,
+      "phase": "step1:runGoal",
+      "rule": "unmatched",
+      "seq": 115
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/workspace/git/vessels/goal-host-vessel",
+        "fetch",
+        "--quiet",
+        "origin",
+        "dev"
+      ],
+      "exitCode": 128,
+      "phase": "step1:runGoal",
+      "rule": "unmatched",
+      "seq": 116
+    },
+    {
+      "argv": [
+        "git",
+        "-C",
+        "/workspace/git/vessels/goal-host-vessel",
+        "log",
+        "origin/dev",
+        "-n",
+        "20",
+        "--since=2026-10-10T11:59:59Z",
+        "--fixed-strings",
+        "--grep=route-edit-095e1639",
+        "--format=%H%x1f%ct%x1f%B%x1e"
+      ],
+      "exitCode": 128,
+      "phase": "step1:runGoal",
+      "rule": "unmatched",
+      "seq": 117
     }
   ],
   "steps": [
@@ -1975,6 +2070,7 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "edit-intent :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT DETECTED (pre-walk, names repos/goal-host-vessel/src/quiesce.ts) — routing to feature_compose",
         "edit-intent :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT routed by pick",
         "edit-intent :: [log] [goal-host-vessel] /run-goal: EARLY EDIT-INTENT feature_compose producer resolved via discovery → http://dev-vessel.test.invalid/v2/impulses/resolve",
@@ -1985,7 +2081,7 @@
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=095e1639",
+        "failure-recall :: [log] [goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=095e1639",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
         "edit-intent :: [log] [goal-host-vessel] /run-goal: EDIT-INTENT DETECTED (0-step walk names repos/goal-host-vessel/src/quiesce.ts) — routing to feature_compose",
@@ -1996,7 +2092,7 @@
         "edit-intent :: [log] [goal-host-vessel] /run-goal: EDIT-INTENT ESCALATION patch_with_tools HTTP 404",
         "edit-intent :: [warn] [goal-host-vessel] reach-patch NOT ATTEMPTED (walk-complete): synthetic id (feature_compose:) — the walk persisted no execution row to patch (satisfier-only reach) — this execution stays ungraded and its arm learns nothing from it",
         "edit-intent :: [log] [goal-host-vessel] reached-command cache: EVICTED 095e1639 (reach graded false: deterministic:edit-intent-accepted-unfavorable — routed edit-intent to feature_compose; verdict=UNFAVORABLE (op_count=?:) — not in memory; tombstone persi",
-        "edit-intent :: [log] [goal-host-vessel] failure-memory: REMEMBERED hash=095e1639 class=add pick=feature_compose (1 on record) reason=\"deterministic:edit-intent-accepted-unfavorable — routed edit-intent to feature_compose; verdict=UNFA\""
+        "edit-intent :: [log] [goal-host-vessel] failure-memory: REMEMBERED hash=095e1639 class=- pick=feature_compose (1 on record) reason=\"deterministic:edit-intent-accepted-unfavorable — routed edit-intent to feature_compose; verdict=UNFA\""
       ],
       "op": "runGoal",
       "record": {
@@ -2018,7 +2114,7 @@
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791634681680,
+            "at": 1791634681710,
             "failed_producers": [],
             "goal_hash": "095e1639",
             "kind": "no_target",
@@ -2034,7 +2130,7 @@
             "termination": "opportunistic walk found no applicable pick (empty inferred target)"
           },
           {
-            "at": 1791634681700,
+            "at": 1791634681730,
             "failed_producers": [],
             "goal_hash": "095e1639",
             "kind": "no_target",
@@ -2050,7 +2146,7 @@
         ],
         "selectedTemplateId": "feature_compose",
         "status": "completed",
-        "trigger": "operator"
+        "trigger": "run-goal"
       },
       "step": 1,
       "verdict": {
@@ -2067,7 +2163,8 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=095e1639 (terms tried: verdict_diff_marker,constant,quiesce)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"095e1639\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"095e1639\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT DETECTED (pre-walk, names repos/goal-host-vessel/src/quiesce.ts) — routing to feature_compose",
         "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT routed by pick",
         "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT feature_compose producer resolved via discovery → http://dev-vessel.test.invalid/v2/impulses/resolve",
@@ -2077,7 +2174,7 @@
         "[goal-host-vessel] /run-goal: EARLY EDIT-INTENT LANDED-PROBE found no commit for route-edit-095e1639 since dispatch start — falling through to walk",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
-        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; reached-command cache bypassed) goal_hash=095e1639",
+        "[goal-host-vessel] /run-goal: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=095e1639",
         "[goal-host-vessel] /run-goal: walk: no pick — opportunistic walk found no applicable pick (empty inferred target); terminating walk",
         "[goal-host-vessel] /run-goal: walk: ROUTE-AROUND no_target missing=[] failed_producers=0 ()",
         "[goal-host-vessel] /run-goal: EDIT-INTENT DETECTED (0-step walk names repos/goal-host-vessel/src/quiesce.ts) — routing to feature_compose",

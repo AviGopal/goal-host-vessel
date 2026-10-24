@@ -47,6 +47,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -56,7 +97,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -68,7 +109,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -80,7 +121,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -97,7 +138,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -114,7 +155,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -131,7 +172,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -140,6 +181,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "verdict write reach",
             "type": "concept"
@@ -151,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -160,6 +202,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "verdict",
             "type": "concept"
@@ -171,7 +214,42 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 13,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=Write%20a%20test%20that%20pins%20the%20reach%20verdict%20body&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "Write a test that pins the reach verdict body",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 14,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -179,8 +257,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3561,
-        "sha256": "430ef84f971dae0928b29f37ee9dbd49be7f0ed0394acc48a42dc6dd2d810ebb",
+        "chars": 4101,
+        "sha256": "5c40fa36e1ffe22fc8a89982023e01b7e4e6affb9d98ee6b13f7cef356a4edd4",
         "type": "llm_completion"
       },
       "headers": {},
@@ -188,7 +266,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 11,
+      "seq": 15,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -196,8 +274,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3561,
-        "sha256": "430ef84f971dae0928b29f37ee9dbd49be7f0ed0394acc48a42dc6dd2d810ebb",
+        "chars": 4101,
+        "sha256": "5c40fa36e1ffe22fc8a89982023e01b7e4e6affb9d98ee6b13f7cef356a4edd4",
         "type": "llm_completion"
       },
       "headers": {},
@@ -205,7 +283,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 12,
+      "seq": 16,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -213,8 +291,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3561,
-        "sha256": "430ef84f971dae0928b29f37ee9dbd49be7f0ed0394acc48a42dc6dd2d810ebb",
+        "chars": 4101,
+        "sha256": "5c40fa36e1ffe22fc8a89982023e01b7e4e6affb9d98ee6b13f7cef356a4edd4",
         "type": "llm_completion"
       },
       "headers": {},
@@ -222,7 +300,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 17,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -232,7 +310,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-failed-9642c944-1791633601265",
+        "execution_id": "walk-satisfier-failed-9642c944-1791633601285",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -280,7 +358,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"9642c944\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+              "description": "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -320,7 +398,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[goal-host-vessel] /run-goal: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking",
+              "description": "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"9642c944\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -360,7 +438,7 @@
             {
               "actualPrompt": "",
               "consumed_from_task_ids": [],
-              "description": "[dispatch] execution_path=fresh_derivation attempt_count=0",
+              "description": "[goal-host-vessel] /run-goal: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking",
               "inputState": {
                 "environment": {},
                 "filesAvailable": [],
@@ -396,6 +474,46 @@
               "success": false,
               "task_id": "walk-step-4",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [],
+              "description": "[dispatch] execution_path=fresh_derivation attempt_count=0",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [],
+              "resolver_id": "walk",
+              "resolver_tier": "deterministic",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "walk"
+                },
+                "status": "failure"
+              },
+              "skipped": false,
+              "status": "failure",
+              "success": false,
+              "task_id": "walk-step-5",
+              "toolCalls": []
             }
           ]
         },
@@ -414,7 +532,8 @@
           "walk_failed": true,
           "walk_log": [
             "[walk-concepts] no concepts recalled for goal_hash=9642c944 (terms tried: verdict,write,reach)",
-            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"9642c944\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+            "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+            "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"9642c944\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
             "[goal-host-vessel] /run-goal: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking",
             "[dispatch] execution_path=fresh_derivation attempt_count=0"
           ]
@@ -433,13 +552,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-failed-9642c944-1791633601265"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 14,
+      "seq": 18,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -447,7 +566,7 @@
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-failed-9642c944-1791633601265",
+        "execution_id": "walk-satisfier-failed-9642c944-1791633601285",
         "goal_hash": "9642c944",
         "reached": false,
         "reason": "check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to feature_compose, and this goal's text did not enter it (no repos file named with an edit verb), so it is refused rather than walked"
@@ -457,7 +576,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 15,
+      "seq": 19,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     }
@@ -477,16 +596,17 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "edit-intent :: [log] [goal-host-vessel] /run-goal: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking",
         "edit-intent :: [log] [goal-host-vessel] reached-command cache: EVICTED 9642c944 (reach graded false: check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to feature_compose, and) — not in memory; tombstone persi",
-        "edit-intent :: [log] [goal-host-vessel] failure-memory: REMEMBERED hash=9642c944 class=write pick=- (1 on record) reason=\"check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to \""
+        "edit-intent :: [log] [goal-host-vessel] failure-memory: REMEMBERED hash=9642c944 class=- pick=- (1 on record) reason=\"check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to \""
       ],
       "op": "runGoal",
       "record": {
         "attemptCount": 0,
         "attempts": 0,
         "completionShapes": null,
-        "executionId": "walk-satisfier-failed-9642c944-1791633601265",
+        "executionId": "walk-satisfier-failed-9642c944-1791633601285",
         "executionPath": "fresh_derivation",
         "goalReachReason": "check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to feature_compose, and this goal's text did not enter it (no repos file named with an edit verb), so it is refused rather than walked",
         "inferenceConfidence": null,
@@ -507,7 +627,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-failed-9642c944-1791633601265",
+            "execution_id": "walk-satisfier-failed-9642c944-1791633601285",
             "goal_hash": "9642c944",
             "reached": false,
             "reason": "check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to feature_compose, and this goal's text did not enter it (no repos file named with an edit verb), so it is refused rather than walked"
@@ -523,7 +643,8 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=9642c944 (terms tried: verdict,write,reach)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"9642c944\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"9642c944\",\"inferred_target_shapes\":[],\"confidence\":0,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] /run-goal: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking",
         "[dispatch] execution_path=fresh_derivation attempt_count=0"
       ]

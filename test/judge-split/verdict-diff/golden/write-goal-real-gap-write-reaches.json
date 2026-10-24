@@ -47,6 +47,47 @@
       "body": {
         "impulse": {
           "pointer": {
+            "limit": 1,
+            "shape": "substrateNodes",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "boot",
+      "route": "unmatched",
+      "seq": 3,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "apiKey": "verdict-diff-caller-key",
+            "type": "apiKey"
+          },
+          "type": "authentication"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:identity-caller-key",
+      "seq": 4,
+      "status": 200,
+      "url": "http://127.0.0.1:59190/v1/auth/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
             "type": "compute_state_signature"
           }
         }
@@ -56,7 +97,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 3,
+      "seq": 5,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -68,7 +109,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 4,
+      "seq": 6,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -80,7 +121,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 5,
+      "seq": 7,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -97,7 +138,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 6,
+      "seq": 8,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -114,7 +155,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 9,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -131,7 +172,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 10,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -140,6 +181,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement recording advanced",
             "type": "concept"
@@ -151,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 9,
+      "seq": 11,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -160,6 +202,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 5,
             "query": "improvement",
             "type": "concept"
@@ -171,7 +214,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 10,
+      "seq": 12,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -188,16 +231,51 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 11,
+      "seq": 13,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 14,
+      "status": 404,
+      "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=File%20a%20gap%20recording%20that%20the%20improvement%20lane's%20compose%20stage%20has%20not%20advanced%20in%20six%20hours.&limit=500"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
+            "include_global": true,
+            "limit": 12,
+            "query": "File a gap recording that the improvement lane's compose stage has not advanced in six hours.",
+            "shape": "shape_description",
+            "type": "concept"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:concept-recall",
+      "seq": 15,
+      "status": 200,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": false,
       "body": {
         "caller": "goal-host:goal_target_inference",
-        "chars": 3609,
-        "sha256": "9f60bbd5c51ab0f6d0d0986ab67edeabf674aca4aaad5bbdafc85cb39758df89",
+        "chars": 4149,
+        "sha256": "38fff9e8c6a8266555cc89304916a7340c4a1c1012470c32de8822827c6353e9",
         "type": "llm_completion"
       },
       "headers": {},
@@ -205,7 +283,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 12,
+      "seq": 16,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -224,7 +302,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 13,
+      "seq": 17,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -240,7 +318,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 14,
+      "seq": 18,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -257,7 +335,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 15,
+      "seq": 19,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -275,7 +353,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 16,
+      "seq": 20,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -287,7 +365,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 17,
+      "seq": 21,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -299,7 +377,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 18,
+      "seq": 22,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -309,6 +387,9 @@
         "impulse": {
           "pointer": {
             "activity_id": "satisfier:substrateGap_write",
+            "goal_target_shapes": [
+              "substrateGap_write"
+            ],
             "type": "thompson_posterior"
           }
         }
@@ -318,7 +399,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 19,
+      "seq": 23,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -337,7 +418,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 20,
+      "seq": 24,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -356,7 +437,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 21,
+      "seq": 25,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -365,6 +446,7 @@
       "body": {
         "impulse": {
           "pointer": {
+            "execution_id": "00000000-0000-4000-8000-000000000001",
             "limit": 3,
             "query": "substrateGap_write pointer payload",
             "type": "concept"
@@ -376,7 +458,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 22,
+      "seq": 26,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -385,7 +467,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2473,
-        "sha256": "3d9b3fe68474db3173a026b9e86726ceda52758632689d08737e8b3f819a3500",
+        "sha256": "61475585d24ef0cdb31731bfe7474ba81ddf127806f76e02096b2490700cc829",
         "type": "llm_completion"
       },
       "headers": {},
@@ -393,7 +475,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:arg-extraction",
-      "seq": 23,
+      "seq": 27,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -417,7 +499,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "dev:gap-write",
-      "seq": 24,
+      "seq": 28,
       "status": 200,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -426,7 +508,7 @@
       "body": {
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-write-1-1791633600120",
+        "execution_id": "walk-satisfier-write-1-1791633600140",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -510,13 +592,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-write-1-1791633600120"
+        "idempotency-key": "idem-1"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 25,
+      "seq": 29,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -533,7 +615,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 26,
+      "seq": 30,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -553,7 +635,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "dev:gap-readback",
-      "seq": 27,
+      "seq": 31,
       "status": 200,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -561,8 +643,8 @@
       "auth": false,
       "body": {
         "caller": "goal-host:reach_verification",
-        "chars": 3256,
-        "sha256": "57b4c5ac685ebb7394abaee1848ae88c53d1c09f0ad40cc340919c158c53bea4",
+        "chars": 3726,
+        "sha256": "c5b4f0abde268bc65a7bc9bd44c0521f45953ff9520a6d177cf2707da76d0c79",
         "type": "llm_completion"
       },
       "headers": {},
@@ -570,7 +652,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "judge",
-      "seq": 28,
+      "seq": 32,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -580,7 +662,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-1-1791633600135",
+        "execution_id": "walk-satisfier-1-1791633600155",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
@@ -640,6 +722,9 @@
         },
         "input_impulse_shapes": [],
         "metadata": {
+          "goal_target_shapes": [
+            "substrateGap_write"
+          ],
           "satisfier": true,
           "shape": "substrateGap_write"
         },
@@ -664,13 +749,13 @@
         }
       },
       "headers": {
-        "idempotency-key": "walk-satisfier-1-1791633600135"
+        "idempotency-key": "idem-2"
       },
       "kind": "sink",
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 29,
+      "seq": 33,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -687,7 +772,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 30,
+      "seq": 34,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -704,76 +789,6 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 31,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "unaccounted_landing_scan",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 32,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "impulse": {
-          "pointer": {
-            "shape": "substrateGap_write",
-            "type": "resolver_schema"
-          }
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 33,
-      "status": 404,
-      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "unaccounted_landing_scan",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 34,
-      "status": 404,
-      "url": "http://discovery.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "llm_completion_dispatch",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
       "seq": 35,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
@@ -782,7 +797,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "walkBudget",
+          "shape": "unaccounted_landing_scan",
           "type": "vesselCapability"
         }
       },
@@ -799,7 +814,7 @@
       "auth": true,
       "body": {
         "pointer": {
-          "shape": "walkBudget",
+          "shape": "unaccounted_landing_scan",
           "type": "vesselCapability"
         }
       },
@@ -815,9 +830,79 @@
     {
       "auth": true,
       "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "substrateGap_write",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 38,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "llm_completion_dispatch",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 39,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 40,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "walkBudget",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 41,
+      "status": 404,
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
         "caller": "goal-host:floor_tool_loop",
-        "chars": 4293,
-        "sha256": "5c589d1cc0aaa2b8839b6624d0d9796a55d4bae4044c7320ba1448f4a028bebe",
+        "chars": 3661,
+        "sha256": "4b861e057dabf91e23a1202f6079f93d707db6c55ab6945a84f25912c256cbd3",
         "type": "llm_completion_dispatch"
       },
       "headers": {},
@@ -825,7 +910,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 38,
+      "seq": 42,
       "status": 404,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -842,7 +927,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 39,
+      "seq": 43,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -852,7 +937,7 @@
         "completion_shapes": [
           "substrateGap_write"
         ],
-        "execution_id": "walk-satisfier-1-1791633600135",
+        "execution_id": "walk-satisfier-1-1791633600155",
         "goal_hash": "60e7ab58",
         "reached": true,
         "reason": "the gap was filed and reads back"
@@ -862,7 +947,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:reach",
-      "seq": 40,
+      "seq": 44,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
     },
@@ -881,6 +966,7 @@
         "path_activities": [
           "universal-tool-fallback"
         ],
+        "reached": false,
         "success": false,
         "walk_tier": "universal_tool_fallback"
       },
@@ -889,7 +975,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 41,
+      "seq": 45,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
     }
@@ -909,12 +995,14 @@
       },
       "label": null,
       "markers": [
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [rebind] outcome selected=no candidates=0",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=60e7ab58 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
         "reached :: [log] REACHED via 1-step chain",
         "landed,credit :: [log] [goal-host-vessel] walk: WITHHELD alpha-credit for satisfier:substrateGap_write — no in-chain producer-to-consumer edge and no landed sha",
         "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=60e7ab58 targetShapes=[\"substrateGap_write\"]",
+        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand), substrateGap_write(write)] source=hand",
         "landed,no-pick :: [log] [goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch 00000000-0000-4000-8000-000000000001 landed ledger-unreachable: no producer for unaccounted_landing_scan with no settled attempt (causal-attempt-ledger)",
         "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
         "floor :: [log] [goal-host-vessel] floor: dispatch FAILED http=404 iter=0 — 4xx is a channel fault; loop aborts with no observations",
@@ -928,7 +1016,7 @@
         "completionShapes": [
           "substrateGap_write"
         ],
-        "executionId": "walk-satisfier-1-1791633600135",
+        "executionId": "walk-satisfier-1-1791633600155",
         "executionPath": "satisfier",
         "goalReachReason": "the gap was filed and reads back",
         "grounded": false,
@@ -936,7 +1024,7 @@
         "learning": {
           "alphaBetaDelta": [],
           "gapsFiled": [],
-          "goalPathRecorded": true,
+          "goalPathRecorded": false,
           "oracleLabelWritten": false
         },
         "reached": true,
@@ -952,7 +1040,7 @@
             "completion_shapes": [
               "substrateGap_write"
             ],
-            "execution_id": "walk-satisfier-1-1791633600135",
+            "execution_id": "walk-satisfier-1-1791633600155",
             "goal_hash": "60e7ab58",
             "reached": true,
             "reason": "the gap was filed and reads back"
@@ -971,7 +1059,8 @@
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=60e7ab58 (terms tried: improvement,recording,advanced)",
-        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"60e7ab58\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[]}",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"60e7ab58\",\"inferred_target_shapes\":[\"substrateGap_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
         "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"substrateGap_write\" directly (connected vessel resolve) — no bridge needed",
         "REACHED via 1-step chain",
