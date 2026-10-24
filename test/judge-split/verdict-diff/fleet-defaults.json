@@ -294,5 +294,11 @@
       }
     }
   ],
-  "spawn": []
+  "spawn": [
+    {
+      "id": "git:committed-autonomy-scope",
+      "argsInclude": ["show", "HEAD:scripts/substrate/autonomy-scope.json"],
+      "stdout": "{\"autonomyScope\": {\"excluded_paths\": [\"repos/goal-host-vessel/src/judge/\"]}}"
+    }
+  ]
 }
