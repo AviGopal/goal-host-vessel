@@ -334,6 +334,7 @@ import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
+import { composeReportStage, cutCallerOutcome } from "./check-supply-ledger-reason";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
 import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
@@ -14263,6 +14264,7 @@ async function runGoalWithRecoveryInner(
   // compose was cut at the caller while the callee may still land it.
   const _dispatchStartMs = Date.now();
   let _earlyComposeCutAtCaller = false;
+  let _earlyComposeCutAtS: number | null = null; // seconds from dispatch start to the cut (check-supply-ledger-reason.ts)
   // THE WRITE DOORS (write-door.ts): admitted as a change iff the caller declared a write shape (read here, before
   // inference seeds anything) or the early edit-intent route hands this dispatch to feature_compose (set there).
   let _changeAdmitted = admittedChange({ admittedEditRoute: false, declaredOutputShapes: opts.expectedOutputShapes });
@@ -15231,7 +15233,7 @@ async function runGoalWithRecoveryInner(
             // test-writing scope rule. Keyed on the request's marker, never on the stage or the error text.
             const _earlyCheckSupplyStop = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
             if (_earlyCheckSupplyStop) {
-              const _stage = String(earlyBody.stage ?? "(none)");
+              const _stage = composeReportStage(earlyBody); // an UNFAVORABLE report names no stage; its refusal implies one
               tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (verdict=${earlyVerdict || "(none)"}); NOT falling through to the walk`);
               return {
                 result: null,
@@ -15255,7 +15257,7 @@ async function runGoalWithRecoveryInner(
         } catch (earlyErr) {
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
           tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failure detail name=${String((earlyErr as Error)?.name ?? "")} cause=${String(((earlyErr as { cause?: unknown })?.cause as Error | undefined)?.message ?? (earlyErr as { cause?: unknown })?.cause ?? "")} code=${String((earlyErr as { code?: unknown })?.code ?? "")}`);
-          if ((earlyErr as Error)?.name === "TimeoutError" || /timed out|socket|closed|reset/i.test(String((earlyErr as Error)?.message ?? ""))) _earlyComposeCutAtCaller = true;
+          if ((earlyErr as Error)?.name === "TimeoutError" || /timed out|socket|closed|reset/i.test(String((earlyErr as Error)?.message ?? ""))) { _earlyComposeCutAtCaller = true; _earlyComposeCutAtS = Math.round((Date.now() - _dispatchStartMs) / 1000); }
         }
         // OBSERVE (observe-mode.ts): an observe dispatch whose dry-run compose failed or answered non-OK is not walked
         // or escalated either: the post-walk route and patch_with_tools would compose the same edit again.
@@ -15301,6 +15303,9 @@ async function runGoalWithRecoveryInner(
           // post-walk escalation and the recovery loop. Marker only (a malformed one included), never the failure kind.
           const _earlyCheckSupplyNoWalk = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
           if (_earlyCheckSupplyNoWalk) {
+            // No compose report here (the call was cut or failed): the compose's own outcome is on the gap row, newest
+            // lesson since this dispatch started, else stage=unknown (check-supply-ledger-reason.ts).
+            const _cutOutcome = cutCallerOutcome(await readGapByIdForOracle(_probeGapId).catch(() => null), _dispatchStartMs, _earlyComposeCutAtS ?? Math.round((Date.now() - _dispatchStartMs) / 1000));
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose failed at the call (no landing for ${_probeGapId}): no escalation; NOT falling through to the walk`);
             return {
               result: null,
@@ -15308,7 +15313,7 @@ async function runGoalWithRecoveryInner(
               selectedTemplateId: "feature_compose",
               completionShapes: ["fileEditResult"],
               attempts: 1,
-              goalReachReason: `early edit-intent routed to feature_compose; the check_supply compose call failed or was refused and nothing landed for ${_probeGapId} - a check-supply goal is never walked or escalated`,
+              goalReachReason: `early edit-intent routed to feature_compose; the check_supply compose call failed or was refused and nothing landed for ${_probeGapId}${_cutOutcome} - a check-supply goal is never walked or escalated`,
               reached: false,
             };
           }
