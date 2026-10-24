@@ -205,6 +205,16 @@ let phase = "import";
 let reqSeq = 0;
 
 const scrub = (s: string): string => s.split(WS).join("<WS>");
+// An Idempotency-Key header carries the execution id it dedupes (walk-satisfier-<n>-<virtual ms>, …), a long
+// id-shaped string that secret scanners read as a key. The golden records it as an ordinal placeholder in order of
+// first use (idem-1, idem-2, …): what the replay compares is whether two requests share a key, not the id text. Both
+// sides of a check come from this child, so both are normalized.
+const idemOrdinals = new Map<string, string>();
+const idemPlaceholder = (v: string): string => {
+  let p = idemOrdinals.get(v);
+  if (!p) { p = `idem-${idemOrdinals.size + 1}`; idemOrdinals.set(v, p); }
+  return p;
+};
 
 // ── fs redirect ────────────────────────────────────────────────────────────────────────────────
 const REDIRECT_ROOT = `${WS}/__root`;
@@ -479,7 +489,7 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
     // Headers other than Content-Type and Authorization are recorded by value (hop and credential
     // forwarding headers are gate inputs); Authorization only by presence.
     const hdrs: Record<string, string> = {};
-    headers.forEach((v, k) => { if (k !== "content-type" && k !== "authorization") hdrs[k] = scrub(v); });
+    headers.forEach((v, k) => { if (k !== "content-type" && k !== "authorization") hdrs[k] = k === "idempotency-key" ? idemPlaceholder(v) : scrub(v); });
     requests.push({
       seq: ++reqSeq, phase, kind, method, url: scrub(url),
       auth: headers.has("authorization"),
