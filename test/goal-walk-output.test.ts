@@ -82,12 +82,13 @@ const OUT_ID = "walk-boot01-abc1234-web_page-7";
 const PAGE = "<html>" + "x".repeat(4_990) + "</html>"; // > 2000 chars, a string output
 const JSON_ID = "walk-boot01-abc1234-webSearchResult-8";
 const JSON_OUT = { results: Array.from({ length: 60 }, (_, i) => ({ title: `t${i}`, url: `https://example.test/${i}`, snippet: "s".repeat(40) })) };
+// The kept output is written as the keeper returns it under both caps (the caps test pins the keeper itself), so the
+// fixture also builds at the parent commit, where the read is what is absent.
 function finishedRecord(): void {
-  const keep = wp.walkOutputKeeper();
   const poolOutputs: Record<string, unknown> = {};
   const row = (id: string, shape: string, producedBy: string, exec: string, content: unknown) => {
     const c = typeof content === "string" ? content : JSON.stringify(content);
-    poolOutputs[id] = keep(c, typeof content === "string");
+    poolOutputs[id] = { text: c, chars: c.length, truncated: false, contentType: typeof content === "string" ? "text" : "json" };
     return { id, shape, goalSignature: null, producedBy, producerExecutionId: exec, consumedIds: [], contentPreview: c.slice(0, 2000), chars: c.length, truncated: c.length > 2000 };
   };
   executionStore.set(D, {
@@ -168,6 +169,17 @@ describe("goalWalkOutput: one output in full, after the walk", () => {
     expect(JSON.stringify(ws.j.body)).not.toContain(PAGE);
     expect(Object.keys(ws.j.body.poolProvenance[0])).toEqual(["id", "shape", "goalSignature", "producedBy", "producerExecutionId", "consumedIds", "contentPreview", "chars", "truncated"]);
     expect(ws.j.body.poolProvenance[0].contentPreview).toBe(PAGE.slice(0, 2000));
+  });
+
+  it("[MUST-FAIL] a record mirrored before outputs were kept serves its preview, marked truncated, never a not-found", async () => {
+    finishedRecord();
+    const rec = executionStore.get(D) as unknown as Record<string, unknown>;
+    delete rec["poolOutputs"];
+    const r = await json(await resolve({ type: "goalWalkOutput", dispatchId: D, impulseId: OUT_ID }));
+    expect(r.status).toBe(200);
+    expect(r.j.body).toMatchObject({ impulseId: OUT_ID, shape: "web_page", contentType: null, content: PAGE.slice(0, 2000), chars: PAGE.length, truncated: true });
+    const g = await json(await resolve({ type: "goalWalkOutput", dispatchId: D, impulseId: "walk-boot01-abc1234-goal-1" }));
+    expect(g.j.body).toMatchObject({ content: "", chars: 0, truncated: false });
   });
 
   it("[CONTROL] the full read is gated: no key or a rejected key is refused and serves nothing", async () => {

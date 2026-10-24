@@ -501,7 +501,9 @@ export function walkOutputKeeper(): (serialized: string, isText: boolean) => Wal
 
 /** What `goalWalkOutput {dispatchId, impulseId}` serves for one pool id of a dispatch record, or null when the record
  *  holds no such output (unknown id, or a record pruneStore compacted). An output with no content (the preview's
- *  `chars: 0` row) is served as empty text. */
+ *  `chars: 0` row) is served as empty text. A record mirrored before outputs were kept has only the preview: it is
+ *  served as the preview, `truncated` when it is shorter than `chars`, so this read never denies an output
+ *  goalWalkState lists. */
 export function walkOutputOf(rec: { dispatchId: string; status?: unknown; poolProvenance?: unknown; poolOutputs?: unknown }, impulseId: string): {
   dispatchId: string; status: unknown; impulseId: string; shape: string | null; producedBy: string | null; producerExecutionId: string | null;
   contentType: "text" | "json" | null; content: string; chars: number; truncated: boolean;
@@ -510,7 +512,6 @@ export function walkOutputOf(rec: { dispatchId: string; status?: unknown; poolPr
   if (!prov) return null;
   const outputs = rec.poolOutputs && typeof rec.poolOutputs === "object" ? (rec.poolOutputs as Record<string, WalkOutputText | undefined>) : {};
   const kept = Object.prototype.hasOwnProperty.call(outputs, impulseId) ? outputs[impulseId] : undefined;
-  if (!kept && Number(prov["chars"] ?? 0) > 0) return null;
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
   return {
     dispatchId: rec.dispatchId,
@@ -519,9 +520,12 @@ export function walkOutputOf(rec: { dispatchId: string; status?: unknown; poolPr
     shape: str(prov["shape"]),
     producedBy: str(prov["producedBy"]),
     producerExecutionId: str(prov["producerExecutionId"]),
-    contentType: kept?.contentType ?? null,
-    content: kept?.text ?? "",
-    chars: kept?.chars ?? 0,
-    truncated: kept?.truncated ?? false,
+    ...(kept
+      ? { contentType: kept.contentType, content: kept.text, chars: kept.chars, truncated: kept.truncated }
+      : (() => {
+          const preview = typeof prov["contentPreview"] === "string" ? prov["contentPreview"] : "";
+          const chars = Math.max(preview.length, Number(prov["chars"] ?? 0) || 0);
+          return { contentType: null, content: preview, chars, truncated: preview.length < chars };
+        })()),
   };
 }
