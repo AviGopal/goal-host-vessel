@@ -1087,10 +1087,13 @@ export function reachVerdictBody(
   betaWithheldReason?: string | null,
   // The dispatch's learning mode (observe-mode.ts): /reach records an observe verdict but grades no posterior with it.
   learningMode?: "observe" | "learn" | null,
+  // The concept ids this dispatch recalled (dispatch-context.ts): deduplicated, capped, omitted when there are none.
+  recalledConceptIds?: readonly string[] | null,
 ): string {
   const r = typeof reason === "string" ? reason.trim() : "";
   const h = typeof goalHash === "string" ? goalHash.trim() : "";
   const w = typeof betaWithheldReason === "string" ? betaWithheldReason.trim() : "";
+  const recalled = [...new Set((recalledConceptIds ?? []).filter((x): x is string => typeof x === "string" && x.length > 0))].slice(0, RECALLED_CONCEPT_IDS_CAP);
   return JSON.stringify({
     execution_id: executionId,
     reached,
@@ -1100,6 +1103,7 @@ export function reachVerdictBody(
     ...(typeof betaWithheldReason === "string" ? { beta_withheld: true } : {}),
     ...(w ? { beta_withheld_reason: w.slice(0, 600) } : {}),
     ...(learningMode ? { learning_mode: learningMode } : {}),
+    ...(recalled.length > 0 ? { recalled_concept_ids: recalled } : {}),
   });
 }
 
@@ -1126,7 +1130,7 @@ export function deliverReachVerdict(
     console.warn(`[goal-host-vessel] reach-patch NOT ATTEMPTED (${origin}): ${skipReason} — this execution stays ungraded and its arm learns nothing from it`);
     return;
   }
-  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string), dispatchLearningMode());
+  const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string), dispatchLearningMode(), dispatchRecalledConceptIds());
   const _reachId = executionId as string;
   const _reachVerdict = reached as boolean;
   void (async () => {
@@ -1392,7 +1396,8 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
   // A RECALL INSIDE A DISPATCH NAMES ITS EXECUTION (concept-recall-pointer.ts), so concept-db can credit what this
   // execution recalled. A cache hit sends nothing, so such a recall reads fresh (and still fills the cache); a recall
   // with no dispatch context keeps its cache hits.
-  const _recallExecId = dispatchContext.getStore()?.dispatchId;
+  const _recallStore = dispatchContext.getStore() as DispatchContextStore | undefined;
+  const _recallExecId = _recallStore?.dispatchId;
   const _hit = _recallExecId ? undefined : _recallCache.get(_cacheKey);
   const _ttl = await shapedBudget("recall_cache_ttl_ms", 600_000, 30_000, 3_600_000);
   if (_hit && Date.now() - _hit.at < _ttl) return _hit.rows;
@@ -1439,6 +1444,8 @@ async function recallConceptRows(query: string, limit: number, timeoutMs = 10_00
       ? (j.content as { body?: unknown }).body : undefined;
     const rows = [j.content, inner, j.body].find((x) => Array.isArray(x)) as
       Array<{ summary?: string; content?: string }> | undefined;
+    // What an in-dispatch recall returned is noted on the dispatch's own store, so its reach verdict names it.
+    if (_recallExecId && rows) noteRecalledConcepts(_recallStore, rows);
     if (rows && rows.length > 0) {
       if (_recallCache.size > 300) for (const k of [..._recallCache.keys()].slice(0, 150)) _recallCache.delete(k);
       _recallCache.set(_cacheKey, { at: Date.now(), rows });
@@ -5325,6 +5332,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
+import { beginRecallRecord, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
 // learningMode is the dispatch's own body.learning_mode: under "observe" no side effect writes (observe-mode.ts).
@@ -5337,6 +5345,10 @@ setWalkEgressLearningModeReader(() => dispatchContext.getStore());
 /** The learning mode of the dispatch this code runs for (dispatchContext), carried on its reach verdict. */
 function dispatchLearningMode(): "observe" | "learn" | undefined {
   return dispatchContext.getStore()?.learningMode;
+}
+/** The concept ids the dispatch this code runs for recalled (noteRecalledConcepts), carried on its reach verdict. */
+function dispatchRecalledConceptIds(): string[] {
+  return [...((dispatchContext.getStore() as DispatchContextStore | undefined)?.recalledConceptIds ?? [])];
 }
 /** OBSERVE (observe-mode.ts): whether this dispatch's side effect is skipped — recorded once per dispatch and effect. */
 function observeSkip(effect: ObserveSideEffect): boolean {
@@ -19251,6 +19263,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
     // OBSERVE (observe-mode.ts): the dispatch's learning mode is in context from here, so every side effect this
     // dispatch can cause — the post-seek and throw paths below included — reads it.
     dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));
+    // The dispatch's ROOT entry: its recall record begins empty here, never shared with a dispatch it runs inside.
+    beginRecallRecord(dispatchContext.getStore());
     // Reason plane: caller-owned walk decision-log sink, attached to the record
     // in both the success and failure paths so GET /executions/:id can surface it.
     const walkStepSink: string[] = [];

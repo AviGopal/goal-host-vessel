@@ -30,7 +30,7 @@ describe("the reach verdict carries the dispatch's learning mode", () => {
     expect(reachVerdictBody("exec_1", true, ["shellResult"], "ok", "h1", undefined, null)).toBe(today);
   });
   test("[MUST-FAIL] deliverReachVerdict passes the mode of the dispatch it runs for", () => {
-    expect(SRC).toContain("reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string), dispatchLearningMode());");
+    expect(SRC).toContain("reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string), dispatchLearningMode(), dispatchRecalledConceptIds());");
     expect(SRC).toContain("return dispatchContext.getStore()?.learningMode;");
   });
   test("[CONTROL] a delivery outside any dispatch carries no mode", async () => {
