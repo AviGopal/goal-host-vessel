@@ -331,7 +331,7 @@ import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, co
 // B2: composites a dispatch's walks minted, read back at its verdict (a non-reached first run retires a NEW mint).
 const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
-import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
@@ -1219,7 +1219,7 @@ export function deliverReachVerdict(
   })();
 }
 
-const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "requestLease", "requestLease_renew", "resolverRequest", "verdictCorpusRun", "verdictConsistency"] as const;
+const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "goalWalkOutput", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "requestLease", "requestLease_renew", "resolverRequest", "verdictCorpusRun", "verdictConsistency"] as const;
 const VERSION = "0.1.0";
 /** Each of several compose owners' free slots, from its own composeOwnership PLACEMENT answer (the read the placement
  *  rule already makes: {targets} on the pointer; development-vessel compose-placement.ts). Written onto the row as
@@ -11510,6 +11510,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     // CAUSAL-INTENT LEGIBILITY: surface each live pool impulse's provenance (which intent
     // produced it, via what) so the pool's content is causally attributable to intent AT ANY
     // MOMENT via goalWalkState — not just stamped-but-dark on the impulse metadata.
+    // goalWalkOutput (walk-pool.ts walkOutputKeeper): each output's content, bounded, kept beside its preview from the
+    // same string, so it can be read in full by pool id after the walk ends, for as long as the preview lives.
+    const keepOutput = walkOutputKeeper();
+    const poolOutputs: Record<string, WalkOutputText> = {};
     (rec as { poolProvenance?: unknown }).poolProvenance = poolImpulses.map((im) => {
       const m = (im.metadata ?? {}) as { shape?: string; goalSignature?: string; producedBy?: string; producerExecutionId?: string; consumedIds?: string[] };
       // EVIDENCE LEDGER (2026-07-27): surface a CAPPED preview of each pool impulse's
@@ -11522,6 +11526,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       let c: string;
       try { c = typeof im.content === "string" ? im.content : JSON.stringify(im.content); } catch { c = String(im.content); }
       const hasContent = typeof c === "string" && c.trim().length > 0;
+      if (hasContent) poolOutputs[im.id] = keepOutput(c, typeof im.content === "string");
       return {
         id: im.id,
         shape: m.shape,
@@ -11534,6 +11539,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           : { chars: 0 }),
       };
     });
+    (rec as { poolOutputs?: unknown }).poolOutputs = poolOutputs;
     rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
     // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
     // the record EACH iteration so goalWalkState surfaces WHY the walk is doing
@@ -19933,6 +19939,21 @@ async function handleResolve(req: Request): Promise<Response> {
       } 
     });
   }
+  // ONE OUTPUT IN FULL, after the walk too (walk-pool.ts walkOutputOf): the content the goalWalkState preview cuts at
+  // 2000 chars, by dispatch id + pool id, bounded by the declared caps and kept exactly as long as the preview. A gated
+  // read (inbound-auth.ts GATED_RESOLVE_TYPES): it serves any output of any walk in full.
+  if (type === "goalWalkOutput") {
+    const wid = (typeof body.dispatchId === "string" ? body.dispatchId : undefined)
+      ?? (typeof pointer.dispatchId === "string" ? pointer.dispatchId : undefined);
+    const oid = (typeof body.impulseId === "string" ? body.impulseId : undefined)
+      ?? (typeof pointer.impulseId === "string" ? pointer.impulseId : undefined);
+    if (!wid || !oid) return Response.json({ resolved: false, shape: "goalWalkOutput", error: "dispatchId and impulseId are required" }, { status: 400 });
+    const rec = executionStore.get(wid);
+    if (!rec) return Response.json({ resolved: false, shape: "goalWalkOutput", error: "dispatch not found" }, { status: 404 });
+    const out = walkOutputOf(rec, oid);
+    if (!out) return Response.json({ resolved: false, shape: "goalWalkOutput", error: "output not found", body: { dispatchId: rec.dispatchId, status: rec.status, impulseId: oid } }, { status: 404 });
+    return Response.json({ resolved: true, shape: "goalWalkOutput", body: out });
+  }
   if (type === "goalWalkState") {
     const wid = (typeof body.dispatchId === "string" ? body.dispatchId : undefined)
       ?? (typeof pointer.dispatchId === "string" ? pointer.dispatchId : undefined);
@@ -20636,6 +20657,7 @@ function pruneStore(): void {
     d["steps"] = [];
     d["walkLog"] = [];
     d["poolProvenance"] = [];
+    d["poolOutputs"] = {};
     d["poolEvents"] = [];
     d["compacted"] = true;
   }

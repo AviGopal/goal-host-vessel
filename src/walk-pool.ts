@@ -468,3 +468,60 @@ export function forgetLivePool(dispatchId: unknown): void {
 export function livePool(dispatchId: string): readonly PoolImpulseLike[] | undefined {
   return livePools.get(dispatchId);
 }
+
+// ── goalWalkOutput: one walk output's FULL content, read back by (dispatch id, pool id) ────────────
+
+/**
+ * goalWalkState's `poolProvenance[]` carries a 2000-char PREVIEW of each pool impulse (`contentPreview`, `chars`,
+ * `truncated`), and the live pool is forgotten when the walk ends, so a finished run's output past the cut could not be
+ * read by anyone (a surface drew a cut page as whole). The walk's state mirror now also keeps each output's content,
+ * bounded, on the dispatch record beside the preview (`poolOutputs`, keyed by pool id), from the SAME serialized string
+ * the preview is cut from, so `chars` agrees between the two reads. It lives exactly as long as the preview: pruneStore
+ * clears both when it compacts a record, and both persist with the dispatch store.
+ *
+ * Two declared bounds, both reported (`chars` is always the full length, `truncated` says the kept text is shorter):
+ * WALK_OUTPUT_CAP_CHARS per output, and WALK_OUTPUTS_RECORD_CAP_CHARS across one record's outputs in pool order, since
+ * the whole dispatch store is rewritten every few seconds.
+ */
+export const WALK_OUTPUT_CAP_CHARS = 1_000_000;
+export const WALK_OUTPUTS_RECORD_CAP_CHARS = 2_000_000;
+
+/** One kept output: the text (a prefix when truncated), its full length, and whether it was a string or JSON. */
+export interface WalkOutputText { text: string; chars: number; truncated: boolean; contentType: "text" | "json" }
+
+/** A keeper for ONE mirror pass: each call keeps the next output in pool order, under both caps. */
+export function walkOutputKeeper(): (serialized: string, isText: boolean) => WalkOutputText {
+  let left = WALK_OUTPUTS_RECORD_CAP_CHARS;
+  return (serialized, isText) => {
+    const keep = Math.max(0, Math.min(serialized.length, WALK_OUTPUT_CAP_CHARS, left));
+    left -= keep;
+    return { text: keep === serialized.length ? serialized : serialized.slice(0, keep), chars: serialized.length, truncated: keep < serialized.length, contentType: isText ? "text" : "json" };
+  };
+}
+
+/** What `goalWalkOutput {dispatchId, impulseId}` serves for one pool id of a dispatch record, or null when the record
+ *  holds no such output (unknown id, or a record pruneStore compacted). An output with no content (the preview's
+ *  `chars: 0` row) is served as empty text. */
+export function walkOutputOf(rec: { dispatchId: string; status?: unknown; poolProvenance?: unknown; poolOutputs?: unknown }, impulseId: string): {
+  dispatchId: string; status: unknown; impulseId: string; shape: string | null; producedBy: string | null; producerExecutionId: string | null;
+  contentType: "text" | "json" | null; content: string; chars: number; truncated: boolean;
+} | null {
+  const prov = Array.isArray(rec.poolProvenance) ? (rec.poolProvenance as Array<Record<string, unknown>>).find((p) => p && p["id"] === impulseId) : undefined;
+  if (!prov) return null;
+  const outputs = rec.poolOutputs && typeof rec.poolOutputs === "object" ? (rec.poolOutputs as Record<string, WalkOutputText | undefined>) : {};
+  const kept = Object.prototype.hasOwnProperty.call(outputs, impulseId) ? outputs[impulseId] : undefined;
+  if (!kept && Number(prov["chars"] ?? 0) > 0) return null;
+  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+  return {
+    dispatchId: rec.dispatchId,
+    status: rec.status ?? null,
+    impulseId,
+    shape: str(prov["shape"]),
+    producedBy: str(prov["producedBy"]),
+    producerExecutionId: str(prov["producerExecutionId"]),
+    contentType: kept?.contentType ?? null,
+    content: kept?.text ?? "",
+    chars: kept?.chars ?? 0,
+    truncated: kept?.truncated ?? false,
+  };
+}

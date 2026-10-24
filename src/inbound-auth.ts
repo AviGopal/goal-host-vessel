@@ -33,7 +33,8 @@ import { identityCredential, isNodeSelfCredential, type CallerCredential } from 
 export const OPERATOR_DIRECT_SCOPE = "operator:direct";
 export const ADMIN_SCOPE = "admin";
 
-/** The /resolve types that dispatch or write. Every other type /resolve serves is a read and stays open. */
+/** The /resolve types that dispatch or write, plus goalWalkOutput: a read that serves any walk output in full (the open
+ *  goalWalkState serves only a 2000-char preview). Every other type /resolve serves is a read and stays open. */
 export const GATED_RESOLVE_TYPES: ReadonlySet<string> = new Set([
   "goal_execution", "activity_execution",
   "goalDispatchAsync", "goal_dispatch_async",
@@ -41,6 +42,7 @@ export const GATED_RESOLVE_TYPES: ReadonlySet<string> = new Set([
   // The resolver request queue (request-queue.ts): a lease grant and its renewal are writes, held by the credential.
   "requestLease", "requestLease_renew",
   "verdictCorpusRun",
+  "goalWalkOutput",
 ]);
 
 /** Who a request runs as. `operator` is derived from the credential's scopes; nothing in a body can set it. */
