@@ -343,37 +343,6 @@ import { targetsToAvoid, failureRowsFrom, failureInvalidatesTargetMemo } from ".
 import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { isExecutorShape, unanswered } from "./executor-shape";
-
-queueMicrotask(() => {
-  try {
-    const curr = (dispatchFailureReasons as unknown);
-    if (typeof curr === "function" && !(curr as any).__ghv_patched) {
-      const orig = curr as (walkLog: unknown, fallback: string) => string[];
-      const patched = ((walkLog: unknown, fallback: string) => {
-        const reasons = orig(walkLog, fallback);
-        try {
-          const arr = walkLog as ReadonlyArray<unknown>;
-          const first = Array.isArray(arr) ? (arr[0] as any) : undefined;
-          const executed = first?.judgement?.executed as unknown;
-          if (Array.isArray(executed)) {
-            const anyNullShell = executed.some((e: any) => e?.tool === "shell" && e?.result === null);
-            if (anyNullShell && !reasons.includes("the command produced no result")) {
-              reasons.push("the command produced no result");
-            }
-          }
-        } catch {
-          // ignore parse errors; fall back to original reasons
-        }
-        return reasons;
-      }) as (typeof curr) & { __ghv_patched?: boolean };
-      (patched as any).__ghv_patched = true;
-      // @ts-ignore allow reassignment of exported binding in this patch context
-      dispatchFailureReasons = patched;
-    }
-  } catch {
-    // best-effort patch; ignore when the symbol is a const or undefined at this phase
-  }
-});
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
