@@ -333,6 +333,7 @@ const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
+import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
 import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
@@ -8846,9 +8847,13 @@ async function runGoalAsPoolWalkBody(
   // resolver genuinely produces the impulse. Lazily fetched once and cached;
   // tolerant of failure (empty Set ⇒ never mint, fall through to escalate).
   let liveResolverShapes: Set<string> | null = null;
+  // The registry part alone (discovery plus peers, no activity outputs): what a step resolver must be served by
+  // (unregistered-step.ts). null when discovery could not be read, so the pick check abstains instead of refusing all.
+  let registryResolverShapes: Set<string> | null = null;
   const liveShapes = async (): Promise<Set<string>> => {
     if (liveResolverShapes) return liveResolverShapes;
     const activityProducedShapes = new Set<string>();
+    let discoveryRead = false;
     try {
       const activitiesResp = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities?retired=false&deprecated=false`, {
         signal: AbortSignal.timeout(2_000),
@@ -8870,6 +8875,7 @@ async function runGoalAsPoolWalkBody(
         const j: any = await r.json();
         const shapes = Array.isArray(j?.shapes) ? j.shapes.map((s: unknown) => String(s)).filter(Boolean) : [];
         liveResolverShapes = new Set<string>(shapes);
+        discoveryRead = Array.isArray(j?.shapes);
       } else {
         liveResolverShapes = new Set<string>();
       }
@@ -8881,8 +8887,24 @@ async function runGoalAsPoolWalkBody(
     // union is what lets the satisfier reach a peer vessel instead of filing an
     // authoring gap for a capability that already exists (SC-P4, 2026-07-02).
     for (const s of await fetchPeerRegistryShapes()) liveResolverShapes.add(s);
+    registryResolverShapes = discoveryRead ? new Set(liveResolverShapes) : null;
     for (const s of activityProducedShapes) liveResolverShapes.add(s);
     return liveResolverShapes;
+  };
+  // Is a step resolver served (unregistered-step.ts)? A resolver goal-host holds locally is served unless it is a
+  // cross-vessel proxy (registeredProxyShapes, bare names) whose shape discovery no longer lists. null = registry
+  // unreadable: nothing is judged.
+  const stepServed = async (): Promise<((resolver: string) => boolean) | null> => {
+    await liveShapes();
+    const reg = registryResolverShapes;
+    if (!reg) return null;
+    return (resolver: string): boolean => {
+      const bare = resolver.replace(/^development-vessel:/, "");
+      if (reg.has(bare) || reg.has(resolver)) return true;
+      let local = false;
+      try { local = !!host.runtime.resolvers.get(resolver); } catch { /* no registry: not local */ }
+      return local && !registeredProxyShapes.has(bare);
+    };
   };
   const minted = new Set<string>(); // shapes we've already minted a producer for this walk
   // B2: one composite-authoring attempt per walk (composite-authoring.ts); A2 describes what it produced.
@@ -11564,8 +11586,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     (rec as { steps?: WalkStep[] }).steps = walkSteps;
   };
   const shapeArr = (): string[] => [...producedShapes];
+  // Why a pick was refused before dispatch (unregistered-step.ts), by normalized id; read into each step's `excluded`.
+  const ineligibleReasons = new Map<string, string>();
   const excludedNow = (): Array<{ templateId: string; reason: string }> =>
-    [...exclude].map((id) => ({ templateId: id, reason: "already used or rejected earlier in walk" }));
+    [...exclude].map((id) => ({ templateId: id, reason: ineligibleReasons.get(id) ?? "already used or rejected earlier in walk" }));
   const recordStep = (step: Omit<WalkStep, "index" | "at">): void => {
     walkSteps.push({ index: walkStepIndex++, at: Date.now(), ...step });
     mirrorWalkState();
@@ -12440,8 +12464,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (!pick && target.size > 0) {
       // WRITE DOOR (bridge pick): no wrapper is minted around a write resolver for a goal not admitted as a change.
       const missingTargets = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "bridge_pick", writeDoorHash, tap);
+      // A bridge wraps a RESOLVER, so X must be served by one (unregistered-step.ts), not merely be some activity's
+      // output: a bridge to an unregistered shape is ineligible here, as its template is at the execute step below.
       const live = await liveShapes();
-      let X = missingTargets.find((s) => live.has(s) && !minted.has(s));
+      const served = await stepServed();
+      let X = missingTargets.find((s) => live.has(s) && (served ? served(s) : true) && !minted.has(s));
       if (X && !(await mintGovernorAllows(X))) {
         minted.add(X);
         X = undefined;
@@ -12637,6 +12664,24 @@ If one of those sibling shapes is the action that would create what the goal ask
       pickFailures.set(pick.id, "template unfetchable");
       console.log(`[goal-host-vessel] walk(${opts.surface}): template ${pick.id} unfetchable — excluding`);
       continue;
+    }
+    // UNREGISTERED STEP (unregistered-step.ts): a pick whose own step, or a step of a chain it composes, names a
+    // resolver nothing serves is ineligible: not dispatched, excluded, and the shaped reason recorded.
+    {
+      const served = await stepServed();
+      if (!served) {
+        tap(`[goal-host-vessel] walk(${opts.surface}): step-registry check for ${pick.id} not judged: discovery registry unreadable`);
+      } else {
+        const unserved = await firstUnregisteredStep(template, served, (id) => getTemplateLocalFirst(id));
+        if (unserved) {
+          const reason = unregisteredStepReason(unserved);
+          exclude.add(normActivityId(pick.id));
+          ineligibleReasons.set(normActivityId(pick.id), reason);
+          pickFailures.set(pick.id, reason);
+          tap(`[goal-host-vessel] walk(${opts.surface}): ${pick.id} INELIGIBLE (${reason}): its step resolver is not registered in discovery — not dispatched, excluding`);
+          continue;
+        }
+      }
     }
 
     let trace: ExecutionTrace;
