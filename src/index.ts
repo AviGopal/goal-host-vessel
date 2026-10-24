@@ -7605,8 +7605,10 @@ async function landedShaForGo(goalHash: string): Promise<string | null> {
   }
 }
 
-async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<void> {
-  if (creditHold.heldForGoal(goalText, reached ? "reach" : "hollow", "recordGoalPath")) return; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
+/** Record a walk's path (POST /v2/goal-paths). Resolves true only when the row was written (a 2xx): a caller's
+ *  "goal path recorded" flag is set from this result, never from reaching the call. */
+async function recordGoalPath(goalText: string, pathActivities: string[], reached: boolean, durationMs: number, costUsd: number, walkTier: WalkTier = "fresh_derivation", producedOutputShapes: string[] = [], expectedOutputShapes: string[] = [], parent: { goalHash: string | null; pathSignature: string | null } | null = null, toolsUsed: string[] = []): Promise<boolean> {
+  if (creditHold.heldForGoal(goalText, reached ? "reach" : "hollow", "recordGoalPath")) return false; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   const landedSha = await landedShaForGoal(goalText);
   // Situation at decision time (2026-09-20). Selection ASKS with this signature
   // (recommendReachingPath and both recommend calls send it) but the RECORD never
@@ -7614,7 +7616,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
   // 2026-09-16, so conditioned selection had nothing to condition on. Sender half;
   // receiver landed as e1979f77 + 092eac27, DB field via migration 211.
   const _recStateSig = (await getCachedStateSignature())?.signature_hash;
-  if (!goalText || pathActivities.length === 0) return;
+  if (!goalText || pathActivities.length === 0) return false;
   if (reached) {
     const _did = dispatchContext.getStore()?.dispatchId;
     if (_did) {
@@ -7629,7 +7631,7 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
       } catch (e) {
         _withheld = `ledger-unreachable: ${(e as Error).message.slice(0, 80)}`;
       }
-      if (_withheld) { console.log(`[goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch ${_did} landed ${_withheld} with no settled attempt (causal-attempt-ledger)`); return; }
+      if (_withheld) { console.log(`[goal-host-vessel] recordGoalPath: WITHHELD reached path — dispatch ${_did} landed ${_withheld} with no settled attempt (causal-attempt-ledger)`); return false; }
     }
   }
   if (parent?.goalHash || parent?.pathSignature) {
@@ -7701,8 +7703,10 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
     if (!res.ok) {
       console.warn(`[goal-host] goal-path record REJECTED ${res.status} for a ${pathActivities.length}-step path (reached=${reached}); this walk will not inform future reuse`);
     }
+    return res.ok;
   } catch (e) {
     console.warn(`[goal-host] goal-path record FAILED for a ${pathActivities.length}-step path (reached=${reached}); this walk will not inform future reuse: ${(e as Error).message}`);
+    return false;
   }
 }
 // Durable-trace persistence for SATISFIER reaches (2026-06-28). The shape-graph
@@ -13831,7 +13835,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     console.log(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
     // ABSTAIN (§9.2): the path row's POST applies failure_delta / thompson_beta on reached=false, so an
     // ungraded walk records no path row at all.
-    if (opts.learningMode !== "observe" && !walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
+    if (opts.learningMode !== "observe" && !walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort()).then((ok) => { if (ok && opts.learningSink) opts.learningSink.goalPathRecorded = true; }, () => {});
     {
       const _wid = opts.variables.dispatch_id;
       const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
@@ -13843,7 +13847,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (walkGroundedVerdict !== undefined) (_rec as { grounded?: boolean }).grounded = walkGroundedVerdict;
       }
     }
-    if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
+    // goalPathRecorded is set from the write's result (above), never here: under observe, or for an abstaining walk,
+    // no path is written, so the record must not say one was.
   } else if (chain.length > 0 && opts.learningMode !== "observe") {
     // THE PATH IS THE LEARNING SURFACE, AND IT WAS BEING GATED ON A TRACE IT DOES NOT NEED.
     // The block above is guarded by `lastTrace && chain.length > 0` because everything else in
@@ -13866,9 +13871,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     // reaches with no engine trace, which is exactly the multi-satisfier composition case that
     // compounding depends on. Scoped as an `else if` so every path that already records is
     // untouched: this fires only when the guarded block was skipped, and it cannot double-write.
-    if (!walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort());
+    if (!walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort()).then((ok) => { if (ok && opts.learningSink) opts.learningSink.goalPathRecorded = true; }, () => {});
     console.log(`[goal-host-vessel] recordGoalPath (traceless reach) path=${JSON.stringify(chain)} reached=${reached} goal="${goal.slice(0, 80)}"`);
-    if (opts.learningSink) opts.learningSink.goalPathRecorded = true;
   }
 
   // Adapt the last ExecutionTrace into the GoalRunResult shape the callers read.
