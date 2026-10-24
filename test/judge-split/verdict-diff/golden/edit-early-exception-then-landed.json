@@ -12,7 +12,7 @@
     "timerFires": 6,
     "virtualMsElapsed": 91345
   },
-  "intervalsRegistered": 8,
+  "intervalsRegistered": 6,
   "requests": [
     {
       "auth": false,
