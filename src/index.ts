@@ -20689,85 +20689,7 @@ satisfierTraceSink.start();
 // The dispatch store is the service's: only the service restores it (re-grading interrupted records, posting their
 // oracle labels, scheduling their requeue and resume) and persists it. An importer starts with an empty store and
 // neither reads nor rewrites the file, nor posts to the fleet. Same order as before, ahead of the rest of the boot.
-setTimeout(() => {
-  drainInterruptedRequeue().catch((err) => console.warn("[goal-host-vessel] drain error: " + (err as Error).message));
-}, 15000);
-try {
-  const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
-  for (const r of saved) {
-    if (!r || !r.dispatchId) continue;
-    const wasRunning = r.status === "running";
-    if (wasRunning) {
-      let reconciled = false;
-      // OBSERVE (observe-mode.ts): an observe compose never lands, so a compose report found for its goal is another
-      // dispatch's; reconciling would grade this one from it and label the oracle corpus. Interrupted marking instead.
-      if (typeof r.goal === "string" && /edit repos\//i.test(r.goal) && !observeSkips(r.learningMode, r.dispatchId, "oracle_label")) {
-        try {
-          const h = goalHashOf(r.goal);
-          const reportFile = Bun.file("/workspace/proposals/route-edit-" + h + "-compose-report.json");
-          if (await reportFile.exists()) {
-            const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
-            if (report.verdict === "FAVORABLE" && reportFile.lastModified > r.startedAt) {
-              const cs = Array.isArray(report.cutovers) ? report.cutovers as Array<Record<string, unknown>> : [];
-              let sha = "reconciled";
-              for (const c of cs) { const res = (c?.result ?? {}) as Record<string, unknown>; if (typeof res.new_git_sha === "string" && res.new_git_sha) { sha = res.new_git_sha; break; } }
-              // A FAVORABLE compose report means DRAFTED + TYPECHECKED, not LANDED.
-              // `sha` above defaults to the literal "reconciled" when NO cutover
-              // reported a new_git_sha — the staged-not-landed case this file grades
-              // as honest-not-reached everywhere else (:7021, :7387: "a staged clone
-              // is not a reach"). Declaring reached:true there manufactures a hollow
-              // green for an edit that is not on origin/dev, and feeds it to the
-              // learning loop as a success.
-              const landedSha = sha === "reconciled" ? "" : sha;
-              if (!landedSha) {
-                r.status = "failed"; r.reached = false; r.selectedTemplateId = "feature_compose"; r.endedAt = Date.now();
-                r.goalReachReason = "deterministic:interrupted-staged-not-landed — the compose report was FAVORABLE but no cutover reported a new_git_sha, so the edit is not on origin/dev; a staged clone is not a reach";
-              } else {
-                r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + landedSha; r.endedAt = Date.now(); r.selectedTemplateId = "feature_compose"; r.error = undefined;
-              }
-              // Feed the oracle corpus, exactly as the primary path does at :6048 and
-              // :7695. Those call recordDeterministicLabel unconditionally on polarity;
-              // this reconciliation path graded `reached` in BOTH branches above and
-              // fed nothing, so every reconciled outcome was invisible to the corpus.
-              // Interruptions land hardest on long feature_compose dispatches — exactly
-              // the ones that land commits — so the omission removed successes while
-              // failures on the primary path were still recorded faithfully. The corpus
-              // was therefore a biased failure SAMPLE, not a record of outcomes: over
-              // the newest 100 labels, 98 were not_achieved and all 83 deterministic
-              // ones were, while commit 4a49e46 landed inside that window carrying no
-              // label at all. Any reach rate computed from it read far too low.
-              // Same class as the hollow-green this branch was fixed for: a
-              // reconciliation path not held to the primary path's obligations.
-              recordDeterministicLabel(
-                String(r.goal ?? ""),
-                r.executionId,
-                "feature_compose",
-                { reached: r.reached === true, reason: r.goalReachReason ?? ("deterministic:interrupted-landed — cutover reported new_git_sha " + landedSha), deterministic: true },
-              );
-              sha = landedSha || "NOTHING — staged, not landed";
-              console.log("[goal-host-vessel] reconciled interrupted edit-intent dispatch " + r.dispatchId + " -> landed " + sha);
-              reconciled = true;
-            }
-          }
-        } catch { /* fall through to interrupted marking */ }
-      }
-      if (!reconciled) { interruptedRequeue.push(r); }
-    }
-    // No-resume guard (2026-07-09): edit-intent goals (any goal naming a concrete
-    // repos/<vessel>/<path>.<ext> source file — same predicate as EDIT-INTENT
-    // routing above) must NOT auto-resume on boot. Their compose may have already
-    // landed + cut over — the cutover restart is what interrupted them — so blind
-    // replay re-applies the same edit forever (the route-edit-26279b2b loop).
-    // Resume chains are also depth-capped: a dispatch that is itself a resume
-    // (tags carry resumed_from:) is not resumed again.
-    const isEditIntentGoal = typeof r.goal === "string" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(r.goal);
-    // The resume carries the record's learning mode (observe-mode.ts): an interrupted observe dispatch resumes as observe.
-    const isResumeChild = Array.isArray((r as { tags?: string[] }).tags) && ((r as { tags?: string[] }).tags ?? []).some((t) => t.startsWith("resumed_from:"));
-    if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { runGoalAs(SELF_PRINCIPAL, { goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
-    executionStore.set(r.dispatchId, r);
-  }
-  console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
-} catch { /* first boot or unreadable - start empty */ }
+await restoreDispatchStoreAtBoot();
 setInterval(persistDispatchStore, 5000);
 // The verdict-consistency store exists only on the running service: its root is the directory of the dispatch store
 // this service already keeps (no env read; an importer that is not the service gets no store).
@@ -21047,3 +20969,93 @@ setInterval(() => { void (async () => {
     }
   } catch (e) { console.warn(`[expectation-watchdog] check failed (non-fatal): ${(e as Error).message}`); }
 })(); }, EXP_WATCHDOG_INTERVAL_MS).unref();
+
+/**
+ * THE SERVICE'S DISPATCH-STORE RESTORE, at boot: re-grade interrupted records (boot reconciliation from a FAVORABLE
+ * compose report, with its oracle label), schedule the interrupted-requeue drain (+15 s) and the resume of plain
+ * running records, and load the store into memory. Only the running service calls it, from its boot block (above,
+ * inside `if (import.meta.main)`), exactly where the inline block it replaces ran (import-safety C1'/C2': an importer
+ * starts with an empty store and neither reads nor rewrites the file). The hermetic verdict-diff child calls it in its
+ * boot phase, to replay a restart.
+ */
+async function restoreDispatchStoreAtBoot(): Promise<void> {
+  setTimeout(() => {
+    drainInterruptedRequeue().catch((err) => console.warn("[goal-host-vessel] drain error: " + (err as Error).message));
+  }, 15000);
+  try {
+    const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
+    for (const r of saved) {
+      if (!r || !r.dispatchId) continue;
+      const wasRunning = r.status === "running";
+      if (wasRunning) {
+        let reconciled = false;
+        // OBSERVE (observe-mode.ts): an observe compose never lands, so a compose report found for its goal is another
+        // dispatch's; reconciling would grade this one from it and label the oracle corpus. Interrupted marking instead.
+        if (typeof r.goal === "string" && /edit repos\//i.test(r.goal) && !observeSkips(r.learningMode, r.dispatchId, "oracle_label")) {
+          try {
+            const h = goalHashOf(r.goal);
+            const reportFile = Bun.file("/workspace/proposals/route-edit-" + h + "-compose-report.json");
+            if (await reportFile.exists()) {
+              const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
+              if (report.verdict === "FAVORABLE" && reportFile.lastModified > r.startedAt) {
+                const cs = Array.isArray(report.cutovers) ? report.cutovers as Array<Record<string, unknown>> : [];
+                let sha = "reconciled";
+                for (const c of cs) { const res = (c?.result ?? {}) as Record<string, unknown>; if (typeof res.new_git_sha === "string" && res.new_git_sha) { sha = res.new_git_sha; break; } }
+                // A FAVORABLE compose report means DRAFTED + TYPECHECKED, not LANDED.
+                // `sha` above defaults to the literal "reconciled" when NO cutover
+                // reported a new_git_sha — the staged-not-landed case this file grades
+                // as honest-not-reached everywhere else (:7021, :7387: "a staged clone
+                // is not a reach"). Declaring reached:true there manufactures a hollow
+                // green for an edit that is not on origin/dev, and feeds it to the
+                // learning loop as a success.
+                const landedSha = sha === "reconciled" ? "" : sha;
+                if (!landedSha) {
+                  r.status = "failed"; r.reached = false; r.selectedTemplateId = "feature_compose"; r.endedAt = Date.now();
+                  r.goalReachReason = "deterministic:interrupted-staged-not-landed — the compose report was FAVORABLE but no cutover reported a new_git_sha, so the edit is not on origin/dev; a staged clone is not a reach";
+                } else {
+                  r.status = "completed"; r.reached = true; r.executionId = "feature_compose:" + landedSha; r.endedAt = Date.now(); r.selectedTemplateId = "feature_compose"; r.error = undefined;
+                }
+                // Feed the oracle corpus, exactly as the primary path does at :6048 and
+                // :7695. Those call recordDeterministicLabel unconditionally on polarity;
+                // this reconciliation path graded `reached` in BOTH branches above and
+                // fed nothing, so every reconciled outcome was invisible to the corpus.
+                // Interruptions land hardest on long feature_compose dispatches — exactly
+                // the ones that land commits — so the omission removed successes while
+                // failures on the primary path were still recorded faithfully. The corpus
+                // was therefore a biased failure SAMPLE, not a record of outcomes: over
+                // the newest 100 labels, 98 were not_achieved and all 83 deterministic
+                // ones were, while commit 4a49e46 landed inside that window carrying no
+                // label at all. Any reach rate computed from it read far too low.
+                // Same class as the hollow-green this branch was fixed for: a
+                // reconciliation path not held to the primary path's obligations.
+                recordDeterministicLabel(
+                  String(r.goal ?? ""),
+                  r.executionId,
+                  "feature_compose",
+                  { reached: r.reached === true, reason: r.goalReachReason ?? ("deterministic:interrupted-landed — cutover reported new_git_sha " + landedSha), deterministic: true },
+                );
+                sha = landedSha || "NOTHING — staged, not landed";
+                console.log("[goal-host-vessel] reconciled interrupted edit-intent dispatch " + r.dispatchId + " -> landed " + sha);
+                reconciled = true;
+              }
+            }
+          } catch { /* fall through to interrupted marking */ }
+        }
+        if (!reconciled) { interruptedRequeue.push(r); }
+      }
+      // No-resume guard (2026-07-09): edit-intent goals (any goal naming a concrete
+      // repos/<vessel>/<path>.<ext> source file — same predicate as EDIT-INTENT
+      // routing above) must NOT auto-resume on boot. Their compose may have already
+      // landed + cut over — the cutover restart is what interrupted them — so blind
+      // replay re-applies the same edit forever (the route-edit-26279b2b loop).
+      // Resume chains are also depth-capped: a dispatch that is itself a resume
+      // (tags carry resumed_from:) is not resumed again.
+      const isEditIntentGoal = typeof r.goal === "string" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(r.goal);
+      // The resume carries the record's learning mode (observe-mode.ts): an interrupted observe dispatch resumes as observe.
+      const isResumeChild = Array.isArray((r as { tags?: string[] }).tags) && ((r as { tags?: string[] }).tags ?? []).some((t) => t.startsWith("resumed_from:"));
+      if (wasRunning && typeof r.goal === "string" && !(r as { resumed_as?: string }).resumed_as && Date.now() - r.startedAt < 600000 && !isEditIntentGoal && !isResumeChild) { const old = r as DispatchRecord & { resumed_as?: string }; setTimeout(() => { runGoalAs(SELF_PRINCIPAL, { goal: old.goal, tags: ["resumed_from:" + old.dispatchId], ...(old.learningMode ? { learning_mode: old.learningMode } : {}) }).then(async (res) => { const j = await res.json() as { dispatchId?: string }; if (j.dispatchId) { old.resumed_as = j.dispatchId; persistDispatchStore(); } }).catch(() => { }); }, 20000); }
+      executionStore.set(r.dispatchId, r);
+    }
+    console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
+  } catch { /* first boot or unreadable - start empty */ }
+}

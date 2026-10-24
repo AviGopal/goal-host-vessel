@@ -565,7 +565,10 @@ Bun.plugin({
   setup(build) {
     build.onLoad({ filter: new RegExp(`^${escaped}$`) }, (args) => {
       const text = nodeFs.readFileSync(args.path, "utf8");
-      return { contents: `${text}\nexport { ${NEEDED_NAMES.map((n) => `${n} as __vd_${n}`).join(", ")} };\n`, loader: "ts" };
+      // BOOT RESTORE (optional, so an older tree still loads): since import-safety C1'/C2' the dispatch-store restore
+      // runs only in the service; a tree that exposes it as restoreDispatchStoreAtBoot is replayed through it at boot.
+      const boot = /\basync function restoreDispatchStoreAtBoot\(/.test(text) ? ", restoreDispatchStoreAtBoot as __vd_restoreDispatchStoreAtBoot" : "";
+      return { contents: `${text}\nexport { ${NEEDED_NAMES.map((n) => `${n} as __vd_${n}`).join(", ")}${boot} };\n`, loader: "ts" };
     });
   },
 });
@@ -577,6 +580,7 @@ type Mod = {
   __vd_registerBuiltinResolvers: () => void;
   __vd_registerDevVesselProxies: () => Promise<unknown>;
   __vd_registerDiscoveryProxies: () => Promise<unknown>;
+  __vd_restoreDispatchStoreAtBoot?: () => Promise<void>;
 };
 
 const RECORD_FIELDS = ["status", "reached", "goalReachReason", "selectedTemplateId", "executionId", "completionShapes", "attempts", "attemptCount", "executionPath", "abstain", "learning", "answerBody", "humanGraded", "humanReachNotes", "error", "trigger", "stage", "grounded", "inferenceConfidence", "requeueOf", "routeArounds"];
@@ -633,6 +637,9 @@ async function main(): Promise<void> {
   const store = mod.__vd_executionStore;
 
   phase = "boot";
+  // The service's boot restores the dispatch store first (index.ts restoreDispatchStoreAtBoot): a scenario's seeded
+  // /workspace/goal-host-dispatches.json (redirected) is reconciled, requeued and loaded exactly as at a restart.
+  if (mod.__vd_restoreDispatchStoreAtBoot) await drivePromise(mod.__vd_restoreDispatchStoreAtBoot(), "boot:dispatch-store-restore");
   mod.__vd_registerBuiltinResolvers();
   await drivePromise(mod.__vd_registerDevVesselProxies(), "boot:dev-vessel-proxies");
   await drivePromise(mod.__vd_registerDiscoveryProxies(), "boot:discovery-proxies");
