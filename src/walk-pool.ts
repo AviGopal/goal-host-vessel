@@ -188,7 +188,8 @@ export function isFailedContent(c: unknown): boolean {
   if (typeof o.exitCode === "number" && o.exitCode !== 0) return true;
   if (o.success === false || o.ok === false) return true;
   const hasPayload = ["content", "body", "stdout", "results", "value", "data"].some((k) => o[k] !== undefined && o[k] !== null && o[k] !== "");
-  return typeof o.error === "string" && o.error.length > 0 && !hasPayload;
+  const hasError = (typeof o.error === "string" && o.error.length > 0) || (typeof o.error === "object" && o.error !== null && !Array.isArray(o.error));
+  return hasError && !hasPayload;
 }
 
 /**
