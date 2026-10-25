@@ -11,9 +11,9 @@ import { goalHashOf, isGapInvestigationGoal } from "./goal-target-inference";
 // investigated again under a new hash. Attributing them to the parent X keeps the work, its
 // failures and its closure on the gap that asked for it.
 export function gapIdOfGoalText(goal: string): string {
-  const m = /^Close substrate gap ([-\w:.!]+):\s/.exec(goal)
-    ?? /^investigate and decompose gap ([-\w:.!]+):\s/i.exec(goal)
-    ?? /^investigate gap ([-\w:.!]+) before composing\b/i.exec(goal);
+  const m = /Close substrate gap\s+([-\w:.!|]+):\s*/.exec(goal)
+    ?? /investigate and decompose gap\s+([-\w:.!|]+):/i.exec(goal)
+    ?? /investigate gap\s+([-\w:.!|]+)\s+before composing\b/i.exec(goal);
   return m?.[1] ?? `route-edit-${goalHashOf(goal)}`;
 }
 
