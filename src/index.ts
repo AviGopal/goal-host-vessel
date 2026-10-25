@@ -1109,6 +1109,48 @@ export function reachVerdictBody(
   });
 }
 
+const DETERMINISTIC_INDEPENDENT_RECOMPUTE_CLASS = "deterministic_independent_recompute_disagrees" as const;
+
+function parseDeterministicIndependentRecompute(reason: string | null | undefined, goalHash: string | null | undefined): { produced?: string; input?: string } | null {
+  if (typeof reason !== "string" || !reason.includes(DETERMINISTIC_INDEPENDENT_RECOMPUTE_CLASS)) return null;
+  const producedMatch = reason.match(/produced=([0-9a-fA-F]+)/);
+  const produced = producedMatch && typeof producedMatch[1] === "string" ? producedMatch[1] : undefined;
+  const input = typeof goalHash === "string" && goalHash.length > 0 ? goalHash : undefined;
+  return { ...(produced ? { produced } : {}), ...(input ? { input } : {}) };
+}
+
+function deterministicSha256CommandHexOf(input: string): string {
+  const safe = input.replace(/'/g, "'\\''");
+  return `printf '%s' '${safe}' | shasum -a 256 | awk '{print $1}'`;
+}
+
+async function recomputeSha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder();
+  const data = enc.encode(input);
+  const buf = await globalThis.crypto.subtle.digest("SHA-256", data);
+  const bytes = new Uint8Array(buf);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i]!.toString(16).padStart(2, "0");
+  return hex;
+}
+
+async function maybeRunDeterministicIndependentRecompute(reason: string | null | undefined, goalHash: string | null | undefined): Promise<void> {
+  const p = parseDeterministicIndependentRecompute(reason, goalHash);
+  if (!p || !p.input) return;
+  const cmd = deterministicSha256CommandHexOf(p.input);
+  const oracle = await recomputeSha256Hex(p.input);
+  const produced = typeof p.produced === "string" && p.produced.length > 0 ? p.produced.toLowerCase() : null;
+  if (produced) {
+    if (produced !== oracle) {
+      console.warn(`[goal-host-vessel] deterministic:${DETERMINISTIC_INDEPENDENT_RECOMPUTE_CLASS} oracle disagrees: produced=${produced} oracle=${oracle} cmd=${cmd}`);
+    } else {
+      console.info(`[goal-host-vessel] deterministic:${DETERMINISTIC_INDEPENDENT_RECOMPUTE_CLASS} oracle confirms: value=${oracle} cmd=${cmd}`);
+    }
+  } else {
+    console.info(`[goal-host-vessel] deterministic:${DETERMINISTIC_INDEPENDENT_RECOMPUTE_CLASS} oracle_value=${oracle} cmd=${cmd}`);
+  }
+}
+
 export function deliverReachVerdict(
   executionId: string | undefined,
   reached: unknown,
@@ -1135,6 +1177,7 @@ export function deliverReachVerdict(
   const _reachBody = reachVerdictBody(executionId as string, reached as boolean, completionShapes, reason, goalHash, betaWithheld?.get(executionId as string), dispatchLearningMode(), dispatchRecalledConceptIds());
   const _reachId = executionId as string;
   const _reachVerdict = reached as boolean;
+  try { void maybeRunDeterministicIndependentRecompute(reason ?? null, goalHash ?? null); } catch {}
   void (async () => {
     const BACKOFF_MS = [1_000, 4_000, 12_000];
     let lastErr = "";
