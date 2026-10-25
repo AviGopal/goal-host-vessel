@@ -69,5 +69,5 @@ export function recalledCandidates(rows: RecalledRow[] | null, goalPathShapes: r
   const fromGoalPaths = goalPathShapes.filter((s) => known.has(s) && !catalog[s]);
   // a goal-path shape the index did not recall still enters, described by name only (its recorded reach is the evidence)
   for (const s of fromGoalPaths) catalog[s] = { description: `(a target this goal class reached before) ${s}` };
-    return { tier: "recall", reason: null, catalog, shapes: [...recalled, ...fromGoalPaths], recalled: recalled.filter(r => !r.startsWith("composedDeliverable_")), fromGoalPaths };
+  return { tier: "recall", reason: null, catalog, shapes: [...recalled, ...fromGoalPaths], recalled, fromGoalPaths };
 }
