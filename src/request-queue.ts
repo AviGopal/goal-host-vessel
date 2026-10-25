@@ -284,6 +284,18 @@ export function dispatchOriginOf(rec: { initiator?: unknown; principal?: { kind?
   return k === "key" ? "operator" : k === "node_self" ? "system" : null;
 }
 
+/** Whether a new free-form goal (trimmed text `goal`, initiated by `origin`) coalesces into the running record `rec`
+ *  (index.ts handleRunGoal). Same text, still running, and, when `rec` is a REQUEUED dispatch, the same origin: a restart
+ *  requeues whatever the store held, so a goal of another origin folded into it would run and be graded as that one. */
+export function coalescesInto(
+  rec: { status?: unknown; goal?: unknown; requeuedAt?: unknown; initiator?: unknown; principal?: { kind?: unknown } } | undefined | null,
+  goal: string,
+  origin: RequestOrigin,
+): boolean {
+  if (!rec || rec.status !== "running" || typeof rec.goal !== "string" || rec.goal.trim() !== goal) return false;
+  return !rec.requeuedAt || dispatchOriginOf(rec) === origin;
+}
+
 /** Who initiated a NEW dispatch (index.ts handleRunGoal, at record creation): a key is an operator act, node-self the
  *  system's. goal-host's own requeue and resume continue a dispatch, so they keep its initiator: the requeue's from the
  *  record the drain held, the resume's from the record its resumed_from: tag names. Only an in-process self-call

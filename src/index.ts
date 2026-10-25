@@ -18929,10 +18929,14 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // self-dispatch amplifiers (escalateNoProducerToInvestigation, resume) re-issue the
   // same unreachable goal dozens of times, saturating the in-flight pool and starving
   // real work. Skips requeues (intentional re-run) and targetTemplateId (no goal text).
+  // A goal is never folded into a REQUEUED dispatch of a different origin: a restart requeues whatever the store held
+  // (once, a test fixture), and an operator's goal coalesced into it would run as, and be graded as, that dispatch. The
+  // origin is peeked here (the held requeue initiator is consumed only at record creation, below).
   if (typeof goal === "string" && goal.trim().length > 0 && !targetTemplateId) {
     const norm = goal.trim();
+    const _origin = requestQueue.dispatchInitiator(principal, { requeueOf: requeueId, tags, heldRequeue: (id) => requeueInitiators.get(id), recordOf: (id) => executionStore.get(id) });
     for (const rec of executionStore.values()) {
-      if (rec.status === "running" && typeof rec.goal === "string" && rec.goal.trim() === norm) {
+      if (requestQueue.coalescesInto(rec, norm, _origin)) {
         console.log(`[run-goal] coalesced duplicate in-flight goal -> ${rec.dispatchId} (${norm.slice(0, 60)})`);
         return Response.json({ dispatchId: rec.dispatchId, status: "running", coalesced: true }, { status: 202 });
       }
