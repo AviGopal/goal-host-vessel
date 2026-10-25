@@ -9,11 +9,11 @@ const INDEX = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf8
 const at = (s: string): number => INDEX.indexOf(s);
 
 describe("[MUST-FAIL] the cut-caller ledger line appends the outcome the compose recorded", () => {
-  test("the no-walk stop reads the gap row and appends cutCallerOutcome right after the gap id", () => {
+  test("the no-walk stop reads the gap row and builds its line with cutCallerReason (the outcome before the gap id)", () => {
     const stop = at("if (_earlyCheckSupplyNoWalk) {");
     const block = INDEX.slice(stop, stop + 2000);
     expect(block).toContain("cutCallerOutcome(await readGapByIdForOracle(_probeGapId)");
-    expect(block).toContain("nothing landed for ${_probeGapId}${_cutOutcome} - a check-supply goal is never walked or escalated");
+    expect(block).toContain("goalReachReason: cutCallerReason(_probeGapId, _cutOutcome),");
   });
   test("the cut is timed where it is detected", () => {
     expect(INDEX).toContain("_earlyComposeCutAtCaller = true; _earlyComposeCutAtS = Math.round((Date.now() - _dispatchStartMs) / 1000);");

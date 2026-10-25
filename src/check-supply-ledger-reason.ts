@@ -49,3 +49,12 @@ export function cutCallerOutcome(
   const reason = (typeof l.reason === "string" && l.reason.trim()) || (typeof l.raw_excerpt === "string" && l.raw_excerpt.trim()) || "(no reason recorded)";
   return ` stage=${stage} reason=${reason}`.slice(0, REASON_MAX);
 }
+
+/**
+ * The cut caller's ledger line. The outcome (` stage=<s> reason=<r>`) comes BEFORE the gap id: readers keep only a
+ * prefix of the line (the supply's ledger keeps its first 240 characters), and with the outcome after a long gap id
+ * the stage was cut off, so the ledger said again only "nothing landed".
+ */
+export function cutCallerReason(gapId: string, outcome: string): string {
+  return `early edit-intent routed to feature_compose;${outcome} - the check_supply compose call failed or was refused and nothing landed for ${gapId} - a check-supply goal is never walked or escalated`;
+}

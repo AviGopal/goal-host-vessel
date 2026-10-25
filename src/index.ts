@@ -334,7 +334,7 @@ import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
-import { composeReportStage, cutCallerOutcome } from "./check-supply-ledger-reason";
+import { composeReportStage, cutCallerOutcome, cutCallerReason } from "./check-supply-ledger-reason";
 import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
 import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
@@ -15313,7 +15313,7 @@ async function runGoalWithRecoveryInner(
               selectedTemplateId: "feature_compose",
               completionShapes: ["fileEditResult"],
               attempts: 1,
-              goalReachReason: `early edit-intent routed to feature_compose; the check_supply compose call failed or was refused and nothing landed for ${_probeGapId}${_cutOutcome} - a check-supply goal is never walked or escalated`,
+              goalReachReason: cutCallerReason(_probeGapId, _cutOutcome),
               reached: false,
             };
           }
