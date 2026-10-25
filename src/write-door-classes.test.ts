@@ -180,6 +180,35 @@ describe("write door classes", () => {
     expect(door.taskWriteDoor(admitted, ["learningSummary"]).writeDoor.governs("activityTemplate_write")).toBe(true);
   });
 
+  // User ruling 2026-10-25: activity_create_variant is a change shape whose declaration admits the dispatch, so the
+  // pattern drafter's register_variant step (a pinned dispatch declaring it) runs its write.
+  it("must-fail: a dispatch declaring activity_create_variant is admitted, and its task door admits the variant write", () => {
+    const declared = ["activity_create_variant"];
+    expect(door.callerDeclaresWrite(declared)).toBe(true);
+    const admitted = door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared });
+    expect(admitted).toBe(true);
+    expect(door.taskWriteDoor(admitted, declared).writeDoor.admitted).toBe(true);
+    const VARIANT: C = { id: "draft-activity-from-pattern", outputShapes: ["activity_create_variant"] };
+    expect(filter("template_pick", [VARIANT], admitted, declared, [])).toEqual([VARIANT]);
+  });
+
+  it("control: undeclared, activity_create_variant is still refused; a non-write declaration admits nothing; fs/code writes admit as before", () => {
+    const lines: string[] = [];
+    const VARIANT: C = { id: "draft-activity-from-pattern", outputShapes: ["activity_create_variant"] };
+    for (const declared of [undefined, null, [] as string[]]) {
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(false);
+    }
+    expect(filter("template_pick", [VARIANT], notAdmitted, [], lines)).toEqual([]);
+    expect(door.taskWriteDoor(notAdmitted, []).writeDoor.governs("activity_create_variant")).toBe(true);
+    for (const s of ["fileContent", "llmCompletion", "gapDecomposition", "memoryNote_write", "activityTemplate_write", "activityVariant_write"]) {
+      expect([s, door.callerDeclaresWrite([s])]).toEqual([s, false]);
+      expect([s, door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: [s] })]).toEqual([s, false]);
+    }
+    for (const s of ["fs_edit", "fs_write", "code_modification_proposal", "apply_proposal_as_patch", "feature_compose"]) {
+      expect([s, door.callerDeclaresWrite([s])]).toEqual([s, true]);
+    }
+  });
+
   it("control: read shapes are unaffected", () => {
     const lines: string[] = [];
     expect(filter("template_pick", [READER], notAdmitted, [], lines)).toEqual([READER]);
