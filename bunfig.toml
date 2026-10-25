@@ -1,0 +1,4 @@
+[test]
+# Point GOAL_HOST_DISPATCH_STORE_PATH at a temp file before any test file imports src/index.ts. See
+# test/setup-dispatch-store-isolation.ts for why a per-file redirect is not enough.
+preload = ["./test/setup-dispatch-store-isolation.ts"]
