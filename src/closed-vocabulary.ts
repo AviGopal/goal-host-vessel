@@ -106,7 +106,7 @@ export function vocabularyFromSchema(fields: unknown): Vocabulary {
  */
 export function vocabularyFromRefusal(body: string): { field: string; allowed: string[] } | null {
   if (!body) return null;
-  const code = body.match(/\b(?:unknown|invalid|unsupported)_([a-z][a-z0-9_]*)\b/i);
+  const code = body.match(/\b(?:unknown|invalid|unsupported|empty|missing)_([a-z][a-z0-9_]*)\b/i);
   if (!code) return null;
   const field = code[1]!;
   const f = esc(field);
@@ -315,7 +315,7 @@ function schemaRequired(fields: unknown): string[] {
  * name the resolve protocol carries, never a field of the write, so it is left out of the
  * check and put back unchanged.
  */
-export function holdWriteToAdvertised(pointer: Record<string, unknown>, ad: WriteAdvertisement): ConstrainResult & { vocabulary: Vocabulary } {
+export function holdWriteToAdvertised(pointer: Record<string, unknown>, ad: WriteAdvertisement, alsoRequired: readonly string[] = []): ConstrainResult & { vocabulary: Vocabulary } {
   const { type: shapeType, ...rest } = pointer;
   const names = [...new Set([...pointerFieldNames(rest), ...(Array.isArray(ad.schemaFields) ? (ad.schemaFields as Array<Record<string, unknown>>).map((f) => String(f?.["name"] ?? "")).filter(Boolean) : [])])];
   const vocabulary = mergeVocabularies(
@@ -323,7 +323,7 @@ export function holdWriteToAdvertised(pointer: Record<string, unknown>, ad: Writ
     vocabularyFromSchema(ad.schemaFields),
     ad.learned ?? {},
   );
-  const r = constrainPointer(rest, vocabulary, schemaRequired(ad.schemaFields));
+  const r = constrainPointer(rest, vocabulary, [...schemaRequired(ad.schemaFields), ...alsoRequired]);
   const out = shapeType === undefined ? r.pointer : { type: shapeType, ...r.pointer };
   return { pointer: out, changes: r.changes, refused: r.refused, vocabulary };
 }
@@ -368,10 +368,33 @@ export function createDescriptionReader(url: string, ttlMs: number, fetchImpl: t
 }
 
 /**
- * The one repaired resend after a refused write. Only a 422 is read; `send` is called at most
- * once, and only when the refusal named allowed values that changed the pointer. Returns the
- * resend's status and body when it was made, the vocabulary learned either way, and a line
- * saying what happened (null when the refusal taught nothing).
+ * The field a refusal says is missing: "empty_<field>" / "missing_<field>", "<field> is required",
+ * or "missing (required) field <field>". Null when the refusal names none.
+ */
+export function missingFieldFromRefusal(body: string): string | null {
+  if (!body) return null;
+  const m = body.match(/\b(?:empty|missing)_([a-z][a-z0-9_]*)\b/i)
+    ?? body.match(/\bmissing(?:\s+required)?\s+(?:field|argument|parameter)s?\s*:?\s*["'`]?([A-Za-z_][\w]*)/i)
+    ?? body.match(/["'`]?([A-Za-z_][\w]*)["'`]?\s+(?:is|are)\s+required\b/i);
+  return m ? m[1]! : null;
+}
+
+/** Map a refused field name to the pointer key or advertised field that carries it ("block" -> "blocks"). */
+function fieldKey(field: string, names: readonly string[]): string {
+  const keys = new Set(names);
+  return [field, `${field}s`, `${field}es`].find((k) => keys.has(k)) ?? field;
+}
+
+/**
+ * The one repaired resend after a refused write. Only a 422 is read, and `send` is called at
+ * most once:
+ *   - a refusal naming a MISSING field re-synthesizes the args with the refusal text in hand
+ *     (`resynthesize`), adds what the pointer lacks (the missing field and any other absent key,
+ *     never overwriting one it carries), holds the result to the vocabulary, and resends only if
+ *     the missing field is now present;
+ *   - a refusal naming allowed values repairs from them and resends only if the pointer changed.
+ * Returns the resend's status and body when it was made, the vocabulary learned either way, and
+ * a line saying what happened (null when the refusal taught nothing).
  */
 export async function repairAndResendOnce(
   pointer: Record<string, unknown>,
@@ -379,11 +402,56 @@ export async function repairAndResendOnce(
   refusalBody: string,
   ad: WriteAdvertisement,
   send: (p: Record<string, unknown>) => Promise<{ status: number; ok: boolean; text: () => Promise<string> }>,
+  resynthesize?: (refusal: string) => Promise<Record<string, unknown> | null>,
 ): Promise<{ learned: Vocabulary; resent: { pointer: Record<string, unknown>; status: number; ok: boolean; bodyText: string; response: unknown } | null; note: string | null }> {
   if (status !== 422) return { learned: ad.learned ?? {}, resent: null, note: null };
+  const missing = missingFieldFromRefusal(refusalBody);
+  if (missing && resynthesize) {
+    const { type: _t, ...rest } = pointer;
+    const taught = refusalVocabulary(refusalBody, pointerFieldNames(rest));
+    const learned = mergeVocabularies(ad.learned ?? {}, taught);
+    let fresh: Record<string, unknown> | null = null;
+    try { fresh = await resynthesize(refusalBody); } catch { fresh = null; }
+    const key = fieldKey(missing, [...pointerFieldNames(rest), ...Object.keys(fresh ?? {})]);
+    if (!fresh || fresh[key] === undefined || fresh[key] === null) {
+      return { learned, resent: null, note: `HTTP 422: the refusal names the missing field "${key}" and re-synthesis did not supply it; not retrying` };
+    }
+    const merged: Record<string, unknown> = { ...pointer };
+    for (const [k, v] of Object.entries(fresh)) if (k !== "type" && (!(k in merged) || merged[k] === undefined || merged[k] === null || k === key)) merged[k] = v;
+    const held = holdWriteToAdvertised(merged, { ...ad, learned }, [key]);
+    if (held.refused) return { learned, resent: null, note: `HTTP 422 named the missing field "${key}"; the re-synthesized value cannot satisfy it — ${held.refused}; not retrying` };
+    const r = await send(held.pointer);
+    return { learned, resent: { pointer: held.pointer, status: r.status, ok: r.ok, bodyText: await r.text(), response: r }, note: `HTTP 422 named the missing field "${key}" — re-synthesized with the refusal in the prompt and resent once${held.changes.length ? ` (held: ${held.changes.join("; ")})` : ""}` };
+  }
   const rep = repairFromRefusal(pointer, refusalBody, ad);
   if (rep.refused) return { learned: rep.learned, resent: null, note: `the refusal's allowed values cannot satisfy the pointer — ${rep.refused}; not retrying` };
   if (!rep.retry) return { learned: rep.learned, resent: null, note: null };
   const r = await send(rep.pointer);
   return { learned: rep.learned, resent: { pointer: rep.pointer, status: r.status, ok: r.ok, bodyText: await r.text(), response: r }, note: `HTTP 422 named the allowed values — repaired once and resent: ${rep.changes.join("; ")}` };
+}
+
+/**
+ * The prompt block that carries a write shape's ADVERTISED contract to arg synthesis when its
+ * owner serves no resolver_schema: the description verbatim (which states order semantics and
+ * limits in its own words), then each field contract read from it — a closed scalar's allowed
+ * values, and a list field's allowed items (per scope value) — so the model GENERATES the fields
+ * the owner checks instead of leaving them out. Empty when a schema is served or nothing is
+ * advertised; the schema's own contract block is used then, unchanged.
+ */
+export function advertisedContractPrompt(shape: string, description: string | null | undefined, schemaServed: boolean): string {
+  const d = (description ?? "").trim();
+  if (schemaServed || !d) return "";
+  const words = [...new Set(d.match(/[A-Za-z][\w-]*/g) ?? [])];
+  const v = vocabularyFromDescription(d, words);
+  const lines: string[] = [];
+  for (const [field, fv] of Object.entries(v)) {
+    if (fv.scoped) {
+      for (const [val, items] of Object.entries(fv.scoped.values)) {
+        lines.push(`- "${field}" is a LIST (JSON array) of tokens; when "${fv.scoped.by}" is "${val}" each item is one of: ${items.join(", ")}. Emit it whenever the goal implies anything about it; its order is as the description states.`);
+      }
+    } else if (fv.allowed?.length) {
+      lines.push(`- "${field}" is one of: ${fv.allowed.join(", ")}${fv.allowed.length === 1 ? ` (the only allowed value: emit "${fv.allowed[0]}")` : ""}.`);
+    }
+  }
+  return `ADVERTISED CONTRACT for shape "${shape}" (the owning vessel's own description; it serves no resolver_schema, so this is the contract its writes are checked against — emit every field it describes that the goal implies, using ONLY values it allows):\n${d}\n${lines.length ? `Field contract read from it:\n${lines.join("\n")}\n` : ""}\n`;
 }

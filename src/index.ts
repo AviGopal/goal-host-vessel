@@ -25,7 +25,7 @@ import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
 import { quoteUrlsWithAmpersands, COMMAND_KEYS } from './command-repair';
-import { createDescriptionReader, holdWriteToAdvertised, parseJsonObjectLenient, repairAndResendOnce, type Vocabulary } from './closed-vocabulary';
+import { advertisedContractPrompt, createDescriptionReader, holdWriteToAdvertised, parseJsonObjectLenient, repairAndResendOnce, type Vocabulary } from './closed-vocabulary';
 import { Config } from './config';
 import { landedShaForGoal } from './landed-sha';
 import { quiesceRefusal } from './quiesce';
@@ -9086,6 +9086,9 @@ async function runGoalAsPoolWalkBody(
        }
      }
    } catch { /* fail-open: no vessel schema advertised, fall back to how-to + goal text */ }
+   // NO SCHEMA, STILL A CONTRACT (closed-vocabulary.ts): a write whose owner serves no resolver_schema is shown the
+   // shape's ADVERTISED description and the field contract read from it, so required fields are generated, not omitted.
+   if (!schemaContract && /_write$/.test(shape)) schemaContract = advertisedContractPrompt(shape, await advertisedDescription(shape), false);
    let howToGuidance = "";
     try {
       // Same three faults as the walk-time recall, same fix: pinned port -> masked
@@ -9755,7 +9758,7 @@ async function runGoalAsPoolWalkBody(
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify(walkResolveBody(shape, p, { caller: "goal-host:walk_llm_completion", task_type: "walk_llm_completion", ...(dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) })),
           signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
-        }));
+        }), (refusal) => llmExtractPointerArgs(shape, refusal));
         refusalVocabByShape.set(shape, _rep.learned);
         if (_rep.note) tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): ${_rep.note}`);
         if (_rep.resent) {
