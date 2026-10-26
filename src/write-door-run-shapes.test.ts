@@ -127,3 +127,74 @@ describe("the run door judges what a template writes", () => {
     expect(no).toBe(true);
   });
 });
+
+// THE WRITE A FETCH CARRIES (write-door.ts fetchedResolveWrites): an http_fetch POST of an impulse to a resolve URL
+// writes that impulse's type, exactly like a native task of the type; an opaque resolve POST is a write (fail closed).
+describe("an http_fetch POST to a resolve URL is judged as the write it carries", () => {
+  beforeEach(async () => (await import("./write-door")).resetWriteDoorCounters());
+  const fetchTask = (config: Record<string, unknown>) => ({ id: "post", resolver: "http_fetch", config: { type: "http_fetch", ...config }, outputShapes: ["http_fetch"] });
+  const composition = (task: unknown) => ({ id: "learned-composition-test-suite-to-http-fetch", output_shapes: ["test_suite"], tasks: [{ id: "t1", resolver: "test_suite", outputShapes: ["test_suite"] }, task] });
+  const GAP_POST = fetchTask({ url: "http://127.0.0.1:8090/v2/impulses/resolve", method: "POST", body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", summary: "x" } } }) });
+  const judge = async (m: Door, template: unknown, admitted = false, product: Set<string> = new Set()) => {
+    const lines: string[] = [];
+    const refused = await m.templateRunRefused("activity:⟨learned-composition-test-suite-to-http-fetch⟩", ["test_suite"], async () => template, admitted, "composite_pick", new m.DoorRefusals().forDispatch("d"), "h1", (l) => lines.push(l), product);
+    return { refused, lines };
+  };
+
+  it("[MUST-FAIL] a read goal's composition whose http_fetch POSTs {impulse:{type:substrateGap_write}} to a resolve URL is refused at the door", async () => {
+    const m = await door();
+    expect(m.templateRunShapes(composition(GAP_POST))).toContain("substrateGap_write");
+    const r = await judge(m, composition(GAP_POST));
+    expect(r.refused).toBe(true);
+    expect(r.lines[0]).toContain("door=composite_pick");
+    // the body as an object, in config.pointer, and the type only on the pointer are the same write
+    const asPointer = { id: "post", resolver: "http_fetch", config: { pointer: { type: "http_fetch", url: "http://localhost:18080/v2/impulses/resolve", method: "post", body: { pointer: { type: "concept_write" } } } } };
+    expect((await judge(m, composition(asPointer))).refused).toBe(true);
+    // an impulse-resolve task that sends an http_fetch pointer carries the same write
+    const viaResolve = { id: "post", resolver: "impulse-resolve", config: { pointer: { type: "http_fetch", url: "http://127.0.0.1:8090/v2/impulses/resolve", method: "POST", body: JSON.stringify({ impulse: { type: "substrateGap_write" } }) } } };
+    expect(m.fetchedResolveWrites(viaResolve)).toEqual(["substrateGap_write"]);
+  });
+
+  it("[MUST-FAIL] an opaque resolve POST is a write: unparseable body, a placeholder type, a placeholder body, a placeholder method or URL, no body", async () => {
+    const m = await door();
+    const url = "http://127.0.0.1:8080/v2/impulses/resolve";
+    for (const cfg of [
+      { url, method: "POST", body: "{\"impulse\": {\"type\": \"x\", \"limit\": {{n}}}}" },
+      { url, method: "POST", body: JSON.stringify({ impulse: { type: "{{variables.shape}}" } }) },
+      { url, method: "POST", body: "{{impulse:payload}}" },
+      { url, method: "POST", body: JSON.stringify({ impulse: { pointer: { limit: 1 } } }) },
+      { url, method: "{{variables.method}}", body: "{}" },
+      { url: "{{variables.endpoint}}", method: "POST", body: "{}" },
+      { url, method: "POST" },
+    ]) {
+      expect(m.fetchedResolveWrites(fetchTask(cfg))).toEqual([m.OPAQUE_RESOLVE_WRITE]);
+      expect((await judge(m, composition(fetchTask(cfg)))).refused).toBe(true);
+    }
+  });
+
+  it("CONTROL: an http_fetch GET, a POST to a non-resolve URL, and a resolve POST of a read shape are unaffected", async () => {
+    const m = await door();
+    const get = fetchTask({ url: "http://127.0.0.1:8090/v2/impulses/resolve?type=substrateGap_write" });
+    const elsewhere = fetchTask({ url: "https://example.org/api/items", method: "POST", body: "{{impulse:payload}}" });
+    const readResolve = fetchTask({ url: "http://127.0.0.1:8080/v2/impulses/resolve", method: "POST", body: JSON.stringify({ impulse: { type: "executionTraceWithSignatures", pointer: { type: "executionTraceWithSignatures", limit: 1 } } }) });
+    for (const t of [get, elsewhere, readResolve]) {
+      const r = await judge(m, composition(t));
+      expect(r.refused).toBe(false);
+      expect(r.lines).toEqual([]);
+    }
+  });
+
+  it("CONTROL: a goal declared as a write still reaches its http_fetch write", async () => {
+    const m = await door();
+    expect((await judge(m, composition(GAP_POST), true)).refused).toBe(false);
+    // and a store write that is the goal's own product still runs
+    expect((await judge(m, composition(GAP_POST), false, new Set(["substrateGap_write"]))).refused).toBe(false);
+  });
+
+  it("a vessel resolver registered as <shape>/<kind> is judged by the shape it serves", async () => {
+    const m = await door();
+    const t = { id: "panel", output_shapes: ["llm_completion"], tasks: [{ id: "t1", resolver: "uiPanel_write/pattern", outputShapes: ["llm_completion"] }] };
+    expect(m.templateRunShapes(t)).toContain("uiPanel_write");
+    expect((await judge(m, t)).refused).toBe(true);
+  });
+});

@@ -180,10 +180,51 @@ export function writeDoorShapes(shapes: readonly string[], admitted: boolean, do
   return writeDoorFilter(shapes, (s) => [s], admitted, door, goalHash, record, String, goalProduct ?? new Set(shapes));
 }
 
+/** The shape an http_fetch task writes when its request is opaque (see fetchedResolveWrites): refused like a store write. */
+export const OPAQUE_RESOLVE_WRITE = "opaque_resolve_write";
+
+/** A URL whose path is an impulse resolve endpoint (/v2/impulses/resolve, or discovery's /resolve), on any host. */
+const RESOLVE_PATH = /\/(?:v2\/impulses\/)?resolve\/?(?:[?#]|$)/;
+
 /**
- * Every shape a template run produces: its declared outputs and each task's resolver id, config.pointer.type and
- * outputs (what the executor's task door reads; a vessel resolver is registered under the shape it serves, and an
- * impulse-resolve task writes the type of the pointer it sends).
+ * THE WRITE A FETCH CARRIES: an http_fetch task that POSTs an impulse to a resolve URL writes the impulse's type, exactly
+ * like a native task of that type (measured class: a composition's http_fetch POST of {impulse:{type:
+ * "substrateGap_write"}} is a gap write the resolver id alone does not name). The request is read from the task's
+ * config (or config.pointer): GET and HEAD send nothing; a POST to any other URL is not judged here. Fail closed: a
+ * method or URL that is a placeholder, or a resolve POST whose body is absent, unparseable or names no literal type
+ * (a `{{…}}` value could bind to any type at run time, and this door judges the template before binding), writes
+ * OPAQUE_RESOLVE_WRITE. The read types it names (a resolve of a read shape) are returned too and refused by nothing.
+ */
+export function fetchedResolveWrites(task: unknown): string[] {
+  const k = (task ?? {}) as { resolver?: unknown; config?: Record<string, unknown> };
+  const config = k.config && typeof k.config === "object" ? k.config : {};
+  const resolver = typeof k.resolver === "string" ? k.resolver.replace(/\/[^/]*$/, "") : "";
+  const pointer = config.pointer && typeof config.pointer === "object" ? (config.pointer as Record<string, unknown>) : null;
+  if (resolver !== "http_fetch" && config.type !== "http_fetch" && pointer?.type !== "http_fetch") return [];
+  const req = pointer && ("url" in pointer || "body" in pointer || "method" in pointer) ? pointer : config;
+  const opaque = (v: unknown): boolean => typeof v === "string" && v.includes("{{");
+  const method = req.method === undefined ? "GET" : req.method;
+  if (typeof method !== "string" || opaque(method)) return [OPAQUE_RESOLVE_WRITE];
+  if (/^(GET|HEAD)$/i.test(method.trim())) return [];
+  const url = req.url;
+  if (typeof url !== "string" || opaque(url)) return [OPAQUE_RESOLVE_WRITE];
+  if (!RESOLVE_PATH.test(url)) return [];
+  let body: unknown = req.body;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch { return [OPAQUE_RESOLVE_WRITE]; }
+  }
+  if (!body || typeof body !== "object") return [OPAQUE_RESOLVE_WRITE];
+  const b = body as { type?: unknown; impulse?: { type?: unknown; pointer?: { type?: unknown } }; pointer?: { type?: unknown } };
+  const named = [b.impulse?.type, b.impulse?.pointer?.type, b.pointer?.type, b.type].filter((v) => v !== undefined);
+  if (named.length === 0 || named.some((v) => typeof v !== "string" || !v || opaque(v))) return [OPAQUE_RESOLVE_WRITE];
+  return [...new Set(named as string[])];
+}
+
+/**
+ * Every shape a template run produces: its declared outputs and each task's resolver id (and the shape it serves, the
+ * id less a `/kind` suffix), config.pointer.type, outputs, and the impulse type an http_fetch task POSTs to a resolve URL
+ * (what the executor's task door reads; a vessel resolver is registered under the shape it serves, and an impulse-
+ * resolve task writes the type of the pointer it sends).
  */
 export function templateRunShapes(template: unknown): string[] {
   const t = (template ?? {}) as { outputShapes?: unknown; output_shapes?: unknown; tasks?: unknown };
@@ -191,10 +232,14 @@ export function templateRunShapes(template: unknown): string[] {
   const shapes = [...list(t.outputShapes), ...list(t.output_shapes)];
   for (const task of Array.isArray(t.tasks) ? t.tasks : []) {
     const k = (task ?? {}) as { resolver?: unknown; outputShapes?: unknown; config?: { pointer?: { type?: unknown } } };
-    if (typeof k.resolver === "string" && k.resolver !== "compose" && k.resolver !== "compose_parallel") shapes.push(k.resolver);
+    if (typeof k.resolver === "string" && k.resolver !== "compose" && k.resolver !== "compose_parallel") {
+      shapes.push(k.resolver);
+      const served = k.resolver.replace(/\/[^/]*$/, "");
+      if (served && served !== k.resolver) shapes.push(served);
+    }
     const pointerType = k.config?.pointer?.type; // the pointer an impulse-resolve task sends
     if (typeof pointerType === "string" && pointerType) shapes.push(pointerType);
-    shapes.push(...list(k.outputShapes));
+    shapes.push(...list(k.outputShapes), ...fetchedResolveWrites(task));
   }
   return [...new Set(shapes)];
 }
