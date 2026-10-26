@@ -298,6 +298,7 @@ import { parseFileExtension } from "./file-extension";
 import { decideEscalationTarget } from "./escalation-target";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite, walkResolveBody } from "./applied-write";
+import { isSatisfierOnlyTrace, satisfierReachMetadata, satisfierStepAudit, thrownVerifyDurableTrace, withBetaWithheld } from "./satisfier-durable-trace";
 import * as judge from "./judge/entries";
 import * as judgeInputs from "./judge/inputs";
 import { zeroToolWriteClaim } from "./judge/floor-clamps";
@@ -7779,15 +7780,8 @@ export async function persistWithinDeadline(persist: Promise<void>, deadlineMs: 
   if (!settled) console.warn(`[goal-host-vessel] durable satisfier trace ${traceId} NOT persisted within ${ms}ms — the walk continues; the insert keeps running and is graded at insert by its tags when it lands (a /reach before it may match no row)`);
   return settled;
 }
-/**
- * A WITHHELD β RIDES ON THE PERSISTED TRACE. The trace sink forwards only tags and metadata, so the walk's
- * withhold decision travels as tags activity-api's insert path reads (beta_withheld:true, beta_withheld_reason:<r>):
- * it then applies no α/β to the arm and marks the row reach_withheld:true, as POST /reach does for beta_withheld.
- */
-export function withBetaWithheld(tags: readonly string[] | undefined, reason: string | null | undefined): string[] {
-  const kept = (tags ?? []).filter((t) => t !== "beta_withheld:true" && !t.startsWith("beta_withheld_reason:"));
-  return [...kept, "beta_withheld:true", ...(reason ? [`beta_withheld_reason:${reason}`] : [])];
-}
+// A WITHHELD β RIDES ON THE PERSISTED TRACE (satisfier-durable-trace.ts, re-exported for its importers).
+export { withBetaWithheld };
 async function persistSatisfierTrace(trace: ExecutionTrace): Promise<void> {
   // SPEND ACCOUNTING: every trace persisted here used to carry costUsd 0 and, off the floor,
   // tokens 0. Attribute the LLM usage this dispatch made since its previous persisted trace,
@@ -11975,6 +11969,8 @@ If one of those sibling shapes is the action that would create what the goal ask
             // the GOAL DIRECTION ((c1); goal-direction-signature.ts), not only by its one constant pool bucket.
             metadata: { satisfier: true, shape: satisfiableNow, ...(target.size > 0 ? { goal_target_shapes: [...target].sort() } : {}) },
           };
+          // AUDITABLE STEP (agf_bgj5catiey2l): what this resolve bound and a digest of what it returned.
+          Object.assign(synthTrace.metadata ?? (synthTrace.metadata = {}), satisfierStepAudit(stepBound, resolved.content));
           satisfierTraces.push(synthTrace);
           chain.push(satId);
           // CONSUMPTION-EDGE DECLARATION, BOUND-ONLY (CONSUMPTION-EDGE-ANALYSIS, agentic-floor
@@ -12623,6 +12619,7 @@ If one of those sibling shapes is the action that would create what the goal ask
                     // Same goal-direction key as the satisfier site above ((c1)).
                     metadata: { satisfier: true, shape: missingShape, ...(target.size > 0 ? { goal_target_shapes: [...target].sort() } : {}) },
                   };
+                  Object.assign(_vrSynthTrace.metadata ?? (_vrSynthTrace.metadata = {}), satisfierStepAudit(stepBound, _vrResolved.content)); // same audit as above
                   satisfierTraces.push(_vrSynthTrace);
                   chain.push(_vrSatId);
                   ledgerStep(undefined, [missingShape]);
@@ -12899,6 +12896,10 @@ If one of those sibling shapes is the action that would create what the goal ask
   let walkAbstain: GoalReachVerdict["abstain"];
   // The reach as finally decided (after every flip below) came from a DETERMINISTIC oracle: the bank gate's input.
   let walkReachDeterministic = false;
+  // A THROW IN VERIFY MUST NOT DROP THE TRACE (agf_bgj5catiey2l): the durable trace the verify built (null until
+  // then) and the verify's error, for the FINALLY below that flushes and, when the verify threw first, persists.
+  let walkDurableTrace: ExecutionTrace | null = null;
+  let walkVerifyError: string | null = null;
 
   if (!lastTrace || chain.length === 0) {
     reached = false;
@@ -13823,11 +13824,15 @@ If one of those sibling shapes is the action that would create what the goal ask
           tags: (!reached && walkBetaWithheld) ? _existingTags : [..._existingTags, reached ? "reached:true" : "reached:false"],
           // One chain carrier per walk (OP-1): a graded not-reached durable trace carries only ancestors this dispatch has not charged.
           ...(walkChainCarrier ? { compositionChain: walkChainCarrier.durable } : {}),
+          // AUDITABLE (agf_bgj5catiey2l), the floor's model: the answer (final_text's cap) or a pointer to it, the reach
+          // reason on EVERY verdict, and each satisfier step's resolver, bound inputs and content digest.
+          metadata: { ...(lastTrace.metadata ?? {}), ...satisfierReachMetadata({ reached, reachReason: goalReachReason ?? lastTrace.reason, answerBody, answerPointer: lastTrace.outputImpulseIds, steps: satisfierTraces }) },
         };
         // Untagged is not enough: activity-api's insert path blamed a failed ungraded trace β=1 anyway. Say so on the trace.
         if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
         // A DECLINE, queryable: activity-api's isReachInapplicable reads declined:<class>; the decliner's reason rides in metadata.
         if (!reached && walkDeclined) { durableTrace.tags = [...(durableTrace.tags ?? []).filter((t) => !t.startsWith("declined:")), `declined:${walkDeclined.class}`]; durableTrace.metadata = { ...(durableTrace.metadata ?? {}), decline: { class: walkDeclined.class, reason_text: walkDeclined.reason, decliner_id: String(lastPick) } }; }
+        walkDurableTrace = durableTrace; // the persist below is started; the finally does not post a second one
         // AWAITED (OP-1): the walk-complete /reach for this execution is delivered after the walk returns, so a
         // fire-and-forget insert raced it and /reach matched no row in ~24% of satisfier-last walks (diag-1c).
         // BOUNDED BY THE SHAPED FLUSH DEADLINE (qa): the sink alone bounds it only by postWithRetry — 3 attempts of
@@ -13838,7 +13843,21 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
       walkReachDeterministic = reached === true && isDeterministicVerdict(verdict);
     } catch (e) {
+      walkVerifyError = String((e as Error)?.message ?? e);
       console.warn("[goal-host-vessel] walk goal-reach verify error (non-fatal):", (e as Error).message);
+    } finally {
+      // THE FLUSH AND THE DURABLE PERSIST OUTLIVE A THROWING VERIFY (agf_bgj5catiey2l). Both sat inside the try, so
+      // a throw dropped every unflushed step and the durable row. After a throw the flush runs again (it posts each
+      // trace once), and when the throw came before the durable persist, the trace persists here with the error.
+      if (walkVerifyError !== null) try {
+        await flushSatisfierTraces(lastTrace);
+        const _thrown = walkDurableTrace === null
+          ? thrownVerifyDurableTrace(lastTrace, { reached, reachReason: goalReachReason, answerBody, answerPointer: lastTrace.outputImpulseIds, steps: satisfierTraces, verifyError: walkVerifyError })
+          : null;
+        if (_thrown && isSatisfierOnlyTrace(lastTrace)) await persistWithinDeadline(persistSatisfierTrace(_thrown), (await resolveSelectionTuning()).satisfierFlushDeadlineMs, _thrown.id);
+      } catch (e) {
+        console.warn(`[goal-host-vessel] walk trace flush after verify failed (non-fatal): ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+      }
     }
     // BANK GATE (reached-command-store.ts shouldBank): one judge "yes" banked a command that the retry of the same failed
     // dispatch then replayed. Bank only a deterministic oracle's reach. No second INDEPENDENT observer exists here: the
