@@ -25,6 +25,7 @@ import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
 import { betaSample } from './beta-sample';
 import { quoteUrlsWithAmpersands, COMMAND_KEYS } from './command-repair';
+import { createDescriptionReader, holdWriteToAdvertised, parseJsonObjectLenient, repairAndResendOnce, type Vocabulary } from './closed-vocabulary';
 import { Config } from './config';
 import { landedShaForGoal } from './landed-sha';
 import { quiesceRefusal } from './quiesce';
@@ -6730,6 +6731,8 @@ async function fetchKnownShapes(): Promise<string[]> {
 // The dead getCachedKnownShapes() and its two backing vars were removed here; this
 // const is NOT part of that block — it is read by two live cache paths further up.
 const KNOWN_SHAPES_TTL_MS = 5 * 60 * 1000;
+// A write shape's advertised description, read at pointer-build time (closed-vocabulary.ts).
+const advertisedDescription = createDescriptionReader(`${DISCOVERY_ENDPOINT.replace(/\/$/, "")}/registry/shape-descriptions`, KNOWN_SHAPES_TTL_MS);
 
 function canonicalizeShapeName(raw: string, known: string[]): string | null {
   function normalize(s: string): string {
@@ -9001,6 +9004,10 @@ async function runGoalAsPoolWalkBody(
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
   const satisfierTried = new Set<string>();
+  // CLOSED VOCABULARY (closed-vocabulary.ts): per write shape, the resolver_schema fields arg synthesis read and the
+  // allowed values the shape's own refusals named this walk, so every later write of the shape is held to them.
+  const advertisedSchemaFields = new Map<string, unknown>();
+  const refusalVocabByShape = new Map<string, Vocabulary>();
   // ROUTE-AROUND input (route-around.ts): why each satisfier this walk tried came back empty — the
   // per-shape reason that lastRawResolveReason (last-wins) loses by the time the walk stalls.
   const satisfierFailures = new Map<string, string>();
@@ -9060,6 +9067,7 @@ async function runGoalAsPoolWalkBody(
          if (cc && cc.known === true && Array.isArray(cc.fields)) {
            const req = cc.fields.filter((f: any) => f.required).map((f: any) => f.name);
            requiredFields = req as string[];
+           advertisedSchemaFields.set(shape, cc.fields);
            const opt = cc.fields.filter((f: any) => !f.required).map((f: any) => f.name);
            if (!execField) execField = req.find((r: string) => EXEC_FIELDS.includes(r)) ?? "";
            // A contract may describe a FLAT-pointer resolver, in which case it carries no
@@ -9202,11 +9210,15 @@ async function runGoalAsPoolWalkBody(
       if (!rr.ok) return null;
       const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
-      const m = String(text).match(/\{[\s\S]*\}/);
-      if (!m) return null;
-      const parsed = JSON.parse(m[0]);
-      const args = (parsed && typeof parsed === "object" && !Array.isArray(parsed)) ? parsed as Record<string, unknown> : null;
-      if (!args) return null;
+      // ONLY VALID JSON IS SENT (closed-vocabulary.ts): the first balanced object, comments and trailing commas
+      // removed; anything still invalid is refused here with its reason (it used to throw and log as "fetch threw").
+      const _pj = parseJsonObjectLenient(String(text));
+      if (!_pj.ok) {
+        lastRawResolveReason = _pj.reason;
+        console.log(`[goal-host-vessel] walk: arg synthesis for "${shape}" REFUSED — ${_pj.reason}; no call made`);
+        return null;
+      }
+      const args = _pj.value;
       // BIND BEFORE SYNTHESISE (2026-09-03, operator directive: "we are not threading impulse
       // content through the activities in an effective way — impulses can be treated similarly
       // to variables").
@@ -9692,6 +9704,24 @@ async function runGoalAsPoolWalkBody(
         if (_spliced.command !== _c) { console.log(`[goal-host-vessel] walk rawResolve ${shape}: threaded pool shapes into ${_ef} deterministically (command is now a function of threaded inputs)`); pointer[_ef] = _spliced.command; }
       }
     }
+    // CLOSED VOCABULARY (closed-vocabulary.ts): a write is held to the values its shape advertises (description,
+    // resolver_schema enum, its own refusals this walk) before it is sent; an unsatisfiable closed field refuses the call.
+    const _vocabAd = /_write$/.test(shape)
+      ? { description: await advertisedDescription(shape), schemaFields: advertisedSchemaFields.get(shape), learned: refusalVocabByShape.get(shape) }
+      : null;
+    if (_vocabAd) {
+      const _held = holdWriteToAdvertised(pointer, _vocabAd);
+      if (_held.refused) {
+        noteRawResolveFailure(shape, `closed-vocabulary: ${_held.refused}`);
+        tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): REFUSED before sending — ${_held.refused}`);
+        return null;
+      }
+      if (_held.changes.length > 0) {
+        tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): held the pointer to the shape's advertised vocabulary — ${_held.changes.join("; ")}`);
+        for (const k of Object.keys(pointer)) delete pointer[k];
+        Object.assign(pointer, _held.pointer);
+      }
+    }
     let resp: Response;
     try {
       // SINGLE-WRITER POOL ROWS (walk-egress-guard.ts): a write the walk may never make is refused before egress.
@@ -9715,7 +9745,26 @@ async function runGoalAsPoolWalkBody(
       console.log(`[goal-host-vessel] walk rawResolve ${shape}: transport error — ${String((e as Error).message ?? e).slice(0, 140)}`);
       return null;
     }
-    const bodyText = await resp.text();
+    let bodyText = await resp.text();
+    // A 422 that names the allowed values is repaired from them ONCE: the values are kept for the walk, and the
+    // pointer is resent only when the repair changed it (never the same pointer twice, never a second retry).
+    if (!resp.ok && _vocabAd) {
+      try {
+        const _rep = await repairAndResendOnce(pointer, resp.status, bodyText, _vocabAd, (p) => walkEgressFetch(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+          body: JSON.stringify(walkResolveBody(shape, p, { caller: "goal-host:walk_llm_completion", task_type: "walk_llm_completion", ...(dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) })),
+          signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+        }));
+        refusalVocabByShape.set(shape, _rep.learned);
+        if (_rep.note) tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): ${_rep.note}`);
+        if (_rep.resent) {
+          resp = _rep.resent.response as Response; bodyText = _rep.resent.bodyText;
+          for (const k of Object.keys(pointer)) delete pointer[k];
+          Object.assign(pointer, _rep.resent.pointer);
+        }
+      } catch (e) { tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): the repaired resend failed — ${String((e as Error)?.message ?? e).slice(0, 140)}`); }
+    }
     if (!resp.ok) { noteRawResolveFailure(shape, bodyText.slice(0, 200), resp.status); console.log(`[goal-host-vessel] walk rawResolve ${shape}: HTTP ${resp.status} ${bodyText.slice(0, 140)}`); return null; }
     let parsed: unknown;
     try { parsed = JSON.parse(bodyText); } catch { parsed = bodyText; }
@@ -9831,9 +9880,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (!rr.ok) return null;
       const j: any = rr.json;
       const text = j?.body?.content ?? j?.content ?? j?.body?.text ?? "";
-      const m = String(text).match(/\{[\s\S]*\}/);
-      if (!m) return null;
-      const parsed = JSON.parse(m[0]) as { shape?: unknown; args?: unknown };
+      const _pj = parseJsonObjectLenient(String(text));
+      if (!_pj.ok) { console.log(`[goal-host-vessel] walk: action-shape selection REFUSED — ${_pj.reason}`); return null; }
+      const parsed = _pj.value as { shape?: unknown; args?: unknown };
       if (typeof parsed?.shape !== "string" || !siblings.includes(parsed.shape)) return null;
       const args = (parsed.args && typeof parsed.args === "object" && !Array.isArray(parsed.args)) ? parsed.args as Record<string, unknown> : {};
       return { shape: parsed.shape, args };
