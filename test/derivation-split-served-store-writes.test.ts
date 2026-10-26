@@ -16,6 +16,9 @@
 //   [CONTROL]   a read question that names a store noun beside a SERVED write (a surface panel) infers no write
 //               terminal through the real decision path, though the chooser proposes the write. The landing-page wording
 //               is a READ-control fixture qa requires, not a PREREG-UIVIEW goal; no view shape is used or special-cased.
+//   [MUST-FAIL] a read question RECALLING a past write ("What notes did I write in Obsidian yesterday?") infers no
+//               write terminal though obsidian:write_note is served and the chooser proposes it; the passive recall
+//               ("Which notes were written yesterday?") the same; "Write a note about X" keeps the write.
 //   [CONTROL]   an unserved store write, a change primitive, the pool write and activityVariant_write are never
 //               deferred deterministically; with no served set nothing is.
 import { describe, expect, it } from "bun:test";
@@ -111,6 +114,29 @@ describe("a read question naming a store noun beside a served write infers no wr
       expect([...split.intermediate, ...split.terminal].filter(isMutationShape)).toEqual([]);
     });
   }
+
+  // A read question RECALLING a past write: "did I write" names the vault and a write verb, and read as a request to
+  // write a note, so the read rule never ran and the chooser's obsidian:write_note became the goal's own target.
+  const RECALLS: Array<[string, string]> = [
+    ["[MUST-FAIL]", "What notes did I write in Obsidian yesterday?"],
+    ["[MUST-FAIL]", "Which notes were written yesterday?"],
+  ];
+  for (const [tag, goal] of RECALLS) {
+    it(`${tag} "${goal}": the proposed vault write is dropped and nothing is deferred as a write`, async () => {
+      expect(served.has(VAULT_WRITE)).toBe(true);
+      const stub = tempting(["memoryNote", VAULT_WRITE]);
+      const d = await inferGoalTargetDecision(goal, [...KNOWN, ...NEAR], { complete: stub.complete });
+      expect(stub.proposed.flat()).toContain(VAULT_WRITE);
+      expect([...d.shapes, ...d.alternatives.flat()].filter(isMutationShape)).toEqual([]);
+      const split = await inferDerivationSplit(goal, d.shapes, { servedShapes: served, complete: noLlm().complete });
+      expect([...split.intermediate, ...split.terminal].filter(isMutationShape)).toEqual([]);
+    });
+  }
+
+  it("[CONTROL] an imperative to write a note keeps the proposed vault write", async () => {
+    const d = await inferGoalTargetDecision("Write a note about the registry rewrite in Obsidian.", [...KNOWN, ...NEAR], tempting(["memoryNote", VAULT_WRITE]));
+    expect(d.shapes).toContain(VAULT_WRITE);
+  });
 
   const STORE_GOAL = "Save a summary of yesterday's meeting as an Obsidian note.";
   it("[CONTROL] the same tempting proposal on a store goal keeps the vault write (the stub tempts; the read rule decides)", async () => {

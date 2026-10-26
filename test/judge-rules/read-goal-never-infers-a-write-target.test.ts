@@ -13,6 +13,8 @@
 //               admits it (pins at both feeds).
 //   [MUST-FAIL] RUN 0 pos 5: the REGISTRY advertised it (development-vessel config.ts); a vocabulary containing it does
 //               not let it through inference, and fetchKnownShapes refuses it from the union of all feeds.
+//   [MUST-FAIL] "What notes did I write in Obsidian yesterday?" (and the passive "were written") is a read goal in
+//               the closed copy and asks for no artifact in the open rule; "Can you write a note about X?" is not a read.
 //   [CONTROL]   "update X to Y" still infers its write target and stays a write goal; "Can you update X to Y?" too.
 //   [CONTROL]   a read goal's non-mutation targets are kept; a question that asks to save a note keeps its write.
 import { describe, expect, it } from "bun:test";
@@ -56,6 +58,14 @@ describe("a read goal never infers a write target", () => {
     expect(src).toContain("if (isShapeName(s)) return true;");
   });
 
+  it("[MUST-FAIL] a question recalling a past write is a read goal, in both copies", () => {
+    for (const g of ["What notes did I write in Obsidian yesterday?", "Which notes were written yesterday?"]) {
+      expect([g, RG.isReadQuestionGoal(g)]).toEqual([g, true]);
+      expect([g, WG.goalRequiresArtifact(g, [])]).toEqual([g, false]);
+    }
+    expect(RG.isReadQuestionGoal("Can you write a note about X?")).toBe(false);
+  });
+
   it("[CONTROL] a change goal keeps its write target and stays a write goal", async () => {
     const upd = "update the README in repos/demo-vessel to describe the new flag";
     const d = await inferGoalTargetDecision(upd, KNOWN, llm(["fileEditResult"]));
@@ -85,7 +95,8 @@ describe("the closed read rule agrees with the reach gate's question rule", () =
       "Can you update repos/demo-vessel/src/x.ts to export y?", "What is the weather tomorrow? Save it as a note in my vault.",
       "update the README in repos/demo-vessel to describe the new flag", "How many modules are under repos/x/src?",
       "Could you fix gap gap-123 in repos/demo-vessel/src/a.ts?", "why does the walk choose webSearchResult", "list the vessels", "",
-      "Should we record the findings as a durable note?", "Which activity produced fileEditResult last?"];
+      "Should we record the findings as a durable note?", "Which activity produced fileEditResult last?",
+      "What notes did I write in Obsidian yesterday?", "Which notes were written yesterday?", "Write a note about X"];
     for (const g of GOALS) {
       const openQuestion = !!g && !WG.goalAsksForBehaviourChange(g) && (/\?\s*$/.test(g.trim()) || RG.QUESTION_LEAD.test(g));
       const openRead = openQuestion && !WG.goalAsksForChange(g) && !WG.goalRequiresArtifact(g, []);
@@ -106,7 +117,8 @@ describe("the closed read rule agrees with the reach gate's question rule", () =
       "Write a summary of the registry", "Make the system notice a stale memo", "why does the gate stop it",
       "Can you update repos/demo-vessel/src/x.ts to export y?", "update the README in repos/demo-vessel to describe the new flag",
       "Could you fix gap gap-123 in repos/demo-vessel/src/a.ts?", "Should we record the findings as a durable note?",
-      "Print /workspace/docs/plan.txt verbatim", "Please add a row to the ledger. Then report it."];
+      "Print /workspace/docs/plan.txt verbatim", "Please add a row to the ledger. Then report it.",
+      "What notes did I write in Obsidian yesterday?", "Which notes were written yesterday?", "Write a note about X"];
     for (const g of GOALS) expect([g, RG.goalDemandsArtifact(g)]).toEqual([g, WG.goalRequiresArtifact(g, [])]);
   });
 });

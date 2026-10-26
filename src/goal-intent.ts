@@ -34,7 +34,16 @@ export function goalRequestsDurableArtifact(rawGoal: string): boolean {
   // "write", "writes", "writing" or "written". The most natural phrasing for asking for a
   // durable artifact, "write a note titled X", did not register as one. Found by a test
   // asserting the stem worked; it did not.
-  const verb = /\b(record|save|persist|document|capture|writ(?:e|es|ing|ten)?|note down|log|jot|archive)\b/i.test(goal);
+  // A RECALL of a past write asks to READ it, not to write: "What notes did I write in Obsidian yesterday?", "which notes
+  // were written", "what have I written". Read as a request, it kept the chooser's obsidian:write_note as the goal's own
+  // target (the read guard never ran), so a read question could write a note. Those verb spans are removed before the
+  // verb test, so a request beside a recall ("What did I write? Save it as a note.") still counts. A perfect passive
+  // ("have been written") is not taken as recall: "make sure the findings have been written to the vault" asks for one.
+  const asked = goal
+    .replace(/\b(?:did|didn't|did not)\s+(?:[\w'-]+\s+){1,3}?(?:record|save|persist|document|capture|write|note down|log|jot|archive)\b/gi, " ")
+    .replace(/\b(?:was|were|wasn't|weren't)\s+(?:(?:ever|already|just|all|only)\s+)?written\b/gi, " ")
+    .replace(/\b(?:have|has|had|haven't|hasn't|hadn't)\s+(?:(?!been\b)[\w'-]+\s+){1,2}?written\b/gi, " ");
+  const verb = /\b(record|save|persist|document|capture|writ(?:e|es|ing|ten)?|note down|log|jot|archive)\b/i.test(asked);
   const noun = /\b(notes?|findings?|vault|obsidian|concepts?|report|document|memo|knowledge|journal)\b/i.test(goal);
   return verb && noun;
 }

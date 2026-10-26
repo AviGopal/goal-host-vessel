@@ -47,6 +47,20 @@ describe('goalRequestsDurableArtifact', () => {
     expect(goalRequestsDurableArtifact('write a note about the registry')).toBe(true);
     expect(goalRequestsDurableArtifact('written findings for the audit')).toBe(true);
   });
+
+  it('[MUST-FAIL] a question RECALLING a past write asks for no artifact; a request to write still does', () => {
+    // "What notes did I write in Obsidian yesterday?" read as a request to write a note, so the read guard never ran
+    // and the goal kept obsidian:write_note as its own target: a read question could write a note.
+    expect(goalRequestsDurableArtifact('What notes did I write in Obsidian yesterday?')).toBe(false);
+    expect(goalRequestsDurableArtifact('Which notes were written yesterday?')).toBe(false);
+    expect(goalRequestsDurableArtifact('What have I written in my vault this week?')).toBe(false);
+    expect(goalRequestsDurableArtifact('what did Alice save to the journal on Monday')).toBe(false);
+    expect(goalRequestsDurableArtifact("Save a summary of yesterday's meeting as an Obsidian note.")).toBe(true);
+    expect(goalRequestsDurableArtifact('Write a note about the registry rewrite')).toBe(true);
+    expect(goalRequestsDurableArtifact('Can you write a note about the registry rewrite?')).toBe(true);
+    expect(goalRequestsDurableArtifact('What did I write yesterday? Save it as a note.')).toBe(true);
+    expect(goalRequestsDurableArtifact('Make sure the findings have been written to the vault')).toBe(true);
+  });
 });
 
 describe('goalDemandsLandedEdit — a CREATION goal must demand landing evidence too', () => {
