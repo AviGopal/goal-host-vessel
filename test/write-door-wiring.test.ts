@@ -112,3 +112,42 @@ describe("write doors: store and change classes are wired", () => {
     expect(src).toContain("write_door_ias_task: (iasExecutor as unknown as { writeDoorTaskCounters?: () => unknown }).writeDoorTaskCounters?.() ?? null,");
   });
 });
+
+// WHAT A TEMPLATE WRITES, AT EVERY PICK THAT RUNS ONE (write-door.ts templateRunRefused, DoorRefusals). Measured: the
+// template_pick door dropped learned-composition-test-suite-to-substrategap-write twice, then the composite author
+// re-offered it with outputs [test_suite] and the composite door, judging only those outputs, let it run.
+describe("write doors: run shapes and the dispatch's refusals are wired", () => {
+  test("[MUST-FAIL] composite pick: the composite's own run shapes and the dispatch's refusals are judged before it is picked", () => {
+    const at = after("const _c = await authorComposite(", 1200);
+    expect(at).toContain('|| await templateRunRefused(_c.pick.id, _c.pick.outputShapes, () => getTemplateLocalFirst(_c.pick.id), changeAdmitted, "composite_pick", doorRefused, writeDoorHash, tap, writeDoorProduct))) {');
+    expect(at.indexOf("templateRunRefused(")).toBeLessThan(at.indexOf('pickSource = "improvise";'));
+    expect(at.indexOf("doorRefused.add(_c.pick.id);")).toBeLessThan(at.indexOf('pickSource = "improvise";'));
+  });
+  test("[MUST-FAIL] execute step: every pick's fetched template passes the run door before host.runTemplate", () => {
+    const run = src.indexOf("trace = await host.runTemplate(template, bvars, {");
+    const gate = src.lastIndexOf('if (await templateRunRefused(pick.id, pick.outputShapes ?? [], async () => template, changeAdmitted, pickSource === "improvise" ? "composite_pick" : pickSource === "bridge" ? "bridge_pick" : "template_pick", doorRefused, writeDoorHash, tap, writeDoorProduct)) {', run);
+    expect(gate).toBeGreaterThan(src.indexOf("template = await getTemplateLocalFirst(pick.id);"));
+    expect(run - gate).toBeLessThan(900);
+    expect(src.slice(gate, run)).toContain("continue;");
+  });
+  test("[MUST-FAIL] horizontal bundle: each branch's template passes the run door", () => {
+    const at = after("const tmpl = await getTemplateLocalFirst(c.id);", 500);
+    expect(at).toContain('if (await templateRunRefused(c.id, c.outputShapes, async () => tmpl, changeAdmitted, "template_pick", doorRefused, writeDoorHash, tap, writeDoorProduct)) return null;');
+    expect(at.indexOf("templateRunRefused(")).toBeLessThan(at.indexOf("host.runTemplate("));
+  });
+  test("[MUST-FAIL] the dispatch's record: one per dispatch, fed by every template_pick drop, taken at the terminal record", () => {
+    expect(src).toContain('const doorRefused = doorRefusals.forDispatch(String(opts.variables?.dispatch_id ?? ""));');
+    expect(src.match(/doorRefused\.noteDropped\(/g)?.length).toBe(3);
+    expect(after("candidates = writeDoorFilter(candidates,", 300)).toContain("doorRefused.noteDropped(_preDoor, candidates, (c) => c.id);");
+    expect(after("forward = writeDoorFilter(forward,", 300)).toContain("doorRefused.noteDropped(_preForward, forward, (c) => c.id);");
+    expect(after("const producers = writeDoorFilter(_found,", 300)).toContain("doorRefused.noteDropped(_found, producers, (c) => c.id);");
+    expect(src).toContain('doorRefusals.take(String(variables?.dispatch_id ?? record.dispatchId ?? ""));');
+  });
+  test("[MUST-FAIL] recovery pick: templates refused earlier in the dispatch are excluded from the pinned head and every recommendation", () => {
+    expect(src).toContain("const doorRefusedHeads: string[] = _changeAdmitted ? [] : _doorRefused.list();");
+    const pinned = src.indexOf("        nextTarget = pinnable;");
+    expect(src.slice(src.lastIndexOf("} else if (!_changeAdmitted && _doorRefused.has(pinnable)) {", pinned), pinned)).toContain("doorRefusedHeads.push(pinnable);");
+    expect(src).toContain("_doorRefused.add(pinnable);");
+    expect(src).toContain("const altPickRetry = await recommendExcluding(goal, [...excluded, ...doorRefusedHeads], repairKey,");
+  });
+});

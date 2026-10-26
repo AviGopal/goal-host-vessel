@@ -335,7 +335,9 @@ import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains,
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
 import { composeReportStage, cutCallerOutcome, cutCallerReason } from "./check-supply-ledger-reason";
-import { admittedChange, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
+import { admittedChange, DoorRefusals, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, templateRunRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
+// Templates a write door refused, per dispatch: refused again on any re-offer, taken at the terminal record write.
+const doorRefusals = new DoorRefusals();
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
 import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
@@ -8804,6 +8806,9 @@ async function runGoalAsPoolWalkBody(
   const writeDoorProduct = new Set<string>([...(opts.expectedOutputShapes ?? []), ...(opts.terminalOutputShapes ?? [])]);
   // A satisfier refusal is recorded and counted once per shape per walk (the satisfier re-evaluates every step).
   const writeDoorSatisfierNoted = new Set<string>();
+  // Templates any door refused in this DISPATCH (write-door.ts DoorRefusals): a retry walk, the composite author or the
+  // execute step re-offering one refuses it again.
+  const doorRefused = doorRefusals.forDispatch(String(opts.variables?.dispatch_id ?? ""));
 
   // REUSE BEFORE DERIVE — the proven composition for this goal, normalised to the
   // same id form the walk's candidates carry so the two are comparable.
@@ -12092,7 +12097,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     // WRITE DOOR (template pick, write-door.ts): a producer of a filesystem-write shape is not a candidate on a goal
     // not admitted as a change. Every single-pick tier below (reuse, genuine, scaffold, opportunistic) picks from here.
+    const _preDoor = candidates;
     candidates = writeDoorFilter(candidates, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
+    doorRefused.noteDropped(_preDoor, candidates, (c) => c.id);
 
     // (b) SELECT BEST — goal-gap weighted. With a target, prefer candidates that
     // advance TOWARD it; do NOT grab unrelated progress-makers (that wanders into
@@ -12215,7 +12222,9 @@ If one of those sibling shapes is the action that would create what the goal ask
             const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
             forward = (Array.isArray(rows) ? rows : []).map((c: any) => readCandidateShapes(c, _blendK)).filter((c): c is WalkCandidate => c !== null);
             // WRITE DOOR (template pick): the OR-edge's own forward fetch never passed through `candidates`.
+            const _preForward = forward;
             forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
+            doorRefused.noteDropped(_preForward, forward, (c) => c.id);
           }
         } catch { /* discover failed */ }
         const seen = new Set<string>();
@@ -12249,6 +12258,8 @@ If one of those sibling shapes is the action that would create what the goal ask
             try {
               const tmpl = await getTemplateLocalFirst(c.id);
               if (!tmpl) return null;
+              // WRITE DOOR (template pick, run shapes): a branch whose own tasks write outside the goal's product is not run.
+              if (await templateRunRefused(c.id, c.outputShapes, async () => tmpl, changeAdmitted, "template_pick", doorRefused, writeDoorHash, tap, writeDoorProduct)) return null;
               const bvars = poolVars();
               return await host.runTemplate(tmpl, bvars, {
                 impulses: poolImpulses,
@@ -12434,6 +12445,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             // (outputs shellResult, llm_completion, memoryNote_write) and its memoryNote_write task executed. A producer
             // of a missing target found here is picked below with no other door; only the candidate list above had one.
             const producers = writeDoorFilter(_found, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
+            doorRefused.noteDropped(_found, producers, (c) => c.id);
             // Prefer a GENUINE producer whose inputs are already satisfied (executable now).
             pick = producers.find((c) => !isHollowScaffold(c.id) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s))))
               ?? producers.find((c) => c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
@@ -12508,7 +12520,11 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (_why) {
         walkComposeTried = true;
         const _c = await authorComposite(goal, _missingC, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 180_000 });
-        if (_c.ok && writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id, writeDoorProduct).length === 0) {
+        if (_c.ok && (writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id, writeDoorProduct).length === 0
+          || await templateRunRefused(_c.pick.id, _c.pick.outputShapes, () => getTemplateLocalFirst(_c.pick.id), changeAdmitted, "composite_pick", doorRefused, writeDoorHash, tap, writeDoorProduct))) {
+          // Its declared outputs, a task it runs, or an earlier door in this dispatch refused it (write-door.ts).
+          doorRefused.add(_c.pick.id);
+          exclude.add(normActivityId(_c.pick.id));
           tap(`[goal-host-vessel] walk(${opts.surface}): composite ${_c.pick.id} REFUSED at the write door (outputs=[${_c.pick.outputShapes.join(",")}]) — not executing it`);
         } else if (_c.ok) {
           pickSource = "improvise";
@@ -12683,6 +12699,15 @@ If one of those sibling shapes is the action that would create what the goal ask
           continue;
         }
       }
+    }
+
+    // WRITE DOOR (execute, write-door.ts templateRunRefused): every pick reaches here with its template in hand, so the
+    // shapes its run writes are judged, not only the outputs its discovery row or the composite author declared.
+    if (await templateRunRefused(pick.id, pick.outputShapes ?? [], async () => template, changeAdmitted, pickSource === "improvise" ? "composite_pick" : pickSource === "bridge" ? "bridge_pick" : "template_pick", doorRefused, writeDoorHash, tap, writeDoorProduct)) {
+      exclude.add(normActivityId(pick.id));
+      pickFailures.set(pick.id, "refused at the write door: its run writes outside the goal's product on a goal not admitted as a change");
+      tap(`[goal-host-vessel] walk(${opts.surface}): ${pick.id} REFUSED at the write door before execution — not dispatched, excluding`);
+      continue;
     }
 
     let trace: ExecutionTrace;
@@ -16619,7 +16644,9 @@ async function runGoalWithRecoveryInner(
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
   let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
-  const doorRefusedHeads: string[] = [];
+  // Templates a door refused earlier in this dispatch (a walk's template_pick or composite door) stay refused here.
+  const _doorRefused = doorRefusals.forDispatch(String(opts.variables?.dispatch_id ?? ""));
+  const doorRefusedHeads: string[] = _changeAdmitted ? [] : _doorRefused.list();
   // Correlation id of the recommendation actually selected for THIS attempt.
   let pickCorrelationId: string | null = null;
   if (!nextTarget && goal) {
@@ -16656,10 +16683,16 @@ async function runGoalWithRecoveryInner(
       const pinnable = pinnableHead(reaching.activities);
       if (!pinnable) {
         console.log(`[goal-host-vessel] ${opts.surface}: known-reaching path head ${pathHead} is a satisfier pseudo-id, not a template -- NOT pinning it; deferring to shape-directed selection (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"})`);
+      } else if (!_changeAdmitted && _doorRefused.has(pinnable)) {
+        // WRITE DOOR (recovery pick): a head a door already refused in this dispatch is not pinned.
+        noteWriteRefusal("recovery_pick");
+        tap(`${writeDropLine("recovery_pick", [pinnable], goalHashOf(goal))}; already refused in this dispatch`);
+        doorRefusedHeads.push(pinnable);
       } else if (templateRefused(_changeAdmitted ? null : await getTemplateLocalFirst(pinnable).catch((e) => { tap(`[write-door] recovery_pick: head ${pinnable} unjudged: head unfetchable (${String((e as Error)?.message ?? e).slice(0, 80)})`); return null; }), _changeAdmitted, "recovery_pick", goalHashOf(goal), tap, new Set(seededOutputShapes ?? opts.expectedOutputShapes ?? []))) {
         // WRITE DOOR (recovery pick): a known-reaching head that writes outside the goal's product is not pinned; it is
         // excluded and the shape-directed selection below (itself doored) tries an alternative.
         doorRefusedHeads.push(pinnable);
+        _doorRefused.add(pinnable);
       } else {
         nextTarget = pinnable;
         console.log(`[goal-host-vessel] ${opts.surface}: reusing known-reaching path ${nextTarget} (pathway_steps=${reaching.activities.length} proven=${reaching.successfulExecutions}/${reaching.totalExecutions} signature=${reaching.pathSignature ?? "none"}${reaching.activities.length > 1 ? ` remaining=[${reaching.activities.slice(1).join(",")}]` : ""})`);
@@ -16875,7 +16908,7 @@ async function runGoalWithRecoveryInner(
     // Alter the approach for the next attempt (engine-selected approaches only).
     if (attempt < maxAttempts) {
       const repairKey = await repairSignatureOf(classifyFailure(goalReachReason), completionShapes ?? []);
-        const altPickRetry = await recommendExcluding(goal, excluded, repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
+        const altPickRetry = await recommendExcluding(goal, [...excluded, ...doorRefusedHeads], repairKey, seededOutputShapes ?? null, undefined, { impulse: [...c6SeekPool], completion: completionShapes ?? seededOutputShapes ?? null }, { admitted: _changeAdmitted, goalHash: goalHashOf(goal), record: tap });
       if (altPickRetry && 'status' in altPickRetry && (altPickRetry.status === 401 || altPickRetry.status === 403)) {
         tap(`[goal-host-vessel] ${opts.surface}: auth failure (${altPickRetry.status}) - refusing to use as evidence`);
         break;
@@ -19518,6 +19551,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         }
         unboundByDispatch.delete(String(variables?.dispatch_id ?? record.dispatchId ?? ""));
       }
+      doorRefusals.take(String(variables?.dispatch_id ?? record.dispatchId ?? ""));
       // B2 earned-by-doing: a composite this dispatch MINTED whose run did not reach is retired, not left selectable.
       for (const _cid of compositesToRetire(composedByDispatch.take(String(variables?.dispatch_id ?? record.dispatchId ?? "")), record.reached)) {
         void retireComposite(_cid, `minted by the walk and its first run did not reach (dispatch ${String(variables?.dispatch_id ?? record.dispatchId ?? "")})`, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 8_000 })

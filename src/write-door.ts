@@ -50,6 +50,16 @@
 // runs every task (its documented default when the option is absent), so /health shows the
 // executor's own drop counts as null there.
 //
+// WHAT A TEMPLATE WRITES, AT EVERY PICK THAT RUNS ONE (templateRunRefused): a pick's declared outputs are not what its
+// run writes. Measured: a read question's template_pick door dropped learned-composition-test-suite-to-substrategap-
+// write (discovery's row named substrateGap_write), then the composite author returned the same template as an
+// existing composite with outputs [test_suite], and the composite door, judging those outputs only, let it run. So the
+// composite door, the walk's execute step (every template_pick, bridge and composite pick reaches it with the template
+// in hand) and the horizontal bundle judge templateRunShapes, the same shapes the executor's task door reads.
+// ONCE REFUSED, REFUSED FOR THE DISPATCH (DoorRefusals): a template any door dropped is refused again whichever route
+// re-offers it (the composite author, a retry walk, the recovery loop's pinned head or recommendation), keyed by the
+// dispatch id and the normalised template id, and cleared at the dispatch's terminal record.
+//
 // The satisfier and vesselResolve keep their unconditional filesystem refusal (a walk-side write
 // is uncreditable without a landed sha whatever the admission); on a goal not admitted they also
 // refuse the rest of the class, and every refusal is counted here.
@@ -207,4 +217,71 @@ export interface TaskWriteDoor { admitted: boolean; governs: (shape: string) => 
 export function taskWriteDoor(admitted: boolean, goalProduct: Iterable<string>): { writeDoor: TaskWriteDoor } {
   const product = new Set(goalProduct);
   return { writeDoor: { admitted, governs: (shape: string) => refusedWrite(shape, product) } };
+}
+
+/** A template id as every door keys it: the activity:⟨…⟩ wrapper stripped (the composite author returns it wrapped). */
+export function doorTemplateKey(id: string): string {
+  return id.replace(/^activity:/, "").replace(/[⟨⟩]/g, "").trim();
+}
+
+/** The templates a door refused in one dispatch (normalised ids). */
+export class RefusedTemplates {
+  private readonly ids = new Set<string>();
+  add(id: string): void { const k = doorTemplateKey(id); if (k) this.ids.add(k); }
+  has(id: string): boolean { return this.ids.has(doorTemplateKey(id)); }
+  list(): string[] { return [...this.ids]; }
+  /** Record every item a door filter dropped: those of `before` not in `kept`. */
+  noteDropped<T>(before: readonly T[], kept: readonly T[], idOf: (item: T) => string): void {
+    for (const item of before) if (!kept.includes(item)) this.add(idOf(item));
+  }
+}
+
+/** Per-dispatch refusals, bounded like the walk's other per-dispatch records; taken at the terminal record write. */
+export class DoorRefusals {
+  private byDispatch = new Map<string, RefusedTemplates>();
+  constructor(private readonly cap = 256) {}
+  /** The dispatch's record (created on first use). No dispatch id: a fresh record the caller alone holds. */
+  forDispatch(dispatchId: string): RefusedTemplates {
+    if (!dispatchId) return new RefusedTemplates();
+    let r = this.byDispatch.get(dispatchId);
+    if (!r) {
+      if (this.byDispatch.size >= this.cap) { const oldest = this.byDispatch.keys().next().value; if (oldest !== undefined) this.byDispatch.delete(oldest); }
+      r = new RefusedTemplates();
+      this.byDispatch.set(dispatchId, r);
+    }
+    return r;
+  }
+  take(dispatchId: string): void { this.byDispatch.delete(dispatchId); }
+}
+
+/**
+ * The run door: on a goal not admitted, is running template `id` refused? Refused when a door already refused it in
+ * this dispatch, or when its declared outputs or any shape its run writes (templateRunShapes of the loaded template)
+ * are refused. A refusal is counted under `door`, recorded, and added to `refused`. A template that cannot be loaded
+ * is judged by its declared outputs alone (the task door still holds) and the line says it was unjudged.
+ */
+export async function templateRunRefused(
+  id: string,
+  declaredOutputs: readonly string[],
+  loadTemplate: () => Promise<unknown>,
+  admitted: boolean,
+  door: WriteDoor,
+  refused: RefusedTemplates,
+  goalHash: string,
+  record?: (line: string) => void,
+  goalProduct?: ReadonlySet<string> | null,
+): Promise<boolean> {
+  if (admitted) return false;
+  const key = doorTemplateKey(id);
+  if (refused.has(key)) {
+    counters[door] += 1;
+    record?.(`${writeDropLine(door, [key], goalHash)}; already refused in this dispatch`);
+    return true;
+  }
+  let template: unknown = null;
+  try { template = await loadTemplate(); } catch (e) { template = null; record?.(`[write-door] ${door}: ${key} tasks unjudged: template unloadable (${String((e as Error)?.message ?? e).slice(0, 80)})`); }
+  const shapes = [...declaredOutputs, ...(template ? templateRunShapes(template) : [])];
+  if (writeDoorFilter([key], () => shapes, false, door, goalHash, record, String, goalProduct).length > 0) return false;
+  refused.add(key);
+  return true;
 }
