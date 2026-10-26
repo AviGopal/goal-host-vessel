@@ -1,6 +1,7 @@
 import { registryFieldFor, registryRatioFor } from "./registry-field";
 import { verbatimReadTarget } from "./verbatim-read";
 import { isMutationShape } from "./judge/shapes";
+import { isStoreWrite } from "./write-door";
 import { goalDemandsArtifact, isReadQuestionGoal } from "./read-goal";
 import { isShapeName } from "./shape-name";
 import { betaSample } from "./beta-sample";
@@ -120,6 +121,9 @@ export interface InferGoalTargetShapesOpts {
   /** Piece 5: recall by meaning for a RESIDUAL (the unsatisfied part of the goal); the caller's own shape recall, bounded
    *  by the same shaped k. Returns a described catalog of recalled, advertised shapes, or null when recall can't be asked. */
   recallResidual?: (text: string) => Promise<ShapeCatalog | null>;
+  /** The shapes a vessel actually serves (discovery's resolvable set). The derivation split defers a STORE-write target
+   *  deterministically only when it is served; absent, no target is deferred without the LLM split. */
+  servedShapes?: ReadonlySet<string>;
 }
 
 /**
@@ -1332,14 +1336,17 @@ export async function inferDerivationSplit(
   const llmEndpoint = opts.llmEndpoint;
   // A derivation needs at least 2 distinct target shapes (a derive AND an emit).
   if (!goal || inferredTargets.length < 2) return noSplit;
-  // DETERMINISTIC SPLIT for the three emit terminals (2026-08-13): a recognised emit
-  // sink + a distinct non-emit shape splits unambiguously (defer the write, produce the
-  // source first) with no LLM. Scoped to exactly the sinks the composition route emits;
-  // activityVariant_write is NOT one and falls through to its guard + the LLM path below.
+  // DETERMINISTIC SPLIT for STORE-write terminals: a store write (write-door.ts isStoreWrite:
+  // a judge/shapes.ts mutation shape that is neither a change primitive nor the walk's own
+  // pool write) that a vessel actually serves, plus a distinct non-emit shape, splits
+  // unambiguously (defer the write, produce the source first) with no LLM. The emit set is
+  // read from the classification and the served set at use time, not kept as a list.
+  // activityVariant_write is self-contained (below) and falls through to its guard.
   {
-    const EMIT_TERMINALS = new Set(["memoryNote_write", "concept_write", "substrateGap_write"]);
-    const emit = inferredTargets.filter((sh) => EMIT_TERMINALS.has(sh));
-    const nonEmit = inferredTargets.filter((sh) => !EMIT_TERMINALS.has(sh));
+    const served = opts.servedShapes;
+    const isEmit = (sh: string): boolean => !!served && served.has(sh) && isStoreWrite(sh);
+    const emit = inferredTargets.filter(isEmit);
+    const nonEmit = inferredTargets.filter((sh) => !isEmit(sh));
     if (emit.length >= 1 && nonEmit.length >= 1 && !inferredTargets.includes("activityVariant_write")) return { intermediate: nonEmit, terminal: emit };
   }
   if (!opts.complete && !llmEndpoint) return noSplit;

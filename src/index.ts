@@ -14923,6 +14923,7 @@ async function runGoalWithRecoveryInner(
       const split = await inferDerivationSplit(goal, seededOutputShapes, {
         llmEndpoint: LLM_VESSEL_ENDPOINT,
         cache: inferredTargetShapeCache,
+        servedShapes: new Set([...shapeEndpointMap.keys(), ...discoveredProxyShapes]),
         complete: (prompt) =>
           routedText(goalHashOf(goal), "derivation_split_classification", prompt, {
             model: "auto",
