@@ -24,6 +24,8 @@ import { ANSWER_SHAPES, assertedDatesInText, digestSegments, isStaleDate, tempor
 import { SEARCH_RESULT_SHAPES } from "./grounded-report";
 import { isFsWriteShape } from "./fs-write-shapes";
 import { CHANGE_PRIMITIVE_SHAPES } from "./write-door";
+import { emptyResultSetReason } from "./empty-result-set";
+import { canonicalGoalText } from "./goal-intent";
 
 export interface ReachJudgeInput {
   goal: string;
@@ -260,6 +262,18 @@ export function judgeShadowOf(v: { reached: boolean; reason?: string } | null): 
  *  below accepts ANY non-LLM producer as a source, so a shell/file/registry read passes to the judge. */
 export const CURRENT_INFORMATION_CUES = /\b(?:today'?s?|tonight|yesterday'?s?|right now|at the moment|currently|current|latest|this (?:week'?s?|month'?s?|morning|afternoon|evening)|news|headlines?|breaking)\b/i;
 
+/** Goals about LIVE STATE that CURRENT_INFORMATION_CUES does not name: the recent history or present activity of a
+ *  system ("the three most recent commits to X", "the last 5 dispatches", "what changed recently", "what is X doing
+ *  now"). A heuristic cue list (flagged). A recency word counts only when a live-state noun follows within two words, so
+ *  "the most recent ice age" and "least recently used" are not live-state questions (probe 1bcb864f: a recent-commits
+ *  question answered by one no-input llm_completion_dispatch step was judged reached). */
+export const LIVE_STATE_CUES = new RegExp([
+  String.raw`\b(?:most recent|recent|latest|newest|last (?:\d+|two|three|four|five|six|seven|eight|nine|ten|few|several))\s+(?:[\w'-]+\s+){0,2}?(?:commits?|changes?|changelog|activity|activities|runs?|dispatch(?:es)?|executions?|traces?|events?|logs?|errors?|failures?|alerts?|incidents?|gaps?|deploy(?:s|ments)?|push(?:es)?|landings?|releases?|builds?|merges?|pull requests?|jobs?|ticks?|restarts?|sessions?|verdicts?|edits?)\b`,
+  String.raw`\b(?:changed|happened|landed|failed|broke|merged|deployed) (?:recently|lately|today|since yesterday)\b`,
+  String.raw`\bwhat(?:'s| has| have)? (?:been )?(?:changed|happening) (?:recently|lately)\b`,
+  String.raw`\b(?:running|doing|serving|failing) (?:now|right now)\b`,
+].join("|"), "i");
+
 /** Goals asking the substrate to describe ITSELF (the deictic "you"/"this system"). */
 export const SELF_DESCRIPTION_CUES = /\b(?:what|who) are you\b|\bdescribe yourself\b|\btell me about yourself\b|\bintroduce yourself\b|\bwhat can you do\b|\bwhat(?: is|'s) this (?:system|substrate)\b|\bwhat (?:this|the) (?:system|substrate) is\b/i;
 
@@ -382,6 +396,60 @@ export function consultedInRun(producedShapes: string[], commandEvidence?: strin
   return digestSegments(contentDigest ?? "").some((seg) => seg.shape !== null && LLM_WRITER_SHAPES.has(seg.shape) && ranTools(seg.text));
 }
 
+/** A read's output that holds nothing: blank, `[]`, `{}`, `null`, `""`, a failure envelope (success:false, a non-empty
+ *  `error`), an empty store listing (empty-result-set.ts), or an object whose every field (bookkeeping keys aside) is
+ *  itself empty, e.g. {"commits":[]} or {"stdout":"","exitCode":0}. A number, 0 included, is a value, never empty, so a
+ *  count that answers zero ({"count":0,"files":[]}) is a read that returned something. */
+export function isEmptyReadOutput(text: string): boolean {
+  const t = text.trim();
+  if (t === "") return true;
+  let v: unknown;
+  try { v = JSON.parse(t); } catch { return false; }
+  const BOOKKEEPING = new Set(["success", "ok", "shape", "metadata", "exitCode", "exit_code", "offset", "limit", "model", "requested_model", "duration_ms", "durationMs"]);
+  const empty = (x: unknown, depth: number): boolean => {
+    if (x === null || x === undefined) return true;
+    if (typeof x === "string") {
+      const s = x.trim();
+      if (s === "") return true;
+      if (depth < 3 && (s.startsWith("{") || s.startsWith("["))) { try { return empty(JSON.parse(s), depth + 1); } catch { return false; } }
+      return false;
+    }
+    if (typeof x !== "object") return false;
+    if (Array.isArray(x)) return x.length === 0;
+    const o = x as Record<string, unknown>;
+    if (o.success === false || o.ok === false) return true;
+    if (o.error !== undefined && o.error !== null && o.error !== false && !(typeof o.error === "string" && !o.error.trim())) return true;
+    if (emptyResultSetReason(o.body ?? o, o.metadata) !== null) return true;
+    const fields = Object.keys(o).filter((k) => !BOOKKEEPING.has(k) && k !== "error");
+    return depth >= 3 ? fields.length === 0 : fields.every((k) => empty(o[k], depth + 1));
+  };
+  return empty(v, 0);
+}
+
+/** Did a step READ state in-run and get something back? A produced shape that is a source (not an LLM writer, a seed, a
+ *  `_write`, a filesystem write or a change primitive: isReadRoleShape, plus searches, SEARCH_RESULT_SHAPES) whose digest
+ *  segment is not empty (isEmptyReadOutput). A source shape with NO digest segment is unknown and counts as read, the
+ *  convention consultedInRun keeps (a cut digest, or the floor's unlabelled block, never refuses a real read). Also a
+ *  command that read the registry, or a tool the answering model ran itself whose tool_output came back with no error and
+ *  not empty (`body.executed_tool_calls`, as index.ts executedToolCallsOf reads it). */
+export function hasNonEmptyRead(producedShapes: string[], commandEvidence?: string, contentDigest?: string): boolean {
+  if (REGISTRY_READ_RE.test(commandEvidence ?? "")) return true;
+  const segs = digestSegments(contentDigest ?? "");
+  const isSource = (s: string) => isReadRoleShape(s) || SEARCH_RESULT_SHAPES.has(s);
+  if (producedShapes.some((s) => isSource(s) && (() => { const mine = segs.filter((g) => g.shape === s); return mine.length === 0 || mine.some((g) => !isEmptyReadOutput(g.text)); })())) return true;
+  const toolRead = (text: string): boolean => {
+    let o: any;
+    try { o = JSON.parse(text.trim()); } catch { return false; }
+    const raw = o?.body?.executed_tool_calls ?? o?.content?.body?.executed_tool_calls ?? o?.executed_tool_calls;
+    if (!Array.isArray(raw)) return false;
+    return raw.some((c: any) => c && typeof c === "object" && (c.error === undefined || c.error === null || c.error === false || c.error === "")
+      && c.tool_output !== undefined && c.tool_output !== null && !isEmptyReadOutput(typeof c.tool_output === "string" ? c.tool_output : JSON.stringify(c.tool_output)));
+  };
+  return segs.some((g) => g.shape !== null && LLM_WRITER_SHAPES.has(g.shape) && toolRead(g.text));
+}
+
+const CURRENT_STATE_CODE = "ungrounded-current-state";
+
 const DAY_MS = 86_400_000;
 const notReached = (code: string, why: string): ReachJudgeVerdict => ({
   reached: false, deterministic: true, completion_shapes: [], reason: `deterministic:${code} — ${why}`,
@@ -402,6 +470,8 @@ const notReached = (code: string, why: string): ReachJudgeVerdict => ({
  *     resolved through discovery by the caller: STRUCTURAL, no word list) and whose chain made no local read
  *     (hasLocalRead). A walk aimed at no local shape is not a local-state question, whatever its words. The judge
  *     is consulted in shadow for this rule (judgeReach).
+ *  6. UNGROUNDED CURRENT STATE: a LIVE_STATE_CUES or CURRENT_INFORMATION_CUES goal whose chain has no step that read
+ *     state and returned non-empty output (hasNonEmptyRead). Not shadowed by the judge.
  *  After the judge (judgeReach, not here): a reached verdict whose judge names the goal's subject this_system, on a
  *  chain that consulted nothing in-run (consultedInRun), is not reached under rule 5's code.
  */
@@ -445,6 +515,17 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
   // target (whatever that target's content) has answered from it.
   if (localTargets.length > 0 && !localTargets.some((t) => producedShapes.includes(t)) && !hasLocalRead(producedShapes, input.commandEvidence, input.contentDigest)) {
     return notReached(LOCAL_STATE_CODE, `the goal targets ${localTargets.slice(0, 4).join(", ")}, served by this substrate's own vessels, and the chain made no local read (produced: ${producedShapes.join(", ") || "none"}); an answer from model memory describes some other system`);
+  }
+
+  // Rule 6: a goal about CURRENT / LIVE state (LIVE_STATE_CUES or CURRENT_INFORMATION_CUES on the canonical goal text) is
+  // reached only if some step READ that state and got something back (hasNonEmptyRead). Rule 2 already refuses a chain
+  // with no source for its cues; this one also refuses a live-state goal rule 2 does not cue, and a read that came back
+  // empty. A goal with no cue is caught structurally by rule 5 (localTargets), which keeps its own reading: a walk that
+  // produced its local target has answered from it, empty or not.
+  const canonical = canonicalGoalText(goal);
+  const currentState = LIVE_STATE_CUES.test(canonical) || CURRENT_INFORMATION_CUES.test(canonical);
+  if (currentState && !hasNonEmptyRead(producedShapes, input.commandEvidence, input.contentDigest)) {
+    return notReached(CURRENT_STATE_CODE, `ungrounded: no step read the current state the goal asks about (produced: ${producedShapes.join(", ") || "none"}; no source step returned non-empty output); an answer from model memory or an empty read cannot say what the state is now`);
   }
   return null;
 }
