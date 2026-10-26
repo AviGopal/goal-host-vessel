@@ -9,9 +9,13 @@
 //   [MUST-FAIL] a served store write of a non-surface vessel (llmModelPolicy_write, llm-resolver-vessel's model
 //               policy store) is deferred behind its read with no LLM call.
 //   [MUST-FAIL] the goal-host split call site passes the served set.
+//   [MUST-FAIL] a served vault write (obsidian:write_note) on a store goal is deferred the same way.
 //   [CONTROL]   five read-only questions infer no write target, even when the chooser proposes store writes.
 //   [CONTROL]   "which gaps closed in 24 h?" infers no substrateGap_write.
 //   [CONTROL]   memoryNote_write / concept_write / substrateGap_write still split deterministically.
+//   [CONTROL]   a read question that names a store noun beside a SERVED write (a surface panel) infers no write
+//               terminal through the real decision path, though the chooser proposes the write. The landing-page wording
+//               is a READ-control fixture qa requires, not a PREREG-UIVIEW goal; no view shape is used or special-cased.
 //   [CONTROL]   an unserved store write, a change primitive, the pool write and activityVariant_write are never
 //               deferred deterministically; with no served set nothing is.
 import { describe, expect, it } from "bun:test";
@@ -19,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { inferDerivationSplit, inferGoalTargetDecision } from "../src/goal-target-inference";
 import { isMutationShape } from "../src/judge/shapes";
 import { isStoreWrite, isWriteShape } from "../src/write-door";
+import { isReadQuestionGoal } from "../src/read-goal";
 
 const KNOWN = [
   "webSearchResult", "substrateGap", "substrateGap_write", "memoryNote_write", "concept_write",
@@ -79,6 +84,45 @@ describe("read-only goals infer no write terminal", () => {
     expect([...d.shapes, ...d.alternatives.flat()]).not.toContain("substrateGap_write");
     const split = await inferDerivationSplit(goal, d.shapes, { servedShapes: SERVED, complete: noLlm().complete });
     expect(split.terminal).not.toContain("substrateGap_write");
+  });
+});
+
+describe("a read question naming a store noun beside a served write infers no write terminal", () => {
+  const VAULT_WRITE = "obsidian:write_note";
+  const PANEL_WRITE = "uiPanel_write";
+  const NEAR = ["memoryNote", VAULT_WRITE, "obsidian:ui_screenshot", PANEL_WRITE];
+  const served: ReadonlySet<string> = new Set([...KNOWN, ...NEAR]);
+  const tempting = (shapes: string[]) => {
+    const proposed: string[][] = [];
+    return { proposed, complete: async () => { proposed.push(shapes); return JSON.stringify({ target_shapes: shapes }); } };
+  };
+  const CASES: Array<[string, string[], string]> = [
+    ["What does the landing page currently show?", ["obsidian:ui_screenshot", PANEL_WRITE], PANEL_WRITE],
+  ];
+  for (const [goal, proposal, write] of CASES) {
+    it(`[CONTROL] "${goal}": the proposed ${write} is dropped by the read rule and nothing is deferred as a write`, async () => {
+      expect(isStoreWrite(write)).toBe(true);
+      expect(isReadQuestionGoal(goal)).toBe(true);
+      const stub = tempting(proposal);
+      const d = await inferGoalTargetDecision(goal, [...KNOWN, ...NEAR], { complete: stub.complete });
+      expect(stub.proposed.flat()).toContain(write);
+      expect([...d.shapes, ...d.alternatives.flat()].filter(isMutationShape)).toEqual([]);
+      const split = await inferDerivationSplit(goal, d.shapes, { servedShapes: served, complete: noLlm().complete });
+      expect([...split.intermediate, ...split.terminal].filter(isMutationShape)).toEqual([]);
+    });
+  }
+
+  const STORE_GOAL = "Save a summary of yesterday's meeting as an Obsidian note.";
+  it("[CONTROL] the same tempting proposal on a store goal keeps the vault write (the stub tempts; the read rule decides)", async () => {
+    const d = await inferGoalTargetDecision(STORE_GOAL, [...KNOWN, ...NEAR], tempting(["memoryNote", VAULT_WRITE]));
+    expect(d.shapes).toContain(VAULT_WRITE);
+  });
+
+  it("[MUST-FAIL] on that store goal the served vault write is deferred without the LLM split (the widening)", async () => {
+    const llm = noLlm();
+    const split = await inferDerivationSplit(STORE_GOAL, ["memoryNote", VAULT_WRITE], { servedShapes: served, complete: llm.complete });
+    expect(split).toEqual({ intermediate: ["memoryNote"], terminal: [VAULT_WRITE] });
+    expect(llm.calls.length).toBe(0);
   });
 });
 
