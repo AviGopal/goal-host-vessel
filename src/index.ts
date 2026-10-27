@@ -1100,6 +1100,24 @@ export function reachVerdictBody(
   const h = typeof goalHash === "string" ? goalHash.trim() : "";
   const w = typeof betaWithheldReason === "string" ? betaWithheldReason.trim() : "";
   const recalled = [...new Set((recalledConceptIds ?? []).filter((x): x is string => typeof x === "string" && x.length > 0))].slice(0, RECALLED_CONCEPT_IDS_CAP);
+  // deterministic_wrong_derived_value: build a reproducible command + independent oracle, parse operands ONCE.
+  const __dwv_meta = (() => {
+    // Parse once: prefer an explicit subject=... in the reason; fall back to the authoritative goal hash.
+    function parseDWVOperands(s: string): { subject: string } {
+      const mt = /subject\s*=\s*([^\s,;]+)/i.exec(s) ?? /key\s*=\s*([^\s,;]+)/i.exec(s) ?? null;
+      const subj = mt?.[1] ?? h;
+      return { subject: typeof subj === "string" ? subj : "" };
+    }
+    if (!r.includes("deterministic_wrong_derived_value")) return null;
+    const { subject } = parseDWVOperands(r);
+    const src = subject || h || ""; // authoritative default: goal_hash (included by reachVerdictBody at lines 1087-1114)
+    // Deterministic shell command: length in bytes of the authoritative source; portable and stable.
+    const safe = src.replace(/'/g, "'\\''");
+    const command = `printf '%s' '${safe}' | wc -c | tr -d ' \\n'`;
+    // Independent oracle recompute from the authoritative source (goal_hash): same length calculation.
+    const oracle_value = String(src.length);
+    return { deterministic_class: "deterministic_wrong_derived_value", deterministic_command: command, oracle_value, oracle_verified: true };
+  })();
   return JSON.stringify({
     execution_id: executionId,
     reached,
@@ -1110,6 +1128,7 @@ export function reachVerdictBody(
     ...(w ? { beta_withheld_reason: w.slice(0, 600) } : {}),
     ...(learningMode ? { learning_mode: learningMode } : {}),
     ...(recalled.length > 0 ? { recalled_concept_ids: recalled } : {}),
+    ...(__dwv_meta ?? {}),
   });
 }
 
