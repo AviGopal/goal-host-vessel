@@ -62,7 +62,8 @@
 //
 // The satisfier and vesselResolve keep their unconditional filesystem refusal (a walk-side write
 // is uncreditable without a landed sha whatever the admission); on a goal not admitted they also
-// refuse the rest of the class, and every refusal is counted here.
+// refuse the rest of the class, and every refusal is counted here. The satisfier's action-then-read branch judges the
+// SIBLING it would run (the shape that writes), not only the target it was asked for, under the same "satisfier" count.
 import { isFsWriteShape } from "./fs-write-shapes";
 import { isMutationShape } from "./judge/shapes";
 

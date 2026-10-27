@@ -11331,8 +11331,23 @@ If one of those sibling shapes is the action that would create what the goal ask
       const reason = o["reason"] ?? o["error"] ?? o["message"];
       return typeof reason === "string" && reason.length > 0 ? reason : "the action was refused by the vessel";
     };
+    // WRITE DOOR (satisfier action, write-door.ts): the sibling this branch RUNS is judged by the shape it writes, not
+    // by the target it was asked for. Measured: a goal not admitted as a change inferred the read target uiFeedback, its
+    // resolve failed, and this branch ran the sibling uiPanel_write three times (empty "Untitled" panels on the human
+    // surface) with no door counting it, because the doors above judged only `shape`. The write is goal-host's own call
+    // below, so it is refused before it is made: a filesystem write always, a change shape or a store write outside the
+    // goal's product on a goal not admitted. Each refused pick (the retry's too) is counted under "satisfier".
+    const actionRefused = (actionShape: string): boolean => {
+      if (isFsWriteShape(actionShape)) {
+        noteWriteRefusal("satisfier");
+        tap(`[goal-host-vessel] walk(${opts.surface}): satisfier action "${actionShape}" for target "${shape}" REFUSED — a filesystem write has no snapshot/rollback and an edit-effect reach is uncreditable without a landed sha`);
+        return true;
+      }
+      return writeDoorFilter([actionShape], (s) => [s], changeAdmitted, "satisfier", writeDoorHash, (l) => tap(`${l}; satisfier action for target ${shape}`), String, writeDoorProduct).length === 0;
+    };
     let action = await llmPickProducingAction(shape, siblings);
     if (!action) return null;
+    if (actionRefused(action.shape)) return null;
     // A picked sibling (shellResult among local-tools' shapes) carries an LLM-written command: the
     // initial-synthesis origin rule applies (command-egress.ts). Refused without being run.
     const _actEgress = synthesisWithinInputsOrRefuse(commandOf(action.args), [goal]);
@@ -11350,6 +11365,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier action "${action.shape}" REFUSED (${refusal}) — retrying once with corrective feedback`);
       const retryAction = await llmPickProducingAction(shape, siblings, refusal);
       if (retryAction) {
+        if (actionRefused(retryAction.shape)) return null;
         const retryEp = await endpointForShape(retryAction.shape);
         // Merge the first attempt's args UNDER the corrected ones: the retry often
         // only re-emits the field it was told to fix (e.g. path) and drops others
