@@ -64,8 +64,17 @@
 // is uncreditable without a landed sha whatever the admission); on a goal not admitted they also
 // refuse the rest of the class, and every refusal is counted here. The satisfier's action-then-read branch judges the
 // SIBLING it would run (the shape that writes), not only the target it was asked for, under the same "satisfier" count.
+//
+// STORE PRODUCTS BY POLICY (writeDoorPolicy): whether a change shape a dispatch may declare as its own product is a
+// change or a store product is a shaped decision, read at use time from WORKSPACE_ROOT/policies/writeDoorPolicy.json
+// (the shaped-policy store), never a literal here. A shape classed "store_product" is judged like a store write: run
+// only as the goal's own product, and declaring it admits nothing, so the run is not a code or file change. Classed
+// "change", it is a change shape like the rest. With no usable row the class is the user's ruling (2026-10-27,
+// "Store product (Recommended)"): activity_create_variant is a store product.
+import { readFileSync } from "node:fs";
 import { isFsWriteShape } from "./fs-write-shapes";
 import { isMutationShape } from "./judge/shapes";
+import { isUsablePolicy, shapedPolicyPath } from "./shaped-policy-store";
 
 /**
  * Drafter / landing shapes, the mutating primitives (git, GitHub, units, database, the tree), and the primitives that
@@ -99,8 +108,57 @@ export function isStoreWrite(shape: unknown): boolean {
   return typeof shape === "string" && !isWriteShape(shape) && isMutationShape(shape) && !WALK_MECHANICS_WRITES.has(shape);
 }
 
+/** The shaped policy that classes a declarable change shape as a change or a store product. */
+export const WRITE_DOOR_POLICY_SHAPE = "writeDoorPolicy";
+export type DeclaredProductClass = "store_product" | "change";
+/** The class each steerable shape has when no usable row answers: the user's ruling of 2026-10-27. */
+export const WRITE_DOOR_POLICY_DEFAULTS: Readonly<Record<string, DeclaredProductClass>> = Object.freeze({ activity_create_variant: "store_product" });
+/** Same "at use time" window as selection-tuning.ts (and activity-api's getTuningParam). */
+export const WRITE_DOOR_POLICY_TTL_MS = 30_000;
+
+let policyRoot: string | undefined;
+let policyClock: () => number = () => Date.now();
+let policyCache: { at: number; classes: Readonly<Record<string, DeclaredProductClass>> } | null = null;
+
+/** Test seam: the workspace root the row is read under, and the clock; drops the cached classes. */
+export function configureWriteDoorPolicy(o: { workspaceRoot?: string; clock?: () => number }): void {
+  policyRoot = o.workspaceRoot;
+  if (o.clock) policyClock = o.clock;
+  policyCache = null;
+}
+export function _resetWriteDoorPolicyCache(): void { policyCache = null; }
+
+/**
+ * The classes in force: the row's `shapeClasses` ({shape: "store_product" | "change"}) over the defaults. A row may
+ * steer only a CHANGE_PRIMITIVE_SHAPES member, never a filesystem write, so a row can narrow a declared change to one
+ * product write but can never open a file write; an unknown shape or class value is ignored. An absent, unreadable or
+ * unparseable row is the defaults.
+ */
+export function declaredProductClasses(): Readonly<Record<string, DeclaredProductClass>> {
+  const now = policyClock();
+  if (policyCache && now - policyCache.at < WRITE_DOOR_POLICY_TTL_MS) return policyCache.classes;
+  const classes: Record<string, DeclaredProductClass> = { ...WRITE_DOOR_POLICY_DEFAULTS };
+  try {
+    const row = JSON.parse(readFileSync(shapedPolicyPath(WRITE_DOOR_POLICY_SHAPE, policyRoot), "utf8")) as unknown;
+    const authored = isUsablePolicy(row) ? row["shapeClasses"] : null;
+    if (isUsablePolicy(authored)) {
+      for (const [shape, cls] of Object.entries(authored)) {
+        if ((cls === "store_product" || cls === "change") && CHANGE_PRIMITIVE_SHAPES.has(shape) && !isFsWriteShape(shape)) classes[shape] = cls;
+      }
+    }
+  } catch { /* absent is the normal case: the defaults are the ruling */ }
+  policyCache = { at: now, classes: Object.freeze(classes) };
+  return policyCache.classes;
+}
+
+/** A change shape the policy classes as a store product: run only as the goal's own product; declaring it admits nothing. */
+export function isDeclaredStoreProduct(shape: unknown): boolean {
+  return typeof shape === "string" && declaredProductClasses()[shape] === "store_product";
+}
+
 /** On a goal NOT admitted as a change: is producing `shape` refused? `goalProduct` = the goal's targets. */
 export function refusedWrite(shape: unknown, goalProduct?: ReadonlySet<string> | null): boolean {
+  if (isDeclaredStoreProduct(shape)) return !(goalProduct?.has(shape as string) ?? false);
   if (isWriteShape(shape)) return true;
   return isStoreWrite(shape) && !(goalProduct?.has(shape as string) ?? false);
 }
@@ -113,10 +171,10 @@ export interface WriteDoorContext {
 }
 
 export function callerDeclaresWrite(declared: readonly string[] | null | undefined): boolean {
-  // Every change shape a caller declares admits the dispatch, activity_create_variant included (user ruling 2026-10-25:
-  // it is a change, not a declarable store product, so a pinned drafter that declares it runs its variant write).
-  // Undeclared, it is still refused like every change shape.
-  return Array.isArray(declared) && declared.some((s) => isWriteShape(s));
+  // A declared change shape admits the dispatch, except one the shaped policy classes as a store product
+  // (writeDoorPolicy; activity_create_variant by default): that is the goal's product, run by refusedWrite's product
+  // rule, and it never makes the run a code or file change. Undeclared, it is refused like every change shape.
+  return Array.isArray(declared) && declared.some((s) => isWriteShape(s) && !isDeclaredStoreProduct(s));
 }
 
 export function admittedChange(ctx: WriteDoorContext): boolean {

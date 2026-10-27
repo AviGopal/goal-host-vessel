@@ -3,9 +3,23 @@
 // product. Measured: a learned composition on a goal not admitted ran uiPanel_write, concept_write (from a composed
 // child) and code_modification_proposal; a read-only goal was inferred ["config_file","apply_proposal_as_patch"].
 // Namespace import, so on a module without the new helpers the assertions (not the link) fail.
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import * as door from "./write-door";
+
+// The writeDoorPolicy row is read from WORKSPACE_ROOT/policies/ (shaped-policy-store); every test here reads it under a
+// root of its own, empty unless a test writes the row, so no host file steers these assertions.
+const POLICY_ROOT = mkdtempSync(join(tmpdir(), "write-door-policy-"));
+type PolicySeam = { configureWriteDoorPolicy?: (o: { workspaceRoot?: string; clock?: () => number }) => void };
+const usePolicyRoot = (root: string): void => (door as unknown as PolicySeam).configureWriteDoorPolicy?.({ workspaceRoot: root });
+const writePolicyRow = (root: string, row: unknown): void => {
+  mkdirSync(join(root, "policies"), { recursive: true });
+  writeFileSync(join(root, "policies", "writeDoorPolicy.json"), JSON.stringify(row));
+};
+afterAll(() => { rmSync(POLICY_ROOT, { recursive: true, force: true }); usePolicyRoot(undefined as unknown as string); });
 
 type C = { id: string; outputShapes: string[] };
 const UI_PANEL: C = { id: "learned-composition-uipanel-write-to-resolver-pattern-report", outputShapes: ["uiPanel_write", "resolver_pattern_report"] };
@@ -20,7 +34,7 @@ const filter = (d: door.WriteDoor, cands: C[], admitted: boolean, product: strin
   (door.writeDoorFilter as (...a: unknown[]) => C[])(cands, (c: C) => c.outputShapes, admitted, d, "8daaf150", (l: string) => lines.push(l), (c: C) => c.id, new Set(product));
 
 describe("write door classes", () => {
-  beforeEach(() => door.resetWriteDoorCounters());
+  beforeEach(() => { door.resetWriteDoorCounters(); usePolicyRoot(POLICY_ROOT); });
 
   it("must-fail: a not-admitted goal drops uiPanel_write, concept_write and code_modification_proposal producers at template pick", () => {
     const lines: string[] = [];
@@ -70,7 +84,9 @@ describe("write door classes", () => {
     const GAP_COMPOSER: C = { id: "producer-of-gap_compose", outputShapes: ["gap_compose"] };
     expect(filter("template_pick", [GAP_COMPOSER, READER], notAdmitted, ["gap_compose", "resolver_pattern_report"], lines).map((c) => c.id)).toEqual([READER.id]);
     expect(door.writeDoorShapes(["dispatch_goal", "fileContent"], notAdmitted, "target", "h", (l) => lines.push(l))).toEqual(["fileContent"]);
-    const { writeDoor } = door.taskWriteDoor(false, MINT_DISPATCH_PRIMITIVES);
+    // Each is refused even as the goal's product, except a store product by policy (activity_create_variant by default),
+    // which is refused whenever it is not the product.
+    const { writeDoor } = door.taskWriteDoor(false, MINT_DISPATCH_PRIMITIVES.filter((s) => s !== "activity_create_variant"));
     for (const s of MINT_DISPATCH_PRIMITIVES) {
       expect([s, door.isWriteShape(s)]).toEqual([s, true]);
       expect([s, writeDoor.governs(s)]).toEqual([s, true]);
@@ -180,32 +196,87 @@ describe("write door classes", () => {
     expect(door.taskWriteDoor(admitted, ["learningSummary"]).writeDoor.governs("activityTemplate_write")).toBe(true);
   });
 
-  // User ruling 2026-10-25: activity_create_variant is a change shape whose declaration admits the dispatch, so the
-  // pattern drafter's register_variant step (a pinned dispatch declaring it) runs its write.
-  it("must-fail: a dispatch declaring activity_create_variant is admitted, and its task door admits the variant write", () => {
+  // User ruling 2026-10-27 ("Store product (Recommended)"), recorded as the shaped writeDoorPolicy whose default it is:
+  // activity_create_variant is allowed when it is the goal's own declared product, and it does not admit the run as a
+  // code or file change. The pattern drafter's register_variant step (a pinned dispatch declaring it) runs its write.
+  const VARIANT: C = { id: "draft-activity-from-pattern", outputShapes: ["activity_create_variant"] };
+  it("must-fail: by policy, a dispatch declaring activity_create_variant runs the variant write as its product and is not admitted as a change", () => {
     const declared = ["activity_create_variant"];
-    expect(door.callerDeclaresWrite(declared)).toBe(true);
+    expect(door.callerDeclaresWrite(declared)).toBe(false);
     const admitted = door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared });
-    expect(admitted).toBe(true);
-    expect(door.taskWriteDoor(admitted, declared).writeDoor.admitted).toBe(true);
-    const VARIANT: C = { id: "draft-activity-from-pattern", outputShapes: ["activity_create_variant"] };
+    expect(admitted).toBe(false);
+    const { writeDoor } = door.taskWriteDoor(admitted, declared);
+    expect(writeDoor.governs("activity_create_variant")).toBe(false);
+    // Not a code or file change: the run's other change writes stay refused.
+    for (const s of ["fs_edit", "fs_write", "code_modification_proposal", "apply_proposal_as_patch", "variant_promote", "git_commit"]) {
+      expect([s, writeDoor.governs(s)]).toEqual([s, true]);
+    }
     expect(filter("template_pick", [VARIANT], admitted, declared, [])).toEqual([VARIANT]);
+    expect(door.writeDoorShapes(declared, admitted, "target", "h")).toEqual(declared);
   });
 
-  it("control: undeclared, activity_create_variant is still refused; a non-write declaration admits nothing; fs/code writes admit as before", () => {
+  it("control: undeclared or not the product, activity_create_variant is refused; a non-write declaration admits nothing; fs/code writes admit as before", () => {
     const lines: string[] = [];
-    const VARIANT: C = { id: "draft-activity-from-pattern", outputShapes: ["activity_create_variant"] };
     for (const declared of [undefined, null, [] as string[]]) {
       expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(false);
     }
     expect(filter("template_pick", [VARIANT], notAdmitted, [], lines)).toEqual([]);
     expect(door.taskWriteDoor(notAdmitted, []).writeDoor.governs("activity_create_variant")).toBe(true);
+    // A goal whose product is something else gets no admission for a producer that writes a variant.
+    expect(filter("template_pick", [VARIANT, READER], notAdmitted, ["resolver_pattern_report"], lines).map((c) => c.id)).toEqual([READER.id]);
+    expect(door.taskWriteDoor(notAdmitted, ["resolver_pattern_report"]).writeDoor.governs("activity_create_variant")).toBe(true);
     for (const s of ["fileContent", "llmCompletion", "gapDecomposition", "memoryNote_write", "activityTemplate_write", "activityVariant_write"]) {
       expect([s, door.callerDeclaresWrite([s])]).toEqual([s, false]);
       expect([s, door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: [s] })]).toEqual([s, false]);
     }
     for (const s of ["fs_edit", "fs_write", "code_modification_proposal", "apply_proposal_as_patch", "feature_compose"]) {
       expect([s, door.callerDeclaresWrite([s])]).toEqual([s, true]);
+    }
+    // Declared beside a change shape, the change shape still admits the run.
+    expect(door.callerDeclaresWrite(["activity_create_variant", "fs_edit"])).toBe(true);
+  });
+
+  it("control: the shaped row steers it: a writeDoorPolicy row classing it a change flips both results; a row cannot open a file write", () => {
+    const root = mkdtempSync(join(tmpdir(), "write-door-policy-row-"));
+    try {
+      const declared = ["activity_create_variant"];
+      writePolicyRow(root, { shapeClasses: { activity_create_variant: "change" } });
+      usePolicyRoot(root);
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(true);
+      expect(door.taskWriteDoor(false, declared).writeDoor.governs("activity_create_variant")).toBe(true);
+      // A row naming a filesystem write, a non-change shape or an unknown class is ignored.
+      writePolicyRow(root, { shapeClasses: { activity_create_variant: "store_product", fs_edit: "store_product", memoryNote_write: "change", variant_promote: "maybe" } });
+      usePolicyRoot(root);
+      expect(door.taskWriteDoor(false, ["fs_edit", "variant_promote"]).writeDoor.governs("fs_edit")).toBe(true);
+      expect(door.taskWriteDoor(false, ["fs_edit", "variant_promote"]).writeDoor.governs("variant_promote")).toBe(true);
+      expect(door.callerDeclaresWrite(["memoryNote_write"])).toBe(false);
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(false);
+      // An unparseable row is the default (the ruling).
+      writeFileSync(join(root, "policies", "writeDoorPolicy.json"), "{not json");
+      usePolicyRoot(root);
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(false);
+      expect(door.taskWriteDoor(false, declared).writeDoor.governs("activity_create_variant")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      usePolicyRoot(POLICY_ROOT);
+    }
+  });
+
+  it("control: the row is read at use time: a changed row takes effect after one policy window, with no restart", () => {
+    const root = mkdtempSync(join(tmpdir(), "write-door-policy-ttl-"));
+    let now = 1_000_000;
+    try {
+      (door as unknown as PolicySeam).configureWriteDoorPolicy?.({ workspaceRoot: root, clock: () => now });
+      const declared = ["activity_create_variant"];
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(false);
+      writePolicyRow(root, { shapeClasses: { activity_create_variant: "change" } });
+      now += 1_000; // inside the window: the cached classes still answer
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(false);
+      now += door.WRITE_DOOR_POLICY_TTL_MS; // past it: the row is read again
+      expect(door.admittedChange({ admittedEditRoute: false, declaredOutputShapes: declared })).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      (door as unknown as PolicySeam).configureWriteDoorPolicy?.({ workspaceRoot: POLICY_ROOT, clock: () => Date.now() });
     }
   });
 
