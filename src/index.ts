@@ -13806,15 +13806,15 @@ If one of those sibling shapes is the action that would create what the goal ask
           // the ribosome ("verdict=not-reached (tag:reached:false)") SKIPPED extraction
           // and NO learned-composition-* template was ever persisted (hub 404, verified).
           // Build first, then tag with compositeGrounded so tag and mint decision agree.
-          const _composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)));
+          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)));
+          // The chain rebuild drops each step's write tasks: put the accepted ones back against their step, so the
+          // composite records the effect, and a confirmed deliverable write in it is an executed-tool anchor.
+          const compositeWithWrites = spliceStepWrites(composite, stepWrites);
           // ≥ 2 output-bearing tasks AND ≥ 1 real edge between them (walk-pool.ts hasRealEdge): with
           // recorded step edges a template step now carries real output ids, so the old count alone
-          // would mint two unrelated reads as a recipe.
-          const _edgeGrounded = mintGrounded || (_composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(_composite.tasks, carriedSteps));
-          // The chain rebuild drops each step's write tasks: put the accepted ones back after their step, so the
-          // composite records the effect, and a confirmed deliverable write in it is an executed-tool anchor.
-          const composite = spliceStepWrites(_composite, stepWrites);
-          const compositeGrounded = _edgeGrounded || hasVerifiedWriteAnchor(composite);
+          // would mint two unrelated reads as a recipe. (Judged on the chain's own tasks, before the splice.)
+          const compositeGrounded = hasVerifiedWriteAnchor(compositeWithWrites) || mintGrounded || (composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(composite.tasks, carriedSteps));
+          Object.assign(composite, { tasks: compositeWithWrites.tasks, metadata: compositeWithWrites.metadata });
           composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];
           // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
           //

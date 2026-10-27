@@ -281,13 +281,14 @@ describe("the walk routes its writes, read-backs and the mint through these", ()
   });
 
   test("MUST-FAIL: the composite keeps step writes and the mint gate sees a confirmed write task", () => {
-    expect(src).toContain("const composite = spliceStepWrites(_composite, stepWrites);");
-    expect(src).toContain("const compositeGrounded = _edgeGrounded || hasVerifiedWriteAnchor(composite);");
+    expect(src).toContain("const compositeWithWrites = spliceStepWrites(composite, stepWrites);");
+    expect(src).toContain("const compositeGrounded = hasVerifiedWriteAnchor(compositeWithWrites) || mintGrounded || (");
+    expect(src).toContain("Object.assign(composite, { tasks: compositeWithWrites.tasks, metadata: compositeWithWrites.metadata });");
     expect(src).toContain("if (!groundedForMint(grounded, trace as unknown as Pick<ExecutionTrace, \"tasks\" | \"metadata\">)) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }");
   });
 
   test("CONTROL: the composite's reach tag is still stamped from the same decision the mint uses", () => {
-    const at = src.indexOf("const compositeGrounded = _edgeGrounded || hasVerifiedWriteAnchor(composite);");
+    const at = src.indexOf("Object.assign(composite, { tasks: compositeWithWrites.tasks, metadata: compositeWithWrites.metadata });");
     expect(at).toBeGreaterThan(0);
     expect(src.indexOf('composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];', at)).toBeGreaterThan(at);
   });
