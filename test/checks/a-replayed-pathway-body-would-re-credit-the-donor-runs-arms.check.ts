@@ -7,24 +7,52 @@ import * as mod from "../../src/index";
  *
  * We exercise credit-carrier selection via the public export:
  *   chargeChainCarrier(dispatchId, chainExecIds, durableChain, durableGraded, compositeRecorded)
- * and assert the INTENDED behavior (design 01 §3.6): a replayed body must NOT re-credit the donor run.
+ * and assert the INTENDED behavior (design 01 §3.6): a replayed body must NOT re-credit the donor run,
+ * while a re-execution should.
  *
- * The assertion fails today because the current implementation re-credits along the durable chain.
+ * The first test fails today because the current implementation re-credits the durable chain on replay.
  */
-describe("carry replay V-A credit policy", () => {
-  it("does not re-credit donor run's arms when the body is replayed from recorded results", () => {
-    // Simulate a replay: the current run's composition chain excludes the donor execution id.
+describe("carry replay credit policy (V-A vs V-B)", () => {
+  it("on V-A replay, withholds all durable credit and credits composite chain", () => {
     const donorExec = "exec-donor-9c9b";
     const chainExecIds = ["exec-now-a1", "exec-now-b2"] as const;
-
-    // The durable chain (recorded earlier) still contains the donor execution id.
     const durableChain = [...chainExecIds, donorExec];
 
-    // compositeRecorded=true (the replay produces a recorded composite), durableGraded=false (fresh grading decision path).
-    const res = mod.chargeChainCarrier("dispatch-zz", chainExecIds, durableChain, false, true);
+    // V-A replay: compositeRecorded=true, durableGraded=false.
+    const res = mod.chargeChainCarrier(
+      "dispatch-va-replay",
+      chainExecIds,
+      durableChain,
+      false, // durableGraded
+      true // compositeRecorded
+    );
 
-    // Ideal (design 01 §3.6): on V-A replay the body's arms receive no new alpha/beta.
-    // Therefore, the donor execution id MUST NOT be credited.
-    expect(res.durable).not.toContain(donorExec);
+    // Ideal (design 01 §3.6): on V-A replay, the body's arms receive no new alpha/beta.
+    // The durable credit list should be empty.
+    expect(res.durable).toEqual([]);
+
+    // The adaptation outcome (composite chain) IS credited. This should contain the current execution IDs.
+    expect(res.composite).toEqual([...chainExecIds]);
+  });
+
+  it("CONTROL: on V-B re-execution, credits durable chain including donor", () => {
+    const donorExec = "exec-donor-9c9b";
+    const chainExecIds = ["exec-now-a1", "exec-now-b2", donorExec] as const;
+    const durableChain = [...chainExecIds];
+
+    // V-B re-execution: not a composite replay, reusing durable grading.
+    // compositeRecorded=false, durableGraded=true.
+    const res = mod.chargeChainCarrier(
+      "dispatch-vb-rexec",
+      chainExecIds,
+      durableChain,
+      true, // durableGraded
+      false // compositeRecorded
+    );
+
+    // On re-execution, credit propagates along the durable chain.
+    expect(res.durable).toContain(donorExec);
+    // The full durable chain should be credited.
+    expect(res.durable).toEqual(expect.arrayContaining(durableChain));
   });
 });
