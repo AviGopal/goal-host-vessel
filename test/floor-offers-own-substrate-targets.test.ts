@@ -57,7 +57,9 @@ describe("the floor's offer follows discovery, own substrate only, never a shell
   it("[CONTROL] source_code gone; unadvertised hand tools dropped; unknown vocabulary keeps the list; exclusions honoured", () => {
     expect(ft["UNIVERSAL_READ_TOOLS"].map((t: any) => t.name)).not.toContain("source_code");
     expect(ft["floorHandToolNames"](new Set(["fs_read", "codeSearchResult", "substrateGap"]))).toEqual(["fs_read", "codeSearchResult", "substrateGap"]);
-    expect(ft["floorHandToolNames"](new Set())).toEqual(ft["UNIVERSAL_READ_TOOLS"].map((t: any) => t.name));
+    // Pin changed under the user ruling of 2026-10-26T19:05:13Z ("Shell on the floor now anyway"): the floor's hand list
+    // is UNIVERSAL_FLOOR_TOOLS (the read tools plus web_search and bounded_shell).
+    expect(ft["floorHandToolNames"](new Set())).toEqual(ft["UNIVERSAL_FLOOR_TOOLS"].map((t: any) => t.name));
     expect(ft["floorTargetCandidates"](["fileContent"], KNOWN, NAMED_SHAPE_EXCLUDE)).toEqual([]);
     expect(ft["floorTargetCandidates"](["memoryNote_write", "fs_read", "not_advertised"], KNOWN, NAMED_SHAPE_EXCLUDE)).toEqual([]);
   });
