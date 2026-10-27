@@ -12567,7 +12567,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _why = composeTrigger({ tried: walkComposeTried, goal, hasPick: !!pick, missing: _missingC, targetSize: target.size, novel: !!_novelC, steps: chain.length });
       if (_why) {
         walkComposeTried = true;
-        const _c = await authorComposite(goal, _missingC, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 180_000 });
+        const _c = await authorComposite(goal, _missingC, [...producedShapes], dispatchContext.getStore()?.dispatchId, { resolveUrl: ufResolveUrl, apiKey: API_KEY, timeoutMs: 180_000, templateEndpoint: ACTIVITY_API_ENDPOINT });
         if (_c.ok && (writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick", writeDoorHash, tap, (p) => p.id, writeDoorProduct).length === 0
           || await templateRunRefused(_c.pick.id, _c.pick.outputShapes, () => getTemplateLocalFirst(_c.pick.id), changeAdmitted, "composite_pick", doorRefused, writeDoorHash, tap, writeDoorProduct))) {
           // Its declared outputs, a task it runs, or an earlier door in this dispatch refused it (write-door.ts).

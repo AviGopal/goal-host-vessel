@@ -2,6 +2,7 @@
 // what it produced. Must-fail at the parent (bac8742): the module does not exist and the walk has no compose step.
 import { describe, expect, test } from "bun:test";
 import { ComposedLedger, authorComposite, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "../src/composite-authoring";
+import * as compositeAuthoring from "../src/composite-authoring";
 
 const src = require("node:fs").readFileSync(`${import.meta.dir}/../src/index.ts`, "utf8") as string;
 
@@ -161,5 +162,68 @@ describe("earned by doing: a minted composite whose first run does not reach is 
     expect(set).toBeGreaterThan(0);
     expect(ret).toBeGreaterThan(set);
     expect(src.slice(ret, ret + 400)).toContain("record.reached)");
+  });
+});
+
+// agf_7k96bk4xtfnu + agf_x91rx70lbdok: the author returns a content-addressed id, so re-authoring a chain a miss retired
+// hands back the retired id; and an llm task may declare a write it never performs. Must-fail at the parent: both came
+// back as picks. Goal text from a five-word draw (motive sneeze posing gray decal).
+describe("the stored composite is read back before the walk takes it", () => {
+  // namespace read, so the parent (no such export) runs every other test in this file
+  const fakeWriterTasks = (t: unknown): string[] => (compositeAuthoring as unknown as { fakeWriterTasks: (t: unknown) => string[] }).fakeWriterTasks(t);
+  const GOAL = "Explain the motive behind posing a gray decal that makes the ledger auditors sneeze";
+  const API = "http://aa9";
+  const author = (body: Record<string, unknown>, stored: (url: string) => { status: number; json: unknown }) =>
+    fakeFetch((c) => (c.url.startsWith(`${API}/v2/activities/templates/`) ? stored(c.url) : { status: 200, json: { shape: "author_composed_capability", body } }));
+  const deps = (f: typeof fetch) => ({ resolveUrl: at("http://v9/v2/impulses/resolve"), fetchImpl: f, timeoutMs: 1000, templateEndpoint: API });
+  const report = [{ id: "data", resolver: "traceAggregateReport", output_shapes: ["traceAggregateReport"] }, { id: "fmt", resolver: "llm_completion_dispatch", output_shapes: ["decalMotiveReport"] }];
+
+  test("MUST-FAIL: a retired id the author re-composes is refused, read by its bare id", async () => {
+    const { f, calls } = author({ minted_activity_id: "activity:⟨composed-cap-decal-0a1b⟩", validated: true, output_shapes: ["decalMotiveReport"], tasks: report },
+      () => ({ status: 200, json: { id: "activity:⟨composed-cap-decal-0a1b⟩", retired: true, deprecated: true, tasks: report } }));
+    const r = await authorComposite(GOAL, ["decalMotiveReport"], [], "d-1", deps(f));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/composed-cap-decal-0a1b, which is retired/);
+    expect(calls.some((c) => c.url === `${API}/v2/activities/templates/composed-cap-decal-0a1b`)).toBe(true);
+  });
+  test("MUST-FAIL: an llm task declaring uiView_write is refused, and a composite this walk minted is retired", async () => {
+    const fakeTasks = [report[0], { id: "fmt", resolver: "llm_completion_dispatch", output_shapes: ["uiView_write"] }];
+    const { f, calls } = author({ minted_activity_id: "composed-cap-uiview-9f", validated: true, output_shapes: ["uiView_write"], tasks: fakeTasks },
+      () => ({ status: 200, json: { id: "composed-cap-uiview-9f", tasks: fakeTasks } }));
+    const r = await authorComposite(GOAL, ["uiView_write"], [], undefined, deps(f));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/fmt:uiView_write/);
+    await new Promise((res) => setTimeout(res, 5));
+    expect(calls.some((c) => c.body?.pointer?.type === "activityTemplate_deprecate" && c.body.pointer.templateId === "composed-cap-uiview-9f")).toBe(true);
+  });
+  test("MUST-FAIL: a reused composite whose STORED row has a fake writer is refused (not retired: it carries history)", async () => {
+    const { f, calls } = author({ minted_activity_id: "composed-cap-old-3c", validated: true, reused_existing: true, output_shapes: ["decalMotiveReport"], tasks: report },
+      () => ({ status: 200, json: { id: "composed-cap-old-3c", tasks: [{ id: "w", resolver: "llm_completion_dispatch", outputShapes: ["memoryNote_write"] }] } }));
+    const r = await authorComposite(GOAL, ["decalMotiveReport"], [], undefined, deps(f));
+    expect(r.ok).toBe(false);
+    await new Promise((res) => setTimeout(res, 5));
+    expect(calls.some((c) => c.body?.pointer?.type === "activityTemplate_deprecate")).toBe(false);
+  });
+  test("CONTROL: a live existing composite is reused as today", async () => {
+    const { f } = author({ minted_activity_id: "composed-cap-old-3c", validated: true, reused_existing: true, output_shapes: ["decalMotiveReport"], tasks: report },
+      () => ({ status: 200, json: { id: "composed-cap-old-3c", retired: false, deprecated: false, tasks: report } }));
+    expect(await authorComposite(GOAL, ["decalMotiveReport"], [], undefined, deps(f))).toEqual({ ok: true, pick: { id: "composed-cap-old-3c", outputShapes: ["decalMotiveReport"], reusedExisting: true } });
+  });
+  test("CONTROL: an llm task producing a report shape, and a task whose resolver IS the write, are accepted", async () => {
+    const writer = [...report, { id: "save", resolver: "uiView_write", output_shapes: ["uiView_write"] }, { id: "post", resolver: "uiPanel_write/vessel", outputShapes: ["uiPanel_write"] }];
+    const { f } = author({ minted_activity_id: "composed-cap-ok-77", validated: true, output_shapes: ["uiView_write"], tasks: writer },
+      () => ({ status: 200, json: { id: "composed-cap-ok-77", tasks: writer } }));
+    const r = await authorComposite(GOAL, ["uiView_write"], [], undefined, deps(f));
+    expect(r.ok).toBe(true);
+    expect(fakeWriterTasks(writer)).toEqual([]);
+    expect(fakeWriterTasks([{ id: "c", resolver: "compose", output_shapes: ["uiView_write"] }])).toEqual([]);
+  });
+  test("CONTROL: an unreadable stored row is not judged on lifecycle (the plan's tasks still are)", async () => {
+    const { f } = author({ minted_activity_id: "composed-cap-new-5d", validated: true, output_shapes: ["decalMotiveReport"], tasks: report }, () => ({ status: 503, json: {} }));
+    const r = await authorComposite(GOAL, ["decalMotiveReport"], [], undefined, deps(f));
+    expect(r.ok).toBe(true);
+  });
+  test("the walk hands the author activity-api's endpoint", () => {
+    expect(src).toMatch(/authorComposite\([^\n]*templateEndpoint: ACTIVITY_API_ENDPOINT/);
   });
 });
