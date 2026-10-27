@@ -23,9 +23,11 @@
 import { ANSWER_SHAPES, assertedDatesInText, digestSegments, isStaleDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { SEARCH_RESULT_SHAPES } from "./grounded-report";
 import { isFsWriteShape } from "./fs-write-shapes";
-import { CHANGE_PRIMITIVE_SHAPES } from "./write-door";
+import { CHANGE_PRIMITIVE_SHAPES, WALK_MECHANICS_WRITES, isWriteShape } from "./write-door";
 import { emptyResultSetReason } from "./empty-result-set";
 import { canonicalGoalText } from "./goal-intent";
+import { isMutationShape } from "./judge/shapes";
+import { claimsWriteSucceeded } from "./judge/floor-clamps";
 
 export interface ReachJudgeInput {
   goal: string;
@@ -450,6 +452,107 @@ export function hasNonEmptyRead(producedShapes: string[], commandEvidence?: stri
 
 const CURRENT_STATE_CODE = "ungrounded-current-state";
 
+/** Answers that claim the run PERFORMED a change, beyond what claimsWriteSucceeded (judge/floor-clamps.ts) names: a
+ *  change verb anchored by "successfully", by a first-person subject, or by "as requested". A heuristic cue list
+ *  (flagged). A bare past tense is reportage, never a claim: "the rockfish thread was updated yesterday" answers a read.
+ *  Probe c1bbfc9f: an answer asserting a completed change, on a chain that read a view and wrote nothing. */
+const CHANGE_VERB = String.raw`(?:updated|changed|modified|moved|reordered|rearranged|pinned|placed|put|added|removed|deleted|created|saved|applied|renamed|wrote|written|published|posted|prioriti[sz]ed|unchecked|tightened|arranged)`;
+export const CHANGE_CLAIM_CUES: readonly RegExp[] = [
+  new RegExp(String.raw`\bsuccessfully\s+(?:been\s+)?${CHANGE_VERB}\b`, "i"),
+  new RegExp(String.raw`\b(?:i|we)(?:'ve|\s+have|\s+had)?\s+(?:now\s+|just\s+|successfully\s+|also\s+)?${CHANGE_VERB}\b`, "i"),
+  new RegExp(String.raw`\b${CHANGE_VERB}\b[^.\n]{0,80}?\bas (?:you )?requested\b`, "i"),
+];
+/** A cue denied inside its own clause ("I could not update…", "nothing was moved") is not a claim. */
+const CHANGE_CLAIM_NEGATION = /\b(?:not|no|nothing|never|cannot|unable|failed)\b|n't\b/i;
+
+/** Does this answer text claim a performed change? claimsWriteSucceeded, or a CHANGE_CLAIM_CUES match whose clause (the
+ *  match and the words before it in its sentence) is not negated. */
+export function claimsPerformedChange(text: string): boolean {
+  if (claimsWriteSucceeded(text)) return true;
+  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
+    for (const re of CHANGE_CLAIM_CUES) {
+      const m = re.exec(sentence);
+      if (m && !CHANGE_CLAIM_NEGATION.test(sentence.slice(Math.max(0, m.index - 40), m.index + m[0].length))) return true;
+    }
+  }
+  return false;
+}
+
+/** The STORE a shape names, the way the walk's own write read-back derives it (index.ts verifyWritePersistedRead):
+ *  strip `_write`, then a `_create`, then a trailing `_<verb>`; here also any `<namespace>:` prefix, case and
+ *  underscores, so uiView_write and human_surface:ui_view name one store and uiPanel_write and ui_view do not. A read
+ *  shape has nothing to strip and names itself. Name families only: a write whose view is a different shape
+ *  (renderPolicy_write shown in ui_view) is not linked, because writes declare no store in shape metadata (the
+ *  declared-write-metadata gap). */
+export function storeFamilyOf(shape: string): string {
+  let s = shape.replace(/^[\w-]+:/, "");
+  if (/_write$/.test(s)) {
+    s = s.replace(/_write$/, "").replace(/_create$/, "");
+    s = s.replace(/_[a-z]+$/, "") || s;
+  } else if (/_(?:create|update|delete)$/.test(s)) {
+    s = s.replace(/_(?:create|update|delete)$/, "");
+  }
+  return s.replace(/_/g, "").toLowerCase();
+}
+
+/** One chain step in run order: its shape, whether it succeeded, and its output when the digest shows one. */
+interface ChainStep { shape: string; ok: boolean; text?: string }
+
+/** The chain's steps IN RUN ORDER. The floor (taskSummary "universal ReAct fallback: … [t1, t2!, …]", index.ts) lists
+ *  its executed tools in order with `!` on a failed call, and that list is read, because the floor's producedShapes put
+ *  the REQUESTED targets first (floorJudgedShapes), so a target write shape there is not a write. A walk's
+ *  producedShapes are what it produced, in first-production order; the digest is deliverable-first (judge-view.ts), so
+ *  it gives each step's output, never the order. A walk step whose digest shows no segment is unknown and counts as
+ *  succeeded, the convention hasNonEmptyRead keeps (a cut digest never refuses a real step). Named debt: the floor's
+ *  ordered write evidence belongs in a structured field, not in its summary text. */
+function chainSteps(producedShapes: string[], taskSummary: string, contentDigest?: string): ChainStep[] {
+  const floor = /^universal ReAct fallback:.*\[([^\]]*)\]\s*$/.exec(taskSummary);
+  if (floor) {
+    return floor[1]!.split(",").map((t) => t.trim()).filter(Boolean)
+      .map((t) => (t.endsWith("!") ? { shape: t.slice(0, -1), ok: false } : { shape: t, ok: true }));
+  }
+  const segs = digestSegments(contentDigest ?? "");
+  return producedShapes.filter((s) => !SEED_SHAPES.has(s)).map((s) => {
+    const mine = segs.filter((g) => g.shape === s);
+    const full = mine.find((g) => !isEmptyReadOutput(g.text));
+    return mine.length === 0 ? { shape: s, ok: true } : full ? { shape: s, ok: true, text: full.text } : { shape: s, ok: false, text: mine[0]!.text };
+  });
+}
+
+/** The record id a write's output names (`id` or `title`, top level or under `body`), as the walk's read-back reads it. */
+function writtenIdOf(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  let o: any;
+  try { o = JSON.parse(text.trim()); } catch { return undefined; }
+  for (const src of [o, o?.body]) {
+    if (!src || typeof src !== "object") continue;
+    for (const k of ["id", "title"]) if (typeof src[k] === "string" && src[k]) return src[k];
+  }
+  return undefined;
+}
+
+/** Is a performed-change claim backed by the chain? "confirmed": a STORE write (isMutationShape, less the walk's own
+ *  WALK_MECHANICS_WRITES) succeeded with output that is not empty or an error (isEmptyReadOutput), and a LATER
+ *  successful read-role step of the same store (storeFamilyOf) read it back, holding the written record's id or title
+ *  when the write named one. "change-class": a change primitive or filesystem write (write-door.ts isWriteShape)
+ *  succeeded; the walk's read-back does not cover those (it reads back `_write` shapes only), the landed-edit gates
+ *  own them, and this rule abstains. Otherwise "no-write" or "no-read-back". */
+export function changeEvidence(producedShapes: string[], taskSummary: string, contentDigest?: string): { kind: "confirmed" | "change-class" | "no-write" | "no-read-back"; stores: string[] } {
+  const steps = chainSteps(producedShapes, taskSummary, contentDigest);
+  if (steps.some((s) => s.ok && isWriteShape(s.shape))) return { kind: "change-class", stores: [] };
+  const writes = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.ok && isMutationShape(s.shape) && !WALK_MECHANICS_WRITES.has(s.shape));
+  if (writes.length === 0) return { kind: "no-write", stores: [] };
+  const stores = [...new Set(writes.map(({ s }) => storeFamilyOf(s.shape)))];
+  const confirmed = writes.some(({ s: w, i }) => {
+    const id = writtenIdOf(w.text);
+    return steps.slice(i + 1).some((r) => r.ok && isReadRoleShape(r.shape) && storeFamilyOf(r.shape) === storeFamilyOf(w.shape)
+      && (id === undefined || r.text === undefined || r.text.includes(id)));
+  });
+  return { kind: confirmed ? "confirmed" : "no-read-back", stores };
+}
+
+const UNWRITTEN_CHANGE_CODE = "unwritten-change-claim";
+
 const DAY_MS = 86_400_000;
 const notReached = (code: string, why: string): ReachJudgeVerdict => ({
   reached: false, deterministic: true, completion_shapes: [], reason: `deterministic:${code} — ${why}`,
@@ -472,6 +575,8 @@ const notReached = (code: string, why: string): ReachJudgeVerdict => ({
  *     is consulted in shadow for this rule (judgeReach).
  *  6. UNGROUNDED CURRENT STATE: a LIVE_STATE_CUES or CURRENT_INFORMATION_CUES goal whose chain has no step that read
  *     state and returned non-empty output (hasNonEmptyRead). Not shadowed by the judge.
+ *  7. UNWRITTEN CHANGE CLAIM: an answer that claims a performed change (claimsPerformedChange), on a chain with no
+ *     successful store write, or with no later read-back of that store confirming it (changeEvidence). Not shadowed.
  *  After the judge (judgeReach, not here): a reached verdict whose judge names the goal's subject this_system, on a
  *  chain that consulted nothing in-run (consultedInRun), is not reached under rule 5's code.
  */
@@ -526,6 +631,21 @@ export function groundingPreGate(input: ReachJudgeInput & { now: Date }): ReachJ
   const currentState = LIVE_STATE_CUES.test(canonical) || CURRENT_INFORMATION_CUES.test(canonical);
   if (currentState && !hasNonEmptyRead(producedShapes, input.commandEvidence, input.contentDigest)) {
     return notReached(CURRENT_STATE_CODE, `ungrounded: no step read the current state the goal asks about (produced: ${producedShapes.join(", ") || "none"}; no source step returned non-empty output); an answer from model memory or an empty read cannot say what the state is now`);
+  }
+
+  // Rule 7: an answer that CLAIMS it changed something is reached only if the chain wrote that store and returned a
+  // result, AND a later step read the store back (changeEvidence). Probe c1bbfc9f: the floor read a view, wrote
+  // nothing, gave an answer asserting a completed change, and the judge credited it. Triggered by the
+  // ANSWER's claim only: whether a goal was admitted as a change is decided in index.ts (write-door.ts admittedChange)
+  // and is not part of ReachJudgeInput, and the goal's wording is never read for admission.
+  if (answers.some(claimsPerformedChange)) {
+    const ev = changeEvidence(producedShapes, input.taskSummary, input.contentDigest);
+    if (ev.kind === "no-write") {
+      return notReached(UNWRITTEN_CHANGE_CODE, `unwritten: the answer claims a change, and no step wrote a store and returned a result (produced: ${producedShapes.join(", ") || "none"}); a claimed change with no write did not happen`);
+    }
+    if (ev.kind === "no-read-back") {
+      return notReached(UNWRITTEN_CHANGE_CODE, `unconfirmed: the answer claims a change to ${ev.stores.join(", ")}, and no later step read that store back to confirm it (produced: ${producedShapes.join(", ") || "none"}); a write that was never read back is not a confirmed change`);
+    }
   }
   return null;
 }
