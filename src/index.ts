@@ -298,7 +298,7 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 import { parseFileExtension } from "./file-extension";
 import { decideEscalationTarget } from "./escalation-target";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
-import { createAppliedWriteLedger, isAppliedWriteShape, settleVerifiedWrite, walkResolveBody } from "./applied-write";
+import { attachWriteTasks, createAppliedWriteLedger, groundedForMint, hasVerifiedWriteAnchor, isAppliedWriteShape, readBackConfirms, settleVerifiedWrite, spliceStepWrites, walkResolveBody, writeReadShape, writtenRecordIdOf, type WriteTaskRecord } from "./applied-write";
 import { isSatisfierOnlyTrace, satisfierReachMetadata, satisfierStepAudit, thrownVerifyDurableTrace, withBetaWithheld } from "./satisfier-durable-trace";
 import * as judge from "./judge/entries";
 import * as judgeInputs from "./judge/inputs";
@@ -321,7 +321,7 @@ import * as verdictConsistency from "./judge/verdict-consistency";
 import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
-import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeReachInParts, judgeShadowOf } from "./reach-grounding";
+import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeReachInParts, judgeShadowOf, storeFamilyOf } from "./reach-grounding";
 import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, observeOffGoalContent, targetSimilarityKey } from "./failure-recall";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeViewParts, DELIVERABLE_CAP, type JudgeCut, type JudgeViewPart, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
@@ -8322,7 +8322,8 @@ async function mintReachedTrace(trace: { id?: string; status?: string; templateI
   if (creditHold.heldForGoal(goalText, "reach", "mintReachedTrace")) return; // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts)
   const executionId = trace?.id;
   if (!executionId) return;
-  if (!grounded) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
+  // A confirmed write task IN THIS TRACE is an executed-tool anchor (applied-write.ts groundedForMint); another trace's write is not.
+  if (!groundedForMint(grounded, trace as unknown as Pick<ExecutionTrace, "tasks" | "metadata">)) { console.log(`[goal-host-vessel] reach->mint: SKIP ungrounded reach ${executionId} — bare-LLM-yes / no executed-tool anchor; not an extractable recipe`); return; }
   // Never extract a run that consumed another execution's impulse: the template would
   // encode a cross-bound recipe (measured: a ribosome-extract run cross-bound and minted
   // a template from another run's trace, which an unrelated goal then ran).
@@ -9512,6 +9513,8 @@ async function runGoalAsPoolWalkBody(
     terminalShapes,
     tags: opts.tags ?? [],
     parentExecutionId: () => { try { return lastExecId; } catch { return undefined; } },
+    // The goal's store: a write task anchors a mint only when it writes what the walk was asked for.
+    deliverable: (shape) => [...terminalShapes, ...target].some((t) => storeFamilyOf(String(t)) === storeFamilyOf(shape)),
   });
   /** The walk's WRITE EVIDENCE for the reach gate (judge entry reachGate): the mutation shapes this
    *  walk applied (a vessel accepted the write, applied-write ledger) or read back persisted. Never the
@@ -9544,44 +9547,16 @@ async function runGoalAsPoolWalkBody(
     if (!isPersistingWrite) return null;
 
     try {
-      // Parse id from writeResult
-      let id: string | undefined;
-      const tryParseId = (v: unknown): string | undefined => {
-        if (typeof v === "object" && v !== null) {
-          const obj = v as Record<string, unknown>;
-          // The identifier may sit at the top level OR nested under `body`
-          // (write resolvers commonly return { success, shape, body: { id | title } }).
-          // For title-keyed stores (memoryNote/concept) the record id IS the title slug,
-          // so `title` is an accepted identifier too.
-          const body = (typeof obj["body"] === "object" && obj["body"] !== null) ? obj["body"] as Record<string, unknown> : null;
-          for (const src of [obj, body]) {
-            if (!src) continue;
-            if (typeof src["id"] === "string" && src["id"]) return src["id"];
-            if (typeof src["title"] === "string" && src["title"]) return src["title"];
-          }
-          if (typeof obj["content"] === "string") {
-            try {
-              const inner = JSON.parse(obj["content"]) as Record<string, unknown>;
-              if (typeof inner["id"] === "string" && inner["id"]) return inner["id"];
-              if (typeof inner["title"] === "string" && inner["title"]) return inner["title"];
-            } catch { /* ignore */ }
-          }
-        }
-        return undefined;
-      };
-      if (typeof writeResult === "string") {
-        try { id = tryParseId(JSON.parse(writeResult)); } catch { /* ignore */ }
-      } else {
-        id = tryParseId(writeResult);
-      }
+      // The id the write's answer names (applied-write.ts writtenRecordIdOf): top level, under `body`, one
+      // object level below it, or in a JSON `content` string. For title-keyed stores (memoryNote/concept) the
+      // record id IS the title slug, so `title` is an accepted identifier too.
+      const id = writtenRecordIdOf(writeResult);
       if (!id) return { persisted: false };
 
-      // Derive read shape: strip trailing _write, then leading verb segment
-      let readShape = writeShape.replace(/_write$/, "");
-      // e.g. concept_create -> concept; note_create -> note
-      readShape = readShape.replace(/^[a-z]+_create$/, (m) => m.replace(/_create$/, ""));
-      // fallback: strip any remaining _<verb> suffix
-      readShape = readShape.replace(/_[a-z]+$/, "") || readShape;
+      // The read shape: the derived name, or the one served read of the same store when that name is not
+      // served (applied-write.ts writeReadShape; uiView_write reads back through human_surface:ui_view).
+      const _live = await liveShapes();
+      const readShape = writeReadShape(writeShape, registryResolverShapes ?? _live);
 
       const ep = await endpointForShape(readShape);
       if (!ep) return { persisted: false };
@@ -9593,12 +9568,14 @@ async function runGoalAsPoolWalkBody(
         if (rr == null) return false;
         try { return JSON.stringify(rr).includes(id!); } catch { return false; }
       };
+      // A confirming read is kept for the write's task; markVerified links it once the satisfier settles on it.
+      const readBack = { readShape, confirmedId: id, site: "write-read-back" };
       const readResult = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { id });
-      if (confirms(readResult)) return { persisted: true, content: readResult };
+      if (confirms(readResult)) { appliedWrites.noteReadBack(writeShape, readBack); return { persisted: true, content: readResult }; }
       // Title-keyed stores (memoryNote/concept): the record id is the title slug, so a
       // read by { id } may miss; retry by { title_prefix }.
       const byTitle = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { title_prefix: id }).catch(() => null);
-      if (confirms(byTitle)) return { persisted: true, content: byTitle };
+      if (confirms(byTitle)) { appliedWrites.noteReadBack(writeShape, readBack); return { persisted: true, content: byTitle }; }
       if (readResult != null) {
         // concept-db REST fallback. It carries this vessel's credential: concept-db scopes id reads to the caller's
         // org, so an uncredentialed read finds this vessel's own concept "not found". Logged, so how often the shaped
@@ -9611,6 +9588,7 @@ async function runGoalAsPoolWalkBody(
           });
           if (fbResp.ok) {
             const fbBody = await fbResp.json() as unknown;
+            appliedWrites.noteReadBack(writeShape, { ...readBack, site: "write-read-back-by-id" }); // read by the written id
             return { persisted: true, content: fbBody };
           }
         } catch { /* fail-open */ }
@@ -9621,7 +9599,12 @@ async function runGoalAsPoolWalkBody(
       return null;
     }
   }
+  /** Every rawResolve of a write shape, accepted or refused, is a write task of the step that sent it
+   *  (applied-write.ts recordOutcome): the pointer it sent and what came back, so the trace shows the effect. */
   const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>, site = "walk"): Promise<unknown | null> => {
+  // The resolve itself is rawResolveOnce, kept at its own indentation; its outcome is recorded after it returns.
+  const sent: { pointer?: Record<string, unknown> } = {};
+  const rawResolveOnce = async (): Promise<unknown | null> => {
     lastRawResolveReason = null;
     lastRawResolveTransient = false;
     rawResolveSeq++;
@@ -9629,6 +9612,7 @@ async function runGoalAsPoolWalkBody(
     delete (base as Record<string, unknown>).goal; // don't let the goal-object default shadow real args
     // The shape is resolved LAST: a synthesized `type` must never change it (see resolve-pointer.ts).
     const pointer: Record<string, unknown> = buildResolvePointer(shape, base as Record<string, unknown>, extraArgs);
+    sent.pointer = pointer; // the same object the vocabulary hold and the repair rewrite in place
     // OBSERVE (observe-mode.ts): an observe walk's gapDecomposition asks for a dry decomposition (no child gap written).
     Object.assign(pointer, observeDecomposeFields(shape, opts.learningMode));
     if ((shape === "shellResult" || shape === "shell" || shape === "bash" || shape === "bounded_shell" || shape === "gitCommitResult" || shape === "git_commit") && !pointer.execution_id && dispatchContext.getStore()?.dispatchId) pointer.execution_id = dispatchContext.getStore()!.dispatchId;
@@ -9843,6 +9827,10 @@ async function runGoalAsPoolWalkBody(
     // before any later branch can discard the result. `site` names the caller.
     if (isAppliedWriteShape(shape)) appliedWrites.recordApplied(shape, { site, endpoint, result: content });
     return content;
+  };
+  const result = await rawResolveOnce();
+  if (isAppliedWriteShape(shape)) appliedWrites.recordOutcome(shape, { site, endpoint, pointer: sent.pointer, result, reason: result == null ? lastRawResolveReason : null });
+  return result;
   };
   /** A terminal write this walk already applied and read back persisted is not applied again. */
   const refuseReapply = (shape: string, site: string): boolean => {
@@ -11397,6 +11385,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     // to the pool too (it's genuine output).
     addToPool(action.shape, actionResult, `vessel-resolve satisfier action (${action.shape})`, { producedBy: `satisfier:${action.shape}` });
     const reread = refuseReapply(shape, "action-then-read re-read") ? null : await rawResolve(shape, ep.endpoint, ep.resolvePath, { ...action.args, ...directArgs }, "satisfier-reread");
+    // The action's write task is confirmed only when the re-read holds the record the action's answer named
+    // (readBackConfirms): a read that answers whatever was written is not a read-back of this write.
+    const _rereadId = reread != null ? readBackConfirms(actionResult, reread) : null;
+    if (_rereadId) appliedWrites.confirmReadBack(action.shape, { readShape: shape, confirmedId: _rereadId, site: "satisfier-reread" });
     if (reread != null) { verifiedWrites.add(`satisfier:${shape}`); appliedWrites.markVerified(shape); recordExecutorCommand({ ...action.args, ...directArgsRaw }); return { content: reread, effect: effectTupleOf(shape, ep?.endpoint, reread) }; }
     // Action succeeded but re-read empty — still genuine progress (the artifact was
     // created). Surface the action result as the target's content rather than null,
@@ -11549,6 +11541,8 @@ If one of those sibling shapes is the action that would create what the goal ask
   // STEP EDGES (walk-pool.ts, agentic-floor B2): what each chain step actually bound and produced,
   // indexed by its chain position — the composite's edges, instead of "step i consumed step i-1".
   const stepEdges = new Map<number, StepEdge>();
+  /** Per chain index, the write tasks that step sent (applied-write.ts): the composite puts them back after the step. */
+  const stepWrites = new Map<number, WriteTaskRecord[]>();
   /** A step that produced only bookkeeping (no output impulse, or every output isBookkeepingOnly). */
   const stepIsStub = (i: number): boolean => {
     const ids = stepEdges.get(i)?.outputImpulseIds ?? [];
@@ -11918,6 +11912,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const satisfiableNow = preferComposition ? undefined : ((_rcPrefer && _satEligible.includes(_rcPrefer) ? _rcPrefer : undefined) ?? _satProven[0] ?? _satEligible[0]);
       if (satisfiableNow) {
         const _seqBefore = rawResolveSeq;
+        const _writeMark = appliedWrites.mark();
         const resolved = await vesselResolveShape(satisfiableNow);
         // INSTRUMENTATION, DELIBERATELY NOT A FIX.
         //
@@ -12044,6 +12039,8 @@ If one of those sibling shapes is the action that would create what the goal ask
           Object.assign(synthTrace.metadata ?? (synthTrace.metadata = {}), satisfierStepAudit(stepBound, resolved.content));
           satisfierTraces.push(synthTrace);
           chain.push(satId);
+          // TRACE = EFFECT (agf_9oaufozk7r2a): the writes this resolve sent are tasks of this step, accepted or refused.
+          { const _w = appliedWrites.tasksSince(_writeMark); attachWriteTasks(synthTrace, _w); if (_w.length > 0) stepWrites.set(chain.length - 1, _w); }
           // CONSUMPTION-EDGE DECLARATION, BOUND-ONLY (CONSUMPTION-EDGE-ANALYSIS, agentic-floor
           // B4): a compute (llmCompletion) or terminal-write satisfier consumes EXACTLY the
           // shapes its resolve bound into its prompt/body (stepBound, recorded where the
@@ -12665,6 +12662,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               if (_vrEndpoint && !satisfierTried.has(missingShape)) {
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
                 const _vrSeqBefore = rawResolveSeq;
+                const _vrWriteMark = appliedWrites.mark();
                 const _vrResolved = await vesselResolveShape(missingShape);
                 if (!_vrResolved) satisfierFailures.set(missingShape, resolveFailureSince(_vrSeqBefore));
                 if (_vrResolved) {
@@ -12693,6 +12691,7 @@ If one of those sibling shapes is the action that would create what the goal ask
                   Object.assign(_vrSynthTrace.metadata ?? (_vrSynthTrace.metadata = {}), satisfierStepAudit(stepBound, _vrResolved.content)); // same audit as above
                   satisfierTraces.push(_vrSynthTrace);
                   chain.push(_vrSatId);
+                  { const _w = appliedWrites.tasksSince(_vrWriteMark); attachWriteTasks(_vrSynthTrace, _w); if (_w.length > 0) stepWrites.set(chain.length - 1, _w); } // same as the satisfier site
                   ledgerStep(undefined, [missingShape]);
                   recordStepEdge([], [missingShape]);
                   stampProvenance(missingShape, { producerExecutionId: _vrSynthTrace.id, consumedIds: [] });
@@ -13807,11 +13806,15 @@ If one of those sibling shapes is the action that would create what the goal ask
           // the ribosome ("verdict=not-reached (tag:reached:false)") SKIPPED extraction
           // and NO learned-composition-* template was ever persisted (hub 404, verified).
           // Build first, then tag with compositeGrounded so tag and mint decision agree.
-          const composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)));
+          const _composite = buildCompositeTraceFromChain(chain, chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal), chain.map((_, i) => stepEdges.get(i)));
           // ≥ 2 output-bearing tasks AND ≥ 1 real edge between them (walk-pool.ts hasRealEdge): with
           // recorded step edges a template step now carries real output ids, so the old count alone
           // would mint two unrelated reads as a recipe.
-          const compositeGrounded = mintGrounded || (composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(composite.tasks, carriedSteps));
+          const _edgeGrounded = mintGrounded || (_composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(_composite.tasks, carriedSteps));
+          // The chain rebuild drops each step's write tasks: put the accepted ones back after their step, so the
+          // composite records the effect, and a confirmed deliverable write in it is an executed-tool anchor.
+          const composite = spliceStepWrites(_composite, stepWrites);
+          const compositeGrounded = _edgeGrounded || hasVerifiedWriteAnchor(composite);
           composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];
           // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
           //
