@@ -346,7 +346,7 @@ import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
 import { targetsToAvoid, failureRowsFrom, failureInvalidatesTargetMemo } from "./failed-targets";
-import { floorHandToolNames, floorTargetCandidates } from "./floor-tools";
+import { floorHandToolNames, floorTargetCandidates, floorPromptToolLines, UNIVERSAL_FLOOR_TOOLS } from "./floor-tools";
 import { isTransientFailure } from "./transient-failure";
 import { isExecutorShape, unanswered } from "./executor-shape";
 import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
@@ -5258,7 +5258,7 @@ function escalateNoProducerToInvestigation(goal: string, confidence: number | nu
 // whole goal directly with a tool-enabled LLM carrying the full resolver toolkit —
 // read tools plus the goal's own target write shapes — then re-verify. Robust reach
 // floor for cold arbitrary goals. Additive, guarded, fail-open.
-// UNIVERSAL_READ_TOOLS lives in floor-tools.ts (no shell: see there).
+// UNIVERSAL_READ_TOOLS and UNIVERSAL_FLOOR_TOOLS live in floor-tools.ts (no general shell; the floor's bounded shell: see there).
 /** Discovery's producer rows for a shape: the request ufResolveUrl has always made, with its v2 fallback. */
 async function ufDiscoverRows(shape: string, onUnreachable?: (why: string) => void): Promise<any[]> {
   try {
@@ -6267,11 +6267,12 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   }
 
   const writeShapes = [...new Set(targetShapes)].filter((s) => /(_write|_create_write)$/.test(s));
-  // THE OFFER FOLLOWS DISCOVERY (CHANGE-29, user ruling 06:06:38Z): the hand read tools discovery still advertises,
-  // plus each target shape this substrate serves (not a shell, not a non-shape token), plus the write shapes as before.
+  // THE OFFER FOLLOWS DISCOVERY (CHANGE-29, user ruling 06:06:38Z): the hand tools discovery still advertises (the read
+  // tools, plus web_search and bounded_shell under the user ruling of 2026-10-26T19:05:13Z), plus each target shape this
+  // substrate serves (not a forbidden shell, not a non-shape token), plus the write shapes as before.
   const knownForFloor = new Set(await fetchKnownShapes());
   const handNames = new Set(floorHandToolNames(knownForFloor));
-  const tools: any[] = UNIVERSAL_READ_TOOLS.filter((t) => handNames.has(t.name));
+  const tools: any[] = UNIVERSAL_FLOOR_TOOLS.filter((t) => handNames.has(t.name));
   const floorOwnOnly = new Set<string>();
   for (const ts of floorTargetCandidates(targetShapes, knownForFloor, NAMED_SHAPE_EXCLUDE)) {
     const t = await ufBuildWriteTool(ts, "resolve", ufOwnProducerUrl);
@@ -6279,13 +6280,15 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   }
   for (const ws of writeShapes) { const t = await ufBuildWriteTool(ws); if (t) tools.push(t); }
   console.log(`[goal-host-vessel] floor: TOOLS [${tools.map((t: any) => `${t.name}(${floorOwnOnly.has(t.name) ? "target" : writeShapes.includes(t.name) ? "write" : "hand"})`).join(", ")}] source=${floorOwnOnly.size > 0 ? "hand+target" : "hand"}`);
+  // What the prompt says about search, shell and exact computation follows the tools actually offered.
+  const _ftl = floorPromptToolLines(new Set(tools.map((t: any) => String(t?.name))));
   const writeLine = writeShapes.length ? ` To PERFORM the required write/create/record action, call the matching write tool (${writeShapes.join(", ")}) with a payload built STRICTLY and FAITHFULLY from what the goal asks and what you read — never invent unrelated content.` : "";
   // A goal naming two paths, answered from one, is the measured floor failure: the producer
   // was right and its ARGUMENT was incomplete, and the retry then walked away from that
   // producer entirely. Supplying the computed fact costs one line and cannot compose wrongly.
   const _mqNote = multiQuantityNote(goal);
   // The floor is told the real date for a time-relative goal, under the same condition as the walk's own prompts.
-  const prompt = `${timeRelativeOffset(goal) !== null ? temporalGroundingBlock() : ""}You are the substrate's universal executor. Accomplish this goal END-TO-END. The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. You have NO shell and NO internet tool: for anything about the world outside this repository — live prices, current measurements, external facts — say plainly that you cannot retrieve it rather than supplying a remembered number; stating such a value from your own knowledge is an INVALID answer. yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with fs_read/codeSearchResult; to find WHERE something is defined or used across the repositories, search every vessel's source with fs_grep and cite its results[].url (repos/<vessel>/...) and line verbatim; query substrate data (e.g. gaps) with the matching read tool. You have NO shell tool: commands cannot be run, and nothing may be written except through a write tool offered below. A file's LINE COUNT is the line_count field of a codeSearchResult call on that file (exact, identical to wc -l) — use it verbatim, never count lines yourself. Other EXACT COMPUTATIONS (hashes, checksums, byte-precise transforms) cannot be measured with these tools: say so plainly rather than writing a value from generation (measured wrong self-computed values include lettercounts off by one and a hallucinated sha256).${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${floorObservationsBlock(walkContext, (await resolveSelectionTuning()).floorObservationsMaxChars)}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
+  const prompt = `${timeRelativeOffset(goal) !== null ? temporalGroundingBlock() : ""}You are the substrate's universal executor. Accomplish this goal END-TO-END. The repository root is /workspace/git/super-repo; all repo-relative paths must be made absolute against /workspace/git/super-repo. ${_ftl.world} yourself using your available tools. You MUST gather the real data/content by CALLING your tools before you answer — never answer from memory or prior knowledge; an answer not grounded in what your tools actually returned is INVALID. Read source files with fs_read/codeSearchResult; to find WHERE something is defined or used across the repositories, search every vessel's source with fs_grep and cite its results[].url (repos/<vessel>/...) and line verbatim; query substrate data (e.g. gaps) with the matching read tool. ${_ftl.shell} A file's LINE COUNT is the line_count field of a codeSearchResult call on that file (exact, identical to wc -l) — use it verbatim, never count lines yourself. ${_ftl.compute}${writeLine}\n\nGOAL: ${goal}${recipeSeed}${investigationSeed}${floorObservationsBlock(walkContext, (await resolveSelectionTuning()).floorObservationsMaxChars)}${_mqNote ? "\n\n" + _mqNote : ""}\n\nWhen finished, respond with the final answer/result, grounded in your tool results.`;
   // ── REAL ReAct loop (extracted to runGroundedToolLoop, shared with the a.5 grounded
   // investigation): dispatch → EXECUTE requested tools → observe → re-dispatch. The helper
   // resolves llm_completion_dispatch itself and returns null if unavailable → fall through.
@@ -10607,7 +10610,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // failure says the producer could not be asked — not that the command is wrong. Handing it
     // to the self-correction loop rewrites a correct command and spends the walk's only shot;
     // the walk then ends at 0 steps. The floor's shellResult call used to be the de-facto retry
-    // here, and the floor no longer offers a shell (floor-tools.ts). One bounded retry of the
+    // here, and the floor no longer offers shellResult (floor-tools.ts). One bounded retry of the
     // SAME command; model-synthesized commands never take this branch.
     // REACHABILITY (c): the retry RE-PICKS, excluding every route this walk saw fail for the shape, so a dead egress or
     // a peer that refuses this node's credential is not dialled twice. An auth refusal (401/403) is NOT transient for that
@@ -11261,7 +11264,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       try {
         _niInvestigated = true;
         // GROUNDED investigation: the SAME executing loop as the ReAct fallback, with READ-and-
-        // inspect tools (the _write impulse-shape boundary is preserved; no shell — floor-tools.ts).
+        // inspect tools (the _write impulse-shape boundary is preserved; UNIVERSAL_READ_TOOLS, no shell — floor-tools.ts).
         // It EXECUTES tools and yields content ONLY when at least one read
         // actually grounded (inv.groundedOk >= 1) — never an un-executed LLM answer (the root of
         // the ".rs count = 6" hollow-green was returning an ungrounded LLM guess here).

@@ -1,18 +1,25 @@
-// Pins: the universal-tool floor offers a model NO shell. Floor run 27c1c600 (09-30)
+// Pins: the universal-tool floor offers a model NO general shell. Floor run 27c1c600 (09-30)
 // created /workspace/git/super-repo/GPT-5.md through the shellResult tool the floor
 // offered as a read-only "inspect" tool. runGroundedToolLoop's allowlist is exactly the
 // offered list, so a name absent here cannot be called by the floor's model.
+// Pins narrowed under the user ruling of 2026-10-26T19:05:13Z, "Shell on the floor now anyway" (offer bounded_shell
+// on the floor as it is, accepting the containment gap): the floor's list (UNIVERSAL_FLOOR_TOOLS) now carries
+// bounded_shell and web_search, so "no shell" means no shellResult, shell or bash. The investigation loop's
+// UNIVERSAL_READ_TOOLS is unchanged and still carries no shell at all.
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { FLOOR_FORBIDDEN_TOOLS, UNIVERSAL_READ_TOOLS } from "./floor-tools";
+import { FLOOR_FORBIDDEN_TOOLS, UNIVERSAL_FLOOR_TOOLS, UNIVERSAL_READ_TOOLS } from "./floor-tools";
 
-const names = UNIVERSAL_READ_TOOLS.map((t) => t.name);
+const names = UNIVERSAL_FLOOR_TOOLS.map((t) => t.name);
+const readNames = UNIVERSAL_READ_TOOLS.map((t) => t.name);
+const GENERAL_SHELLS = ["shellResult", "shell", "bash"];
 
 describe("the floor's offered tools", () => {
-  it("contain no shellResult, nor any other shell alias", () => {
+  it("contain no shellResult, shell or bash (the forbidden general shells)", () => {
     expect(names).not.toContain("shellResult");
+    expect([...FLOOR_FORBIDDEN_TOOLS]).toEqual(GENERAL_SHELLS);
     for (const f of FLOOR_FORBIDDEN_TOOLS) expect(names).not.toContain(f);
   });
 
@@ -31,7 +38,8 @@ describe("the floor's offered tools", () => {
     // Both model-driven loops take their tools from the shared list.
     // Pin changed under the user ruling of 2026-10-16T06:06:38Z (CHANGE-29): the floor's tools are the hand list
     // filtered by what discovery advertises, plus the own-substrate target tools; still only from this list.
-    expect(src).toContain("const tools: any[] = UNIVERSAL_READ_TOOLS.filter((t) => handNames.has(t.name));");
+    // Pin changed under the user ruling of 2026-10-26T19:05:13Z: the floor's list is UNIVERSAL_FLOOR_TOOLS.
+    expect(src).toContain("const tools: any[] = UNIVERSAL_FLOOR_TOOLS.filter((t) => handNames.has(t.name));");
     expect(src).toContain("runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, [])");
     // The floor's and the investigation's prompts no longer steer the model to a shell tool.
     const floorPrompt = src.slice(src.indexOf("You are the substrate's universal executor."), src.indexOf("When finished, respond with the final answer/result"));
@@ -44,7 +52,7 @@ describe("the floor's offered tools", () => {
 });
 
 describe("the floor's repo-wide code search (user ruling 10-02)", () => {
-  it("offers fs_grep — a search with the webSearchResult result form — and still no shell", () => {
+  it("offers fs_grep — a search with the webSearchResult result form — and still no general shell", () => {
     expect(names).toContain("fs_grep");
     const g = UNIVERSAL_READ_TOOLS.find((t) => t.name === "fs_grep")!;
     expect(g.input_schema.required).toEqual(["pattern"]);
@@ -53,8 +61,11 @@ describe("the floor's repo-wide code search (user ruling 10-02)", () => {
     for (const f of FLOOR_FORBIDDEN_TOOLS) expect(names).not.toContain(f);
   });
 
-  it("offers only read tools: no write, edit, commit or shell shape is in the list", () => {
-    for (const n of names) expect(n).not.toMatch(/(_write|_create_write|^fs_write$|^fs_edit$|^git_commit|^code_(insert|replace|add_import)|shell|bash)/);
+  it("offers no write, edit or commit shape and no general shell; the read list has no shell at all", () => {
+    // Narrowed under the user ruling of 2026-10-26T19:05:13Z: bounded_shell is the one shell the floor offers.
+    for (const n of names) expect(n).not.toMatch(/(_write|_create_write|^fs_write$|^fs_edit$|^git_commit|^code_(insert|replace|add_import)|^shellResult$|^shell$|^bash$)/);
+    expect(names.filter((n) => /shell|bash/.test(n))).toEqual(["bounded_shell"]);
+    for (const n of readNames) expect(n).not.toMatch(/(_write|_create_write|^fs_write$|^fs_edit$|^git_commit|^code_(insert|replace|add_import)|shell|bash)/);
   });
 
   it("the floor prompt points the model at fs_grep for repo-wide search", () => {
