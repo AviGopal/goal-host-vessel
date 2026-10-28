@@ -13850,6 +13850,22 @@ If one of those sibling shapes is the action that would create what the goal ask
           // would mint two unrelated reads as a recipe. (Judged on the chain's own tasks, before the splice.)
           const compositeGrounded = hasVerifiedWriteAnchor(compositeWithWrites) || mintGrounded || (composite.tasks.filter((t) => t.success && (t.outputImpulseIds?.length ?? 0) > 0).length >= 2 && hasRealEdge(composite.tasks, carriedSteps));
           Object.assign(composite, { tasks: compositeWithWrites.tasks, metadata: compositeWithWrites.metadata });
+          // SCORED BY CONSUMPTION IN THE RECIPE TOO (finding agf_2wegbdg3j8vo): the composite keeps only the steps the reach
+          // credits (involvedSteps: the producers of the judged artifact and what fed them along recorded edges). A step whose
+          // output nothing consumed is dropped from what the ribosome extracts, and the composition is named by what it kept.
+          {
+            const _edgesAll = chain.map((_, i) => stepEdges.get(i));
+            const _keep = new Set(involvedSteps(_edgesAll, new Set(verdict.completion_shapes ?? []), () => false, stepIsStub));
+            if (_keep.size > 0 && _keep.size < chain.length) {
+              const _keptWrites = new Map<number, WriteTaskRecord[]>();
+              let _j = 0;
+              chain.forEach((_, i) => { if (_keep.has(i)) { const w = stepWrites.get(i); if (w) _keptWrites.set(_j, w); _j++; } });
+              const _kept = spliceStepWrites(buildCompositeTraceFromChain(chain.filter((_, i) => _keep.has(i)), chainExecIds, [...producedShapes], totalDurationMs, totalCostUsd, [...(opts.tags ?? []), "composite:true"], poolImpulses, goalHashOf(goal), _edgesAll.filter((_, i) => _keep.has(i))), _keptWrites);
+              const _dropped = chain.filter((_, i) => !_keep.has(i));
+              tap(`[goal-host-vessel] walk(${opts.surface}): composite keeps ${_keep.size}/${chain.length} step(s); dropped unconsumed ${_dropped.join(", ")}`);
+              Object.assign(composite, { id: _kept.id, templateId: _kept.templateId, templateName: _kept.templateName, tasks: _kept.tasks, outputImpulseIds: _kept.outputImpulseIds, metadata: { ...(_kept.metadata ?? {}), dropped_unconsumed_steps: _dropped } });
+            }
+          }
           composite.tags = [...(composite.tags ?? []), compositeGrounded ? "reached:true" : "reached:false"];
           // LOG WHAT WE CONSTRUCTED, AND WHETHER THE WRITE SURVIVED (2026-08-09).
           //

@@ -265,8 +265,14 @@ export function involvedSteps(edges: ReadonlyArray<StepEdge | undefined>, delive
   // `isStub(i)`: the step produced only bookkeeping (a receipt, no payload — isBookkeepingOnly). It
   // is neither a deliverable producer nor the stand-in, and it earns nothing.
   const n = edges.length;
-  const seeds: number[] = [];
+  let seeds: number[] = [];
   for (let i = 0; i < n; i++) if (!isStub(i) && (edges[i]?.outputShapes ?? []).some((s) => deliverables.has(s))) seeds.push(i);
+  // SCORED BY CONSUMPTION (USER ruling; finding agf_2wegbdg3j8vo): when a deliverable is a WRITE, the written artifact is
+  // what the reach judged, so only the steps that produced it, and the steps that fed them along recorded edges, are
+  // involved. A step whose output the judge named but nothing consumed (an inferred intermediate beside the write) fed
+  // nothing toward the artifact and is neither credited nor kept in a minted composite.
+  const writeSeeds = seeds.filter((i) => (edges[i]?.outputShapes ?? []).some((s) => deliverables.has(s) && isWriteShape(s)));
+  if (writeSeeds.length > 0) seeds = writeSeeds;
   if (seeds.length === 0) { for (let i = n - 1; i >= 0; i--) if (!isStub(i)) { seeds.push(i); break; } }
   const seen = new Set<number>(seeds);
   const stack = [...seeds];
