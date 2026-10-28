@@ -4408,6 +4408,20 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   }
 
   if (writeEvidence) {
+    if (producedShapes) {
+      // GOAL: make code-edit execution records preserve which drafter produced them.
+      // This is a temporary attribution; when variant drafters are introduced, this will
+      // need to be plumbed from the 'walk' function that selected the drafter. For now,
+      // all successful walks are attributed to the floor.
+      for (const shape of producedShapes) {
+        const s: any = shape;
+        if (typeof s !== 'string' && typeof s.shape === 'string' && s.shape.endsWith("_write")) {
+          // The type of Shape allows arbitrary extra properties.
+          (s as { drafter?: string }).drafter = "floor";
+        }
+      }
+    }
+
     const _wgTargets = writeEvidence.targets ?? deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? [];
     // CHANGE-36a, kept when the gap oracle did not decide (no field, or an unreadable gap store): a goal whose targets
     // ask for a gapDecomposition and hold no mutation shape is not a write goal, so an imperative in the gap's first
