@@ -327,7 +327,7 @@ import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeVie
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
-import { floorObservationsBlock, type FloorWalkContext } from "./floor-walk-context";
+import { floorObservationsBlock, floorTargetsAfterWalk, type FloorWalkContext } from "./floor-walk-context";
 import { recalledCandidates } from "./shape-recall";
 import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
 // B2: composites a dispatch's walks minted, read back at its verdict (a non-reached first run retires a NEW mint).
@@ -6210,6 +6210,9 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
     return await dispatchContext.run(enterDispatchContext(dispatchContext.getStore(), { dispatchId, decomposeGapId: _floorGapId, learningMode: _floorMode, goal }), () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));
   }
   console.log(`[goal-host-vessel] floor: ENTER universalToolFallback goalHash=${goalHashOf(goal)} targetShapes=${JSON.stringify(targetShapes)}`);
+  // After a HOLLOW walk the floor is offered and judged without the walk's failed non-write targets (floor-walk-context.ts).
+  const judgedTargets = floorTargetsAfterWalk(targetShapes, walkContext?.walkEndedHollow === true);
+  if (judgedTargets.length !== targetShapes.length) console.log(`[goal-host-vessel] floor: after a hollow walk, the walk's targets [${targetShapes.filter((s) => !judgedTargets.includes(s)).join(", ")}] are neither offered nor judged`);
   // (2026-07-27, law-1) The old `if (!LLM_VESSEL_ENDPOINT) return null` gate SILENTLY DISABLED
   // the entire ReAct parity FLOOR because LLM_VESSEL_ENDPOINT is unset in the running container —
   // yet the grounded loop resolves llm_completion_dispatch via DISCOVERY (ufResolveUrl), not that
@@ -6307,7 +6310,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   const handNames = new Set(floorHandToolNames(knownForFloor));
   const tools: any[] = UNIVERSAL_FLOOR_TOOLS.filter((t) => handNames.has(t.name));
   const floorOwnOnly = new Set<string>();
-  for (const ts of floorTargetCandidates(targetShapes, knownForFloor, NAMED_SHAPE_EXCLUDE)) {
+  for (const ts of floorTargetCandidates(judgedTargets, knownForFloor, NAMED_SHAPE_EXCLUDE)) {
     const t = await ufBuildWriteTool(ts, "resolve", ufOwnProducerUrl);
     if (t) { tools.push(t); floorOwnOnly.add(ts); }
   }
@@ -6351,7 +6354,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // missing one.
   const authoredFinalAnswer = finalText.trim().length > 0;
   if (!finalText) { finalText = observations.join("\n\n").slice(0, 6000); console.log(`[goal-host-vessel] universal ReAct fallback: cap/deadline hit before a final answer — judging on ${groundedOk} grounded tool output(s)`); }
-  const produced = floorJudgedShapes(targetShapes, calledWriteShapes, executed);
+  const produced = floorJudgedShapes(judgedTargets, calledWriteShapes, executed);
   const toolSummary = executed.map((e) => `${e.tool}${e.ok ? "" : "!"}`).join(", ");
   const taskSummary = `universal ReAct fallback: ${groundedOk} grounded read result(s) + ${calledWriteShapes.size} write(s), ${executedOk}/${executed.length} tool call(s) OK [${toolSummary}]`;
   // GRADE THE ANSWER, NOT THE SCRATCHPAD.
@@ -6409,7 +6412,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // The floor's write evidence is its own successful write-tool calls (side effects the vessel accepted);
   // the requested targets in `produced` above are what the judge is told to look for, never evidence.
   const floorWrites = [...calledWriteShapes];
-  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined, undefined, undefined, undefined, undefined, { persistedWrites: floorWrites, targets: targetShapes, surface: "floor" }, "floor");
+  const verdict = await verifyGoalReached(goal, produced, taskSummary, digest, commandEvidence || undefined, undefined, undefined, undefined, undefined, { persistedWrites: floorWrites, targets: judgedTargets, surface: "floor" }, "floor");
   console.log(`[goal-host-vessel] floor: verdict goalHash=${goalHashOf(goal)} verdictNull=${verdict === null} reached=${verdict?.reached === true} groundedOk=${groundedOk} finalTextLen=${finalText.length}`);
   // PERSIST THE FLOOR'S EXECUTION. Until this existed the floor returned a FABRICATED
   // execution id (`universal-tool-fallback:<goalHash>`) that named no row anywhere: a
@@ -6461,7 +6464,7 @@ async function universalToolFallback(goal: string, targetShapes: string[], dispa
   // and do not narrate tool responses.
   // The floor's reach decision (judge entry floorVerdict; the rule is src/judge-rules/floor.ts): the
   // fabricated-transcript refusal above, plus a substantive answer and not every tool failed.
-  const _floorV = judge.floorVerdict(judgeInputs.floorInput({ goal, targets: targetShapes, writes: floorWrites, answerText: finalText, verdictReason: verdict?.reason ?? null, toolsTotal: executed.length, toolsOk: executedOk, groundedReads: groundedOk }), verdict ? { reached: verdict.reached === true, reason: String(verdict.reason ?? ""), abstain: !!verdict.abstain } : null);
+  const _floorV = judge.floorVerdict(judgeInputs.floorInput({ goal, targets: judgedTargets, writes: floorWrites, answerText: finalText, verdictReason: verdict?.reason ?? null, toolsTotal: executed.length, toolsOk: executedOk, groundedReads: groundedOk }), verdict ? { reached: verdict.reached === true, reason: String(verdict.reason ?? ""), abstain: !!verdict.abstain } : null);
   const _fabricatedTranscript = _floorV.fabricated_transcript;
   if (_fabricatedTranscript) console.log(`[goal-host-vessel] floor: FABRICATED TOOL TRANSCRIPT goalHash=${goalHashOf(goal)} — the answer narrates a tool call/response but ZERO tools executed; refusing the reach`);
   const floorReached = _floorV.reached;
@@ -15969,7 +15972,7 @@ async function runGoalWithRecoveryInner(
           noteRouteTaken(walk.routeAround, "universal-tool-fallback");
           const _ufOut: { reason?: string; abstain?: true } = {};
           // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
+          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, walkEndedHollow: walk.reached === false, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
       // An ABSTAINED floor (§9.2) is ungraded: no failed path row (its POST would add failure_delta / thompson_beta).
       if (!uf?.reached && opts.learningMode !== "observe" && !_ufOut.abstain) void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
           if (uf?.reached) {

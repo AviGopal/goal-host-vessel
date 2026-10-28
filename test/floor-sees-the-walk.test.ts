@@ -46,7 +46,8 @@ describe("the floor is shown what the walk gathered", () => {
     expect(INDEX).toContain("${investigationSeed}${floorObservationsBlock(walkContext, (await resolveSelectionTuning()).floorObservationsMaxChars)}");
     // (+ the dispatch's failed replays, so the floor does not seed a recipe that failed: reached-command-bank-wiring.test.ts)
     // (the dispatch's learning mode rides the same context into the floor: observe-mode.ts)
-    expect(INDEX).toContain('_ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });');
+    // (and whether the walk ended hollow, so the floor drops its failed targets: floor-after-hollow-walk.test.ts)
+    expect(INDEX).toContain('_ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, walkEndedHollow: walk.reached === false, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });');
     expect(INDEX).toContain('undefined, { priorFeedback: priorFailureFeedbackFor(goal), decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });');
     expect(INDEX).toContain("universalToolFallback(goal, targetShapes, dispatchId, out, walkContext)");
   });

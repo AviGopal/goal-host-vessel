@@ -29,6 +29,20 @@ export interface FloorWalkContext {
   decomposeGapId?: string;
   /** The dispatch's learning mode, carried into the floor's own dispatch context (observe-mode.ts). */
   learningMode?: "observe" | "learn";
+  /** The walk before this floor ended NOT reached on its inferred targets (floorTargetsAfterWalk). */
+  walkEndedHollow?: boolean;
+}
+
+/**
+ * THE FLOOR AFTER A HOLLOW WALK IS THE REACT LOOP, NOT A RETRY OF THE WALK'S TARGETS (CLAUDE.md floor-parity contract:
+ * "the walk with tool-enabled fallback IS the ReAct loop"). The walk's inferred targets are what it just failed on; handed
+ * to the floor they became target tools and the reach judge's "produced" shapes, so a floor answer to a general question
+ * was graded against shapes nothing could produce (10-28: a general how-to question, web_search 3/3 OK, judged against
+ * repairPolicy/maintenanceLease). After a hollow walk the floor keeps only the WRITE targets (the goal's own durable
+ * effect, which keeps its write tool); its answer is judged as an answer: what its tools ran plus its text.
+ */
+export function floorTargetsAfterWalk(targets: readonly string[], walkEndedHollow: boolean): string[] {
+  return walkEndedHollow ? targets.filter((s) => /(_write|_create_write)$/.test(s)) : [...targets];
 }
 
 /**
