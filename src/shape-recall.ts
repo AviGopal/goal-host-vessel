@@ -8,12 +8,23 @@
  *     search, the shared scope as written by the system org);
  *   - UNION the target shapes of this goal class's recorded paths (the learned prior, step 8e), so a pathway that reached
  *     stays a candidate even when its wording recalls something else;
+ *   - UNION the advertised prose producer when no answer shape was recalled, so a general question always has a
+ *     producer that answers it among the candidates;
  *   - COLD START: recall is a pure-similarity arm, never gated by posteriors, so a shape added an hour ago is a candidate
  *     for a goal that means it; selection then meets it at the uninformed Beta(1,1) prior like any arm.
  * k is a shaped value read at use time (the caller's shapedBudget). When recall cannot be asked (concept-db down, empty
  * index), the decision runs on the NAMED DEGRADED tier (today's names-only path) and records that it did.
  */
 import type { CatalogEntry, ShapeCatalog } from "./described-producers";
+import { ANSWER_SHAPES } from "./reach-date";
+
+/** The advertised PROSE producer: the shape that answers a goal in text (the dispatch wrapper this substrate serves,
+ *  else the raw completion a hub vocabulary carries), or null when neither is advertised. One choice, read by the
+ *  prose route (goal-target-inference.ts) and by the candidates below. */
+export function proseProducerOf(known: ReadonlySet<string> | readonly string[]): string | null {
+  const has = (s: string) => (Array.isArray(known) ? (known as readonly string[]).includes(s) : (known as ReadonlySet<string>).has(s));
+  return has("llm_completion_dispatch") ? "llm_completion_dispatch" : has("llm_completion") ? "llm_completion" : null;
+}
 
 export interface RecalledRow { content?: string; summary?: string; pointer?: { name?: unknown } | null }
 export type RecallTier = "recall" | "degraded";
@@ -28,6 +39,8 @@ export interface RecalledCandidates {
   shapes: string[];
   recalled: string[];
   fromGoalPaths: string[];
+  /** the prose producer, added when no answer shape was recalled (proseProducerOf) */
+  fromProse?: string[];
 }
 
 /** The shape name an indexed row's content carries: concept-db writes it as "<name>: <description>" (its indexedContent,
@@ -69,5 +82,12 @@ export function recalledCandidates(rows: RecalledRow[] | null, goalPathShapes: r
   const fromGoalPaths = goalPathShapes.filter((s) => known.has(s) && !catalog[s]);
   // a goal-path shape the index did not recall still enters, described by name only (its recorded reach is the evidence)
   for (const s of fromGoalPaths) catalog[s] = { description: `(a target this goal class reached before) ${s}` };
-  return { tier: "recall", reason: null, catalog, shapes: [...recalled, ...fromGoalPaths], recalled, fromGoalPaths };
+  // THE PROSE PRODUCER IS ALWAYS A CANDIDATE when no answer shape was recalled. The index describes shapes by where they
+  // were used, so a general question recalls only internal shapes, and the chooser, which may pick only from this list,
+  // confabulated one of them (a general how-to question routed to maintenanceLease/repairPolicy, 10-28). Offered here, it is
+  // chosen by meaning like any candidate; a goal that recalled an answer shape is unchanged.
+  const prose = proseProducerOf(known);
+  const fromProse = prose && !catalog[prose] && ![...recalled, ...fromGoalPaths].some((s) => ANSWER_SHAPES.has(s)) ? [prose] : [];
+  for (const s of fromProse) catalog[s] = { description: "answers the goal directly in text (the advertised prose producer); choose it when no other candidate produces what the goal asks for." };
+  return { tier: "recall", reason: null, catalog, shapes: [...recalled, ...fromGoalPaths, ...fromProse], recalled, fromGoalPaths, fromProse };
 }

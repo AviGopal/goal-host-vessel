@@ -14806,7 +14806,7 @@ async function runGoalWithRecoveryInner(
     const _recallRows = await recallConceptRows(stripDispatchIds(goal), _recallK, 10_000, { shape: "shape_description", include_global: true });
     const _goalPathShapes = [...new Set((_targetPosterior ?? []).flatMap((r) => [...(r.expected_output_shapes ?? [])]))];
     const _cands = recalledCandidates(_recallRows, _goalPathShapes, new Set(knownShapes));
-    tap(`[goal-host-vessel] ${opts.surface}: shape recall tier=${_cands.tier} k=${_recallK} recalled=${_cands.recalled.length} from_goal_paths=${_cands.fromGoalPaths.length}${_cands.reason ? ` reason="${_cands.reason}"` : ""} candidates=${JSON.stringify(_cands.shapes.slice(0, 20))}`);
+    tap(`[goal-host-vessel] ${opts.surface}: shape recall tier=${_cands.tier} k=${_recallK} recalled=${_cands.recalled.length} from_goal_paths=${_cands.fromGoalPaths.length} from_prose=${_cands.fromProse?.length ?? 0}${_cands.reason ? ` reason="${_cands.reason}"` : ""} candidates=${JSON.stringify(_cands.shapes.slice(0, 20))}`);
     const decision = await inferGoalTargetDecision(goal, knownShapes, {
         ...(_cands.tier === "recall" ? { shapeCatalog: _cands.catalog, promptVocabulary: _cands.shapes } : {}),
         // Piece 5: the chooser's residual is recalled by meaning ONCE, with the same shaped k and the same index.

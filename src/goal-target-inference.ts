@@ -7,6 +7,7 @@ import { isShapeName } from "./shape-name";
 import { betaSample } from "./beta-sample";
 import { describedCandidatesBlock, lexicalChoice, validity, type Candidate, type ChooserTier, type ShapeCatalog } from "./described-producers";
 import { NOVEL_OPTION, RESIDUAL_OPTION, parseNovel, parseResidual, type NovelTarget } from "./novel-target";
+import { proseProducerOf } from "./shape-recall";
 /**
  * Goal→target-shape inference (lever 4, 2026-06-25).
  *
@@ -970,9 +971,7 @@ async function inferGoalTargetDecisionRoutes(
   // Fire the deterministic prose route for EITHER, targeting whichever is actually
   // in the vocabulary — so a pure question reaches instead of falling through to
   // the LLM inferrer that confabulates obsidian:write_note onto the target set.
-  const _proseTarget = knownShapes.includes("llm_completion_dispatch")
-    ? "llm_completion_dispatch"
-    : (knownShapes.includes("llm_completion") ? "llm_completion" : null);
+  const _proseTarget = proseProducerOf(knownShapes);
   if (_proseTarget) {
     const EXPLANATORY_RE = /\b(explain|describe|define|summar\w*|what\s+(is|are|does|do)\b|what'?s\b|how\s+(do|does|did|can|would|should)\b[\s\S]*\bwork|why\s+(do|does|did|is|are)\b|tell me about|walk me through|give (me )?an overview|overview of|concept of|the (idea|notion|meaning) of)\b/i;
     // A QUESTION ABOUT THE PRESENT STATE OF THE WORLD IS NOT A PROSE QUESTION (2026-08-16).
