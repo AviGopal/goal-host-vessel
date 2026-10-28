@@ -15,7 +15,7 @@
 //
 // Fixture goal from a fresh 5-word draw (draw-words.sh):
 //   2026-10-28T19:30:28Z seed=1793215828966868210 words=duplicate energy litigator bronchial jawless
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as fwc from "../src/floor-walk-context";
@@ -60,6 +60,24 @@ describe("the floor after a hollow walk drops the walk's failed targets", () => 
     expect(after!(["repairPolicy", "memoryNote_write"], true)).toEqual(["memoryNote_write"]);
     expect(floorTargetCandidates(after!(WALK_TARGETS, false), KNOWN, new Set())).toEqual(WALK_TARGETS);
   });
+
+  it("[CONTROL] driven through the floor's entry point: no tool run and no text, after a hollow walk, is NOT reached", async () => {
+    // universalToolFallback with fetch spied: discovery serves only the dispatch; the dispatch answers no tool call and
+    // empty text. The floor returns null (not reached) whatever targets the hollow walk handed it.
+    const DISPATCH = { id: "dispatch-vessel", endpoint: "http://llm-dispatch.test.invalid", resolve_endpoint: "/v2/impulses/resolve", protocol: "http" };
+    const spy = spyOn(globalThis, "fetch").mockImplementation((async (_i: unknown, init?: { body?: unknown }) => {
+      let b: any = {};
+      try { b = JSON.parse(String(init?.body ?? "{}")); } catch { /* not JSON */ }
+      if (b?.pointer?.type === "vesselCapability") return Response.json({ content: { vessels: b.pointer.shape === "llm_completion_dispatch" ? [DISPATCH] : [] } });
+      if (b?.impulse?.pointer?.type === "llm_completion_dispatch") return Response.json({ success: true, shape: "llmTextCompletion", body: { text: "" } });
+      return new Response("not served by this fixture", { status: 503 });
+    }) as unknown as typeof fetch);
+    try {
+      const r = await m["universalToolFallback"](GOAL, WALK_TARGETS, undefined, {}, { walkEndedHollow: true });
+      expect(r).toBeNull();
+      expect(r?.reached === true).toBe(false);
+    } finally { spy.mockRestore(); }
+  }, 30_000);
 
   it("[CONTROL] a floor that ran no tools and produced no text is still not reached", () => {
     // the floor's own empty-loop exit returns no result (null: not reached) before any judging, whatever the targets

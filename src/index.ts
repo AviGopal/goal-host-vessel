@@ -21173,6 +21173,7 @@ export {
   rememberGoalFailure,
   recallGoalFailures,
   runGroundedToolLoop,
+  universalToolFallback,
   isDeterministicVerdict,
   dispatchContext,
   readGapByIdForOracle,
