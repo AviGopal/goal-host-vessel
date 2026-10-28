@@ -99,7 +99,7 @@ describe("a satisfier's effecting write is a task of its step's trace", () => {
 
   test("CONTROL: a step asked for the write shape itself carries that write once, as its own task", () => {
     const { trace } = confirmedWriteStep();
-    expect(trace.tasks.map((t) => t.taskId)).toEqual(["satisfier-resolve"]);
+    expect(trace.tasks.map((t) => t.taskId)).toEqual(["satisfier-resolve", "satisfier-resolve-read-back"]);
     expect(trace.tasks[0]!.resolvedConfig).toMatchObject({ holder: "grandpa" });
   });
 
@@ -107,7 +107,7 @@ describe("a satisfier's effecting write is a task of its step's trace", () => {
     const { trace } = confirmedWriteStep();
     const task = writeTaskIn(trace)!;
     const rec = (trace.metadata?.["write_tasks"] as WriteTaskRecord[])[0]!;
-    expect(rec.read_back).toEqual({ read_shape: READ, confirmed_id: ENTRY_ID, write_task_id: task.taskId, site: "write-read-back" });
+    expect(rec.read_back).toEqual({ read_shape: READ, confirmed_id: ENTRY_ID, write_task_id: task.taskId, site: "write-read-back", read_task_id: `${task.taskId}-read-back` });
   });
 
   test("MUST-FAIL: a satisfier-written reach has an executed-tool anchor, so the mint does not skip it as ungrounded", () => {
@@ -123,7 +123,7 @@ describe("a satisfier's effecting write is a task of its step's trace", () => {
     const id = readBackConfirms(writeAnswer, readAnswer);
     expect(ledger.confirmReadBack(WRITE, { readShape: READ, confirmedId: id!, site: "satisfier-reread" })).toBe(true);
     const t = attachWriteTasks(stepTrace(READ), ledger.tasksSince(m));
-    expect(t.tasks.map((x) => x.resolverId)).toEqual([READ, WRITE]);
+    expect(t.tasks.map((x) => x.resolverId)).toEqual([READ, WRITE, READ]);
     expect(groundedForMint(false, t)).toBe(true);
   });
 
@@ -134,13 +134,13 @@ describe("a satisfier's effecting write is a task of its step's trace", () => {
       { taskId: "compose-step-2", description: "produce b", resolverId: WRITE, inputImpulseIds: [], outputImpulseIds: [], success: true },
     ], metadata: {} };
     const spliced = spliceStepWrites(composite, new Map([[1, writes]]));
-    expect(spliced.tasks.map((t) => t.taskId)).toEqual(["compose-step-1", "compose-step-2"]);
+    expect(spliced.tasks.map((t) => t.taskId)).toEqual(["compose-step-1", "compose-step-2", "compose-step-2-read-back"]);
     expect(spliced.tasks[1]!.resolvedConfig).toMatchObject({ holder: "grandpa" });
     expect(hasVerifiedWriteAnchor(composite)).toBe(false);
     expect(hasVerifiedWriteAnchor(spliced)).toBe(true);
     // A step that resolved a read and wrote through a sibling keeps the write as its own task right after it.
     const viaRead = spliceStepWrites({ ...composite, tasks: [{ ...composite.tasks[0]! }, { ...composite.tasks[1]!, resolverId: READ }] }, new Map([[1, writes]]));
-    expect(viaRead.tasks.map((t) => t.resolverId)).toEqual(["llm_completion", READ, WRITE]);
+    expect(viaRead.tasks.map((t) => t.resolverId)).toEqual(["llm_completion", READ, WRITE, READ]);
     expect(hasVerifiedWriteAnchor(viaRead)).toBe(true);
     expect(composite.tasks[1]!.resolvedConfig).toBeUndefined(); // the composite passed in is not mutated
   });

@@ -13002,6 +13002,8 @@ If one of those sibling shapes is the action that would create what the goal ask
   // A THROW IN VERIFY MUST NOT DROP THE TRACE (agf_bgj5catiey2l): the durable trace the verify built (null until
   // then) and the verify's error, for the FINALLY below that flushes and, when the verify threw first, persists.
   let walkDurableTrace: ExecutionTrace | null = null;
+  /** Set when a single confirmed-write satisfier reach is minted after its durable persist (its mint grounding). */
+  let mintSingleConfirmedWrite: boolean | null = null;
   let walkVerifyError: string | null = null;
 
   if (!lastTrace || chain.length === 0) {
@@ -13879,6 +13881,12 @@ If one of those sibling shapes is the action that would create what the goal ask
             }
             if (opts.learningMode !== "observe") await mintReachedTrace(composite as any, compositeGrounded, goalHashOf(goal), undefined, goal);
           })();
+        } else if (hasVerifiedWriteAnchor(lastTrace)) {
+          // ONE CONFIRMED WRITE IS A RECIPE (applied-write.ts): a single satisfier step whose trace holds a write of the
+          // goal's store and the read that confirmed it is the same shape of evidence a composite carries, so it goes to the
+          // mint like one, AFTER its durable trace (which carries both tasks) is persisted below. A single step with no
+          // confirmed write stays unminted.
+          mintSingleConfirmedWrite = mintGrounded;
         }
       }
       // DURABLE-TRACE persistence for satisfier reaches (2026-06-28). A satisfier
@@ -13947,6 +13955,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // satisfier-last walk for minutes. Past satisfierFlushDeadlineMs (20 s default) the walk continues and logs
         // the miss; the insert keeps running, and the verdict it carries is still graded at insert by its tags.
         await persistWithinDeadline(persistSatisfierTrace(durableTrace), (await resolveSelectionTuning()).satisfierFlushDeadlineMs, durableTrace.id);
+        if (reached && mintSingleConfirmedWrite !== null && opts.learningMode !== "observe") void mintReachedTrace(durableTrace as any, mintSingleConfirmedWrite, goalHashOf(goal), undefined, goal);
       }
       walkReachDeterministic = reached === true && isDeterministicVerdict(verdict);
     } catch (e) {

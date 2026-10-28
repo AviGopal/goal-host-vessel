@@ -109,7 +109,7 @@ export interface WriteTaskRecord {
   refusal: string | null;
   deliverable: boolean;
   /** Set only when a later read of the store held output_ref: the read-back that confirmed THIS task. */
-  read_back: { read_shape: string; confirmed_id: string; write_task_id: string; site: string } | null;
+  read_back: { read_shape: string; confirmed_id: string; write_task_id: string; site: string; read_task_id?: string } | null;
 }
 
 /** What one rawResolve of a write shape ended with: the result (null = refused or failed) and the pointer sent. */
@@ -289,11 +289,35 @@ function placeStepWrites(
   if (stepTask) for (let i = writes.length - 1; i >= 0; i--) if (writes[i]!.success && writes[i]!.shape === stepTask.resolverId) { mergeAt = i; break; }
   const after: ExecutionTrace["tasks"] = [];
   const records = writes.map((w, i) => {
-    if (i !== mergeAt || !stepTask) { after.push(writeTaskOf(w)); return w; }
-    if (w.resolved_config) stepTask.resolvedConfig = w.resolved_config;
-    return { ...w, task_id: stepTask.taskId, read_back: w.read_back ? { ...w.read_back, write_task_id: stepTask.taskId } : null };
+    const placed = i !== mergeAt || !stepTask
+      ? w
+      : { ...w, task_id: stepTask.taskId, read_back: w.read_back ? { ...w.read_back, write_task_id: stepTask.taskId } : null };
+    if (i !== mergeAt || !stepTask) after.push(writeTaskOf(w));
+    else if (w.resolved_config) stepTask.resolvedConfig = w.resolved_config;
+    // The read that confirmed the write is a task of the trace too, right after it, naming the write it read back.
+    if (!placed.read_back) return placed;
+    const rt = readBackTaskOf(placed);
+    after.push(rt);
+    return { ...placed, read_back: { ...placed.read_back, read_task_id: rt.taskId } };
   });
   return { after, records };
+}
+
+/** The read-back of a confirmed write as a trace task: the read shape it went through, linked to the write task it
+ *  confirmed (consumedFromTaskIds), so the trace shows the effect AND its confirmation, and a recipe keeps both. */
+export function readBackTaskOf(w: WriteTaskRecord): ExecutionTrace["tasks"][number] {
+  const rb = w.read_back!;
+  return {
+    taskId: `${w.task_id}-read-back`,
+    description: `read back ${w.shape} through ${rb.read_shape} (record ${rb.confirmed_id}, walk site ${rb.site})`,
+    resolverId: rb.read_shape,
+    resolverTier: "pattern",
+    inputImpulseIds: [],
+    outputImpulseIds: [],
+    outputShapes: [rb.read_shape],
+    consumedFromTaskIds: [w.task_id],
+    success: true,
+  };
 }
 
 /** Add a step's write tasks to its trace (the step's own task is its first): the records ride in metadata.write_tasks. */

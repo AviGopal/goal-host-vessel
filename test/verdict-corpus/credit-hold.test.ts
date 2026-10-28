@@ -119,7 +119,8 @@ describe("every credit site consults the hold", () => {
   test("the reach-direction credit callers pass the goal, so the hold can see its classes", () => {
     expect(SRC).toContain(`creditReachedTemplate(_stepId, verdict.reason ?? "goal reached", goal)`);
     expect(SRC).toContain(`creditReachedTemplate(selId, verdict.reason ?? "goal reached", goal as string)`);
-    expect((SRC.match(/mintReachedTrace\([^\n]*, goal(?: as string)?\);/g) ?? []).length).toBe(3);
+    // 4: the single confirmed-write satisfier reach is minted after its durable persist (applied-write.ts), passing the goal too.
+    expect((SRC.match(/mintReachedTrace\([^\n]*, goal(?: as string)?\);/g) ?? []).length).toBe(4);
   });
   test("MUST-FAIL: a creditReachedTemplate that skips heldFor is red", () => {
     const mutant = SRC.replace(`if (creditHold.heldForGoal(goalText, "reach", "creditReachedTemplate")) return { templateId: activityId, dAlpha: 0, dBeta: 0 };`, "");
