@@ -85,6 +85,9 @@ export interface SelectionTuning {
   /** Full view or abstain (judge-view.ts): how many ordered parts of a deliverable larger than the judge's view the
    *  reach judge reads. A deliverable needing more parts than this is not read in full, so it is ungraded (cut-view). */
   judgeViewMaxParts: number;
+  /** Person verdict (person-verdict.ts): how long a DEFERRED judge-only reach waits for a person's verdict (ms) before it
+   *  resolves ungraded-expired (no alpha, no beta) and its dispatch record's retention lifts. */
+  personVerdictWindowMs: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
@@ -103,6 +106,8 @@ export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freez
   // Full-read default (2026-10-18): 4 parts of the 24,000-char deliverable budget read a deliverable of up to 96,000
   // chars in full, at most 4 judge calls per end-of-walk verdict; a larger one stays an abstain.
   judgeViewMaxParts: 4,
+  // Person-verdict window default (USER ruling 2026-10-29T22:38:47Z, qa r1): 7 days.
+  personVerdictWindowMs: 604_800_000,
 });
 
 /** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
@@ -122,6 +127,7 @@ const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
   verdictConsistencyK: undefined,
   verdictConsistencyTtlMs: undefined,
   judgeViewMaxParts: undefined,
+  personVerdictWindowMs: undefined,
 };
 
 function resolveField(key: keyof SelectionTuning, authored: unknown): number {
@@ -200,6 +206,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       verdictConsistencyK: resolveField("verdictConsistencyK", parsed["verdictConsistencyK"]),
       verdictConsistencyTtlMs: resolveField("verdictConsistencyTtlMs", parsed["verdictConsistencyTtlMs"]),
       judgeViewMaxParts: resolveField("judgeViewMaxParts", parsed["judgeViewMaxParts"]),
+      personVerdictWindowMs: resolveField("personVerdictWindowMs", parsed["personVerdictWindowMs"]),
     };
   } catch {
     // No policy file is the shipped state, and it must still honour the env tier — otherwise
@@ -216,6 +223,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       verdictConsistencyK: resolveField("verdictConsistencyK", undefined),
       verdictConsistencyTtlMs: resolveField("verdictConsistencyTtlMs", undefined),
       judgeViewMaxParts: resolveField("judgeViewMaxParts", undefined),
+      personVerdictWindowMs: resolveField("personVerdictWindowMs", undefined),
     };
   }
 

@@ -75,16 +75,22 @@ describe("deliverReachVerdict — sends the reason on the wire", () => {
 });
 
 describe("every delivery site passes a reason and the goal hash", () => {
-  // The three call sites live inside the dispatch path, which no unit test can drive; a site
+  // The call sites live inside the dispatch path, which no unit test can drive; a site
   // that drops the arguments silently restores the reason-less body for its whole class.
-  test("walk-complete, walk-threw and the early edit-intent site", async () => {
+  // The fourth is the person's verdict on a deferred judge-only reach (person-verdict.ts): the walk's own reason and
+  // goal hash, carried on the deferral.
+  test("walk-complete, walk-threw, the early edit-intent site and the person-verdict site", async () => {
     const s = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     const calls = [...s.matchAll(/deliverReachVerdict\(([^;]*)\);/g)].map((m) => m[1]!).filter((a) => !a.includes("executionId: string"));
-    expect(calls.length).toBe(3);
-    const byOrigin = Object.fromEntries(calls.map((a) => [(a.match(/"(walk-complete|walk-threw|early-edit-intent-unfavorable)"/) ?? [])[1], a]));
+    expect(calls.length).toBe(4);
+    const byOrigin = Object.fromEntries(calls.map((a) => [(a.match(/"(walk-complete|walk-threw|early-edit-intent-unfavorable|person-verdict)"/) ?? [])[1], a]));
     expect(byOrigin["walk-complete"]).toContain("seek.goalReachReason");
     expect(byOrigin["walk-threw"]).toContain("record.error");
     expect(byOrigin["early-edit-intent-unfavorable"]).toContain('"deterministic:early-edit-intent-not-landed"');
-    for (const a of calls) expect(a).toContain("goalHashOf(");
+    expect(byOrigin["person-verdict"]).toContain("d.reason, d.goalHash");
+    // the deferral carries the walk-complete site's own reason and goal hash (the openDeferral site), as the
+    // beta-withheld pin proves the withhold's provenance
+    expect(s).toContain('reason: seek.goalReachReason ?? null, goalHash: goalHashOf(String(goal ?? "")), betaWithheldReason: betaWithheld.get(record.executionId) ?? null');
+    for (const a of calls.filter((x) => !x.includes('"person-verdict"'))) expect(a).toContain("goalHashOf(");
   });
 });

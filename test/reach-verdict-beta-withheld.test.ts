@@ -143,9 +143,14 @@ describe("the withhold record is filled at the decision, threaded to every walk,
 
   test("MUST-FAIL: every deliverReachVerdict call site passes the record", () => {
     const calls = SRC.split("\n").filter((l) => /\bdeliverReachVerdict\(/.test(l) && !/function deliverReachVerdict\(/.test(l) && !/^\s*\/\//.test(l));
-    const origins = calls.map((l) => /"(walk-complete|walk-threw|early-edit-intent-unfavorable)"/.exec(l)?.[1]).sort();
-    expect(origins).toEqual(["early-edit-intent-unfavorable", "walk-complete", "walk-threw"]);
-    for (const l of calls) expect(l).toMatch(/, (opts\.)?betaWithheld\);\s*$/);
+    const origins = calls.map((l) => /"(walk-complete|walk-threw|early-edit-intent-unfavorable|person-verdict)"/.exec(l)?.[1]).sort();
+    expect(origins).toEqual(["early-edit-intent-unfavorable", "person-verdict", "walk-complete", "walk-threw"]);
+    // The person's verdict on a deferred judge-only reach (person-verdict.ts) carries the withhold the walk recorded
+    // for that execution, captured on the deferral at walk end, since the dispatch's map is out of scope by then.
+    for (const l of calls.filter((x) => !x.includes('"person-verdict"'))) expect(l).toMatch(/, (opts\.)?betaWithheld\);\s*$/);
+    expect(calls.find((x) => x.includes('"person-verdict"'))).toMatch(/, personBetaWithheld\);\s*$/);
+    expect(SRC).toContain("const personBetaWithheld = d.betaWithheldReason ? new Map([[d.executionId, d.betaWithheldReason]]) : null;");
+    expect(SRC).toContain("betaWithheldReason: betaWithheld.get(record.executionId) ?? null");
   });
 
   test("MUST-FAIL: the record survives the fallback — only ever added to, and the fallback step never touches it", () => {

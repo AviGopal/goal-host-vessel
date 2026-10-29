@@ -354,6 +354,7 @@ import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
+import { ALPHA_WITHHELD_NO_EDGE, deferralExpired, expireDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
 import * as requestQueue from "./request-queue";
@@ -8790,6 +8791,10 @@ async function runGoalAsPoolWalkBody(
     /** Caller-owned, dispatch-wide record of executions whose arm a walk WITHHELD β for (execution id -> reason).
      *  Walks only add to it; every POST /reach for an execution named in it carries beta_withheld. */
     betaWithheld?: Map<string, string>;
+    /** Caller-owned, dispatch-wide record of executions whose reach a walk WITHHELD α for because the chain formed no
+     *  in-chain edge (execution id -> ALPHA_WITHHELD_NO_EDGE): the walk-complete /reach of such a judge-only reach is
+     *  deferred to a person (person-verdict.ts). */
+    alphaWithheld?: Map<string, string>;
     /** A RE-FRAMED walk only: the goal's own target shapes it was re-framed FROM. Carried on the walk's write
      *  evidence, so the reach gate (judge entry reachGate) holds the re-framed walk to the goal's own targets. */
     reframedFrom?: readonly string[];
@@ -13290,6 +13295,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       // set in the not-reached branch, read at the durable persist. null ⇒ the durable trace keeps its own chain.
       let walkChainCarrier: { durable: string[]; composite: string[] } | null = null;
       let walkBetaWithheld = false;
+      // α withheld because the chain formed no in-chain edge: with a non-deterministic reached verdict, a JUDGE-ONLY reach
+      // (person-verdict.ts). Its durable satisfier trace is persisted without the reached:true tag, so the trace insert
+      // does not grade it; the person's /reach is its first grading.
+      let walkAlphaWithheldNoEdge = false;
       // The last pick's own answer DECLINED (judge.satisfierDeclineClass), for the durable trace's declined:<class> tag.
       let walkDeclined: judge.SatisfierDecline | null = null;
       // Why β was withheld, for the durable trace: the abstain below, or the not-reached branch's record entry.
@@ -13561,7 +13570,7 @@ If one of those sibling shapes is the action that would create what the goal ask
               ? `[goal-host-vessel] walk(${opts.surface}): alpha-credited involved step ${_stepId} (+${_abCredit.dAlpha}) (substance-honest reach: ${verdict.reason}) goal_hash=${goalHashOf(goal)}`
               : `[goal-host-vessel] walk(${opts.surface}): alpha-credit NOT APPLIED for ${_stepId} (dAlpha=0) despite a substance-honest reach: ${verdict.reason}`);
           }
-        } else if (consumedInChain.size === 0) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); } else if (consumedInChain.size > 0 && editEffectReach) {
+        } else if (consumedInChain.size === 0) { tap("[goal-host-vessel] walk: WITHHELD alpha-credit for " + lastPick + " — no in-chain producer-to-consumer edge and no landed sha"); walkAlphaWithheldNoEdge = true; if (lastTrace?.id) opts.alphaWithheld?.set(lastTrace.id, ALPHA_WITHHELD_NO_EDGE); } else if (consumedInChain.size > 0 && editEffectReach) {
           tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit for ${lastPick} — edit-effect reach via in-chain edge only (no landed sha); fileEditResult/fileWriteResult is advertised-not-applied, not substance`);
         }
         // ANSWER-DELIVERY (decision-transparency, 2026-07-07): a genuinely-reached
@@ -13988,6 +13997,9 @@ If one of those sibling shapes is the action that would create what the goal ask
         };
         // Untagged is not enough: activity-api's insert path blamed a failed ungraded trace β=1 anyway. Say so on the trace.
         if (!reached && walkBetaWithheld) durableTrace.tags = withBetaWithheld(durableTrace.tags, walkBetaWithheldReason);
+        // A JUDGE-ONLY reach (reached, non-deterministic, α withheld for no edge) is persisted untagged too: graded at insert
+        // it would credit α on the judge's word alone, before the person's verdict (person-verdict.ts).
+        if (reached && walkAlphaWithheldNoEdge && isJudgeOnlyReach(true, goalReachReason, ALPHA_WITHHELD_NO_EDGE)) durableTrace.tags = _existingTags;
         // A DECLINE, queryable: activity-api's isReachInapplicable reads declined:<class>; the decliner's reason rides in metadata.
         if (!reached && walkDeclined) { durableTrace.tags = [...(durableTrace.tags ?? []).filter((t) => !t.startsWith("declined:")), `declined:${walkDeclined.class}`]; durableTrace.metadata = { ...(durableTrace.metadata ?? {}), decline: { class: walkDeclined.class, reason_text: walkDeclined.reason, decliner_id: String(lastPick) } }; }
         walkDurableTrace = durableTrace; // the persist below is started; the finally does not post a second one
@@ -14454,6 +14466,8 @@ async function runGoalWithRecoveryInner(
     learningSink?: LearningConsequences;
     /** The walks' β-withhold record (see runGoalAsPoolWalkBody), handed to every walk this dispatch runs. */
     betaWithheld?: Map<string, string>;
+    /** The walks' α-withhold (no in-chain edge) record, handed along with betaWithheld (person-verdict.ts). */
+    alphaWithheld?: Map<string, string>;
     /** EVALUABILITY (per-dispatch, shape-driven; L1/L12): ablate the learned pathway so a floor/counterfactual arm can be run and RECORDED. disableReuse/forceFloor suppress the reached-command cache + lexical rebind (cold derivation); pinnedPriors/seed reserved for seeded selection. */
     ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
     /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
@@ -15651,6 +15665,7 @@ async function runGoalWithRecoveryInner(
         stepSink: opts.stepSink,
         learningSink: opts.learningSink,
         betaWithheld: opts.betaWithheld,
+        alphaWithheld: opts.alphaWithheld,
         // Replay is held off only on an EXACT-hash failure history: a near-miss lesson from a similar
         // goal must not cost this goal its learned pathway (the gap-closing lane shares one class token).
         ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,
@@ -15719,6 +15734,7 @@ async function runGoalWithRecoveryInner(
           stepSink: opts.stepSink,
           learningSink: opts.learningSink,
           betaWithheld: opts.betaWithheld,
+          alphaWithheld: opts.alphaWithheld,
           ablation: opts.ablation,
           skipFailedReplays: [..._failedReplays],
           learningMode: opts.learningMode,
@@ -15813,6 +15829,7 @@ async function runGoalWithRecoveryInner(
             stepSink: opts.stepSink,
             learningSink: opts.learningSink,
             betaWithheld: opts.betaWithheld,
+            alphaWithheld: opts.alphaWithheld,
             ablation: opts.ablation,
             skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
           learningMode: opts.learningMode,
@@ -15869,6 +15886,7 @@ async function runGoalWithRecoveryInner(
             stepSink: opts.stepSink,
             learningSink: opts.learningSink,
             betaWithheld: opts.betaWithheld,
+            alphaWithheld: opts.alphaWithheld,
             ablation: opts.ablation,
             skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
         learningMode: opts.learningMode,
@@ -19536,6 +19554,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
     const walkStepSink: string[] = [];
     // Executions whose arm a walk of this dispatch withheld β for; outside the try so the throw path sees it too.
     const betaWithheld = new Map<string, string>();
+    // Executions whose reach a walk of this dispatch withheld α for (no in-chain edge): a judge-only reach (person-verdict.ts).
+    const alphaWithheld = new Map<string, string>();
     try {
       // Compute state-space signature BEFORE dispatch so the trace records
       // the environment in which template selection happened. The hash is
@@ -19637,6 +19657,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         onGapIdRecovered: (gid) => { record.gapIdRecoveredFromText = gid; },
         learningSink,
         betaWithheld,
+        alphaWithheld,
         ablation,
         learningMode,
       });
@@ -19741,7 +19762,18 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // arrival, so delivery IS credit: a dropped patch is an arm that never learns from
       // an execution it actually ran. Delivery, retry and every skip reason live in
       // deliverReachVerdict so the throw path can report its verdict too.
-      deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")), betaWithheld);
+      // A JUDGE-ONLY REACH WAITS FOR A PERSON (person-verdict.ts; USER ruling 2026-10-29T22:38:47Z): reached=true on a
+      // non-deterministic verdict whose α the walk withheld for no in-chain edge is not graded here. The record carries
+      // the deferral (reach_decided_by:person) and a person's label delivers this same /reach (oracle-label-consumer.ts).
+      // Every other verdict, reached=false and deterministic ones included, is delivered now as before.
+      if (record.executionId && isJudgeOnlyReach(record.reached, seek.goalReachReason, alphaWithheld.get(record.executionId))) {
+        record.deferredReach = openDeferral({ executionId: record.executionId, completionShapes: seek.completionShapes ?? [], reason: seek.goalReachReason ?? null, goalHash: goalHashOf(String(goal ?? "")), betaWithheldReason: betaWithheld.get(record.executionId) ?? null, learningMode: learningMode ?? null }, Date.now());
+        record.reachDecidedBy = "person";
+        walkStepSink.push(`[goal-host-vessel] reach_decided_by:person — judge-only reach of ${record.executionId} (non-deterministic, α withheld: ${ALPHA_WITHHELD_NO_EDGE}); its /reach waits for a person's verdict`);
+        console.log(`[goal-host-vessel] reach DEFERRED to a person (walk-complete): ${record.executionId} is a judge-only reach; no /reach until a person's verdict or the window ends`);
+      } else {
+        deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")), betaWithheld);
+      }
       // A FALSE verdict must be able to un-bank what a TRUE verdict banked. Without this the
       // known-command library only ever grows: a command from a reach that later graded false
       // stayed on disk and was replayed by the next similar goal after every restart.
@@ -19977,7 +20009,54 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
     activityApiEndpoint: ACTIVITY_API_ENDPOINT,
     devVesselEndpoint: DEV_VESSEL_ENDPOINT,
     apiKey: API_KEY,
+    decideDeferredReach: (r, decision) => decideDeferredReach(record, decision),
   });
+}
+
+/**
+ * A PERSON's verdict on a DEFERRED judge-only reach (person-verdict.ts), handed here by the oracle-label consumer:
+ * the SAME deliverReachVerdict the walk would have sent at walk end (reached -> α, not reached -> β), and for a
+ * reached verdict the mint, grounded by the person, over the durable trace re-read from the trace store. A partial
+ * verdict delivers nothing (ungraded). Runs in the record's OWN dispatch context (a fresh store from the record and
+ * the deferral), so the mint's ledger check sees its id and the /reach carries the deferral's captured mode.
+ */
+async function decideDeferredReach(record: DispatchRecord, decision: { deliver: boolean; reached: boolean | null; mint: boolean }): Promise<void> {
+  const d = record.deferredReach;
+  if (!d || !decision.deliver || typeof decision.reached !== "boolean") { persistDispatchStore(); return; }
+  // The β withhold the walk recorded for this execution, captured on the deferral (the dispatch's map is gone by now).
+  const personBetaWithheld = d.betaWithheldReason ? new Map([[d.executionId, d.betaWithheldReason]]) : null;
+  // A FRESH store from the record and its deferral, never the ambient one: entered over another dispatch's context it
+  // would keep that dispatch's decomposeGapId (crediting the wrong gap) and its sticky observe mode (silently ungraded).
+  await dispatchContext.run(enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode ?? undefined }), async () => {
+    deliverReachVerdict(d.executionId, decision.reached, d.completionShapes, "person-verdict", d.reason, d.goalHash, personBetaWithheld);
+    if (decision.mint) {
+      try {
+        const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces/${encodeURIComponent(d.executionId)}`, { headers: API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}, signal: AbortSignal.timeout(15_000) });
+        const trace = r.ok ? mintTraceFromStore(await r.json().catch(() => null)) : null;
+        if (!trace) console.warn(`[goal-host-vessel] person-verdict mint: durable trace ${d.executionId} not readable (HTTP ${r.status}); reach delivered, not minted`);
+        else await mintReachedTrace(trace, true, d.goalHash ?? undefined, undefined, typeof record.goal === "string" ? record.goal : undefined);
+      } catch (e) { console.warn(`[goal-host-vessel] person-verdict mint failed (non-fatal): ${(e as Error).message}`); }
+    }
+  });
+  persistDispatchStore();
+}
+
+/**
+ * An OPEN deferral that outlived its window (the shaped tuning row personVerdictWindowMs, default 7 days) resolves
+ * UNGRADED-expired: no /reach (no α, no β), recorded on the record ("no person verdict"), and its retention lifts.
+ */
+async function expireDeferredReaches(now = Date.now()): Promise<number> {
+  const windowMs = (await resolveSelectionTuning()).personVerdictWindowMs;
+  let n = 0;
+  for (const r of executionStore.values()) {
+    const d = r.deferredReach;
+    if (!deferralExpired(d, now, windowMs) || !d || !expireDeferral(d, now)) continue;
+    r.reachDecidedBy = "person";
+    n++;
+    console.log(`[goal-host-vessel] deferred judge-only reach ${d.executionId} EXPIRED ungraded after ${Math.round(windowMs / 3_600_000)}h: no person verdict (no α, no β, no /reach)`);
+  }
+  if (n > 0) persistDispatchStore();
+  return n;
 }
 
 // THE VERDICT CORPUS RUNNER ACTIVITY (src/judge/corpus-activity.ts, closed): replay the deployed corpus
@@ -20560,6 +20639,10 @@ interface DispatchRecord {
   requeueOf?: string;
   /** The dispatch's body.learning_mode, kept so a requeue after a restart runs in the same mode (observe-mode.ts). */
   learningMode?: "observe" | "learn";
+  /** A judge-only reach whose walk-complete /reach waits for a person's verdict (person-verdict.ts). */
+  deferredReach?: DeferredReach | null;
+  /** "person" when a person's verdict decides this record's reach (reach_decided_by:person). */
+  reachDecidedBy?: string;
   /** The caller's own `operator` field, kept as a label only: it carries no authority (inbound-auth.ts). */
   operator_label?: string;
   /** Who the dispatch runs as, from the validated credential (inbound-auth.ts principalRecord). Never the key. */
@@ -20930,10 +21013,13 @@ function persistDispatchStore(): void {
   });
 }
 function pruneStore(): void {
+  void expireDeferredReaches().catch(() => { /* fail-open: the next prune retries */ });
   const byNewest = [...executionStore.entries()].sort((a, b) => b[1].startedAt - a[1].startedAt);
   for (const [, r] of byNewest.slice(100)) {
     const d = r as unknown as Record<string, unknown>;
     if (d["compacted"] === true) continue;
+    // An OPEN deferral keeps its record whole until a person decides it or its window ends (person-verdict.ts).
+    if (retainsRecord(r.deferredReach)) continue;
     d["stateSignature"] = undefined;
     d["steps"] = [];
     d["walkLog"] = [];
@@ -20942,7 +21028,7 @@ function pruneStore(): void {
     d["poolEvents"] = [];
     d["compacted"] = true;
   }
-  for (const [id] of byNewest.slice(2000)) executionStore.delete(id);
+  for (const [id, r] of byNewest.slice(2000)) if (!retainsRecord(r.deferredReach)) executionStore.delete(id);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21189,6 +21275,7 @@ export {
   resolveClassRow, buildFromClassRow, verifyFromClassRow, selectorOf,
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
+  decideDeferredReach,
   buildFailedCompositeTrace,
   walkFailureMode,
   buildCompositeTraceFromChain,

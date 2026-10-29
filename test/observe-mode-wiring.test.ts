@@ -27,9 +27,16 @@ describe("the learning mode is in the dispatch context", () => {
     expect(src).toContain("const _floorMode = walkContext?.learningMode;");
     // (every entry builds its store with enterDispatchContext over the existing store, so the whole line is the entry:
     // L2a's decomposeGapId rides the same entries, and no entry downgrades observe: dispatch-context-entry.test.ts)
+    // the person's verdict on a deferred judge-only reach enters the record's own dispatch over a FRESH store, with the
+    // mode captured on the deferral (never the ambient store's: person-verdict.ts)
+    expect(src).toContain("dispatchContext.run(enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode ?? undefined }), async () => {");
     const entries = src.match(/dispatchContext\.(enterWith|run)\([^\n]*/g) ?? [];
-    expect(entries.length).toBe(4);
-    expect(entries.every((m) => m.includes("learningMode") && m.includes("enterDispatchContext(dispatchContext.getStore(), {"))).toBe(true);
+    expect(entries.length).toBe(5);
+    // every entry carries the mode; all but the person-verdict site build over the existing store, which deliberately
+    // builds a FRESH store from the record and its deferral (an ambient dispatch's gap id / observe must not leak in)
+    expect(entries.every((m) => m.includes("learningMode") && (m.includes("enterDispatchContext(dispatchContext.getStore(), {") || m.includes("enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode")))).toBe(true);
+    // and the fresh-store form is that one site only, never a reusable escape
+    expect(src.split("enterDispatchContext(undefined,").length - 1).toBe(1);
     expect(src.match(/priorFeedback: priorFailureFeedbackFor\(goal\), (skipFailedReplays: \[\.\.\._failedReplays\], )?decomposeGapId: typeof opts\.variables\["decompose_gap_id"\] === "string" \? opts\.variables\["decompose_gap_id"\] : undefined, learningMode: opts\.learningMode \}/g)?.length).toBe(2);
   });
   test("the /run-goal background run enters it before any side effect of the dispatch", () => {

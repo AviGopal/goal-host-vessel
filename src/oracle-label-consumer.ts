@@ -5,15 +5,30 @@
  * MUST run there too; otherwise a human reach override is written to the oracle
  * corpus, shown 'recorded', and silently NEVER applied on the read path.
  *
- * A HUMAN verdict corrects record.reached + surfaces directed notes (corrective, law 13);
- * reach is NEVER posterior-written — the arm already earns reach credit via
- * v_shape_conditioned_score (FROM execution.success), so re-writing a β would
- * double-count and could β-condemn a correctly-selected arm on an unreachable goal (law 12).
+ * A HUMAN verdict corrects record.reached + surfaces directed notes (corrective, law 13).
+ *
+ * POSTERIOR WRITES: ONLY FOR A DEFERRED JUDGE-ONLY REACH, AND ONLY FROM A PERSON (USER ruling
+ * 2026-10-29T22:38:47Z, "Person verdict counts"; person-verdict.ts). A reach the LLM judge alone called
+ * reached (non-deterministic, alpha withheld for no in-chain edge) is NOT graded at walk end: the walk
+ * leaves its walk-complete /reach undelivered and the record carries record.deferredReach. On such a
+ * record this consumer acts only on a PERSON's row (isPersonPrincipal): it hands the person's verdict
+ * to deps.decideDeferredReach, which sends the SAME deliverReachVerdict the walk would have sent
+ * (achieved -> reached=true, alpha, plus the mint; not_achieved -> reached=false, beta; partial ->
+ * ungraded). It cannot double-count: the walk never posted /reach for that execution, the person's
+ * /reach is the first, activity-api's /reach latch (reach_graded:true) refuses any second grading of
+ * the row, and the human latch here (learning.oracleLabelWritten) plus the deferral's own state
+ * (no longer "open") make a second person label a no-op. An operator key's verdict:human row and an
+ * agent's automated row decide nothing on a deferred record and burn no latch, so the person can still
+ * speak. On every other record a human verdict is still NEVER posterior-written: the arm already
+ * earned (or was refused) reach credit at walk end, and re-writing a beta would double-count and could
+ * beta-condemn a correctly-selected arm on an unreachable goal (law 12).
  *
  * Extracted from index.ts so the consumer's effects (record mutation, the latch, the
  * disagreement-gap POST) are observable through an injected fetch rather than only by
  * reading source text.
  */
+
+import { personDecision, type DeferredReach } from "./person-verdict";
 
 export interface OracleLabelRow {
   verdict?: string;
@@ -65,6 +80,8 @@ export function hasHumanVerdictPrincipal(label: OracleLabelRow | undefined): boo
   return scopes.includes(HUMAN_VERDICT_SCOPE) || scopes.includes(ADMIN_SCOPE);
 }
 
+/** Deferred reaches already logged as awaiting a person (one line per execution id, process lifetime). */
+const deferredAwaitLogged = new Set<string>();
 /** Human-labeled rows ignored for want of a human-verdict principal (one per execution id, process lifetime). */
 const ignoredHumanLabelExecs = new Set<string>();
 let ignoredHumanLabelCount = 0;
@@ -81,6 +98,10 @@ export function __resetOracleLabelCountersForTests(): void {
 /** The slice of DispatchRecord the consumer reads and writes. */
 export interface OracleLabelRecord {
   status: string;
+  /** A judge-only reach whose walk-complete /reach waits for a person's verdict (person-verdict.ts). */
+  deferredReach?: DeferredReach | null;
+  /** "person" when a person's verdict decides this record's reach (reach_decided_by:person). */
+  reachDecidedBy?: string;
   executionId?: string | null;
   goal?: unknown;
   reached?: boolean | null;
@@ -95,6 +116,8 @@ export interface OracleLabelDeps {
   devVesselEndpoint: string;
   apiKey: string;
   fetchImpl?: typeof fetch;
+  /** Deliver a person's decision on a DEFERRED judge-only reach (index.ts: deliverReachVerdict + the mint). */
+  decideDeferredReach?: (record: OracleLabelRecord, decision: { deliver: boolean; reached: boolean | null; mint: boolean }, label: OracleLabelRow) => Promise<void>;
 }
 
 /**
@@ -180,7 +203,19 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     const labelPayload = (await labelRes.json().catch(() => null)) as { content?: string } | null;
     let labels: OracleLabelRow[] = [];
     try { labels = labelPayload?.content ? (JSON.parse(labelPayload.content) as OracleLabelRow[]) : []; } catch { labels = []; }
-    const label = pickConsumableLabel(labels);
+    // A DEFERRED judge-only reach is decided by a PERSON only: the newest person row with a recognised verdict.
+    // Operator-key and automated rows decide nothing here and burn no latch, so the person can still speak.
+    const deferredOpen = record.deferredReach?.state === "open";
+    const label = deferredOpen
+      ? labels.find((l) => !isCalibrationLabel(l) && isPersonPrincipal(l) && (l.verdict === "achieved" || l.verdict === "not_achieved" || l.verdict === "partial"))
+      : pickConsumableLabel(labels);
+    if (deferredOpen && !label) {
+      if (!deferredAwaitLogged.has(String(labelExecId))) {
+        deferredAwaitLogged.add(String(labelExecId));
+        console.log(`[oracle-label] deferred judge-only reach ${labelExecId} awaits a PERSON verdict (${labels.length} row(s), none from a person; operator-key and automated rows decide nothing here)`);
+      }
+      return;
+    }
     // Unprincipalled human rows NEWER than the row acted on (or all of them, when none is acted on).
     const pickedAt = label ? labels.indexOf(label) : labels.length;
     const ignoredHuman = labels.slice(0, pickedAt).filter((l) => !isCalibrationLabel(l) && isUnprincipalledHumanLabel(l));
@@ -211,8 +246,9 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
     // against 81 machine consumptions. Leaving the latch unburned for machine labels is
     // sufficient: the corpus read is ORDER BY created_at DESC (activity-api
     // src/routes/impulses.ts), so a later human row is already first on the next poll.
-    if (label?.labeler === "human") learn.oracleLabelWritten = true;
-    if (label?.labeler === "human") {
+    const humanVerdict = label?.labeler === "human" || (deferredOpen && isPersonPrincipal(label));
+    if (humanVerdict) learn.oracleLabelWritten = true;
+    if (humanVerdict) {
       const priorReached = record.reached;
       record.reached = labelVerdict === "achieved" ? true : labelVerdict === "not_achieved" ? false : null;
       // ORACLE-DISAGREEMENT WIRE (2026-09-19). A human verdict that CONTRADICTS the
@@ -233,7 +269,19 @@ export async function consumeOracleLabel(record: OracleLabelRecord, deps: Oracle
       const notes = typeof label?.notes === "string" ? label.notes.trim() : "";
       record.humanReachNotes = notes;
       record.goalReachReason = `[human override: ${notes || ("reached=" + String(record.reached))}] ${record.goalReachReason ?? ""}`.slice(0, 600);
-      console.log(`[oracle-label] HUMAN reach override verdict=${labelVerdict} for ${labelExecId} -> record.reached=${record.reached} (no posterior β-penalty)`);
+      if (deferredOpen && record.deferredReach && label) {
+        const decision = personDecision(record.deferredReach, labelVerdict);
+        if (decision) {
+          record.deferredReach.state = decision.deliver ? "delivered" : "ungraded";
+          record.deferredReach.decidedAt = Date.now();
+          record.deferredReach.decision = labelVerdict;
+          record.reachDecidedBy = "person";
+          console.log(`[oracle-label] PERSON verdict=${labelVerdict} decides deferred judge-only reach ${labelExecId}: ${decision.deliver ? `deliver reached=${decision.reached}${decision.mint ? " + mint" : ""}` : "ungraded (no alpha, no beta)"}`);
+          await deps.decideDeferredReach?.(record, decision, label);
+        }
+      } else {
+        console.log(`[oracle-label] HUMAN reach override verdict=${labelVerdict} for ${labelExecId} -> record.reached=${record.reached} (no posterior β-penalty)`);
+      }
     } else {
       console.log(`[oracle-label] consumed automated verdict=${labelVerdict} for ${labelExecId} (no override)`);
     }
