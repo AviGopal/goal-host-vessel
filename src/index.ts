@@ -306,6 +306,7 @@ import { zeroToolWriteClaim } from "./judge/floor-clamps";
 import { isMutationShape } from "./judge/shapes";
 import * as creditHold from "./judge/credit-hold";
 import type { WriteArtifactEvidence } from "./judge/inputs";
+import { confirmedTerminalWritesOf, hollowCapApplies, readBackStepFor, type ConfirmedReadBack } from "./walk-read-back";
 import { claimedDifference, claimedWinner } from "./two-source-claims";
 import { countsSomeOtherUnit } from "./counts-other-unit";
 import { missingVerifierGap, verifierFamilyOf } from "./missing-verifier-gap";
@@ -3875,7 +3876,11 @@ function noteJudgeShadow(v: GoalReachVerdict, walkEvidence?: { walkLog: string[]
   walkEvidence?.walkLog.push(line);
   if (rec) rec.judge_verdict_before_pregate = { reached: j.reached, reason: j.reason };
 }
-async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: GateJudgeView, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
+/** What the walk itself testifies to the reach verifier: capability gaps it filed, its step log, and the terminal
+ *  writes it read back and confirmed (confirmedTerminalWrites, absent on callers that predate it). */
+interface WalkEvidence { gapsFiled: number; walkLog: string[]; confirmedTerminalWrites?: readonly string[] }
+
+async function verifyGoalReached(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: WalkEvidence, judgeView?: GateJudgeView, deliverables?: string[], poolEvidence?: PoolEvidence[], writeEvidence?: WriteArtifactEvidence, captureSurface?: judgeCapture.JudgeSurface): Promise<GoalReachVerdict | null> {
   const v = await verifyGoalReachedUnrestricted(goal, producedShapes, taskSummary, contentDigest, commandEvidence, walkEvidence, judgeView, poolEvidence, deliverables, writeEvidence);
   if (v && v.deterministic !== true) {
     const keep = new Set(deliverables ?? inferredTargetDecisionCache.get(goalHashOf(goal))?.shapes ?? []);
@@ -3912,7 +3917,7 @@ async function verifyGoalReached(goal: string, producedShapes: string[], taskSum
   }), v);
   return v;
 }
-async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: { gapsFiled: number; walkLog: string[] }, judgeView?: GateJudgeView, poolEvidence?: PoolEvidence[], deliverables?: string[], writeEvidence?: WriteArtifactEvidence): Promise<GoalReachVerdict | null> {
+async function verifyGoalReachedUnrestricted(goal: string, producedShapes: string[], taskSummary: string, contentDigest?: string, commandEvidence?: string, walkEvidence?: WalkEvidence, judgeView?: GateJudgeView, poolEvidence?: PoolEvidence[], deliverables?: string[], writeEvidence?: WriteArtifactEvidence): Promise<GoalReachVerdict | null> {
   // ── Deterministic hollow pre-check (no LLM) ──────────────────────────────
   const dig = (contentDigest ?? "").trim();
   const meaningfulShapes = producedShapes.filter((s) => s !== "goal");
@@ -4447,7 +4452,11 @@ async function verifyGoalReachedUnrestricted(goal: string, producedShapes: strin
   // the LLM call. Ordered AFTER the deterministic oracles above: a ground-truth-verified
   // reach has already returned, so this suppresses only the rubber-stamp path, never a
   // recomputed truth. Fail-open: callers that pass no walkEvidence are unaffected.
-  if (walkEvidence) {
+  // A walk that READ BACK a terminal write and confirmed it (walkEvidence.confirmedTerminalWrites) has testimony the
+  // step log does not carry: satisfier productions write no "step N ran" line, so one failed template step beside a
+  // verified write read as "every step produced nothing". Such a walk is not capped here; the pre-gate's read-back
+  // rule and the judge below grade it. A walk with no confirmed write is capped exactly as before.
+  if (walkEvidence && hollowCapApplies(walkEvidence)) {
     const stepLines = walkEvidence.walkLog.filter((l) => /\bstep \d+ ran /.test(l));
     const allStepsHollow = stepLines.length > 0 && stepLines.every((l) => /\bnew_shapes=0\b/.test(l));
     if ((walkEvidence.gapsFiled > 0 && producedShapes.length <= 2) || allStepsHollow) {
@@ -8958,6 +8967,12 @@ async function runGoalAsPoolWalkBody(
   // producedShapes is the set of shapes currently available to consume; poolImpulses
   // are the concrete impulses (with content) we seed into each step's execution.
   const producedShapes = new Set<string>();
+  /** WRITE READ-BACKS this walk actually performed and that confirmed the write (verifyWritePersistedRead, the
+   *  shaped read of the same store by rawResolve that returned the written id), keyed by the write shape: the read
+   *  shape and the record the read returned. addToPool records the read as its own pool step right after the write,
+   *  so the reach pre-gate's read-back rule (reach-grounding.ts changeEvidence) sees the read the walk really made.
+   *  Only a confirming rawResolve writes here: no read step is ever inferred or synthesized. */
+  const confirmedReadBacks = new Map<string, ConfirmedReadBack>();
   let commandReuseFired = false; // Tier-2 lexical rebind fired this walk -> record as learned_pathway
   // Shape -> the BANKED command this walk replayed for it (exact hit, lexical rebind or family recipe). Read against the success ledger
   // (executorCommands) at return: a replay the ledger does not hold failed, and the next attempt skips only that one.
@@ -9001,6 +9016,12 @@ async function runGoalAsPoolWalkBody(
     if (!shape || producedShapes.has(shape)) return;
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary, prov));
+    // The write's confirmed read-back, as the next step (walk-read-back.ts): the real read record, never a stub.
+    const rb = readBackStepFor(shape, confirmedReadBacks, producedShapes);
+    if (rb) {
+      producedShapes.add(rb.shape);
+      poolImpulses.push(mkImpulse(rb.shape, rb.content, rb.summary, { producedBy: `read-back:${shape}` }));
+    }
   };
   // DATA-FLOW BINDING: expose each pool impulse's CONTENT as a variable keyed by
   // its shape, so a downstream task's `{{shape}}` placeholder interpolates from
@@ -9607,11 +9628,11 @@ async function runGoalAsPoolWalkBody(
       // A confirming read is kept for the write's task; markVerified links it once the satisfier settles on it.
       const readBack = { readShape, confirmedId: id, site: "write-read-back" };
       const readResult = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { id });
-      if (confirms(readResult)) { appliedWrites.noteReadBack(writeShape, readBack); return { persisted: true, content: readResult }; }
+      if (confirms(readResult)) { appliedWrites.noteReadBack(writeShape, readBack); confirmedReadBacks.set(writeShape, { readShape, confirmedId: id, content: readResult }); return { persisted: true, content: readResult }; }
       // Title-keyed stores (memoryNote/concept): the record id is the title slug, so a
       // read by { id } may miss; retry by { title_prefix }.
       const byTitle = await rawResolve(readShape, ep.endpoint, ep.resolvePath, { title_prefix: id }).catch(() => null);
-      if (confirms(byTitle)) { appliedWrites.noteReadBack(writeShape, readBack); return { persisted: true, content: byTitle }; }
+      if (confirms(byTitle)) { appliedWrites.noteReadBack(writeShape, readBack); confirmedReadBacks.set(writeShape, { readShape, confirmedId: id, content: byTitle }); return { persisted: true, content: byTitle }; }
       if (readResult != null) {
         // concept-db REST fallback. It carries this vessel's credential: concept-db scopes id reads to the caller's
         // org, so an uncredentialed read finds this vessel's own concept "not found". Logged, so how often the shaped
@@ -13068,7 +13089,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the grader is handed: an empty commandEvidence means it graded a bare number with no
       // provenance, which is a different defect from a judge that saw the provenance and shrugged.
       console.log(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=${commandEvidence.length} shapes=${[...producedShapes].join(",").slice(0, 120)} digestLen=${(contentDigest ?? "").length} cmdEvidence=${JSON.stringify(commandEvidence.slice(0, 240))}`);
-      const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [] };
+      // Terminal writes this walk READ BACK and confirmed (a satisfier's verified write with a recorded read-back):
+      // the hollow-walklog cap does not apply to a walk that has one (verifyGoalReachedUnrestricted).
+      const confirmedTerminalWrites = confirmedTerminalWritesOf(verifiedWrites, confirmedReadBacks, (sh) => terminalShapes.has(sh) || target.has(sh));
+      const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [], confirmedTerminalWrites };
       let verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target], poolEvidenceOf(poolImpulses), walkWriteEvidence());
       // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
