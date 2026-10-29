@@ -15,6 +15,8 @@
 // contents from fs_read (source_code, which discovery no longer serves, was dropped under the 10-16 ruling), and a
 // repo-wide search from fs_grep. local-tools also gates its shell
 // (shell-containment.ts) as a second layer, for every other caller.
+import { writeReadShape } from "./applied-write";
+
 export const UNIVERSAL_READ_TOOLS = [
   { name: "fs_read", description: "Read a file's contents by path.", input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
   { name: "codeSearchResult", description: "Grep a single file for a regex pattern. The result also carries line_count (the file's exact line count, identical to `wc -l`) and match_count; to count a file's lines, call this with any pattern and read line_count.", input_schema: { type: "object", properties: { path: { type: "string" }, pattern: { type: "string" } }, required: ["path", "pattern"] } },
@@ -80,10 +82,27 @@ export function floorHandToolNames(known: ReadonlySet<string>): string[] {
 }
 
 /** The goal's target shapes the floor may offer as their own tool, before the own-substrate producer check. Write
- *  shapes are left out: they keep their own write-tool path. */
+ *  shapes are left out: they keep their own write-tool path.
+ *
+ *  A STORE-WRITE target brings its READ sibling (applied-write.ts writeReadShape, the walk's own read-back shape) when
+ *  that read is served: the floor's read-back gate (reach-grounding.ts changeEvidence, rule 7) confirms a claimed write
+ *  only by a later read of the same store, so a floor offered the write and no read could write a record and never
+ *  measure it (a note written and graded "unconfirmed"). The sibling is held to every rule a target is (served here,
+ *  not a hand tool, not a shell, not excluded), and nothing loosens the gate: the write is confirmed only if the floor
+ *  actually calls the read after it. */
 export function floorTargetCandidates(targetShapes: readonly string[], known: ReadonlySet<string>, excluded: ReadonlySet<string>): string[] {
   const hand = new Set(UNIVERSAL_FLOOR_TOOLS.map((t) => t.name));
-  return [...new Set(targetShapes)].filter((s) =>
-    typeof s === "string" && s.length > 0 && known.has(s) && !hand.has(s) && !/(_write|_create_write)$/.test(s)
-    && !FLOOR_FORBIDDEN_TOOLS.includes(s) && !excluded.has(s));
+  const isWrite = (s: string) => /(_write|_create_write)$/.test(s);
+  const offerable = (s: unknown): s is string =>
+    typeof s === "string" && s.length > 0 && known.has(s) && !hand.has(s) && !isWrite(s)
+    && !FLOOR_FORBIDDEN_TOOLS.includes(s) && !excluded.has(s);
+  const out: string[] = [];
+  for (const s of new Set(targetShapes)) {
+    if (offerable(s)) out.push(s);
+    else if (typeof s === "string" && isWrite(s)) {
+      const read = writeReadShape(s, known);
+      if (read !== s && offerable(read)) out.push(read);
+    }
+  }
+  return [...new Set(out)];
 }
