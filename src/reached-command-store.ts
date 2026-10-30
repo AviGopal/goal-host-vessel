@@ -52,6 +52,71 @@ export function shouldBank(o: { deterministic: boolean; independentConcurring: b
 
 const isBasis = (b: unknown): b is ReachedCommandBasis => b === "deterministic" || b === "concurring";
 
+/** The bank candidate a walk's reached commands offer: what a bank line carries, before its basis. */
+export interface BankCandidate {
+  command: string;
+  field: string;
+  shape: string;
+  targetShapes: string[];
+  goalText: string;
+}
+
+/** The field a command rides in, from its shape's name (sql / script / cmd), else "command". */
+export function commandFieldOf(shape: string): string {
+  return ["sql", "script", "cmd"].find((f) => new RegExp(`(^|[_-])${f}([_-]|$)`, "i").test(shape)) ?? "command";
+}
+
+/** A command whose output differs between sh and bash (`echo` with a backslash escape) is not a reusable recipe. */
+export function isShellDependentEcho(cmd: string): boolean {
+  return /\becho\b[^|;]*\\[nrt]/.test(cmd);
+}
+
+/**
+ * THE ONE PICK both bank paths use (the walk's deterministic bank and a person's verdict on a deferred judge-only
+ * reach): the first reached command, in the walk's order, that is not shell-dependent, produced a shape the walk
+ * produced, and is non-empty. Observe never yields one. `onShellDependent` is told each shell-dependent command
+ * skipped before the pick (the walk logs it), in order, exactly as the walk's inline loop did.
+ */
+export function pickBankCandidate(
+  commands: Iterable<[string, string]>,
+  producedShapes: ReadonlySet<string>,
+  goal: string,
+  learningMode: string | undefined,
+  onShellDependent?: (shape: string) => void,
+): BankCandidate | null {
+  for (const [sh, cmd] of commands) {
+    if (typeof cmd === "string" && isShellDependentEcho(cmd)) { onShellDependent?.(sh); continue; }
+    if (learningMode !== "observe" && producedShapes.has(sh) && typeof cmd === "string" && cmd.trim()) {
+      return { command: cmd, field: commandFieldOf(sh), shape: sh, targetShapes: [...producedShapes], goalText: goal };
+    }
+  }
+  return null;
+}
+
+/** Provenance a bank line may carry (additive: the loader ignores it). A person's verdict names itself here. */
+export interface BankProvenance { decided_by: "person"; label_execution_id: string }
+
+/**
+ * The LAST word the store's lines say about `hash`, by the same rule the loader applies (a line with that hash and
+ * tombstone true is a tombstone; one with command, field, shape and a basis is a bank). null when the lines say
+ * nothing. Read over the lines appended after a mark, it says whether the hash was tombstoned since then.
+ */
+export function lastWordFor(lines: readonly string[], hash: string): "bank" | "tombstone" | null {
+  let word: "bank" | "tombstone" | null = null;
+  for (const line of lines) {
+    const e = parseLine(line);
+    if (!e || e.hash !== hash) continue;
+    if (e.tombstone === true) word = "tombstone";
+    else if (e.command && e.field && e.shape && isBasis(e.basis)) word = "bank";
+  }
+  return word;
+}
+
+function parseLine(line: string): RawLine | null {
+  if (!line.trim()) return null;
+  try { return JSON.parse(line) as RawLine; } catch { return null; }
+}
+
 /**
  * A banked command whose replay FAILED in this dispatch: the walk replayed it for `shape` and its
  * resolve did not succeed as itself (no result, refused, or rewritten by the walk's correction).
@@ -97,6 +162,8 @@ interface RawLine {
   targetShapes?: string[];
   goalText?: string;
   basis?: string;
+  /** Additive (a person's bank names itself); ignored by the replay. */
+  provenance?: unknown;
 }
 
 /**
@@ -122,13 +189,8 @@ export function applyReachedCommandLines(lines: string[]): {
   let legacy = 0;
 
   for (const line of lines) {
-    if (!line.trim()) continue;
-    let e: RawLine;
-    try {
-      e = JSON.parse(line) as RawLine;
-    } catch {
-      continue; // skip malformed line
-    }
+    const e = parseLine(line); // a blank or malformed line is skipped
+    if (!e) continue;
     if (!e.hash) continue;
     if (e.tombstone === true) {
       entries.delete(e.hash);

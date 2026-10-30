@@ -246,6 +246,7 @@ async function resolveFleetActivityFeed(): Promise<FleetActivityFeed> {
 }
 
 import { appendFile, readFile, readdir, stat } from "node:fs/promises";
+import { statSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
 import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
@@ -265,7 +266,7 @@ import { blendEdgeScore, type EdgeEvidence } from "./edge-blend";
 import { psiInputs } from "./psi-inputs";
 import { resolveSelectionTuning, SELECTION_TUNING_DEFAULTS } from "./selection-tuning";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
-import { applyReachedCommandLines, shouldBank, failedBankReplays, replayBlocked, type ReachedCommandBasis, type FailedReplay } from "./reached-command-store";
+import { applyReachedCommandLines, shouldBank, failedBankReplays, replayBlocked, pickBankCandidate, lastWordFor, type ReachedCommandBasis, type FailedReplay, type BankCandidate, type BankProvenance } from "./reached-command-store";
 import { stateDirOffWorkspace, testHostRefusal } from "./test-host-guard";
 import { readStoreAtBoot, storeWritesSettled, writeStoreAtomic } from "./dispatch-store-file";
 import { isBookkeepingOnly } from "./bookkeeping-only";
@@ -356,7 +357,7 @@ import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
-import { ALPHA_WITHHELD_NO_EDGE, deferralExpired, expireDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
+import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, expireDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
 import * as requestQueue from "./request-queue";
@@ -4790,7 +4791,7 @@ const reachedCommandCache = new Map<string, { command: string; field: string; sh
 // failure starts empty rather than breaking boot.
 const REACHED_CMD_CACHE_PATH = process.env.REACHED_CMD_CACHE_PATH ?? "/workspace/.goal-host-reached-commands.jsonl";
 const REACHED_CMD_CACHE_MAX_LOAD = 2000;
-function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis }): void {
+function persistReachedCommand(hash: string, e: { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis; provenance?: BankProvenance }): void {
   if (observeSkip("reached_command_bank")) return; // OBSERVE (observe-mode.ts): the known-command library is not banked
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
 }
@@ -8802,6 +8803,8 @@ async function runGoalAsPoolWalkBody(
      *  in-chain edge (execution id -> ALPHA_WITHHELD_NO_EDGE): the walk-complete /reach of such a judge-only reach is
      *  deferred to a person (person-verdict.ts). */
     alphaWithheld?: Map<string, string>;
+    /** BANK PERSISTENCE: a judge-only reach's bank candidate, keyed like alphaWithheld (person-verdict.ts). */
+    bankCandidates?: Map<string, BankCandidate>;
     /** A RE-FRAMED walk only: the goal's own target shapes it was re-framed FROM. Carried on the walk's write
      *  evidence, so the reach gate (judge entry reachGate) holds the re-framed walk to the goal's own targets. */
     reframedFrom?: readonly string[];
@@ -14079,6 +14082,13 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
       }
     }
+    if (!_bankBasis && reached && opts.learningMode !== "observe" && lastTrace?.id) {
+      // BANK PERSISTENCE (person-verdict.ts): a judge-credited reach is not banked here; its candidate is kept for the
+      // dispatch's deferral, and only a person's "achieved" banks it. Observe keeps none. pickBankCandidate is the
+      // loop above as a function (the same rules, in the same order: reached-command-store.ts).
+      const _cand = pickBankCandidate(executorCommands.entries(), producedShapes, goal, opts.learningMode);
+      if (_cand) opts.bankCandidates?.set(lastTrace.id, _cand);
+    }
 
     // Per-goal learning: record the FULL multi-activity path -> reach outcome.
     // UNCONDITIONAL PRECONDITION LOG. A reached 2-step composition records no path row, and
@@ -14475,6 +14485,8 @@ async function runGoalWithRecoveryInner(
     betaWithheld?: Map<string, string>;
     /** The walks' α-withhold (no in-chain edge) record, handed along with betaWithheld (person-verdict.ts). */
     alphaWithheld?: Map<string, string>;
+    /** BANK PERSISTENCE: a judge-only reach's bank candidate, keyed like alphaWithheld (person-verdict.ts). */
+    bankCandidates?: Map<string, BankCandidate>;
     /** EVALUABILITY (per-dispatch, shape-driven; L1/L12): ablate the learned pathway so a floor/counterfactual arm can be run and RECORDED. disableReuse/forceFloor suppress the reached-command cache + lexical rebind (cold derivation); pinnedPriors/seed reserved for seeded selection. */
     ablation?: { disableReuse?: boolean; forceFloor?: boolean; pinnedPriors?: boolean; seed?: number };
     /** EVALUABILITY (per-dispatch; L1): 'observe' = no-learn/shadow — the walk executes but writes back NO reached-command cache, goal-path, or mint, so a held-out measurement does not contaminate the learner. Absent/'learn' = current behaviour. */
@@ -15673,6 +15685,7 @@ async function runGoalWithRecoveryInner(
         learningSink: opts.learningSink,
         betaWithheld: opts.betaWithheld,
         alphaWithheld: opts.alphaWithheld,
+        bankCandidates: opts.bankCandidates,
         // Replay is held off only on an EXACT-hash failure history: a near-miss lesson from a similar
         // goal must not cost this goal its learned pathway (the gap-closing lane shares one class token).
         ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,
@@ -15742,6 +15755,7 @@ async function runGoalWithRecoveryInner(
           learningSink: opts.learningSink,
           betaWithheld: opts.betaWithheld,
           alphaWithheld: opts.alphaWithheld,
+          bankCandidates: opts.bankCandidates,
           ablation: opts.ablation,
           skipFailedReplays: [..._failedReplays],
           learningMode: opts.learningMode,
@@ -15837,6 +15851,7 @@ async function runGoalWithRecoveryInner(
             learningSink: opts.learningSink,
             betaWithheld: opts.betaWithheld,
             alphaWithheld: opts.alphaWithheld,
+            bankCandidates: opts.bankCandidates,
             ablation: opts.ablation,
             skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
           learningMode: opts.learningMode,
@@ -15894,6 +15909,7 @@ async function runGoalWithRecoveryInner(
             learningSink: opts.learningSink,
             betaWithheld: opts.betaWithheld,
             alphaWithheld: opts.alphaWithheld,
+            bankCandidates: opts.bankCandidates,
             ablation: opts.ablation,
             skipFailedReplays: [..._failedReplays], // the banked commands that failed in this dispatch, as above
         learningMode: opts.learningMode,
@@ -19563,6 +19579,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
     const betaWithheld = new Map<string, string>();
     // Executions whose reach a walk of this dispatch withheld α for (no in-chain edge): a judge-only reach (person-verdict.ts).
     const alphaWithheld = new Map<string, string>();
+    // BANK PERSISTENCE: a judge-only reach's bank candidate (person-verdict.ts), carried onto its deferral.
+    const bankCandidates = new Map<string, BankCandidate>();
     try {
       // Compute state-space signature BEFORE dispatch so the trace records
       // the environment in which template selection happened. The hash is
@@ -19665,6 +19683,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
         learningSink,
         betaWithheld,
         alphaWithheld,
+        bankCandidates,
         ablation,
         learningMode,
       });
@@ -19775,6 +19794,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // Every other verdict, reached=false and deterministic ones included, is delivered now as before.
       if (record.executionId && isJudgeOnlyReach(record.reached, seek.goalReachReason, alphaWithheld.get(record.executionId))) {
         record.deferredReach = openDeferral({ executionId: record.executionId, completionShapes: seek.completionShapes ?? [], reason: seek.goalReachReason ?? null, goalHash: goalHashOf(String(goal ?? "")), betaWithheldReason: betaWithheld.get(record.executionId) ?? null, learningMode: learningMode ?? null }, Date.now());
+        // BANK PERSISTENCE: the judge-only reach's bank candidate rides on the deferral, bounded (never under observe).
+        record.deferredReach.bank = learningMode === "observe" ? null : boundBankCandidate(bankCandidates.get(record.executionId));
+        record.deferredReach.bankStoreMark = reachedStoreMark();
+        if (record.deferredReach.bank) console.log(`[goal-host-vessel] deferral carries a bank candidate for ${record.executionId}: shape=${record.deferredReach.bank.shape} command_len=${record.deferredReach.bank.command.length}`);
+        else if (bankCandidates.get(record.executionId)) console.log(`[goal-host-vessel] deferral carries NO bank candidate for ${record.executionId}: over the bound (command_len=${bankCandidates.get(record.executionId)!.command.length}) or observe`);
         record.reachDecidedBy = "person";
         walkStepSink.push(`[goal-host-vessel] reach_decided_by:person — judge-only reach of ${record.executionId} (non-deterministic, α withheld: ${ALPHA_WITHHELD_NO_EDGE}); its /reach waits for a person's verdict`);
         console.log(`[goal-host-vessel] reach DEFERRED to a person (walk-complete): ${record.executionId} is a judge-only reach; no /reach until a person's verdict or the window ends`);
@@ -20029,6 +20053,8 @@ function maybeConsumeOracleLabel(record: DispatchRecord): void {
  */
 async function decideDeferredReach(record: DispatchRecord, decision: { deliver: boolean; reached: boolean | null; mint: boolean }): Promise<void> {
   const d = record.deferredReach;
+  // An undelivered decision (partial, observe) resolves the deferral: its bank candidate is pruned with it.
+  if (d && (!decision.deliver || typeof decision.reached !== "boolean")) d.bank = null;
   if (!d || !decision.deliver || typeof decision.reached !== "boolean") { persistDispatchStore(); return; }
   // The β withhold the walk recorded for this execution, captured on the deferral (the dispatch's map is gone by now).
   const personBetaWithheld = d.betaWithheldReason ? new Map([[d.executionId, d.betaWithheldReason]]) : null;
@@ -20043,10 +20069,46 @@ async function decideDeferredReach(record: DispatchRecord, decision: { deliver: 
         if (!trace) console.warn(`[goal-host-vessel] person-verdict mint: durable trace ${d.executionId} not readable (HTTP ${r.status}); reach delivered, not minted`);
         else await mintReachedTrace(trace, true, d.goalHash ?? undefined, undefined, typeof record.goal === "string" ? record.goal : undefined);
       } catch (e) { console.warn(`[goal-host-vessel] person-verdict mint failed (non-fatal): ${(e as Error).message}`); }
+      await bankPersonReach(d);
     }
   });
+  d.bank = null; // pruned with the deferral: resolved, so nothing is kept
   persistDispatchStore();
 }
+
+/** The reached-command store's size now (bytes): the mark a deferral's later tombstone check reads from. */
+function reachedStoreMark(): number {
+  try { return statSync(REACHED_CMD_CACHE_PATH).size; } catch { return 0; }
+}
+
+/**
+ * BANK PERSISTENCE: a PERSON's "achieved" on a deferred judge-only reach banks the walk's candidate, basis
+ * "concurring" (the judge and the person, two independent observers: shouldBank) with the person's provenance.
+ * Never under observe; never over an entry the goal already has (a deterministic bank made in the interim wins); never
+ * over a tombstone the store gained since the walk (the loader's own rule, lastWordFor). Logs length and shape only.
+ */
+async function bankPersonReach(d: DeferredReach): Promise<void> {
+  const b = d.bank;
+  if (!b || !d.goalHash || d.learningMode === "observe") return;
+  const basis = shouldBank({ deterministic: false, independentConcurring: true });
+  if (!basis) return;
+  if (reachedCommandCache.has(d.goalHash)) {
+    console.log(`[goal-host-vessel] person bank NOT applied for ${d.executionId}: goal ${d.goalHash} already has a banked command (no overwrite)`);
+    return;
+  }
+  let since: string[] = [];
+  try { since = (await readFile(REACHED_CMD_CACHE_PATH)).subarray(d.bankStoreMark ?? 0).toString("utf8").split("\n"); } catch { /* no store yet: nothing written since */ }
+  if (lastWordFor(since, d.goalHash) === "tombstone") {
+    console.log(`[goal-host-vessel] person bank NOT applied for ${d.executionId}: goal ${d.goalHash} was tombstoned after the walk (not resurrected)`);
+    return;
+  }
+  reachedCommandCache.set(d.goalHash, { command: b.command, field: b.field, shape: b.shape, targetShapes: b.targetShapes, goalText: b.goalText, basis, strikes: 0 });
+  persistReachedCommand(d.goalHash, { command: b.command, field: b.field, shape: b.shape, targetShapes: b.targetShapes, goalText: b.goalText, basis, provenance: { decided_by: "person", label_execution_id: d.executionId } });
+  console.log(`[goal-host-vessel] person bank APPLIED for ${d.executionId}: goal ${d.goalHash} shape=${b.shape} command_len=${b.command.length} basis=${basis}`);
+}
+
+/** Tests only: the in-process reached-command library. */
+function __reachedCommandCacheForTests(): Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis; strikes?: number }> { return reachedCommandCache; }
 
 /**
  * An OPEN deferral that outlived its window (the shaped tuning row personVerdictWindowMs, default 7 days) resolves
@@ -21299,6 +21361,7 @@ export {
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
   decideDeferredReach,
+  __reachedCommandCacheForTests,
   buildFailedCompositeTrace,
   walkFailureMode,
   buildCompositeTraceFromChain,

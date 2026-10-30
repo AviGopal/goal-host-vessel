@@ -12,6 +12,10 @@
 //   - person "partial"       -> resolved UNGRADED (no alpha, no beta);
 //   - an OBSERVE dispatch's deferral -> resolved UNGRADED whatever the person says (observe grades no posterior);
 //   - no person verdict within the window -> resolved UNGRADED-expired: no /reach at all, recorded on the record.
+// BANK PERSISTENCE: the walk's bank candidate rides on the deferral (bounded, never served or logged) and is banked,
+// basis "concurring" with the person's provenance, only on a person's "achieved" and never under observe. It is never
+// banked over an existing entry for the goal or over a tombstone written since the walk, and it is cleared whenever the
+// deferral resolves.
 // Every other verdict (reached=false, deterministic, an alpha-credited reach) is delivered at walk end as before.
 // An operator key's verdict:human row and an agent's automated row decide nothing here: only a person's does.
 //
@@ -20,7 +24,24 @@
 // default 7 days). The durable trace the person-reached mint re-reads is protected in the trace store by the label
 // row its verdict already wrote (activity-api trace-retention: label execution ids are protected).
 
+import type { BankCandidate } from "./reached-command-store";
+
 export type DeferralState = "open" | "delivered" | "ungraded" | "expired";
+
+/** BANK PERSISTENCE: what a deferral may carry of the walk's bank candidate. A larger command is not carried. */
+export const BANK_LIMITS = Object.freeze({ commandMaxChars: 4_000, goalTextMaxChars: 2_000, targetShapesMax: 32 });
+
+/** The walk's bank candidate, bounded for the deferral (BANK_LIMITS); null when absent or its command is too large. */
+export function boundBankCandidate(c: BankCandidate | null | undefined): BankCandidate | null {
+  if (!c || typeof c.command !== "string" || !c.command.trim() || c.command.length > BANK_LIMITS.commandMaxChars) return null;
+  return {
+    command: c.command,
+    field: c.field,
+    shape: c.shape,
+    targetShapes: (c.targetShapes ?? []).slice(0, BANK_LIMITS.targetShapesMax),
+    goalText: String(c.goalText ?? "").slice(0, BANK_LIMITS.goalTextMaxChars),
+  };
+}
 
 /** What a deferred walk-complete /reach needs later, beyond what the durable trace carries. */
 export interface DeferredReach {
@@ -32,6 +53,11 @@ export interface DeferredReach {
   betaWithheldReason: string | null;
   /** The dispatch's learning mode, captured at walk end: an OBSERVE dispatch's deferral resolves ungraded. */
   learningMode?: "observe" | "learn" | null;
+  /** BANK PERSISTENCE: the walk's bank candidate (bounded), banked only on a PERSON's "achieved". Never served or
+   *  logged (its length and shape only); cleared when the deferral resolves. */
+  bank?: BankCandidate | null;
+  /** The reached-command store's size (bytes) at walk end: a tombstone appended after it blocks the person's bank. */
+  bankStoreMark?: number;
   deferredAt: number;
   state: DeferralState;
   decidedAt?: number;
@@ -67,6 +93,7 @@ export function expireDeferral(d: DeferredReach, now: number): boolean {
   d.state = "expired";
   d.decidedAt = now;
   d.decision = "no person verdict";
+  d.bank = null;
   return true;
 }
 
