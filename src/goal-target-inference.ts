@@ -75,6 +75,14 @@ export interface GoalTargetDecision {
   target_selection?: { candidates: Array<{ shapes: string[]; s: number; f: number }>; chosen: string[]; excluded: string[]; kept: string[]; reasked: boolean };
 }
 
+/** The candidates a decision was chosen among, for the inference tap (gap target-inference-picks-the-read-shape-...): with
+ *  a shape catalog every judged shape is listed (bounded), so a wrong pick can be told apart from a pick whose right
+ *  target was never a candidate. Without a catalog (the degraded tier) there are no candidates, and nothing is added. */
+export function inferenceCandidateFields(d: Pick<GoalTargetDecision, "candidates">, max = 40): { candidate_count: number; candidate_shapes: string[] } | Record<string, never> {
+  if (!d.candidates || d.candidates.length === 0) return {};
+  return { candidate_count: d.candidates.length, candidate_shapes: d.candidates.slice(0, max).map((c) => c.shape) };
+}
+
 export interface InferGoalTargetShapesOpts {
   /** Targets the goal's LATEST attempt failed on with no artifact (CHANGE-35 / A2b-minimal): not chosen again. */
   excludeTargets?: readonly string[];

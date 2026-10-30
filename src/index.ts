@@ -250,7 +250,7 @@ import { statSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
 import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
-import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
+import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
 import { singleFileTargetLine } from "./edit-intent-target";
@@ -14891,7 +14891,7 @@ async function runGoalWithRecoveryInner(
       });
       tap(
         `[goal-host-vessel] ${opts.surface}: goal-target inference ` +
-          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: decision.shapes, confidence: decision.confidence, alternatives: decision.alternatives, recall_tier: _cands.tier, chooser_tier: decision.chooser_tier ?? null }),
+          JSON.stringify({ goal_hash: goalHashOf(goal), inferred_target_shapes: decision.shapes, confidence: decision.confidence, alternatives: decision.alternatives, recall_tier: _cands.tier, chooser_tier: decision.chooser_tier ?? null, ...inferenceCandidateFields(decision) }),
       );
       goalTargetDecision = decision;
       if (decision.shapes.length > 0) seededOutputShapes = decision.shapes;
