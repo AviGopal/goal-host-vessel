@@ -252,6 +252,7 @@ import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capab
 import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
 import { humanPoolDigest } from "./answer-basis";
 import { DurableTraceMemo, NoRowRepairs, deferralOpenRefusal, reinsertTraceForVerdict, withRetry } from "./deferral-row";
+import { LintVerdictCache, dropInstanceValueTemplates } from "./learned-template-guard";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
@@ -7792,6 +7793,12 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
 // DEFERRAL ROWS (deferral-row.ts): the durable trace a deferral defers, and the graded re-insert a decision runs when its
 // /reach matches no row.
 const durableTraceMemo = new DurableTraceMemo();
+// LEARNED-TEMPLATE GUARD (learned-template-guard.ts): lint verdicts by template id, for every pick path.
+const lintVerdicts = new LintVerdictCache();
+const lintGuardTap = (tap: (l: string) => void, where: string, g: { dropped: Array<{ id: string; why: string }>; unchecked: string[] }) => {
+  for (const d of g.dropped) tap(`[goal-host-vessel] walk: learned template ${d.id} DROPPED from ${where} — it carries its source run's instance values (${d.why})`);
+  for (const id of g.unchecked) tap(`[goal-host-vessel] walk: learned template ${id} DROPPED unchecked: template unreadable (at ${where})`);
+};
 const noRowRepairs = new NoRowRepairs();
 const satisfierTraceSink = observeTaggingSink(new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? ""), () => dispatchContext.getStore()?.learningMode);
 /**
@@ -12249,6 +12256,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     const _preDoor = candidates;
     candidates = writeDoorFilter(candidates, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
     doorRefused.noteDropped(_preDoor, candidates, (c) => c.id);
+    // A learned template that still carries its source run is not a candidate on any single-pick tier (learned-template-guard.ts).
+    { const _g = await dropInstanceValueTemplates(candidates, (id) => getTemplateLocalFirst(id), lintVerdicts); candidates = _g.kept; lintGuardTap(tap, "template_pick", _g); }
 
     // (b) SELECT BEST — goal-gap weighted. With a target, prefer candidates that
     // advance TOWARD it; do NOT grab unrelated progress-makers (that wanders into
@@ -12374,6 +12383,8 @@ If one of those sibling shapes is the action that would create what the goal ask
             const _preForward = forward;
             forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick", writeDoorHash, tap, (c) => normActivityId(c.id), writeDoorProduct);
             doorRefused.noteDropped(_preForward, forward, (c) => c.id);
+            // ...nor a sibling of the horizontal bundle (its forward fetch never passed through `candidates`).
+            { const _g = await dropInstanceValueTemplates(forward, (id) => getTemplateLocalFirst(id), lintVerdicts); forward = _g.kept; lintGuardTap(tap, "horizontal_bundle", _g); }
           }
         } catch { /* discover failed */ }
         const seen = new Set<string>();
