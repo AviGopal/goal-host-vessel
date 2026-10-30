@@ -58,3 +58,25 @@ export async function readStoreAtBoot<T>(path: string, now: Date = new Date()): 
   try { await rename(path, aside); return { status: "corrupt", records: [], error, movedTo: aside }; }
   catch (err) { return { status: "corrupt", records: [], error: `${error}; moving it aside failed: ${(err as Error).message}`, movedTo: null }; }
 }
+
+/** NEVER-PERSIST VISIBILITY: a host whose boot found an unreadable store it could not move aside stops persisting, so
+ *  it is not durable. Each skipped persist is logged, at most once per interval (the first skip always), so such a host
+ *  cannot run silently. Returns the line to log for this skip, or null. */
+export function neverPersistLine(state: { lastLoggedAt: number | null; skipped: number }, now: number, intervalMs: number, path: string): string | null {
+  state.skipped++;
+  if (state.lastLoggedAt !== null && now - state.lastLoggedAt < intervalMs) return null;
+  state.lastLoggedAt = now;
+  return `[goal-host-vessel] !!! dispatch store NOT DURABLE: persist skipped (${state.skipped} so far) because ${path} was unreadable at boot and could not be moved aside; nothing this host records survives a restart`;
+}
+
+/** The gap a non-durable host files about itself (deterministic id per node, so a re-file upserts the same row). */
+export function neverPersistGap(node: string, path: string, error: string, now: Date): Record<string, unknown> {
+  return {
+    id: `goal-host-dispatch-store-not-durable-${node.replace(/[^A-Za-z0-9_.-]/g, "_")}`.slice(0, 120),
+    category: "systematic_failure",
+    source: "substrate_detected",
+    status: "open",
+    detected_at: now.toISOString(),
+    summary: `goal-host on ${node} is not persisting its dispatch store: ${path} was unreadable at boot (${error.slice(0, 200)}) and could not be moved aside, so the host keeps every record in memory only and a restart loses them. Move the file aside (it is kept as-is), then restart goal-host.`,
+  };
+}

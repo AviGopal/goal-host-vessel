@@ -268,7 +268,7 @@ import { resolveSelectionTuning, SELECTION_TUNING_DEFAULTS } from "./selection-t
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines, shouldBank, failedBankReplays, replayBlocked, pickBankCandidate, lastWordFor, type ReachedCommandBasis, type FailedReplay, type BankCandidate, type BankProvenance } from "./reached-command-store";
 import { stateDirOffWorkspace, testHostRefusal } from "./test-host-guard";
-import { readStoreAtBoot, storeWritesSettled, writeStoreAtomic } from "./dispatch-store-file";
+import { neverPersistGap, neverPersistLine, readStoreAtBoot, storeWritesSettled, writeStoreAtomic } from "./dispatch-store-file";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { comparePathways } from "./pathway-rank";
@@ -20109,6 +20109,11 @@ async function bankPersonReach(d: DeferredReach): Promise<void> {
   console.log(`[goal-host-vessel] person bank APPLIED for ${d.executionId}: goal ${d.goalHash} shape=${b.shape} command_len=${b.command.length} basis=${basis}`);
 }
 
+/** Tests only: the store's boot restore and its awaited persist (the service runs them; an importer never does). */
+function __storeLifecycleForTests(): { restore: () => Promise<void>; persist: () => Promise<void>; writable: () => boolean } {
+  return { restore: restoreDispatchStoreAtBoot, persist: persistDispatchStoreAwaited, writable: () => dispatchStoreWritable };
+}
+
 /** Tests only: the in-process dispatch store. */
 function __dispatchStoreForTests(): Map<string, DispatchRecord> { return executionStore; }
 
@@ -21106,8 +21111,16 @@ function persistDispatchStore(): void {
   void persistDispatchStoreAwaited();
 }
 /** The same write, its promise settling when it has landed (or failed, logged). */
+/** Each skipped persist of a non-durable host is logged (dispatch-store-file.ts neverPersistLine): the first at once,
+ *  then at most every NEVER_PERSIST_LOG_INTERVAL_MS. A log-rate bound, not a behaviour switch. */
+const NEVER_PERSIST_LOG_INTERVAL_MS = 600_000;
+const _neverPersistLog = { lastLoggedAt: null as number | null, skipped: 0 };
 function persistDispatchStoreAwaited(): Promise<void> {
-  if (!dispatchStoreWritable) return Promise.resolve();
+  if (!dispatchStoreWritable) {
+    const line = neverPersistLine(_neverPersistLog, Date.now(), NEVER_PERSIST_LOG_INTERVAL_MS, DISPATCH_STORE_PATH);
+    if (line) console.error(line);
+    return Promise.resolve();
+  }
   const snapshot = JSON.stringify([...executionStore.values()]);
   return writeStoreAtomic(DISPATCH_STORE_PATH, snapshot).catch((err) => {
     console.warn("[goal-host-vessel] dispatch store persist failed: " + (err as Error).message);
@@ -21386,6 +21399,7 @@ export {
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
   decideDeferredReach,
+  __storeLifecycleForTests,
   expireDeferredReaches,
   __dispatchStoreForTests,
   __reachedCommandCacheForTests,
@@ -21462,7 +21476,22 @@ async function restoreDispatchStoreAtBoot(): Promise<void> {
   const _read = await readStoreAtBoot<DispatchRecord>(DISPATCH_STORE_PATH);
   if (_read.status === "corrupt") {
     if (_read.movedTo) console.error(`[goal-host-vessel] !!! DISPATCH STORE UNREADABLE at boot (${_read.error}): moved aside to ${_read.movedTo}; starting with an empty store`);
-    else { dispatchStoreWritable = false; console.error(`[goal-host-vessel] !!! DISPATCH STORE UNREADABLE at boot (${_read.error}) and could not be moved aside: starting empty and NOT persisting, so the file is not overwritten`); }
+    else {
+      dispatchStoreWritable = false;
+      console.error(`[goal-host-vessel] !!! DISPATCH STORE UNREADABLE at boot (${_read.error}) and could not be moved aside: starting empty and NOT persisting, so the file is not overwritten`);
+      // FILE IT: a host that cannot persist must not run unnoticed. Fire-and-forget, fail-open, logged either way.
+      void (async () => {
+        try {
+          const { hostname } = await import("node:os");
+          const gap = neverPersistGap(hostname(), DISPATCH_STORE_PATH, _read.error, new Date());
+          // The boot has no dispatch context, so this is never an observe dispatch's write; the guard keeps the class
+          // detector's rule (every direct dev-vessel write asks observeSkip first).
+          if (observeSkip("gap_write")) return;
+          const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap } } }), signal: AbortSignal.timeout(10_000) });
+          console.error(`[goal-host-vessel] non-durable dispatch store: gap ${String(gap["id"])} filed (http ${r.status})`);
+        } catch (e) { console.error(`[goal-host-vessel] non-durable dispatch store: gap filing FAILED (${(e as Error).message}); the persist-skip lines keep it visible`); }
+      })();
+    }
     return;
   }
   if (_read.status === "missing") return; // first boot: start empty, quietly
