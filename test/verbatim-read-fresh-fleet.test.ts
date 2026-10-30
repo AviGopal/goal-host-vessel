@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { hostStateEnv } from "./fixtures/host-state-env";
 
 const PATH = "/workspace/validation/network-acceptance-marker.txt";
 const GOAL = `Read ${PATH} and tell me exactly what it says.`;
@@ -68,6 +69,8 @@ beforeAll(async () => {
   host = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "index.ts")], {
     env: {
       PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "",
+      // every /workspace-defaulting store path into this test's state dir (fixtures/host-state-env.ts)
+      ...hostStateEnv(stateDir),
       PORT: String(hostPort), METABOB_API_KEY: "test-key", GOAL_HOST_VESSEL_API_KEY: "test-key",
       DISCOVERY_VESSEL_ENDPOINT: E, ACTIVITY_API_ENDPOINT: E, PRODUCER_DISCOVERY_ENDPOINT: E,
       DEVELOPMENT_VESSEL_ENDPOINT: E, EVENT_BUS_ENDPOINT: E, LLM_VESSEL_ENDPOINT: E,

@@ -266,6 +266,7 @@ import { psiInputs } from "./psi-inputs";
 import { resolveSelectionTuning, SELECTION_TUNING_DEFAULTS } from "./selection-tuning";
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines, shouldBank, failedBankReplays, replayBlocked, type ReachedCommandBasis, type FailedReplay } from "./reached-command-store";
+import { stateDirOffWorkspace, testHostRefusal } from "./test-host-guard";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { comparePathways } from "./pathway-rank";
@@ -21041,6 +21042,13 @@ function pruneStore(): void {
 // live substrate). Run directly (`bun src/index.ts`) import.meta.main === true -> boot unchanged.
 let server: ReturnType<typeof Bun.serve> | undefined;
 if (import.meta.main) {
+// A HALF-REDIRECTED HOST NEVER RUNS ON /workspace STATE (test-host-guard.ts): with its state dir off /workspace and a
+// store path still under it (a test's spawned host that missed a path), the host exits before touching any store.
+// Production defaults (every path unset, all under /workspace) never trip.
+{
+  const _refusal = testHostRefusal();
+  if (_refusal) { console.error(_refusal); process.exit(78); }
+}
 // The trace spool a restart left drains at boot, as it did when every sink replayed on construction. The executor now
 // starts a sink's replay at its first record or start(); an older dist has no start() and replays on construction.
 satisfierTraceSink.start();
@@ -21339,6 +21347,8 @@ setInterval(() => { void (async () => {
  * boot phase, to replay a restart.
  */
 async function restoreDispatchStoreAtBoot(): Promise<void> {
+  // (function-scoped: the boot calls this from the main block, above any module-level declaration placed here)
+  let _testHostReconcileSkipLogged = false;
   setTimeout(() => {
     drainInterruptedRequeue().catch((err) => console.warn("[goal-host-vessel] drain error: " + (err as Error).message));
   }, 15000);
@@ -21351,7 +21361,10 @@ async function restoreDispatchStoreAtBoot(): Promise<void> {
         let reconciled = false;
         // OBSERVE (observe-mode.ts): an observe compose never lands, so a compose report found for its goal is another
         // dispatch's; reconciling would grade this one from it and label the oracle corpus. Interrupted marking instead.
-        if (typeof r.goal === "string" && /edit repos\//i.test(r.goal) && !observeSkips(r.learningMode, r.dispatchId, "oracle_label")) {
+        // A host whose state dir is off /workspace never reads the hard-coded /workspace/proposals reports (test-host-guard.ts).
+        if (typeof r.goal === "string" && /edit repos\//i.test(r.goal) && stateDirOffWorkspace()) {
+          if (!_testHostReconcileSkipLogged) { _testHostReconcileSkipLogged = true; console.log("[goal-host-vessel] boot reconcile of edit-intent dispatches SKIPPED: the state dir is off /workspace, so /workspace/proposals is not read"); }
+        } else if (typeof r.goal === "string" && /edit repos\//i.test(r.goal) && !observeSkips(r.learningMode, r.dispatchId, "oracle_label")) {
           try {
             const h = goalHashOf(r.goal);
             const reportFile = Bun.file("/workspace/proposals/route-edit-" + h + "-compose-report.json");

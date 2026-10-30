@@ -6,6 +6,7 @@ import { join } from "node:path";
 // export fails the whole file at link time, which would turn the base-green controls red too.
 import * as rp from "../src/resolve-pointer";
 import ts from "typescript";
+import { hostStateEnv } from "./fixtures/host-state-env";
 
 /**
  * A PRODUCER'S REQUIRED INPUTS ARE BOUND BEFORE THE WALK INVOKES IT (check-first).
@@ -463,6 +464,8 @@ describe("END TO END — the walk's first llm_completion_dispatch carries a boun
     host = Bun.spawn(["bun", join(import.meta.dir, "..", "src", "index.ts")], {
       env: {
         PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "",
+        // every /workspace-defaulting store path into this test's state dir (fixtures/host-state-env.ts)
+        ...hostStateEnv(stateDir),
         PORT: String(hostPort), METABOB_API_KEY: "test-key", GOAL_HOST_VESSEL_API_KEY: "test-key",
         DISCOVERY_VESSEL_ENDPOINT: E, ACTIVITY_API_ENDPOINT: E, PRODUCER_DISCOVERY_ENDPOINT: E,
         DEVELOPMENT_VESSEL_ENDPOINT: E, EVENT_BUS_ENDPOINT: E, LLM_VESSEL_ENDPOINT: E,
