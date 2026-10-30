@@ -250,6 +250,7 @@ import { statSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
 import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
+import { humanPoolDigest } from "./answer-basis";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
@@ -13069,15 +13070,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     // Human-facing digest (D3, 2026-07-26): the pool under a 1500-char content cap, WITHOUT
     // the internal `- <shape>: ` prefix — used ONLY at the answerBody Basis and bridgeBody
     // Findings sites below. The reach gate reads the judge view instead.
-    const poolDigestHuman = poolImpulses
-      .filter((imp) => { const s = (imp.metadata as { shape?: string } | undefined)?.shape; return s && s !== "goal"; })
-      .map((imp) => {
-        let c: string;
-        try { c = typeof imp.content === "string" ? imp.content : JSON.stringify(imp.content); } catch { c = String(imp.content); } if (c === undefined || c === null) c = "";
-        return c.slice(0, 1500);
-      })
-      .filter((c) => c.trim().length > 0)
-      .join("\n\n");
+    // The walk's own outputs first, carried ones after under a label (answer-basis.ts): after a re-frame the person
+    // reads what reached, not the hollow first attempt's output.
+    const poolDigestHuman = humanPoolDigest(poolImpulses);
     // JUDGE VIEW (judge-view.ts) is what the judge reads: deliverable first at full length,
     // evidence as title/url lines, bookkeeping and stubs excluded, cuts recorded.
     // The captured step outputs are entries of the SAME view (after the pool, so pool content wins
