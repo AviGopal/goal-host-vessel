@@ -88,6 +88,10 @@ export interface SelectionTuning {
   /** Person verdict (person-verdict.ts): how long a DEFERRED judge-only reach waits for a person's verdict (ms) before it
    *  resolves ungraded-expired (no alpha, no beta) and its dispatch record's retention lifts. */
   personVerdictWindowMs: number;
+  /** Self-goals (USER ruling 2026-10-30T03:21:09Z, "Self-goals expire to judge"): how long a DEFERRED judge-only reach
+   *  whose originator is the system (node-self, no person) waits for a person before it falls back to the judge's
+   *  walk-end grading (ms). A person-originated deferral keeps personVerdictWindowMs. */
+  selfGoalVerdictWindowMs: number;
 }
 
 export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freeze({
@@ -108,6 +112,8 @@ export const SELECTION_TUNING_DEFAULTS: Readonly<SelectionTuning> = Object.freez
   judgeViewMaxParts: 4,
   // Person-verdict window default (USER ruling 2026-10-29T22:38:47Z, qa r1): 7 days.
   personVerdictWindowMs: 604_800_000,
+  // Self-goal window default (USER ruling 2026-10-30T03:21:09Z, "e.g. 1 hour"; qa): 1 hour, a SHORT wait for a person.
+  selfGoalVerdictWindowMs: 3_600_000,
 });
 
 /** Env fallbacks, kept as the MIDDLE tier exactly as activity-api's getTuningParam defines it:
@@ -128,6 +134,7 @@ const ENV_FALLBACK: Record<keyof SelectionTuning, string | undefined> = {
   verdictConsistencyTtlMs: undefined,
   judgeViewMaxParts: undefined,
   personVerdictWindowMs: undefined,
+  selfGoalVerdictWindowMs: undefined,
 };
 
 function resolveField(key: keyof SelectionTuning, authored: unknown): number {
@@ -207,6 +214,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       verdictConsistencyTtlMs: resolveField("verdictConsistencyTtlMs", parsed["verdictConsistencyTtlMs"]),
       judgeViewMaxParts: resolveField("judgeViewMaxParts", parsed["judgeViewMaxParts"]),
       personVerdictWindowMs: resolveField("personVerdictWindowMs", parsed["personVerdictWindowMs"]),
+      selfGoalVerdictWindowMs: resolveField("selfGoalVerdictWindowMs", parsed["selfGoalVerdictWindowMs"]),
     };
   } catch {
     // No policy file is the shipped state, and it must still honour the env tier — otherwise
@@ -224,6 +232,7 @@ export async function resolveSelectionTuning(workspaceRoot?: string): Promise<Se
       verdictConsistencyTtlMs: resolveField("verdictConsistencyTtlMs", undefined),
       judgeViewMaxParts: resolveField("judgeViewMaxParts", undefined),
       personVerdictWindowMs: resolveField("personVerdictWindowMs", undefined),
+      selfGoalVerdictWindowMs: resolveField("selfGoalVerdictWindowMs", undefined),
     };
   }
 

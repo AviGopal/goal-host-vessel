@@ -357,7 +357,7 @@ import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
-import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, expireDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
+import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, deferralWindowMs, expireDeferral, expiryOutcome, judgeFallbackDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
 import * as requestQueue from "./request-queue";
@@ -19796,6 +19796,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         record.deferredReach = openDeferral({ executionId: record.executionId, completionShapes: seek.completionShapes ?? [], reason: seek.goalReachReason ?? null, goalHash: goalHashOf(String(goal ?? "")), betaWithheldReason: betaWithheld.get(record.executionId) ?? null, learningMode: learningMode ?? null }, Date.now());
         // BANK PERSISTENCE: the judge-only reach's bank candidate rides on the deferral, bounded (never under observe).
         record.deferredReach.bank = learningMode === "observe" ? null : boundBankCandidate(bankCandidates.get(record.executionId));
+        // SELF-GOALS EXPIRE TO JUDGE (USER ruling 2026-10-30T03:21:09Z): the originator decides the window (person-verdict.ts).
+        record.deferredReach.originator = record.initiator ?? null;
         record.deferredReach.bankStoreMark = reachedStoreMark();
         if (record.deferredReach.bank) console.log(`[goal-host-vessel] deferral carries a bank candidate for ${record.executionId}: shape=${record.deferredReach.bank.shape} command_len=${record.deferredReach.bank.command.length}`);
         else if (bankCandidates.get(record.executionId)) console.log(`[goal-host-vessel] deferral carries NO bank candidate for ${record.executionId}: over the bound (command_len=${bankCandidates.get(record.executionId)!.command.length}) or observe`);
@@ -20107,6 +20109,9 @@ async function bankPersonReach(d: DeferredReach): Promise<void> {
   console.log(`[goal-host-vessel] person bank APPLIED for ${d.executionId}: goal ${d.goalHash} shape=${b.shape} command_len=${b.command.length} basis=${basis}`);
 }
 
+/** Tests only: the in-process dispatch store. */
+function __dispatchStoreForTests(): Map<string, DispatchRecord> { return executionStore; }
+
 /** Tests only: the in-process reached-command library. */
 function __reachedCommandCacheForTests(): Map<string, { command: string; field: string; shape: string; targetShapes: string[]; goalText: string; basis: ReachedCommandBasis; strikes?: number }> { return reachedCommandCache; }
 
@@ -20115,11 +20120,26 @@ function __reachedCommandCacheForTests(): Map<string, { command: string; field: 
  * UNGRADED-expired: no /reach (no α, no β), recorded on the record ("no person verdict"), and its retention lifts.
  */
 async function expireDeferredReaches(now = Date.now()): Promise<number> {
-  const windowMs = (await resolveSelectionTuning()).personVerdictWindowMs;
+  const tuning = await resolveSelectionTuning();
   let n = 0;
   for (const r of executionStore.values()) {
     const d = r.deferredReach;
-    if (!deferralExpired(d, now, windowMs) || !d || !expireDeferral(d, now)) continue;
+    const windowMs = deferralWindowMs(d, tuning);
+    if (!d || !deferralExpired(d, now, windowMs)) continue;
+    if (expiryOutcome(d) === "judge-fallback") {
+      // A SELF-GOAL waited its short window with no person verdict: the judge's walk-end grading is delivered as it would
+      // have been at walk end. Alpha stays withheld at the walk's credit gate; nothing is banked or minted here.
+      // The same delivery path a person's verdict takes (decideDeferredReach: the record's own dispatch context, the
+      // withhold captured on the deferral), with mint:false, so it banks and mints nothing. Its /reach origin label reads
+      // person-verdict; this line names the fallback.
+      if (!judgeFallbackDeferral(d, now)) continue; // closed first: a person label racing it now finds it decided
+      await decideDeferredReach(r, { deliver: true, reached: true, mint: false });
+      r.reachDecidedBy = "judge";
+      n++;
+      console.log(`[goal-host-vessel] deferred judge-only SELF-GOAL ${d.executionId} fell back to judge grading after ${Math.round(windowMs / 60_000)} min with no person verdict (no bank, no mint)`);
+      continue;
+    }
+    if (!expireDeferral(d, now)) continue;
     r.reachDecidedBy = "person";
     n++;
     console.log(`[goal-host-vessel] deferred judge-only reach ${d.executionId} EXPIRED ungraded after ${Math.round(windowMs / 3_600_000)}h: no person verdict (no α, no β, no /reach)`);
@@ -21134,6 +21154,8 @@ satisfierTraceSink.start();
 // neither reads nor rewrites the file, nor posts to the fleet. Same order as before, ahead of the rest of the boot.
 await restoreDispatchStoreAtBoot();
 setInterval(persistDispatchStore, 5000);
+// A self-goal's short deferral window (selfGoalVerdictWindowMs) is checked each minute, not only at the next prune.
+setInterval(() => { void expireDeferredReaches().catch(() => { /* fail-open: the next tick retries */ }); }, 60_000);
 // The verdict-consistency store exists only on the running service: its root is the directory of the dispatch store
 // this service already keeps (no env read; an importer that is not the service gets no store).
 verdictConsistency.setVerdictConsistencyRoot(dirname(DISPATCH_STORE_PATH));
@@ -21361,6 +21383,8 @@ export {
   thresholdSelector, parseThreshold, verifyEditPostState, parseAddSymbol, symbolInAddedLines,
   verifyGoalReached,
   decideDeferredReach,
+  expireDeferredReaches,
+  __dispatchStoreForTests,
   __reachedCommandCacheForTests,
   buildFailedCompositeTrace,
   walkFailureMode,

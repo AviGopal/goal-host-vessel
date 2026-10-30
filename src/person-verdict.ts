@@ -26,7 +26,7 @@
 
 import type { BankCandidate } from "./reached-command-store";
 
-export type DeferralState = "open" | "delivered" | "ungraded" | "expired";
+export type DeferralState = "open" | "delivered" | "ungraded" | "expired" | "judge-fallback";
 
 /** BANK PERSISTENCE: what a deferral may carry of the walk's bank candidate. A larger command is not carried. */
 export const BANK_LIMITS = Object.freeze({ commandMaxChars: 4_000, goalTextMaxChars: 2_000, targetShapesMax: 32 });
@@ -51,6 +51,9 @@ export interface DeferredReach {
   goalHash: string | null;
   /** The beta-withhold reason the walk recorded for this execution, if any (carried into the person's /reach). */
   betaWithheldReason: string | null;
+  /** Who originated the dispatch (record.initiator, from the validated principal): "system" for a node-self goal.
+   *  A system-originated deferral waits only selfGoalVerdictWindowMs, then falls back to the judge's grading. */
+  originator?: "system" | "operator" | null;
   /** The dispatch's learning mode, captured at walk end: an OBSERVE dispatch's deferral resolves ungraded. */
   learningMode?: "observe" | "learn" | null;
   /** BANK PERSISTENCE: the walk's bank candidate (bounded), banked only on a PERSON's "achieved". Never served or
@@ -82,7 +85,31 @@ export function retainsRecord(d: DeferredReach | null | undefined): boolean {
   return !!d && d.state === "open";
 }
 
-/** Has an open deferral outlived its window (personVerdictWindowMs)? */
+/** SELF-GOALS EXPIRE TO JUDGE (USER ruling 2026-10-30T03:21:09Z): the window an open deferral waits for a person. A
+ *  system-originated deferral (node-self, no person principal) waits selfGoalVerdictWindowMs; every other one keeps
+ *  personVerdictWindowMs. Both are shaped tuning rows (selection-tuning.ts). */
+export function deferralWindowMs(d: DeferredReach | null | undefined, w: { personVerdictWindowMs: number; selfGoalVerdictWindowMs: number }): number {
+  return d?.originator === "system" ? w.selfGoalVerdictWindowMs : w.personVerdictWindowMs;
+}
+
+/** What an expired deferral resolves to: a system-originated, learning deferral falls back to the judge's walk-end grading
+ *  (its /reach is delivered as the judge said; alpha is still withheld at the walk's credit gate, and nothing is banked
+ *  or minted on the judge's word alone); every other one resolves ungraded with no /reach. */
+export function expiryOutcome(d: DeferredReach): "judge-fallback" | "ungraded" {
+  return d.originator === "system" && d.learningMode !== "observe" ? "judge-fallback" : "ungraded";
+}
+
+/** Resolve an open deferral to the judge's walk-end grading (self-goals). Returns false if not open. */
+export function judgeFallbackDeferral(d: DeferredReach, now: number): boolean {
+  if (d.state !== "open") return false;
+  d.state = "judge-fallback";
+  d.decidedAt = now;
+  d.decision = "no person verdict: judge grading";
+  d.bank = null;
+  return true;
+}
+
+/** Has an open deferral outlived its window (deferralWindowMs)? */
 export function deferralExpired(d: DeferredReach | null | undefined, now: number, windowMs: number): boolean {
   return !!d && d.state === "open" && now - d.deferredAt >= windowMs;
 }
