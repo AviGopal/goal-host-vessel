@@ -357,7 +357,7 @@ import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
-import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, deferralWindowMs, expireDeferral, expiryOutcome, judgeFallbackDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
+import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, deferralWindowMs, effectiveOriginator, expireDeferral, expiryOutcome, judgeFallbackDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
 import * as requestQueue from "./request-queue";
@@ -20124,9 +20124,12 @@ async function expireDeferredReaches(now = Date.now()): Promise<number> {
   let n = 0;
   for (const r of executionStore.values()) {
     const d = r.deferredReach;
-    const windowMs = deferralWindowMs(d, tuning);
-    if (!d || !deferralExpired(d, now, windowMs)) continue;
-    if (expiryOutcome(d) === "judge-fallback") {
+    // A deferral opened before the originator stamp is judged by the record's own initiator (effectiveOriginator); the
+    // stored deferral keeps whatever it has.
+    const _as = d ? { ...d, originator: effectiveOriginator(d, r) } : d;
+    const windowMs = deferralWindowMs(_as, tuning);
+    if (!d || !_as || !deferralExpired(d, now, windowMs)) continue;
+    if (expiryOutcome(_as) === "judge-fallback") {
       // A SELF-GOAL waited its short window with no person verdict: the judge's walk-end grading is delivered as it would
       // have been at walk end. Alpha stays withheld at the walk's credit gate; nothing is banked or minted here.
       // The same delivery path a person's verdict takes (decideDeferredReach: the record's own dispatch context, the

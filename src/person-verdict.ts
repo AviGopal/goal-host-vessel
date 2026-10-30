@@ -92,6 +92,21 @@ export function deferralWindowMs(d: DeferredReach | null | undefined, w: { perso
   return d?.originator === "system" ? w.selfGoalVerdictWindowMs : w.personVerdictWindowMs;
 }
 
+/** The originator the expiry sweep judges a deferral by. A deferral stamped at its opening with a value keeps it, never
+ *  overwritten. One with no value (opened before the stamp existed, or stamped null because its record had no
+ *  initiator: null and absent are the same) takes the record's initiator; only when that is absent too does a node_self
+ *  principal mean "system". Anything else stays undefined, so the 7-day window: absence never infers "system".
+ *  Read-only: the stored deferral is not rewritten here. */
+export function effectiveOriginator(
+  d: Pick<DeferredReach, "originator">,
+  record: { initiator?: string | null; principal?: { kind?: string } | null },
+): DeferredReach["originator"] {
+  if (d.originator != null) return d.originator;
+  if (record.initiator === "system" || record.initiator === "operator") return record.initiator;
+  if (record.initiator == null && record.principal?.kind === "node_self") return "system";
+  return undefined;
+}
+
 /** What an expired deferral resolves to: a system-originated, learning deferral falls back to the judge's walk-end grading
  *  (its /reach is delivered as the judge said; alpha is still withheld at the walk's credit gate, and nothing is banked
  *  or minted on the judge's word alone); every other one resolves ungraded with no /reach. */
