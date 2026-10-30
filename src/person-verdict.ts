@@ -61,6 +61,9 @@ export interface DeferredReach {
   bank?: BankCandidate | null;
   /** The reached-command store's size (bytes) at walk end: a tombstone appended after it blocks the person's bank. */
   bankStoreMark?: number;
+  /** DEFERRAL ROWS (deferral-row.ts): the bounded compact copy of the deferred durable trace (ids, shapes, statuses; at
+   *  most COMPACT_TRACE_MAX_BYTES), re-inserted graded when the decision's /reach matches no row. Never served or logged. */
+  reinsert?: import("./deferral-row").CompactTrace | null;
   deferredAt: number;
   state: DeferralState;
   decidedAt?: number;

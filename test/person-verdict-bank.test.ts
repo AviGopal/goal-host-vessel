@@ -240,5 +240,11 @@ describe("a person's verdict banks a deferred judge-only reach (index.ts, child 
     expect(SRC).toContain("shape=${record.deferredReach.bank.shape} command_len=${record.deferredReach.bank.command.length}");
     expect(SRC).not.toMatch(/\$\{[^}]*bank\.command\}/);
     expect(SRC).not.toMatch(/\$\{[^}]*bank\.goalText/);
+    // the deferral's compact trace copy (deferral-row.ts) is never served or logged either: no reader names it, and no
+    // template literal interpolates it
+    expect(exBody).not.toContain("reinsert");
+    expect(ws.slice(0, 2000)).not.toContain("reinsert");
+    expect(SRC).not.toMatch(/\$\{[^}]*\.reinsert\b[^}]*\}/);
+    expect(SRC).not.toMatch(/\$\{[^}]*_reinsertCopy[^}]*\}/);
   });
 });

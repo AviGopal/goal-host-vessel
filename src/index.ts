@@ -251,6 +251,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { capabilityDemand, distinctRunsSince, exactFailuresSince } from "./capability-demand";
 import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
 import { humanPoolDigest } from "./answer-basis";
+import { DurableTraceMemo, NoRowRepairs, deferralOpenRefusal, reinsertTraceForVerdict, withRetry } from "./deferral-row";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
@@ -1190,6 +1191,8 @@ export function deliverReachVerdict(
         const j = await r.json().catch(() => null) as { updated?: number } | null;
         if (!j || typeof j.updated !== "number") { console.warn(`[goal-host-vessel] reach-patch: unreadable response (${origin}) for ${_reachId} (attempt ${attempt + 1}, not retried)`); return; }
         if (j.updated === 0) { console.warn(`[goal-host-vessel] reach-patch MATCHED NO ROW (${origin}) for ${_reachId} (reached=${_reachVerdict}) — verdict NOT persisted; this execution stays ungraded`); 
+      // A DEFERRAL'S DECISION re-inserts its trace graded when the row is gone (deferral-row.ts); a done repair files no gap.
+      { const _repair = noRowRepairs.take(_reachId); if (_repair && await _repair().catch(() => false)) return; }
       // A LOST *REACHED* VERDICT IS THE ONE WORTH FILING. Failures still persist normally;
       // it is the successes on this path that vanish, so the loss is success-selective and
       // the learner sees a pessimism it did not earn.
@@ -1209,7 +1212,8 @@ export function deliverReachVerdict(
       if (_reachVerdict && !observeSkip("gap_write")) { // OBSERVE (observe-mode.ts): no lost-verdict gap
         try {
           const _gapId = `lost-reached-verdict-${String(_reachId).replace(/[^a-zA-Z0-9_.-]/g, "_")}`.slice(0, 120);
-          const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+          // RETRIED, NOT DROPPED (deferral-row.ts withRetry, 1/4/12 s): one closed socket used to lose the gap. A 4xx is final.
+          const _g = await withRetry(() => fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
             body: JSON.stringify({
@@ -1233,8 +1237,11 @@ export function deliverReachVerdict(
               },
             }),
             signal: AbortSignal.timeout(5_000),
-          });
-          if (!r.ok) {
+          }), (x) => x.status < 500);
+          const r = _g.value;
+          if (!r) {
+            console.error(`[goal-host-vessel] lost-reached-verdict gap emit FAILED after ${_g.attempts} attempts for ${_reachId}: ${_g.error} — the lost reached verdict of this execution is recorded only in this journal line`);
+          } else if (!r.ok) {
             console.warn(`[goal-host-vessel] lost-reached-verdict gap emit REJECTED for ${_reachId}: http ${r.status}`);
           } else {
             console.log(`[goal-host-vessel] filed lost-reached-verdict gap ${_gapId} (http ${r.status})`);
@@ -1245,6 +1252,7 @@ export function deliverReachVerdict(
       }
       return; }
         console.log(`[goal-host-vessel] reach-patch ok (${origin}): ${_reachId} reached=${_reachVerdict} rows=${j.updated} attempts=${attempt + 1}`);
+        noRowRepairs.take(_reachId); // the row was there: no re-insert
         // A live connection just proved activity-api is reachable — opportunistically
         // redeliver any verdicts a prior transient outage spooled.
         void drainReachSpool();
@@ -7781,6 +7789,10 @@ async function recordGoalPath(goalText: string, pathActivities: string[], reache
 // Built at load, which is import-safe only with ias-executor-ts 64a7e4b or later: its constructor no longer starts a spool
 // replay (an older one replays the live spool from every importer). The service starts the replay at boot (the main
 // block, through the wrapper's start()), so a backlog a restart left still drains then.
+// DEFERRAL ROWS (deferral-row.ts): the durable trace a deferral defers, and the graded re-insert a decision runs when its
+// /reach matches no row.
+const durableTraceMemo = new DurableTraceMemo();
+const noRowRepairs = new NoRowRepairs();
 const satisfierTraceSink = observeTaggingSink(new TranslatingTraceSink(ACTIVITY_API_ENDPOINT, API_KEY ?? ""), () => dispatchContext.getStore()?.learningMode);
 /**
  * PRODUCER BEFORE CONSUMER (2026-10-07). A walk's satisfier step traces were kept in memory and POSTed only at walk end,
@@ -14008,6 +14020,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         // A DECLINE, queryable: activity-api's isReachInapplicable reads declined:<class>; the decliner's reason rides in metadata.
         if (!reached && walkDeclined) { durableTrace.tags = [...(durableTrace.tags ?? []).filter((t) => !t.startsWith("declined:")), `declined:${walkDeclined.class}`]; durableTrace.metadata = { ...(durableTrace.metadata ?? {}), decline: { class: walkDeclined.class, reason_text: walkDeclined.reason, decliner_id: String(lastPick) } }; }
         walkDurableTrace = durableTrace; // the persist below is started; the finally does not post a second one
+        durableTraceMemo.remember(durableTrace); // the copy a deferral opened on this reach keeps (deferral-row.ts)
         // AWAITED (OP-1): the walk-complete /reach for this execution is delivered after the walk returns, so a
         // fire-and-forget insert raced it and /reach matched no row in ~24% of satisfier-last walks (diag-1c).
         // BOUNDED BY THE SHAPED FLUSH DEADLINE (qa): the sink alone bounds it only by postWithRetry — 3 attempts of
@@ -19787,6 +19800,12 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // non-deterministic verdict whose α the walk withheld for no in-chain edge is not graded here. The record carries
       // the deferral (reach_decided_by:person) and a person's label delivers this same /reach (oracle-label-consumer.ts).
       // Every other verdict, reached=false and deterministic ones included, is delivered now as before.
+      // NOTHING TO PATCH, NO DEFERRAL (deferral-row.ts): a judge-only reach with no row to grade later is delivered now, as
+      // before deferral existed; its withhold mark is cleared so the branch below takes the immediate delivery.
+      if (record.executionId && isJudgeOnlyReach(record.reached, seek.goalReachReason, alphaWithheld.get(record.executionId))) {
+        const _noRow = deferralOpenRefusal(record.executionId, SYNTHETIC_EXECUTION_ID_PREFIXES, durableTraceMemo.get(record.executionId));
+        if (_noRow) { console.warn(`[goal-host-vessel] deferral REFUSED for ${record.executionId}: ${_noRow}; the verdict is delivered now`); alphaWithheld.delete(record.executionId); }
+      }
       if (record.executionId && isJudgeOnlyReach(record.reached, seek.goalReachReason, alphaWithheld.get(record.executionId))) {
         record.deferredReach = openDeferral({ executionId: record.executionId, completionShapes: seek.completionShapes ?? [], reason: seek.goalReachReason ?? null, goalHash: goalHashOf(String(goal ?? "")), betaWithheldReason: betaWithheld.get(record.executionId) ?? null, learningMode: learningMode ?? null }, Date.now());
         // BANK PERSISTENCE: the judge-only reach's bank candidate rides on the deferral, bounded (never under observe).
@@ -19794,6 +19813,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // SELF-GOALS EXPIRE TO JUDGE (USER ruling 2026-10-30T03:21:09Z): the originator decides the window (person-verdict.ts).
         record.deferredReach.originator = record.initiator ?? null;
         record.deferredReach.bankStoreMark = reachedStoreMark();
+        // The bounded copy a decision re-inserts when the row is gone (deferral-row.ts). Never served or logged.
+        record.deferredReach.reinsert = durableTraceMemo.get(record.executionId);
         if (record.deferredReach.bank) console.log(`[goal-host-vessel] deferral carries a bank candidate for ${record.executionId}: shape=${record.deferredReach.bank.shape} command_len=${record.deferredReach.bank.command.length}`);
         else if (bankCandidates.get(record.executionId)) console.log(`[goal-host-vessel] deferral carries NO bank candidate for ${record.executionId}: over the bound (command_len=${bankCandidates.get(record.executionId)!.command.length}) or observe`);
         record.reachDecidedBy = "person";
@@ -20058,6 +20079,11 @@ async function decideDeferredReach(record: DispatchRecord, decision: { deliver: 
   // A FRESH store from the record and its deferral, never the ambient one: entered over another dispatch's context it
   // would keep that dispatch's decomposeGapId (crediting the wrong gap) and its sticky observe mode (silently ungraded).
   await dispatchContext.run(enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode ?? undefined }), async () => {
+    // THE ROW MAY BE GONE (deferral-row.ts): if this /reach matches no row, the deferral's copy is re-inserted graded.
+    if (d.reinsert) { const _reinsertCopy = d.reinsert, _r = decision.reached === true, _by = d.state === "judge-fallback" ? "judge-fallback" as const : "person" as const; noRowRepairs.set(d.executionId, async () => {
+      try { await satisfierTraceSink.record(reinsertTraceForVerdict(_reinsertCopy, _r, _by, d.betaWithheldReason)); console.log(`[goal-host-vessel] deferral ${d.executionId}: /reach matched no row; re-inserted graded (reached=${_r}, decided_by=${_by})`); return true; }
+      catch (e) { console.error(`[goal-host-vessel] deferral ${d.executionId}: /reach matched no row AND the graded re-insert failed: ${(e as Error).message}`); return false; }
+    }); }
     deliverReachVerdict(d.executionId, decision.reached, d.completionShapes, "person-verdict", d.reason, d.goalHash, personBetaWithheld);
     if (decision.mint) {
       try {
