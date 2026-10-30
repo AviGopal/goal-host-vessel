@@ -267,6 +267,7 @@ import { resolveSelectionTuning, SELECTION_TUNING_DEFAULTS } from "./selection-t
 import { resolveLessonExecutionPolicy } from "./lesson-execution-policy";
 import { applyReachedCommandLines, shouldBank, failedBankReplays, replayBlocked, type ReachedCommandBasis, type FailedReplay } from "./reached-command-store";
 import { stateDirOffWorkspace, testHostRefusal } from "./test-host-guard";
+import { readStoreAtBoot, storeWritesSettled, writeStoreAtomic } from "./dispatch-store-file";
 import { isBookkeepingOnly } from "./bookkeeping-only";
 import { pinnableHead } from "./pathway-head";
 import { comparePathways } from "./pathway-rank";
@@ -570,6 +571,11 @@ async function gracefulShutdown(sig: string): Promise<void> {
     if (sc) console.log(`[goal-host-vessel] ${sig}: subscriber counts flushed ${JSON.stringify(sc)}`);
   } catch { /* the counter logs and counts its own failures */ }
   try { server?.stop(true); } catch { /* best-effort */ }
+  // ONE FINAL PERSIST, AWAITED: the drained state lands whole (atomic write) before the process exits; exiting with a
+  // write in flight is how a restart truncated the store. Bounded so a hung disk cannot hold the stop past systemd's.
+  try {
+    await Promise.race([storeWritesSettled().then(() => persistDispatchStoreAwaited()), new Promise((r) => setTimeout(r, 15_000))]);
+  } catch { /* persistDispatchStore logs its own failure */ }
   console.log("[goal-host-vessel] stopped");
   process.exit(0);
 }
@@ -21007,9 +21013,18 @@ async function drainInterruptedRequeue(): Promise<void> {
   interruptedRequeue.length = 0;
   persistDispatchStore();
 }
+/** False when the boot found an unreadable store it could NOT move aside: nothing may overwrite that file. */
+let dispatchStoreWritable = true;
+/** Write the store ATOMICALLY (dispatch-store-file.ts: temp + rename, serialised). Fire-and-forget, the old cadence;
+ *  shutdown awaits a final write through persistDispatchStoreAwaited. */
 function persistDispatchStore(): void {
+  void persistDispatchStoreAwaited();
+}
+/** The same write, its promise settling when it has landed (or failed, logged). */
+function persistDispatchStoreAwaited(): Promise<void> {
+  if (!dispatchStoreWritable) return Promise.resolve();
   const snapshot = JSON.stringify([...executionStore.values()]);
-  Bun.write(DISPATCH_STORE_PATH, snapshot).catch((err) => {
+  return writeStoreAtomic(DISPATCH_STORE_PATH, snapshot).catch((err) => {
     console.warn("[goal-host-vessel] dispatch store persist failed: " + (err as Error).message);
   });
 }
@@ -21352,7 +21367,17 @@ async function restoreDispatchStoreAtBoot(): Promise<void> {
   setTimeout(() => {
     drainInterruptedRequeue().catch((err) => console.warn("[goal-host-vessel] drain error: " + (err as Error).message));
   }, 15000);
+  // A MISSING store is a first boot (start empty, quietly). One that EXISTS and cannot be read as a store is moved aside
+  // to <path>.corrupt-<ISO> and logged loudly, never overwritten (dispatch-store-file.ts); the host then starts empty.
+  const _read = await readStoreAtBoot<DispatchRecord>(DISPATCH_STORE_PATH);
+  if (_read.status === "corrupt") {
+    if (_read.movedTo) console.error(`[goal-host-vessel] !!! DISPATCH STORE UNREADABLE at boot (${_read.error}): moved aside to ${_read.movedTo}; starting with an empty store`);
+    else { dispatchStoreWritable = false; console.error(`[goal-host-vessel] !!! DISPATCH STORE UNREADABLE at boot (${_read.error}) and could not be moved aside: starting empty and NOT persisting, so the file is not overwritten`); }
+    return;
+  }
+  if (_read.status === "missing") return; // first boot: start empty, quietly
   try {
+    // The file was just read whole as a JSON array (readStoreAtBoot); read it again for the restore.
     const saved = JSON.parse(await Bun.file(DISPATCH_STORE_PATH).text()) as DispatchRecord[];
     for (const r of saved) {
       if (!r || !r.dispatchId) continue;
@@ -21430,5 +21455,8 @@ async function restoreDispatchStoreAtBoot(): Promise<void> {
       executionStore.set(r.dispatchId, r);
     }
     console.log("[goal-host-vessel] dispatch store: restored " + executionStore.size + " records from disk");
-  } catch { /* first boot or unreadable - start empty */ }
+  } catch (err) {
+    // The file parsed; a record failed while restoring. Say so: a partial restore is not a first boot.
+    console.error(`[goal-host-vessel] !!! dispatch store restore stopped partway (${executionStore.size} records restored): ${(err as Error).message}`);
+  }
 }
