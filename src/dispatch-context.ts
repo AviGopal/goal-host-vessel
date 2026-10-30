@@ -4,7 +4,13 @@
 // site drops or downgrades a field another site set:
 //   - the existing store is kept, and a site sets only the fields it has a value for (an undefined never erases one);
 //   - learningMode is sticky once "observe": nothing entered below an observe dispatch runs as learn (observe-mode.ts);
-//   - decomposeGapId is set only when absent: a nested value never replaces the field the reach gate grades.
+//   - decomposeGapId is set only when absent: a nested value never replaces the field the reach gate grades;
+//   - a FOREIGN store (another dispatch's: its ids do not include this site's dispatchId) lends nothing but observe:
+//     its decomposeGapId and its recall record are dropped (a nested dispatch would otherwise grade the parent's gap
+//     and credit its recalls to the parent), while observe stays sticky. A dispatch's ids are its root id and the
+//     caller-supplied variables.dispatch_id alias (noteDispatchIds), so the cost and recovery re-entries under the alias
+//     are the same dispatch, not foreign. A store whose root recorded no ids (none built before this rule) is never
+//     judged foreign: the rule acts only where the ids say so.
 
 export type DispatchLearningMode = "observe" | "learn";
 export interface DispatchContextStore {
@@ -15,11 +21,19 @@ export interface DispatchContextStore {
   goal?: string;
   /** the concept ids this dispatch's recalls returned (noteRecalledConcepts), carried on its reach verdict */
   recalledConceptIds?: Set<string>;
+  /** every id this dispatch runs under (its root id and a caller-supplied alias), set at its root (noteDispatchIds) */
+  dispatchIds?: ReadonlySet<string>;
+}
+
+/** Whether `prev` belongs to a different dispatch than the one entering as `dispatchId`. */
+export function isForeignStore(prev: DispatchContextStore | undefined, dispatchId: string): boolean {
+  return prev?.dispatchIds !== undefined && !prev.dispatchIds.has(dispatchId);
 }
 
 /** The store an entry site enters: `prev` (the current store, if any) with this site's defined fields laid over it. */
 export function enterDispatchContext(prev: DispatchContextStore | undefined, own: { dispatchId: string; decomposeGapId?: string; learningMode?: DispatchLearningMode; goal?: string }): DispatchContextStore {
   const next: DispatchContextStore = { ...prev, dispatchId: own.dispatchId };
+  if (isForeignStore(prev, own.dispatchId)) { delete next.decomposeGapId; delete next.recalledConceptIds; delete next.dispatchIds; }
   if (own.decomposeGapId && !next.decomposeGapId) next.decomposeGapId = own.decomposeGapId;
   if (own.learningMode && next.learningMode !== "observe") next.learningMode = own.learningMode;
   if (own.goal) next.goal = own.goal;
@@ -40,6 +54,12 @@ export const RECALLED_CONCEPT_IDS_CAP = 50;
 /** The dispatch's root entry begins its recall record, empty, on the store it just entered. */
 export function beginRecallRecord(store: DispatchContextStore | undefined): void {
   if (store) store.recalledConceptIds = new Set<string>();
+}
+
+/** The dispatch's root records the ids it runs under: its own and, when the caller supplied one, variables.dispatch_id. */
+export function noteDispatchIds(store: DispatchContextStore | undefined, alias: unknown): void {
+  if (!store) return;
+  store.dispatchIds = new Set([store.dispatchId, ...(typeof alias === "string" && alias.length > 0 ? [alias] : [])]);
 }
 
 /** A recall inside a dispatch notes the concept ids it returned (the raw id; concept-db canonicalises it), capped. */

@@ -79,10 +79,15 @@ describe("the floor's real re-entry", () => {
     expect(seen.ok).toEqual([false, false]);
     expect(sent).toEqual([]);
   });
-  test("[MUST-FAIL] a nested gap id never replaces the one in the store", async () => {
+  test("[MUST-FAIL] a nested gap id never replaces the one in the store (the same dispatch: its root recorded the nested id)", async () => {
     stub();
-    const seen = await floorUnder({ dispatchId: "d0", decomposeGapId: GAP, learningMode: "learn" }, "d1", { decomposeGapId: "gap-nested" });
+    // Retargeted to the SAME dispatch: the root recorded d0 and its alias d1 (noteDispatchIds), so the floor's re-entry
+    // under d1 is this dispatch, and its nested gap id never replaces the store's. Under a FOREIGN d0 (ids without d1)
+    // the floor takes its own gap id instead: dispatch-context-foreign-entry.test.ts.
+    const seen = await floorUnder({ dispatchId: "d0", decomposeGapId: GAP, learningMode: "learn", dispatchIds: new Set(["d0", "d1"]) }, "d1", { decomposeGapId: "gap-nested" });
     expect(seen.store?.decomposeGapId).toBe(GAP);
+    expect(seen.store?.dispatchId).toBe("d1");
+    expect(seen.store?.learningMode).toBe("learn");
   });
   test("[CONTROL] a learn dispatch stays learn at the floor, and its authoring call goes out", async () => {
     stub();

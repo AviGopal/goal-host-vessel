@@ -5398,7 +5398,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
-import { beginRecallRecord, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
+import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
 // learningMode is the dispatch's own body.learning_mode: under "observe" no side effect writes (observe-mode.ts).
@@ -19580,6 +19580,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
     dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));
     // The dispatch's ROOT entry: its recall record begins empty here, never shared with a dispatch it runs inside.
     beginRecallRecord(dispatchContext.getStore());
+    // ...and the ids it runs under, so a re-entry under its caller-supplied alias is this dispatch, not a foreign one.
+    noteDispatchIds(dispatchContext.getStore(), variables.dispatch_id);
     // Reason plane: caller-owned walk decision-log sink, attached to the record
     // in both the success and failure paths so GET /executions/:id can surface it.
     const walkStepSink: string[] = [];
