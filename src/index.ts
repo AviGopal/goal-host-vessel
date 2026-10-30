@@ -253,6 +253,7 @@ import { orgScopedPathRows, type TargetPathRow } from "./goal-target-inference";
 import { humanPoolDigest } from "./answer-basis";
 import { DurableTraceMemo, NoRowRepairs, deferralOpenRefusal, reinsertTraceForVerdict, withRetry } from "./deferral-row";
 import { LintVerdictCache, dropInstanceValueTemplates } from "./learned-template-guard";
+import { mintedCover } from "./minted-cover";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
@@ -11627,6 +11628,10 @@ If one of those sibling shapes is the action that would create what the goal ask
   // instead of ever running the real compute. Cap how many times composition may pre-empt the real
   // satisfier; once exhausted, run the satisfier so the genuine computed value is produced+bound.
   let _prefCompBudget = 1;
+  // MINTED COVER BEFORE THE SATISFIER (template-instance-lint.ts; gap a-minted-template-is-never-selected-for-a-
+  // paraphrased-goal-...): a ribosome-extracted template that covers EVERY missing target is probed before the satisfier
+  // shortcut; when one is found (slot-level, inputs bound) the next pick takes it, inside the feasible set.
+  let _mintedCoverPick: string | null = null;
   // Effect surface of every satisfied shape this walk touched — the evidence
   // path_signature throws away. Deduped and sorted at send time.
   const effectLedger = new Set<string>();
@@ -11873,7 +11878,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
       const _provenBadSingle = _provenBadShapes.size > 0;
       let preferComposition = false;
-      if (missingForSatisfier.length > 1 || _provenBadSingle) {
+      if (missingForSatisfier.length > 1 || _provenBadSingle || (missingForSatisfier.length > 0 && _prefCompBudget > 0)) {
         try {
           const _psig = (await getCachedStateSignature())?.signature_hash;
           const _pr = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/recommend`, {
@@ -11885,28 +11890,41 @@ If one of those sibling shapes is the action that would create what the goal ask
           if (_pr.ok) {
             const _pj: any = await _pr.json();
             const _precs = _pj?.recommendations ?? _pj?.body?.recommendations ?? [];
-            preferComposition = (Array.isArray(_precs) ? _precs : [])
+            // A MINTED COVER first: a ribosome-extracted (learned-*) candidate whose outputs cover EVERY missing target,
+            // executable now, and slot-level by the instance-value lint (a template still carrying its source run's
+            // record is refused, so this can never replay instance values). Found: the satisfier is skipped without the
+            // intermediate decline below, and the next pick takes it. Fail-closed: an unreadable template is refused.
+            if (_prefCompBudget > 0) {
+              const _mcv = await mintedCover((Array.isArray(_precs) ? _precs : []).map((c: any) => readCandidateShapes(c, _blendK)), missingForSatisfier, producedShapes, (id) => exclude.has(id) || chain.some((x) => normActivityId(x) === id), (id) => getTemplateLocalFirst(id));
+              for (const r of _mcv.refused) tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER refused ${r.id} — ${r.why}`);
+              _mintedCoverPick = _mcv.pick;
+            }
+            if (_mintedCoverPick) {
+              _prefCompBudget--;
+              tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER — ${_mintedCoverPick} covers every missing target ${JSON.stringify(missingForSatisfier)}; suppressing the satisfier so the learned pathway runs`);
+            }
+            preferComposition = _mintedCoverPick !== null || ((missingForSatisfier.length > 1 || _provenBadSingle) && (Array.isArray(_precs) ? _precs : [])
               .map((c: any) => readCandidateShapes(c, _blendK))
               .some((c: WalkCandidate | null) =>
                 c !== null &&
                 !exclude.has(normActivityId(c.id)) && !chain.includes(c.id) &&
                 c.outputShapes.filter((sh) => missingForSatisfier.includes(sh)).length >= (_provenBadSingle ? 1 : 2) &&
-                (c.inputShapes.length === 0 || c.inputShapes.every((sh) => producedShapes.has(sh))));
+                (c.inputShapes.length === 0 || c.inputShapes.every((sh) => producedShapes.has(sh)))));
             // A directly-satisfiable INTERMEDIATE (non-terminal) shape must RUN rather than be
             // suppressed for a speculative composite: leaked/unbindable composites (the store has
             // ~383) get "preferred", fail to execute, and the walk reframes into confabulation.
             // Reliable direct compute of the intermediate beats a multi-cover composite here.
-            if (preferComposition && eligibleForSatisfier.some((s) => !_provenBadShapes.has(s) && !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s))) {
+            if (preferComposition && !_mintedCoverPick && eligibleForSatisfier.some((s) => !_provenBadShapes.has(s) && !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s))) {
               preferComposition = false;
               tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION declined — a directly-satisfiable intermediate is available; running the real compute first (a leaked composite would derail into reframe->confabulation)`);
             }
-            if (preferComposition && _prefCompBudget <= 0) {
+            if (preferComposition && !_mintedCoverPick && _prefCompBudget <= 0) {
               preferComposition = false;
               tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION budget exhausted — a covering composite was already preferred but did not resolve the target; running the REAL single-shape satisfier so the genuine computed value is produced (not a confabulated one)`);
-            } else if (preferComposition) {
+            } else if (preferComposition && !_mintedCoverPick) {
               _prefCompBudget--;
             }
-            if (preferComposition) tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION — a producer covers >=2 of missing target ${JSON.stringify(missingForSatisfier)}; suppressing single-shape satisfier so the composition (ratchet reuse) is selected`);
+            if (preferComposition && !_mintedCoverPick) tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION — a producer covers >=2 of missing target ${JSON.stringify(missingForSatisfier)}; suppressing single-shape satisfier so the composition (ratchet reuse) is selected`);
           }
         } catch { preferComposition = false; }
       }
@@ -12544,7 +12562,17 @@ If one of those sibling shapes is the action that would create what the goal ask
       //    asked with that goal's target shapes, returned the 2-step composition
       //    ['satisfier:shellResult','satisfier:memoryNote_write'] at cover 1.0
       //    with 6/6 reached. The composition was there; the walk could not see it.
-      if (pathwaySet.size > 0) {
+      // 0a. THE MINTED COVER the satisfier probe found (above): taken when it is in the feasible set; used once.
+      if (_mintedCoverPick) {
+        const _mcId = _mintedCoverPick;
+        _mintedCoverPick = null;
+        const mintedPick = candidates.find((c) => normActivityId(c.id) === _mcId && feasibleProducer(c));
+        if (mintedPick) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER picked ${_mcId}`);
+          pick = mintedPick;
+        } else tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER ${_mcId} not in the feasible set; selection proceeds as before`);
+      }
+      if (!pick && pathwaySet.size > 0) {
         const reusePick = [...candidates]
           .sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target))
           .find((c) => pathwaySet.has(normActivityId(c.id)) && feasibleProducer(c) && scaffoldRank(c, target) <= 0);
