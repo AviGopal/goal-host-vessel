@@ -363,6 +363,7 @@ import { planFetchedValueStep, fetchPrefixIsReRunnable } from "./fetched-value";
 import { commandOf, sameOriginOrRefuse, synthesisWithinInputsOrRefuse } from "./command-egress";
 import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
+import { AWAITING_PERSON_VERDICT, awaitsPersonVerdict, personVerdictView } from "./pending-person-verdicts";
 import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, deferralWindowMs, effectiveOriginator, expireDeferral, expiryOutcome, judgeFallbackDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
 import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
 import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
@@ -20209,11 +20210,11 @@ async function handleRunGoal(req: Request): Promise<Response> {
   return Response.json({ dispatchId, status: "running" }, { status: 202 });
 }
 
-function maybeConsumeOracleLabel(record: DispatchRecord): void {
+function maybeConsumeOracleLabel(record: DispatchRecord): Promise<void> {
   // Poll-time oracle-label consumption — SHARED by GET /executions/:id AND the
-  // goalWalkState resolve branch. Fire-and-forget; the oracleLabelWritten latch makes
-  // repeated invocation idempotent. The consumer lives in ./oracle-label-consumer.
-  void consumeOracleLabel(record as unknown as OracleLabelRecord, {
+  // goalWalkState resolve branch (fire-and-forget there), and by the deferral sweep (awaited). The
+  // oracleLabelWritten latch makes repeated invocation idempotent. The consumer lives in ./oracle-label-consumer.
+  return consumeOracleLabel(record as unknown as OracleLabelRecord, {
     activityApiEndpoint: ACTIVITY_API_ENDPOINT,
     devVesselEndpoint: DEV_VESSEL_ENDPOINT,
     apiKey: API_KEY,
@@ -20306,6 +20307,11 @@ function __reachedCommandCacheForTests(): Map<string, { command: string; field: 
  */
 async function expireDeferredReaches(now = Date.now()): Promise<number> {
   const tuning = await resolveSelectionTuning();
+  // A PERSON'S LABEL IS APPLIED WITHIN ONE SWEEP (pending-person-verdicts.ts): every open deferral's labels are read here,
+  // BEFORE the expiry pass, so a person's verdict is decided without anyone polling the dispatch, and one written before
+  // this tick wins over the judge fallback or the expiry this tick would apply. Who may decide is the consumer's rule:
+  // operator-key and automated rows decide nothing.
+  await Promise.allSettled([...executionStore.values()].filter(awaitsPersonVerdict).map((r) => maybeConsumeOracleLabel(r)));
   let n = 0;
   for (const r of executionStore.values()) {
     const d = r.deferredReach;
@@ -20543,6 +20549,12 @@ async function handleResolve(req: Request): Promise<Response> {
       allExecutions = allExecutions.filter(e => e.status === statusFilter);
     }
     allExecutions.sort((a, b) => b.startedAt - a.startedAt);
+    // RUNS AWAITING A PERSON'S VERDICT (pending-person-verdicts.ts): open deferrals only, soonest to lapse first.
+    const _tuning = await resolveSelectionTuning();
+    if ((body.awaiting ?? pointer.awaiting) === AWAITING_PERSON_VERDICT) {
+      allExecutions = allExecutions.filter(awaitsPersonVerdict)
+        .sort((a, b) => (personVerdictView(a, _tuning)?.expiresAt ?? 0) - (personVerdictView(b, _tuning)?.expiresAt ?? 0));
+    }
     
     const total = allExecutions.length;
     const hasMore = offset + limit < total;
@@ -20561,6 +20573,7 @@ async function handleResolve(req: Request): Promise<Response> {
       executionId: r.executionId ?? null,
       learning: (r as { learning?: LearningConsequences }).learning ?? null,
       answerBody: (r as { answerBody?: string }).answerBody ?? null,
+      personVerdict: personVerdictView(r, _tuning),
     }));
     
     return Response.json({ 
@@ -20612,10 +20625,12 @@ async function handleResolve(req: Request): Promise<Response> {
       return Response.json({ resolved: impulse !== null, shape: "goalWalkState", body: { dispatchId: rec.dispatchId, status: rec.status, impulse } }, { status: impulse ? 200 : 404 });
     }
     maybeConsumeOracleLabel(rec);
+    // Only a record with a deferral gains the key: every other run's body keeps its keys (goal-walk-output pins them).
+    const _personVerdict = personVerdictView(rec, await resolveSelectionTuning());
     return Response.json({
       resolved: true,
       shape: "goalWalkState",
-      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, ...dispatchAttribution(rec), executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null, resolverAnswers: rec.resolverAnswers ?? [] },
+      body: { dispatchId: rec.dispatchId, status: rec.status, reached: rec.reached ?? null, poolShapes: rec.poolShapes ?? [], poolProvenance: (rec as { poolProvenance?: unknown }).poolProvenance ?? [], pendingTargets: rec.pendingTargets ?? [], poolEvents: rec.poolEvents ?? [], routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? [], walkLog: Array.isArray(rec.walkLog) ? rec.walkLog.slice(-60) : [], currentStep: rec.walkLog && rec.walkLog.length > 0 ? rec.walkLog[rec.walkLog.length - 1] : null, steps: Array.isArray((rec as { steps?: WalkStep[] }).steps) ? (rec as { steps?: WalkStep[] }).steps : [], walkTier: (rec as { walkTier?: string }).walkTier ?? null, executionPath: rec.executionPath ?? null, attemptCount: (rec as { attemptCount?: number }).attemptCount ?? null, grounded: (rec as { grounded?: boolean }).grounded ?? null, learning: (rec as { learning?: LearningConsequences }).learning ?? null, answerBody: (rec as { answerBody?: string }).answerBody ?? null, goal: rec.goal, operator: rec.operator ?? null, ...dispatchAttribution(rec), executionId: rec.executionId, selectedTemplateId: rec.selectedTemplateId, goalReachReason: rec.goalReachReason ?? null, completionShapes: (rec as { completionShapes?: string[] | null }).completionShapes ?? null, humanGraded: (rec as { humanGraded?: boolean }).humanGraded ?? false, humanReachNotes: (rec as { humanReachNotes?: string }).humanReachNotes ?? null, error: rec.error, trigger: rec.trigger ?? null, requeueOf: rec.requeueOf ?? null, resolverAnswers: rec.resolverAnswers ?? [], ...(_personVerdict ? { personVerdict: _personVerdict } : {}) },
     });
   }
   if (type === "poolImpulse_write" && principal) {
