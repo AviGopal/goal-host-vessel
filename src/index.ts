@@ -254,6 +254,7 @@ import { humanPoolDigest } from "./answer-basis";
 import { DurableTraceMemo, NoRowRepairs, deferralOpenRefusal, reinsertTraceForVerdict, withRetry } from "./deferral-row";
 import { LintVerdictCache, dropInstanceValueTemplates } from "./learned-template-guard";
 import { mintedCover } from "./minted-cover";
+import { planAdaptation, nextBodyStep, type AdaptPlan } from "./pathway-adapt";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
@@ -11632,6 +11633,10 @@ If one of those sibling shapes is the action that would create what the goal ask
   // paraphrased-goal-...): a ribosome-extracted template that covers EVERY missing target is probed before the satisfier
   // shortcut; when one is found (slot-level, inputs bound) the next pick takes it, inside the feasible set.
   let _mintedCoverPick: string | null = null;
+  // FIRST/LAST-MILE ADAPTATION (pathway-adapt.ts): a near-variant of the recommended pathway runs the pathway's template
+  // body through this walk's own candidate guards and executor, and walks only the difference. Planned once, below.
+  let _adaptPlan: AdaptPlan | null = null;
+  const _adaptId = opts.preferPathwayOrigin?.pathSignature ?? opts.preferPathwayOrigin?.goalHash ?? "unknown";
   // Effect surface of every satisfied shape this walk touched — the evidence
   // path_signature throws away. Deduped and sorted at send time.
   const effectLedger = new Set<string>();
@@ -11799,6 +11804,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     carriedSteps++;
   }
   if (carriedSteps > 0) tap(`[goal-host-vessel] walk(${opts.surface}): ADDITIVE — continuing from ${carriedSteps} step(s) of the prior attempt [${chain.join(", ")}]`);
+  if (pathwaySet.size > 0 && target.size > 0 && !opts.ablation?.disableReuse && !opts.ablation?.forceFloor) {
+    _adaptPlan = await planAdaptation(opts.preferPathway, [...target], producedShapes, (id) => getTemplateLocalFirst(id));
+    for (const r of _adaptPlan.skipped) tap(`[goal-host-vessel] walk(${opts.surface}): ADAPT pathway=${_adaptId} skips ${r.id} — ${r.why}`);
+    tap(`[goal-host-vessel] walk(${opts.surface}): ADAPT pathway=${_adaptId} mode=${_adaptPlan.mode ?? "none (no template body step)"} body=[${_adaptPlan.steps.map((x) => x.id).join(",")}]${_adaptPlan.mode === "exact" ? " — exact cover: the ceiling path, walk unchanged" : ""}`);
+  }
+  const _adapting = _adaptPlan?.mode != null && _adaptPlan.mode !== "exact";
+  const _adaptBody = new Set<string>(_adapting ? _adaptPlan!.steps.map((x) => x.id) : []);
   while (chain.length < MAX_STEPS && !targetMet()) {
     // Edge-blend half-life, resolved from the policy volume at USE TIME (law 1) rather
     // than read from a compiled-in constant. Unconfigured -> the previous literal, so
@@ -12269,6 +12281,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         } catch { /* forward target-producer merge is best-effort */ }
       }
     }
+    // (a3) PATHWAY BODY MERGE (pathway-adapt.ts): a body step discover did not return becomes a candidate here, ABOVE the
+    // write door and the instance-value lint, so every guard below still judges it.
+    if (_adapting) {
+      const seen = new Set(candidates.map((c) => normActivityId(c.id)));
+      for (const b of _adaptPlan!.steps) if (!seen.has(b.id) && !exclude.has(b.id) && !chain.some((x) => normActivityId(x) === b.id)) candidates.push({ id: b.id, inputShapes: b.inputShapes, outputShapes: b.outputShapes });
+    }
     // WRITE DOOR (template pick, write-door.ts): a producer of a filesystem-write shape is not a candidate on a goal
     // not admitted as a change. Every single-pick tier below (reuse, genuine, scaffold, opportunistic) picks from here.
     const _preDoor = candidates;
@@ -12582,6 +12600,17 @@ If one of those sibling shapes is the action that would create what the goal ask
           pick = reusePick;
         }
       }
+      // 0c. AN ADAPTED BODY STEP (pathway-adapt.ts): the next body step the pool binds, taken although it may not advance
+      //     a target (its output is the body's intermediate; the exit is the walk's). Only from the guarded candidates.
+      if (!pick && _adapting) {
+        const _nb = nextBodyStep(_adaptPlan!, (id) => exclude.has(id) || chain.some((x) => normActivityId(x) === id), producedShapes);
+        const _bc = _nb ? candidates.find((c) => normActivityId(c.id) === _nb.id && notScaffold(c) && !isIrrelevantLearnedComposite(c)) : undefined;
+        if (_bc) {
+          pathwayReusePicks++;
+          tap(`[goal-host-vessel] walk(${opts.surface}): ADAPTED ${_adaptPlan!.mode} pathway=${_adaptId} — body step ${_nb!.id} bound from this goal's pool (reuse_picks=${pathwayReusePicks})`);
+          pick = _bc;
+        } else if (_nb) tap(`[goal-host-vessel] walk(${opts.surface}): ADAPT body step ${_nb.id} is not a guarded candidate now (door, lint or relevance refused it) — walking as before`);
+      }
       // 1. A GENUINE (non-hollow-scaffold) feasible producer of a target shape.
       pick = pick ?? [...candidates].sort((a, b) => scaffoldRank(a, target) - scaffoldRank(b, target)).find((c) => feasibleProducer(c) && scaffoldRank(c, target) <= 0)
         // 2. A scaffold producer is acceptable ONLY for a target with no live
@@ -12591,7 +12620,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // those inputs first (add as sub-targets) rather than executing the
       // producer prematurely — this is how the chain is built backward.
       if (!pick) {
-        const needsInputs = candidates.find((c) => notScaffold(c) && !isIrrelevantLearnedComposite(c) && advancesTarget(c) && c.inputShapes.length > 0);
+        const needsInputs = [...candidates].sort((a, b) => Number(_adaptBody.has(normActivityId(b.id))) - Number(_adaptBody.has(normActivityId(a.id)))).find((c) => notScaffold(c) && !isIrrelevantLearnedComposite(c) && advancesTarget(c) && c.inputShapes.length > 0);
         if (needsInputs) {
           let added = false;
           for (const s of needsInputs.inputShapes) if (!producedShapes.has(s) && !target.has(s)) { target.add(s); added = true; }
@@ -12859,6 +12888,8 @@ If one of those sibling shapes is the action that would create what the goal ask
     // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
     //     with the accumulated pool impulses + thread parent/composition ids so the
     //     steps form a recorded chain.
+    // An adapted body step says so on its trace (the dispatch's tags plus these), so the reused pathway is countable.
+    const _adaptTags = _adaptBody.has(normActivityId(pick.id)) ? [...(opts.tags ?? []), `adapted:${_adaptPlan!.mode}`, `adapted_pathway:${_adaptId}`] : null;
     pickOutputs.set(pick.id, [...(pick.outputShapes ?? [])]);
     let template: ActivityTemplate | null = null;
     try {
@@ -12914,6 +12945,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         goalContext: { goal },
         // WRITE DOOR (task level): a template's own tasks are not walk picks, so the executor checks each one.
         ...taskWriteDoor(changeAdmitted, writeDoorProduct),
+        ...(_adaptTags ? { tags: _adaptTags } : {}),
       });
     } catch (e) {
       exclude.add(normActivityId(pick.id));
@@ -12926,6 +12958,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     lastExecId = trace.id;
     noteForeignConsumption(pick.id, trace);
     if (trace.status === "failed") pickFailures.set(pick.id, String(trace.reason ?? "template execution failed").slice(0, 200));
+    if (trace.status === "failed" && _adaptBody.has(normActivityId(pick.id))) tap(`[goal-host-vessel] walk(${opts.surface}): ADAPT body step ${pick.id} failed (${pickFailures.get(pick.id)}) — excluded; the walk continues as before`);
     if (trace.id) chainExecIds.push(trace.id);
     totalDurationMs += trace.durationMs ?? 0;
     totalCostUsd += trace.costUsd ?? 0;
@@ -12996,7 +13029,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       excluded: excludedNow(),
       status: trace.status,
       newShapes: _stepNew,
-      rationale: `single-pick ${pickSource}: ${normActivityId(pick.id)} produced ${_stepNew.length} new shape(s)`,
+      rationale: `single-pick ${pickSource}: ${normActivityId(pick.id)} produced ${_stepNew.length} new shape(s)${_adaptBody.has(normActivityId(pick.id)) ? ` (adapted:${_adaptPlan!.mode}, pathway=${_adaptId})` : ""}`,
       poolBefore: iterPoolBefore,
       poolAfter: shapeArr(),
     });
