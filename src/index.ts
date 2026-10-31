@@ -337,6 +337,7 @@ import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeVie
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
+import { asksForSecretValue } from "./secret-extraction";
 import { floorObservationsBlock, floorTargetsAfterWalk, type FloorWalkContext } from "./floor-walk-context";
 import { recalledCandidates } from "./shape-recall";
 import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
@@ -8938,11 +8939,8 @@ async function runGoalAsPoolWalkBody(
   // modes). Fail HONESTLY and SAFELY here: no command runs. Reading a secret's NON-value metadata
   // (length / presence / hash / fingerprint) is explicitly NOT gated.
   {
-    const _g = goal.toLowerCase();
-    const _asksValue = /\b(report|print|show|reveal|extract|echo|display|leak|dump|output|tell me|what(?:'s| is)|value of|get me|give me|expose)\b/.test(_g);
-    const _namesSecret = /\b(api[_ ]?key|access[_ ]?token|private[_ ]?key|client[_ ]?secret|passphrase|password|[a-z0-9]+_(?:key|secret|token|password|passphrase)|anthropic_api_key|openai_api_key|jwt_secret|surrealdb_password|\bcredentials?\b)\b/.test(_g);
-    const _metaNotValue = /\b(length|how long|number of characters|char count|presence|whether .* (?:is )?set|is .* set|exists|does .* exist|hash|sha|fingerprint|last \d|first \d|redact|masked?)\b/.test(_g);
-    if (_asksValue && _namesSecret && !_metaNotValue) {
+    // Whole-goal rule; a check-supply goal is judged within adjacent sentences unless it carries a secret-shaped value (secret-extraction.ts).
+    if (asksForSecretValue(goal)) {
       tap(`[goal-host-vessel] ${opts.surface}: SECRET-EXTRACTION REFUSED (pre-execution) — goal asks to reveal a secret/credential VALUE; failing honestly + safely, no command synthesized (the substrate does not exfiltrate secrets). goal_hash=${goalHashOf(goal)}`);
       return { result: null, status: "failed", selectedTemplateId: "secret-extraction-refused", completionShapes: null, attempts: 0, reached: false, outcome: { kind: "refused", refuse_class: "secret_extraction" }, goalReachReason: "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated." };
     }
@@ -19242,11 +19240,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
   // walk is dispatched, so nothing is left "running" to resume. Non-value metadata (length /
   // presence / hash / fingerprint) is explicitly NOT gated.
   if (typeof goal === "string") {
-    const _g = goal.toLowerCase();
-    const _asksValue = /\b(report|print|show|reveal|extract|echo|display|leak|dump|output|tell me|what(?:'s| is)|value of|get me|give me|expose)\b/.test(_g);
-    const _namesSecret = /\b(api[_ ]?key|access[_ ]?token|private[_ ]?key|client[_ ]?secret|passphrase|password|[a-z0-9]+_(?:key|secret|token|password|passphrase)|anthropic_api_key|openai_api_key|jwt_secret|surrealdb_password|\bcredentials?\b)\b/.test(_g);
-    const _metaNotValue = /\b(length|how long|number of characters|char count|presence|whether .* (?:is )?set|is .* set|exists|does .* exist|hash|sha|fingerprint|last \d|first \d|redact|masked?)\b/.test(_g);
-    if (_asksValue && _namesSecret && !_metaNotValue) {
+    // Whole-goal rule; a check-supply goal is judged within adjacent sentences unless it carries a secret-shaped value (secret-extraction.ts).
+    if (asksForSecretValue(goal)) {
       const dispatchId = crypto.randomUUID();
       const reason = "deterministic:secret-extraction-refused — the goal asks to reveal a secret/credential VALUE; the substrate refuses to exfiltrate secrets (honest failure + security). Non-value metadata (length/presence/hash) is not gated.";
       const outcome: DispatchOutcome = { kind: "refused", refuse_class: "secret_extraction" };
