@@ -5110,7 +5110,6 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   const toks = (str: string) => Array.from(str.matchAll(/\S+/g)).map((m) => ({ raw: m[0], start: m.index as number, end: (m.index as number) + m[0].length }));
   const norm = (t: string) => t.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, "");
   let best: { ratio: number; field: string; command: string; srcHash: string } | null = null;
-      console.log("[rebind] outcome selected=" + (best ? "yes" : "no") + " candidates=" + candidates);
   for (const [srcHash, e] of reachedCommandCache.entries()) {
     if (e.shape !== shape) { refuse("shape-mismatch"); continue; }
     if (!REBIND_EXEC_FIELDS.includes(e.field)) { refuse("field-not-executable"); continue; }
@@ -5303,7 +5302,9 @@ function tryLexicalRebind(goalNow: string, shape: string): { field: string; comm
   }
   // One line per call, always. A silent refusal is why three separate diagnoses of this
   // function were wrong: "no donor existed for this shape" and "a donor existed and every
-  // gate rejected it" produced identical evidence from outside.
+  // gate rejected it" produced identical evidence from outside. The outcome line is emitted
+  // here, after the donor loop: emitted before it, it always read candidates=0.
+  console.log("[rebind] outcome selected=" + (best ? "yes" : "no") + " candidates=" + candidates);
   if (!best) {
   console.log(`[rebind] ... refusals: ${JSON.stringify(refusals)}`);
 
@@ -12588,7 +12589,27 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (mintedPick) {
           tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER picked ${_mcId}`);
           pick = mintedPick;
-        } else tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER ${_mcId} not in the feasible set; selection proceeds as before`);
+        } else {
+          // Name WHICH case applies: the cover is absent from this step's `candidates` (the probe and the pick
+          // draw from different lists), or it is present and a named feasibleProducer check rejected it. The
+          // decision above is unchanged; this only says why.
+          const _mcSeen = candidates.filter((c) => normActivityId(c.id) === _mcId);
+          const _mcWhy = (c: WalkCandidate): string => {
+            const why: string[] = [];
+            if (!notScaffold(c)) why.push("notScaffold");
+            if (isIrrelevantLearnedComposite(c)) {
+              const n = typeof c.alpha === "number" && typeof c.beta === "number" ? c.alpha + c.beta : 0;
+              why.push(n >= 12 && (c.alpha as number) / n < 0.15
+                ? `isIrrelevantLearnedComposite (proven-bad posterior alpha=${c.alpha} beta=${c.beta})`
+                : "isIrrelevantLearnedComposite (advances no specific target)");
+            }
+            if (!advancesTarget(c)) why.push("advancesTarget");
+            const unbound = c.inputShapes.filter((s) => !producedShapes.has(s));
+            if (unbound.length > 0) why.push(`inputs unbound ${JSON.stringify(unbound)}`);
+            return why.join(", ") || "feasibleProducer";
+          };
+          tap(`[goal-host-vessel] walk(${opts.surface}): MINTED-COVER ${_mcId} not in the feasible set: ${_mcSeen.length === 0 ? "absent from candidates" : "rejected by " + _mcSeen.map(_mcWhy).join(" | ")}; selection proceeds as before`);
+        }
       }
       if (!pick && pathwaySet.size > 0) {
         const reusePick = [...candidates]
