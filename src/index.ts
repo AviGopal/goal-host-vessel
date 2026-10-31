@@ -20,6 +20,7 @@ import { dirname } from "node:path";
 import { bindArgsFromPool, boundValues, describeBindings, requiredFieldsFromCorrection } from "./bind-args.js";
 import { UnboundInputs, needsInformationOutcome, type NeedsInformationOutcome } from "./needs-information.js";
 import { buildResolvePointer } from "./resolve-pointer";
+import { bindRequiredInputs, type RequiredInputContract } from "./resolve-pointer";
 import { toolPointer } from "./resolve-pointer";
 import { repairSignatureOf, classifyFailure } from './repair-signature';
 import { resolveShapedPolicy } from "./shaped-policy-store.js";
@@ -5507,6 +5508,33 @@ async function resolverSchemaFieldNames(shape: string): Promise<Set<string> | nu
   return names;
 }
 
+/** A producer's REQUIRED-INPUT CONTRACT for bindRequiredInputs (resolve-pointer.ts): the resolver_schema answer of the
+ *  producer `url` names, the one the call is about to POST to, read at use time and kept a minute per producer and shape.
+ *  Null when it does not answer (the gate then cannot judge, and the pointer is invoked as built). */
+const _requiredInputContractMemo = new Map<string, { at: number; contract: RequiredInputContract | null }>();
+async function requiredInputContract(shape: string, url: string): Promise<RequiredInputContract | null> {
+  const key = `${url}\u0000${shape}`;
+  const hit = _requiredInputContractMemo.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.contract;
+  let contract: RequiredInputContract | null = null;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "resolver_schema", shape } } }),
+      signal: AbortSignal.timeout(4000),
+    });
+    if (r.ok) {
+      // resolver_schema answers under content (concept-db) or body (development-vessel).
+      const j = await r.json() as { content?: unknown; body?: unknown };
+      const c = (j?.content ?? j?.body) as RequiredInputContract | undefined;
+      if (c && typeof c === "object" && typeof c.known === "boolean") contract = c;
+    }
+  } catch { /* unreadable: unjudgeable, invoked as built */ }
+  _requiredInputContractMemo.set(key, { at: Date.now(), contract });
+  return contract;
+}
+
 async function ufExecuteTool(name: string, args: Record<string, unknown>, allowlist: Set<string>, ownOnly?: ReadonlySet<string>): Promise<{ ok: true; result: string } | { ok: false; error: string }> {
   if (!allowlist.has(name)) return { ok: false, error: "tool not authorized" };
   // ORIGIN AT EXECUTION TOO (CHANGE-29): a tool the floor offered because THIS substrate serves it is answered only
@@ -9806,6 +9834,21 @@ async function runGoalAsPoolWalkBody(
         for (const k of Object.keys(pointer)) delete pointer[k];
         Object.assign(pointer, _held.pointer);
       }
+    }
+    // REQUIRED INPUTS (resolve-pointer.ts bindRequiredInputs): a field the producer's resolver_schema marks required is
+    // bound, synthesized where the contract declares how, or the producer is not invoked; the refusal is this resolve's
+    // failure reason, which the satisfier's arg-correction reads.
+    const _rawUrl = resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`;
+    const _bind = bindRequiredInputs({ shape, pointer, contract: await requiredInputContract(shape, _rawUrl), goal, upstream: poolImpulses });
+    if (!_bind.invoke) {
+      noteRawResolveFailure(shape, _bind.reason);
+      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT invoked — ${_bind.reason}`);
+      return null;
+    }
+    if (_bind.synthesized.length > 0) {
+      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): bound required input(s) ${_bind.synthesized.join(", ")} from the goal and upstream content (resolver_schema synthesize_from)`);
+      for (const k of Object.keys(pointer)) delete pointer[k];
+      Object.assign(pointer, _bind.pointer);
     }
     let resp: Response;
     try {
@@ -18024,6 +18067,18 @@ function devEnvelopeUnwrap(parsed: unknown): unknown {
   return impulseContent;
 }
 
+/** The goal a template task runs for: the dispatch's own goal, else a string (or {goal}) goal variable. */
+function proxyGoalText(variables: Record<string, unknown>): string {
+  const g = dispatchContext.getStore()?.goal ?? variables.goal;
+  if (typeof g === "string") return g;
+  const inner = (g as { goal?: unknown } | null | undefined)?.goal;
+  return typeof inner === "string" ? inner : "";
+}
+/** A template task's bound input impulses, as bindRequiredInputs reads them. */
+function proxyUpstream(inputImpulses: unknown): ReadonlyArray<{ metadata?: { shape?: string }; content?: unknown }> {
+  return Array.isArray(inputImpulses) ? inputImpulses as Array<{ metadata?: { shape?: string }; content?: unknown }> : [];
+}
+
 function buildProxyResolver(shape: string) {
   return {
     id: shape,
@@ -18048,7 +18103,11 @@ function buildProxyResolver(shape: string) {
       // remain available for resolvers whose pointer fields aren't explicit
       // in the task config — they just don't override an interpolated config.
       // variables < config (config wins), and the shape LAST: a `type` in either must never re-route it.
-      const pointer: Record<string, unknown> = buildResolvePointer(shape, variables, config);
+      let pointer: Record<string, unknown> = buildResolvePointer(shape, variables, config);
+      // REQUIRED INPUTS (resolve-pointer.ts bindRequiredInputs): unbindable -> the task fails with the reason, never sent hollow.
+      const _bind = bindRequiredInputs({ shape, pointer, contract: await requiredInputContract(shape, `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`), goal: proxyGoalText(variables), upstream: proxyUpstream(context.inputImpulses) });
+      if (!_bind.invoke) throw new Error(_bind.reason);
+      pointer = _bind.pointer;
       // ITER-4 fix: manual AbortController + clearTimeout instead of
       // AbortSignal.timeout — the implicit timer leaks native buffers. Also
       // drain response body explicitly via .cancel() since Bun retains the
@@ -18175,7 +18234,7 @@ function buildDiscoveryProxyResolver(shape: string) {
       const impulseSlots = buildImpulseSlots(context.inputImpulses);
       const config = interpolateProxyValue(configRaw, variables, impulseSlots) as Record<string, unknown>;
       // variables < config (config wins), and the shape LAST: a `type` in either must never re-route it.
-      const pointer: Record<string, unknown> = buildResolvePointer(shape, variables, config);
+      let pointer: Record<string, unknown> = buildResolvePointer(shape, variables, config);
 
       // 1. Resolve the producer endpoint via discovery (lazy → survives restarts).
       const discCtrl = new AbortController();
@@ -18224,6 +18283,11 @@ function buildDiscoveryProxyResolver(shape: string) {
           clearTimeout(discTimer);
         }
       }
+
+      // REQUIRED INPUTS (resolve-pointer.ts bindRequiredInputs), asked of the producer this call POSTs to.
+      const _bind = bindRequiredInputs({ shape, pointer, contract: await requiredInputContract(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`), goal: proxyGoalText(variables), upstream: proxyUpstream(context.inputImpulses) });
+      if (!_bind.invoke) throw new Error(_bind.reason);
+      pointer = _bind.pointer;
 
       // 2. POST to the producer vessel (wrapped impulse-contract form; obsidian
       //    accepts both flat and {impulse:{pointer}}).
