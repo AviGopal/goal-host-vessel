@@ -263,6 +263,7 @@ import { singleFileTargetLine } from "./edit-intent-target";
 import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } from "./refusal-decline";
 import { conceptRecallPointer } from "./concept-recall-pointer";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
+import { templateReachVerdict } from "./template-reach-rule";
 import { composeAdmissionRefusal } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
@@ -17190,8 +17191,17 @@ async function runGoalWithRecoveryInner(
             .join("\n")
             .slice(0, 4000);
         }
+        // A TEMPLATE WITH ITS OWN REACH RULE IS GRADED BY ITS PRODUCT, NOT BY THE JUDGE (template-reach-rule.ts): the
+        // rule reads the run's produced impulses (the emit-time capture, else the store) and the judge is skipped. Its
+        // verdict is an ordinary deterministic one, so it takes the label, β and α paths below like any other.
+        const _ruleV = templateReachVerdict(selId, (execId && reachContentEntries.get(execId)) || ((result.trace as { tasks?: Array<{ outputImpulseIds?: string[]; success?: boolean }> }).tasks ?? [])
+          .filter((t) => t.success !== false).flatMap((t) => t.outputImpulseIds ?? [])
+          .map((id) => (host as { runtime?: { store?: { get(id: string): { content?: unknown; metadata?: { shape?: string } } | undefined } } }).runtime?.store?.get(id))
+          .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp)
+          .map((imp) => ({ shape: imp.metadata?.shape, content: imp.content })));
+        if (_ruleV) tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: DETERMINISTIC via ${selId}: rule=${_ruleV.rule} reached=${_ruleV.reached} (verdict=${_ruleV.value}); LLM judge skipped`);
         // The engine's produced shapes are real emits of the run's tasks, so its mutation shapes are its writes.
-        const verdict = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined, undefined, undefined, undefined, undefined, undefined, { persistedWrites: producedShapes.filter(isMutationShape) }, "recovery");
+        const verdict: GoalReachVerdict | null = _ruleV ?? await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined, undefined, undefined, undefined, undefined, undefined, { persistedWrites: producedShapes.filter(isMutationShape) }, "recovery");
         if (verdict) recordDeterministicLabel(String(goal), execId, selId, verdict);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;
