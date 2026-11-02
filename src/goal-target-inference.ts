@@ -873,6 +873,20 @@ async function inferGoalTargetDecisionRoutes(
     if (cached) return cached;
   }
 
+  // THE SHORTCUTS BELOW ARE CANDIDATES, NOT ANSWERS, WHEN THE CHOICE CAN RUN (B1). Each returned one fixed set (the
+  // prose producer, or shellResult) EARLY, before the chooser saw the advertised vocabulary, so a natural-language read
+  // goal whose data an advertised producer holds (an execution-trace list, a git log) went to a shell that invents
+  // endpoints, or to a completion with no data. With a shape catalog (the described-producers CHOICE: VALIDITY, then the
+  // chooser shown the valid candidates) the first shortcut's set is HELD: the chooser below decides among the known
+  // shapes, the held set among them; when it chooses nothing, or cannot answer, the held set is returned as before, and
+  // when it chooses another producer the held set stays an alternative. Without a catalog the shortcut returns as today.
+  const hold: { d: GoalTargetDecision | null } = { d: null };
+  const shortcut = (d: GoalTargetDecision): GoalTargetDecision | null => {
+    if (!opts.shapeCatalog) return remember(d);
+    hold.d ??= d;
+    return null;
+  };
+
   // A verbatim read of one named absolute path is decided by the shared parse, not by the LLM:
   // the oracle that grades it and the walk that binds its path use the same rule, so an LLM
   // answer here could only disagree with both.
@@ -1005,7 +1019,8 @@ async function inferGoalTargetDecisionRoutes(
     // the guard reuses WRITE_CLAUSE's wording; it retires with the shortcut once targets are chosen from described
     // producers (I-T i), when a write need is read from the write shape's description instead of a verb list.
     if (!isCompositionAsk && EXPLANATORY_RE.test(goal) && !NOT_PROSE_RE.test(goal) && !LIVE_MEASUREMENT_RE.test(goal)) {
-      return remember({ shapes: [_proseTarget], confidence: 0.7, alternatives: [] });
+      const d = shortcut({ shapes: [_proseTarget], confidence: 0.7, alternatives: [] });
+      if (d) return d;
     }
   }
 
@@ -1029,7 +1044,8 @@ async function inferGoalTargetDecisionRoutes(
     const FILE_OPERAND = /repos\/[\w.-]+\/[\w./-]+\.\w+|\b[\w-]+\.(?:json|ts|tsx|js|jsx|md|txt|ya?ml|toml|lock|cfg|ini|sh|py|sql|env)\b/i;
     const NOT_EXTRACT = /\b(summar|explain|describe|overview|analy[sz]e|review|audit|refactor|rewrite|gist|understand|two\s+sentences?|what\s+is\s+.*\s+about|quality|problem|complexity|coverage|security|performance|architecture|conformance)\b/i;
     if (!isCompositionAsk && EXTRACT_VERB.test(goal) && VALUE_NOUN.test(goal) && FILE_OPERAND.test(goal) && !NOT_EXTRACT.test(goal)) {
-      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      const d = shortcut({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      if (d) return d;
     }
   }
 
@@ -1048,7 +1064,8 @@ async function inferGoalTargetDecisionRoutes(
     const INVENTORY_NOUN = /\b(registr(?:y|ies|ed)|vessels?|discovery|services?|systemd|units?|containers?|processes|fleet|shapes?|resolvers?|endpoints?|ports?|advertis)\w*/i;
     const NOT_INVENTORY = /\b(analy[sz]e|review|summar|audit|refactor|edit|implement|\bfix\b|quality|problem|complexity|security|write|persist|propose|\bnote\b|concept)\b/i;
     if (!isCompositionAsk && COUNT_ASK.test(goal) && INVENTORY_NOUN.test(goal) && !NOT_INVENTORY.test(goal)) {
-      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      const d = shortcut({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      if (d) return d;
     }
   }
 
@@ -1063,7 +1080,8 @@ async function inferGoalTargetDecisionRoutes(
     const FS_NOUN = /\b(files?|source\s+files?|lines?|\.ts|\.js|repos\/[\w.-]+|src\/|director(?:y|ies)|folders?|codebase)\b/i;
     const NOT_FS_EDIT = /\b(implement|fix|edit|refactor|rewrite|explain|summar\w*|analy[sz]e|review|audit|propose|persist|write\s+(?:a\s+)?(?:note|file|concept))\b/i;
     if (!isCompositionAsk && FS_AGG_VERB.test(goal) && FS_NOUN.test(goal) && !NOT_FS_EDIT.test(goal)) {
-      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      const d = shortcut({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      if (d) return d;
     }
   }
 
@@ -1083,7 +1101,8 @@ async function inferGoalTargetDecisionRoutes(
     const SUBSTRATE_NOUN = /\b(gaps?|substrate\s?gaps?|activity\s?templates?|activities|executions?|traces?|failed_attempts?|failure\s?modes?)\b/i;
     const NOT_AGG = /\b(implement|\bfix\b|edit|refactor|rewrite|explain|summar|analy[sz]e|review|audit|propose|persist|write\s+(?:a|the)?\s*(?:note|file|concept))\b/i;
     if (!isCompositionAsk && AGG_VERB.test(goal) && SUBSTRATE_NOUN.test(goal) && !NOT_AGG.test(goal)) {
-      return remember({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      const d = shortcut({ shapes: ["shellResult"], confidence: 0.6, alternatives: [] });
+      if (d) return d;
     }
   }
 
@@ -1100,7 +1119,7 @@ async function inferGoalTargetDecisionRoutes(
   // so every established count/registry/fs/extract/prose route wins any overlap. TIGHT GUARD: a
   // code-origin-search VERB + CODE/SOURCE context, and NOT a count/edit/explain/registry ask (those
   // keep their own routes / the LLM edit path). shellResult offered as the fallback alternative.
-  if (knownShapes.includes("codeSearchResult") || knownShapes.includes("source_code") || knownShapes.includes("code_find_function")) {
+  if (!hold.d && (knownShapes.includes("codeSearchResult") || knownShapes.includes("source_code") || knownShapes.includes("code_find_function"))) {
     // Predicate extracted to isCodeInvestigationGoal (module scope) so index.ts keys its
     // satisfier-suppression off the SAME goal shape. (Does NOT exclude on "vessel(s)": investigation
     // goals routinely name a vessel like "goal-host-vessel"; registry/vessel-COUNT goals are excluded
@@ -1124,6 +1143,8 @@ async function inferGoalTargetDecisionRoutes(
     }
   }
   } // end of the deterministic shortcuts (skipped on a re-ask)
+  // The chooser cannot answer (no reply, a refused call, nothing parseable): the held shortcut set, else the fallback.
+  const fallback = (): GoalTargetDecision => (hold.d ? remember(hold.d) : empty);
 
   const known = new Set(knownShapes);
   const fetchImpl = opts.fetchImpl ?? fetch;
@@ -1179,7 +1200,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
     if (opts.complete) {
       const t = await opts.complete(prompt);
       if (t == null) console.warn(`[goal-target-inference] the completion callback returned ${t === null ? "null" : "undefined"} — returning an EMPTY target, which is indistinguishable downstream from "no target is inferable"`);
-  if (t == null) return empty;
+  if (t == null) return fallback();
       text = t;
     } else {
       const r = await fetchImpl(`${llmEndpoint!.replace(/\/$/, "")}/resolve`, {
@@ -1189,7 +1210,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
         signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
       });
       console.warn(`[goal-target-inference] llm_completion returned ${r.status} (${r.status === 402 ? "provider out of credit" : r.status === 429 ? "rate limited" : "transport failure"}) — returning an EMPTY target, which is indistinguishable downstream from "no target is inferable" for goal_hash=${goalHashOf(goal)}`);
-      if (!r.ok) return empty;
+      if (!r.ok) return fallback();
       const j = await r.json() as Record<string, unknown>;
       const body = j?.body as Record<string, unknown> | undefined;
       text = (typeof body?.content === "string" ? body.content
@@ -1199,7 +1220,7 @@ Respond with ONLY JSON: {"target_shapes": [...], "confidence": 0.0, "alternative
     }
     const m = String(text).match(/\{[\s\S]*\}/);
     if (!m) console.warn(`[goal-target-inference] the LLM answered but no JSON object could be parsed from ${String(text).length} char(s) — returning an EMPTY target, indistinguishable downstream from "no target is inferable"; first 120 chars: ${String(text).slice(0, 120) || "(empty response body)"}`);
-if (!m) return empty;
+if (!m) return fallback();
     const parsed = JSON.parse(m[0]) as Record<string, unknown>;
     const rawShapes = Array.isArray(parsed?.target_shapes) ? parsed.target_shapes as unknown[] : [];
     const filterShape = (s: unknown): string | null => {
@@ -1291,9 +1312,16 @@ if (!m) return empty;
     // J2b: no listed shape chosen, and the chooser said why (NOVEL with a described residual): carried, never replaced.
     const novel = outShapes.length === 0 ? parseNovel(parsed, known) : null;
     const residualText = outShapes.length > 0 ? parseResidual(parsed) : "";
-    return remember({ shapes: outShapes, confidence, alternatives, ...(novel ? { novel } : {}), ...(residualText ? { residual: { text: residualText, recalled: [], added: [] } } : {}) });
+    // A held shortcut set: returned when the chooser chose no listed shape (and named no NOVEL need); an alternative when
+    // it chose another set, so a goal that genuinely needs it can still fall back to it.
+    const h = hold.d;
+    if (h && outShapes.length === 0 && !novel) return remember(h);
+    const withHeld = h && outShapes.length > 0 && !h.shapes.every((x) => outShapes.includes(x)) && !alternatives.some((a) => a.slice().sort().join(",") === h.shapes.slice().sort().join(","))
+      ? [...alternatives, h.shapes] : alternatives;
+    if (h) console.log(`[goal-target-inference] deterministic shortcut [${h.shapes.join(", ")}] held as a candidate; the chooser chose [${outShapes.join(", ")}]`);
+    return remember({ shapes: outShapes, confidence, alternatives: withHeld, ...(novel ? { novel } : {}), ...(residualText ? { residual: { text: residualText, recalled: [], added: [] } } : {}) });
   } catch {
-    return empty;
+    return fallback();
   }
 }
 
