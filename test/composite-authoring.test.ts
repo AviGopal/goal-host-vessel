@@ -44,7 +44,7 @@ describe("authoring through discovery", () => {
   test("asks whichever vessel discovery places author_composed_capability on, and returns the validated composite", async () => {
     const { f, calls } = fakeFetch(() => ({ status: 200, json: { shape: "author_composed_capability", body: { minted_activity_id: "composed-cap-x", validated: true, output_shapes: ["opaqueShapeQ"] } } }));
     const r = await authorComposite("goal text", ["opaqueShapeQ"], ["pooled"], "disp-1", { resolveUrl: at("http://v9/v2/impulses/resolve"), fetchImpl: f, timeoutMs: 1000 });
-    expect(r).toEqual({ ok: true, pick: { id: "composed-cap-x", outputShapes: ["opaqueShapeQ"], reusedExisting: false } });
+    expect(r).toEqual({ ok: true, pick: { id: "composed-cap-x", inputShapes: [], outputShapes: ["opaqueShapeQ"], reusedExisting: false } });
     expect(calls[0]!.url).toBe("http://v9/v2/impulses/resolve");
     expect(calls[0]!.body.impulse.pointer).toMatchObject({ type: "author_composed_capability", goal: "goal text", target_shapes: ["opaqueShapeQ"], available_shapes: ["pooled"], execution_id: "disp-1" });
   });
@@ -207,7 +207,7 @@ describe("the stored composite is read back before the walk takes it", () => {
   test("CONTROL: a live existing composite is reused as today", async () => {
     const { f } = author({ minted_activity_id: "composed-cap-old-3c", validated: true, reused_existing: true, output_shapes: ["decalMotiveReport"], tasks: report },
       () => ({ status: 200, json: { id: "composed-cap-old-3c", retired: false, deprecated: false, tasks: report } }));
-    expect(await authorComposite(GOAL, ["decalMotiveReport"], [], undefined, deps(f))).toEqual({ ok: true, pick: { id: "composed-cap-old-3c", outputShapes: ["decalMotiveReport"], reusedExisting: true } });
+    expect(await authorComposite(GOAL, ["decalMotiveReport"], [], undefined, deps(f))).toEqual({ ok: true, pick: { id: "composed-cap-old-3c", inputShapes: [], outputShapes: ["decalMotiveReport"], reusedExisting: true } });
   });
   test("CONTROL: an llm task producing a report shape, and a task whose resolver IS the write, are accepted", async () => {
     const writer = [...report, { id: "save", resolver: "uiView_write", output_shapes: ["uiView_write"] }, { id: "post", resolver: "uiPanel_write/vessel", outputShapes: ["uiPanel_write"] }];

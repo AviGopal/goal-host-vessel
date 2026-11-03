@@ -31,7 +31,10 @@ import { doorTemplateKey, fetchedResolveWrites, isStoreWrite, isWriteShape } fro
 type Send = (url: string, init: RequestInit) => Promise<Response>;
 const sendFor = (shape: string, deps: { fetchImpl?: typeof fetch }): Send => deps.fetchImpl ?? ((url, init) => walkEgressFetch(shape, url, init));
 
-export interface ComposedPick { id: string; outputShapes: string[]; reusedExisting: boolean }
+/** `inputShapes`: the composite's DECLARED inputs, read from its stored row (its external preconditions: every task's
+ *  inputs minus what its own tasks produce). The walk ledgers the pick with them, so a composite that consumes an
+ *  earlier step's output records the in-chain edge; [] when the row is unreadable or declares none. */
+export interface ComposedPick { id: string; inputShapes: string[]; outputShapes: string[]; reusedExisting: boolean }
 export type ComposeOutcome = { ok: true; pick: ComposedPick } | { ok: false; reason: string };
 
 export interface ComposeDeps {
@@ -91,7 +94,12 @@ export async function authorComposite(goal: string, targetShapes: readonly strin
       if (!reusedExisting) void retireComposite(doorTemplateKey(id), `minted with tasks that declare writes they do not resolve: ${fake.join(", ")}`, { ...deps, timeoutMs: Math.min(deps.timeoutMs, 8_000) }).catch(() => undefined);
       return { ok: false, reason: `author_composed_capability returned ${doorTemplateKey(id)} with tasks declaring writes they do not resolve: ${fake.join(", ")}`.slice(0, 300) };
     }
-    return { ok: true, pick: { id, outputShapes: out.length > 0 ? out : [...targetShapes], reusedExisting } };
+    // DECLARED INPUTS (gap a-walk-composed-capability-is-picked-with-no-declared-inputs-...): the pick carried none, so the
+    // walk's consumption ledger, which counts only a step's declared inputs, recorded no edge into a composite and a
+    // reached composition earned no alpha. The author's answer names no inputs; the stored row declares them
+    // (development-vessel composedTemplateInputs, stored as the activity row's input_shapes and served as is by
+    // activity-api's GET /v2/activities/templates/:id).
+    return { ok: true, pick: { id, inputShapes: declaredInputs(stored), outputShapes: out.length > 0 ? out : [...targetShapes], reusedExisting } };
   } catch (e) {
     return { ok: false, reason: `author_composed_capability unreachable: ${(e as Error).message}`.slice(0, 300) };
   }
@@ -99,7 +107,15 @@ export async function authorComposite(goal: string, targetShapes: readonly strin
 
 /** The stored template row (raw: lifecycle flags kept), or null when it cannot be read. A GET, sent like every other
  *  call on this path (the caller's fetchImpl, else the walk egress door). */
-async function readStoredTemplate(endpoint: string, id: string, deps: Pick<ComposeDeps, "fetchImpl" | "apiKey" | "timeoutMs">): Promise<{ retired?: unknown; deprecated?: unknown; tasks?: unknown } | null> {
+type StoredTemplate = { retired?: unknown; deprecated?: unknown; tasks?: unknown; input_shapes?: unknown; inputShapes?: unknown };
+
+/** The stored row's declared input shapes (either spelling), or [] when there is no row or it declares none. */
+function declaredInputs(stored: StoredTemplate | null): string[] {
+  const v = Array.isArray(stored?.input_shapes) ? stored!.input_shapes : Array.isArray(stored?.inputShapes) ? stored!.inputShapes : [];
+  return [...new Set((v as unknown[]).filter((s): s is string => typeof s === "string" && s.length > 0))];
+}
+
+async function readStoredTemplate(endpoint: string, id: string, deps: Pick<ComposeDeps, "fetchImpl" | "apiKey" | "timeoutMs">): Promise<StoredTemplate | null> {
   const f = sendFor("activityTemplate_get", deps);
   try {
     const r = await f(`${endpoint.replace(/\/+$/, "")}/v2/activities/templates/${encodeURIComponent(doorTemplateKey(id))}`, {

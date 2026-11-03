@@ -12809,12 +12809,12 @@ If one of those sibling shapes is the action that would create what the goal ask
           tap(`[goal-host-vessel] walk(${opts.surface}): composite ${_c.pick.id} REFUSED at the write door (outputs=[${_c.pick.outputShapes.join(",")}]) — not executing it`);
         } else if (_c.ok) {
           pickSource = "improvise";
-          pick = { id: _c.pick.id, inputShapes: [], outputShapes: _c.pick.outputShapes };
+          pick = { id: _c.pick.id, inputShapes: _c.pick.inputShapes, outputShapes: _c.pick.outputShapes };
           walkComposed = { id: _c.pick.id, outputShapes: _c.pick.outputShapes, residual: _why === "novel_target" ? _novelC?.residual ?? null : null };
           composedByDispatch.note(String(opts.variables?.dispatch_id ?? ""), _c.pick);
           // a NOVEL walk had no target: the composite's deliverable becomes it, so the walk knows when it is met
           if (target.size === 0) for (const s of _c.pick.outputShapes) target.add(s);
-          tap(`[goal-host-vessel] walk(${opts.surface}): COMPOSED ${_c.pick.reusedExisting ? "existing" : "new"} capability ${_c.pick.id} from existing resolvers (${_why}; outputs=[${_c.pick.outputShapes.join(",")}]) — executing it`);
+          tap(`[goal-host-vessel] walk(${opts.surface}): COMPOSED ${_c.pick.reusedExisting ? "existing" : "new"} capability ${_c.pick.id} from existing resolvers (${_why}; inputs=[${_c.pick.inputShapes.join(",")}]; outputs=[${_c.pick.outputShapes.join(",")}]) — executing it`);
         } else {
           tap(`[goal-host-vessel] walk(${opts.surface}): composite authoring (${_why}) found no chain: ${_c.reason}`);
         }
@@ -13677,7 +13677,11 @@ If one of those sibling shapes is the action that would create what the goal ask
         // in-chain edge here rubber-stamped a hollow fileEditResult reach (dispatch 48400e93:
         // reached:true yet both target files absent on origin/dev) and fed a false posterior.
         // Require deterministic for an edit-effect reach; never credit on the edge alone.
-        const UNRESOLVED_FS_EFFECT = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write"]);
+        // featureComposeReport too (gap an-unjudged-compose-landing-can-mint-a-template-through-the-in-chain-edge-arm-of-
+        // the-mint-gate): a FAVORABLE report is set on typecheck, and only a judged landing sets deterministic. Composite
+        // picks now declare their inputs, so a compose step fed in-chain would otherwise mint (and credit) on the edge
+        // alone. The mint gate reads this same flag, so the two gates keep agreeing.
+        const UNRESOLVED_FS_EFFECT = new Set(["fileEditResult", "fileWriteResult", "fs_edit", "fs_write", "featureComposeReport"]);
         const editEffectReach = (verdict.completion_shapes ?? []).some((s) => UNRESOLVED_FS_EFFECT.has(String(s)))
           || [...producedShapes].some((s) => UNRESOLVED_FS_EFFECT.has(String(s)));
         // A COMMAND HAVING RUN IS NOT EVIDENCE THE ANSWER IS RIGHT. `commandEvidence` used
