@@ -4812,6 +4812,12 @@ function persistReachedCommand(hash: string, e: { command: string; field: string
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
 }
 
+/** A reason that DISCONFIRMS (a deterministic mismatch): it evicts a cached command and is remembered even when the
+ *  dispatch was otherwise unconfirmed. The markers evictReachedCommand has always given eviction precedence. */
+export function reachDisconfirmed(reason: string | null | undefined): boolean {
+  const r = String(reason ?? "").toLowerCase();
+  return r.includes("deterministic:") || r.includes("recomputed") || r.includes("does not match");
+}
 // TOMBSTONE (2026-08-16). The store above is append-only and the loader is last-N-wins, so an
 // in-memory `delete` did not survive a restart: a command banked from a reach that later graded
 // FALSE was resurrected byte-identical on the next boot and replayed by the next similar goal.
@@ -4827,14 +4833,22 @@ function persistReachedCommand(hash: string, e: { command: string; field: string
 // read-modify-write race between concurrent walks), so eviction appends a marker and the loader
 // applies it in order. Last-N-wins then does the right thing for free — a later re-bank after a
 // genuine reach overrides an earlier tombstone, and a later tombstone overrides an earlier bank.
-function evictReachedCommand(hash: string, reason: string): void {
+// `unconfirmed` is the STRUCTURED form of an unconfirmation the reason text cannot carry: the dispatch's early compose
+// was cut at the caller (GoalSeekResult.callerCut), so nothing was graded and the compose may still land. A cut reason
+// names no infrastructure word (cutCallerReason ends "nothing landed for <gap>"), and the strike counter protects only a
+// hash with an in-memory entry, so without the flag the cut tombstoned the hash at once. Disconfirmation keeps precedence.
+export function evictReachedCommand(hash: string, reason: string, unconfirmed = false): void {
   if (observeSkip("reached_command_evict")) return; // OBSERVE (observe-mode.ts): no strike, delete or tombstone
   const envOrUnknown = String(reason ?? "").toLowerCase();
   // Unconfirmation is not disconfirmation (2026-09-18): a grader whose READBACK missed a
   // write that in fact landed must not destroy a proven command. Deterministic mismatch
   // markers keep eviction precedence so never-worked entries stay removable (the ratchet
   // note above still holds).
-  const _disconfirmed = envOrUnknown.includes("deterministic:") || envOrUnknown.includes("recomputed") || envOrUnknown.includes("does not match");
+  const _disconfirmed = reachDisconfirmed(envOrUnknown);
+  if (!_disconfirmed && unconfirmed) {
+    console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (unconfirmed: the compose call was cut at the caller, not a disconfirmation: ${reason})`);
+    return;
+  }
   const _infra = envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown");
   if (!_disconfirmed && _infra) {
     console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (environment or unknown verdict, not a command defect: ${reason})`);
@@ -4964,6 +4978,16 @@ export function dispatchFailureReasons(walkLog: readonly unknown[], finalReason:
 /** Remember a not-reached dispatch's failure reasons (at most three, attempt 1 first) in the failure memory. */
 export function rememberDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): string[] {
   const reasons = dispatchFailureReasons(walkLog, finalReason).slice(0, 3);
+  for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts);
+  return reasons;
+}
+/** rememberDispatchFailures for an UNCONFIRMED dispatch (its compose was cut at the caller: GoalSeekResult.callerCut):
+ *  only reasons that disconfirm (reachDisconfirmed) are remembered. The cut graded nothing, and the compose may land
+ *  after the caller stopped waiting. */
+export function rememberUnconfirmedDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): string[] {
+  const all = dispatchFailureReasons(walkLog, finalReason).slice(0, 3);
+  const reasons = all.filter((r) => reachDisconfirmed(r));
+  if (reasons.length < all.length) console.log(`[goal-host-vessel] failure-memory: NOT REMEMBERED ${all.length - reasons.length} reason(s) of hash=${goalHashOf(goalText)} pick=${pick ?? "-"} (unconfirmed: the compose call was cut at the caller)`);
   for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts);
   return reasons;
 }
@@ -8616,6 +8640,10 @@ interface GoalSeekResult {
   goalReachReason?: string;
   /** Set only when a not-reached floor superseded goalReachReason: the walk's own reason, for readers about the walk's path (the reached-command cache). */
   walkReachReason?: string;
+  /** The early edit-intent compose call was CUT AT THE CALLER (a timeout or a closed socket) and no landing was found:
+   *  the outcome is unconfirmed, not a disconfirmation, so walk-complete neither evicts the cached command nor
+   *  remembers a failure for it (evictReachedCommand / rememberUnconfirmedDispatchFailures). Absent otherwise. */
+  callerCut?: boolean;
   /** A named refusal stage (e.g. check_supply_goal_missed_edit_route), carried onto the dispatch record and served by
    *  GET /executions/:id so refusals of one kind can be counted. Absent on ordinary results. */
   stage?: string;
@@ -15714,6 +15742,7 @@ async function runGoalWithRecoveryInner(
               completionShapes: ["fileEditResult"],
               attempts: 1,
               goalReachReason: cutCallerReason(_probeGapId, _cutOutcome),
+              ...(_earlyComposeCutAtCaller ? { callerCut: true } : {}),
               reached: false,
             };
           }
@@ -20012,7 +20041,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // stayed on disk and was replayed by the next similar goal after every restart.
       if (record.reached === false && typeof record.goal === "string" && record.goal) {
         // The cached command is the WALK's: it is judged on the walk's own reason even when a floor's reason superseded the record's.
-        evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`);
+        // A compose cut at the caller is unconfirmed (seek.callerCut): retained unless its reason disconfirms.
+        if (seek.callerCut === true) evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`, true);
+        else evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`);
       }
       // FAILURE MEMORY: the verdict reason is the lesson. Persist it keyed by goal_hash so the next
       // dispatch of this goal can avoid the named defect explicitly instead of re-deriving blind.
@@ -20022,7 +20053,9 @@ async function handleRunGoal(req: Request): Promise<Response> {
           // goalReachReason describes the worst producer after suppress-drift, not the closest
           // attempt; the most informative lesson is usually the first verdict (measured: A's
           // attempt-1 "5 families instead of 1" was lost behind the drifted "fails to produce").
-          rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+          // A compose cut at the caller is unconfirmed (seek.callerCut): only a disconfirming reason is a lesson.
+          if (seek.callerCut === true) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+          else rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
         }
         else if (record.reached === true) markGoalReached(record.goal);
       }
