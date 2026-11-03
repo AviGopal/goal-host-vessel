@@ -340,7 +340,7 @@ import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseM
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { asksForSecretValue } from "./secret-extraction";
 import { floorObservationsBlock, floorTargetsAfterWalk, type FloorWalkContext } from "./floor-walk-context";
-import { recalledCandidates } from "./shape-recall";
+import { proseProducerOf, recalledCandidates } from "./shape-recall";
 import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
 // B2: composites a dispatch's walks minted, read back at its verdict (a non-reached first run retires a NEW mint).
 const composedByDispatch = new ComposedLedger();
@@ -15089,6 +15089,16 @@ async function runGoalWithRecoveryInner(
         seededOutputShapes &&
         seededOutputShapes.some((sh) => sh !== "shellResult" && new RegExp(`(^|[^a-z0-9_])${sh}([^a-z0-9_]|$)`, "i").test(goal))
       );
+      // ...AND EXCEPT when the CHOICE already chose an answer-bearing producer (gap deterministic-shellresult-shortcuts-
+      // return-before-...: this appender is its remaining instance). With the chooser shown the described candidates
+      // (chooser_tier llm) and every chosen shape a READ (no write, mutation, shell or prose shape), the count comes from
+      // that producer. Appended last, shellResult became the derivation's TERMINAL and the chosen read an intermediate the
+      // shell never consumed (two probes: a correct choice, then a shell terminal and no answer). There shellResult is
+      // HELD as an alternative (the reframe path still tries it when the walk misses), the same rule B1 applies to the
+      // shortcuts: a candidate, not the answer. With no such choice the append is as before.
+      const _prose = proseProducerOf(knownShapes ?? []);
+      const answerBearingChosen = decision.chooser_tier === "llm" && decision.shapes.length > 0
+        && decision.shapes.every((sh) => sh !== "shellResult" && sh !== _prose && !isWriteShape(sh) && !isMutationShape(sh));
       if (
         isCountableQuestion(goal) &&
         !namedProducerInferred &&
@@ -15096,8 +15106,13 @@ async function runGoalWithRecoveryInner(
         seededOutputShapes && seededOutputShapes.length > 0 &&
         !seededOutputShapes.includes("shellResult")
       ) {
-        seededOutputShapes = [...seededOutputShapes, "shellResult"];
-        tap(`[goal-host-vessel] ${opts.surface}: countable goal — APPENDED shellResult to inferred targets ${JSON.stringify(decision.shapes)} so the measurement is composable`);
+        if (answerBearingChosen && seededOutputShapes.every((sh) => decision.shapes.includes(sh))) {
+          if (!decision.alternatives.some((a) => a.length === 1 && a[0] === "shellResult")) goalTargetDecision = { ...decision, alternatives: [...decision.alternatives, ["shellResult"]] };
+          tap(`[goal-host-vessel] ${opts.surface}: countable goal — shellResult HELD as an alternative; the chooser chose answer-bearing ${JSON.stringify(decision.shapes)}, which stays the terminal`);
+        } else {
+          seededOutputShapes = [...seededOutputShapes, "shellResult"];
+          tap(`[goal-host-vessel] ${opts.surface}: countable goal — APPENDED shellResult to inferred targets ${JSON.stringify(decision.shapes)} so the measurement is composable`);
+        }
       }
       // SHELL SAFETY NET (FIX B, 2026-07-23): an IMPERATIVE / system-inspection goal
       // ("count the .ts files under …", "how many vessels are running", "list …",
