@@ -264,7 +264,7 @@ import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } 
 import { conceptRecallPointer } from "./concept-recall-pointer";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { templateReachVerdict } from "./template-reach-rule";
-import { composeAdmissionRefusal } from "./compose-admission-refusal";
+import { ADMISSION_REFUSE_CLASS_PREFIX, composeAdmissionRefusal, isNonAttemptOutcome } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
@@ -4812,6 +4812,10 @@ function persistReachedCommand(hash: string, e: { command: string; field: string
   appendFile(REACHED_CMD_CACHE_PATH, JSON.stringify({ hash, ...e }) + "\n").catch(() => { /* fail-open: in-process cache is authoritative */ });
 }
 
+/** Why a non-attempt outcome is unconfirmed, for walk-complete's evict and remember logs: its kind and class. */
+function nonAttemptWhy(o: { kind?: unknown; refuse_class?: unknown } | null | undefined): string {
+  return `a non-attempt (${String(o?.kind ?? "?")}${typeof o?.refuse_class === "string" ? `/${o.refuse_class}` : ""}), nothing was produced to judge`;
+}
 /** A reason that DISCONFIRMS (a deterministic mismatch): it evicts a cached command and is remembered even when the
  *  dispatch was otherwise unconfirmed. The markers evictReachedCommand has always given eviction precedence. */
 export function reachDisconfirmed(reason: string | null | undefined): boolean {
@@ -4837,7 +4841,8 @@ export function reachDisconfirmed(reason: string | null | undefined): boolean {
 // was cut at the caller (GoalSeekResult.callerCut), so nothing was graded and the compose may still land. A cut reason
 // names no infrastructure word (cutCallerReason ends "nothing landed for <gap>"), and the strike counter protects only a
 // hash with an in-memory entry, so without the flag the cut tombstoned the hash at once. Disconfirmation keeps precedence.
-export function evictReachedCommand(hash: string, reason: string, unconfirmed = false): void {
+// A string names why the outcome is unconfirmed (an admission refusal: the compose never ran).
+export function evictReachedCommand(hash: string, reason: string, unconfirmed: boolean | string = false): void {
   if (observeSkip("reached_command_evict")) return; // OBSERVE (observe-mode.ts): no strike, delete or tombstone
   const envOrUnknown = String(reason ?? "").toLowerCase();
   // Unconfirmation is not disconfirmation (2026-09-18): a grader whose READBACK missed a
@@ -4846,7 +4851,7 @@ export function evictReachedCommand(hash: string, reason: string, unconfirmed = 
   // note above still holds).
   const _disconfirmed = reachDisconfirmed(envOrUnknown);
   if (!_disconfirmed && unconfirmed) {
-    console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (unconfirmed: the compose call was cut at the caller, not a disconfirmation: ${reason})`);
+    console.log(`[goal-host-vessel] reached-command cache: RETAINED ${hash} (unconfirmed: ${typeof unconfirmed === "string" ? unconfirmed : "the compose call was cut at the caller"}, not a disconfirmation: ${reason})`);
     return;
   }
   const _infra = envOrUnknown.includes("capacity") || envOrUnknown.includes("busy") || envOrUnknown.includes("econnrefused") || envOrUnknown.includes("connection") || envOrUnknown.includes("unreachable") || envOrUnknown.includes("timed out") || envOrUnknown.includes("verdict unknown") || envOrUnknown.includes("verdict=unknown");
@@ -4984,10 +4989,10 @@ export function rememberDispatchFailures(goalText: string, walkLog: readonly unk
 /** rememberDispatchFailures for an UNCONFIRMED dispatch (its compose was cut at the caller: GoalSeekResult.callerCut):
  *  only reasons that disconfirm (reachDisconfirmed) are remembered. The cut graded nothing, and the compose may land
  *  after the caller stopped waiting. */
-export function rememberUnconfirmedDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): string[] {
+export function rememberUnconfirmedDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, why = "the compose call was cut at the caller"): string[] {
   const all = dispatchFailureReasons(walkLog, finalReason).slice(0, 3);
   const reasons = all.filter((r) => reachDisconfirmed(r));
-  if (reasons.length < all.length) console.log(`[goal-host-vessel] failure-memory: NOT REMEMBERED ${all.length - reasons.length} reason(s) of hash=${goalHashOf(goalText)} pick=${pick ?? "-"} (unconfirmed: the compose call was cut at the caller)`);
+  if (reasons.length < all.length) console.log(`[goal-host-vessel] failure-memory: NOT REMEMBERED ${all.length - reasons.length} reason(s) of hash=${goalHashOf(goalText)} pick=${pick ?? "-"} (unconfirmed: ${why})`);
   for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts);
   return reasons;
 }
@@ -15652,6 +15657,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: ["fileEditResult"],
                 attempts: 1,
+                outcome: { kind: "refused", refuse_class: `${ADMISSION_REFUSE_CLASS_PREFIX}${_earlyAdmissionStage}` },
                 goalReachReason: `early edit-intent routed to feature_compose; refused at admission (stage=${_earlyAdmissionStage}): ${composeReportReason(earlyBody)} - an admission refusal is final, so it is neither walked nor escalated`,
                 reached: false,
               };
@@ -16563,6 +16569,7 @@ async function runGoalWithRecoveryInner(
                 selectedTemplateId: "feature_compose",
                 completionShapes: null,
                 attempts: 1,
+                outcome: { kind: "refused", refuse_class: `${ADMISSION_REFUSE_CLASS_PREFIX}${_admissionStage}` },
                 goalReachReason: `routed edit-intent to feature_compose; refused at admission (stage=${_admissionStage}): ${String(body.error ?? "").slice(0, 200)} - an admission refusal is final, so it is not escalated to the byte-anchored route`,
                 reached: false,
                 executionId: `feature_compose:refused:${goalHashOf(goal as string)}`,
@@ -20048,6 +20055,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         // The cached command is the WALK's: it is judged on the walk's own reason even when a floor's reason superseded the record's.
         // A compose cut at the caller is unconfirmed (seek.callerCut): retained unless its reason disconfirms.
         if (seek.callerCut === true) evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`, true);
+        // A NON-ATTEMPT (the allowlisted CHANGE-30 outcomes, compose-admission-refusal.ts isNonAttemptOutcome) produced nothing to judge.
+        else if (isNonAttemptOutcome(seek.outcome)) evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`, nonAttemptWhy(seek.outcome));
         else evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? "no reason recorded").slice(0, 120)}`);
       }
       // FAILURE MEMORY: the verdict reason is the lesson. Persist it keyed by goal_hash so the next
@@ -20060,6 +20069,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
           // attempt-1 "5 families instead of 1" was lost behind the drifted "fails to produce").
           // A compose cut at the caller is unconfirmed (seek.callerCut): only a disconfirming reason is a lesson.
           if (seek.callerCut === true) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
+          // A non-attempt (isNonAttemptOutcome): only a disconfirming reason is a lesson.
+          else if (isNonAttemptOutcome(seek.outcome)) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts, nonAttemptWhy(seek.outcome));
           else rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
         }
         else if (record.reached === true) markGoalReached(record.goal);
