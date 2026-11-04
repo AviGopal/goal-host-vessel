@@ -348,7 +348,7 @@ import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
-import { composeReportStage, cutCallerOutcome, cutCallerReason } from "./check-supply-ledger-reason";
+import { composeReportStage, cutCallerOutcome, cutCallerReason, newestLessonSince } from "./check-supply-ledger-reason";
 import { admittedChange, DoorRefusals, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, templateRunRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 // Templates a write door refused, per dispatch: refused again on any re-offer, taken at the terminal record write.
 const doorRefusals = new DoorRefusals();
@@ -15733,7 +15733,12 @@ async function runGoalWithRecoveryInner(
           if (_earlyCheckSupplyNoWalk) {
             // No compose report here (the call was cut or failed): the compose's own outcome is on the gap row, newest
             // lesson since this dispatch started, else stage=unknown (check-supply-ledger-reason.ts).
-            const _cutOutcome = cutCallerOutcome(await readGapByIdForOracle(_probeGapId).catch(() => null), _dispatchStartMs, _earlyComposeCutAtS ?? Math.round((Date.now() - _dispatchStartMs) / 1000));
+            // The row is read once; the lesson check below reads the same row.
+            let _cutRow: Awaited<ReturnType<typeof readGapByIdForOracle>> = null;
+            const _cutOutcome = cutCallerOutcome(await readGapByIdForOracle(_probeGapId).catch(() => null).then((row) => (_cutRow = row)), _dispatchStartMs, _earlyComposeCutAtS ?? Math.round((Date.now() - _dispatchStartMs) / 1000));
+            // A cut is UNCONFIRMED only when the compose recorded no lesson of its own since the dispatch started: a
+            // lesson makes the outcome known (a real failure), so it is graded, evicted and remembered as before.
+            const _cutLessonKnown = newestLessonSince(_cutRow, _dispatchStartMs) !== null;
             tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose failed at the call (no landing for ${_probeGapId}): no escalation; NOT falling through to the walk`);
             return {
               result: null,
@@ -15742,7 +15747,7 @@ async function runGoalWithRecoveryInner(
               completionShapes: ["fileEditResult"],
               attempts: 1,
               goalReachReason: cutCallerReason(_probeGapId, _cutOutcome),
-              ...(_earlyComposeCutAtCaller ? { callerCut: true } : {}),
+              ...(_earlyComposeCutAtCaller && !_cutLessonKnown ? { callerCut: true } : {}),
               reached: false,
             };
           }

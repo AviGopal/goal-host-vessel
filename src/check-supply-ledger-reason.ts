@@ -28,6 +28,24 @@ export function composeReportStage(body: Record<string, unknown> | null | undefi
 interface Lesson { at?: unknown; stage?: unknown; class?: unknown; reason?: unknown; raw_excerpt?: unknown }
 
 /**
+ * The newest failure lesson on the gap row recorded at or after `dispatchStartMs`, else null: the same scan as
+ * cutCallerOutcome, as a record. Non-null means the compose recorded its own outcome during this dispatch, so a cut
+ * caller's outcome is KNOWN, not unconfirmed (index.ts GoalSeekResult.callerCut).
+ */
+export function newestLessonSince(
+  row: { classification_metadata?: Record<string, unknown> } | null | undefined,
+  dispatchStartMs: number,
+): Lesson | null {
+  const lessons = row?.classification_metadata?.["failure_lessons"];
+  let newest: { t: number; l: Lesson } | null = null;
+  for (const l of Array.isArray(lessons) ? (lessons as Lesson[]) : []) {
+    const t = typeof l?.at === "string" ? Date.parse(l.at) : NaN;
+    if (Number.isFinite(t) && t >= dispatchStartMs && (!newest || t > newest.t)) newest = { t, l };
+  }
+  return newest ? newest.l : null;
+}
+
+/**
  * The outcome a cut caller can still report: ` stage=<stage> reason=<text>` from the gap row's newest failure lesson
  * recorded after `dispatchStartMs` (bounded), else ` stage=unknown (caller cut at <n>s, no report)`, n = seconds from
  * dispatch start to the cut (the caller passes the elapsed time when no cut was timed).

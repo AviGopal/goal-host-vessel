@@ -17,7 +17,8 @@ import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cutCallerReason } from "../src/check-supply-ledger-reason";
+import * as ledger from "../src/check-supply-ledger-reason";
+const { cutCallerReason, cutCallerOutcome } = ledger;
 
 const TMP = mkdtempSync(join(tmpdir(), "caller-cut-unconfirmed-"));
 process.env["GOAL_FAILURE_MEMORY_PATH"] = join(TMP, "failure-memory.jsonl");
@@ -59,7 +60,8 @@ describe("[MUST-FAIL] a caller-cut compose is retained and not remembered", () =
     const stop = INDEX.indexOf("if (_earlyCheckSupplyNoWalk) {");
     expect(stop).toBeGreaterThan(0);
     const block = INDEX.slice(stop, stop + 2000);
-    expect(block).toContain("...(_earlyComposeCutAtCaller ? { callerCut: true } : {}),");
+    // the cut was timed at the caller; a narrower condition (no lesson of the compose's own) may join it
+    expect(block).toMatch(/\.\.\.\(_earlyComposeCutAtCaller( && [!\w]+)? \? \{ callerCut: true \} : \{\}\),/);
   });
 
   test("walk-complete passes the cut into both decisions; the pinned calls stay the uncut branch", () => {
@@ -141,5 +143,73 @@ describe("CONTROL: the infrastructure exemptions still retain", () => {
       expect(m.rememberDispatchFailures(goal, [], reason, "feature_compose", ["fileEditResult"], 1)).toEqual([reason]);
       expect(remembered(goal)).toEqual([]);
     }
+  });
+});
+
+// NARROWED: a cut whose compose recorded its own failure lesson during the dispatch is a KNOWN failure, not unconfirmed.
+// cutCallerOutcome found that lesson and the reason quoted its stage, yet callerCut was set on the cut alone, so the
+// failure was retained and not remembered. callerCut now also requires that no lesson was recorded since dispatch start,
+// decided by the same scan as a record (newestLessonSince), never by reading the outcome text.
+const START = 1_900_000_000_000; // a fixed instant, as epoch ms
+const iso = (ms: number): string => new Date(ms).toISOString();
+const rowWith = (lessons: unknown[]) => ({ id: "fixture-gap-narrow", classification_metadata: { failure_lessons: lessons } });
+const KNOWN = rowWith([{ at: iso(START + 60_000), stage: "test_writing", class: "verify_failed", reason: "the written check did not fail at the parent" }]);
+const AT_START = rowWith([{ at: iso(START), stage: "test_writing", reason: "fixture lesson at the start instant" }]);
+const OLDER = rowWith([{ at: iso(START - 60_000), stage: "semantic_gate", reason: "an earlier attempt's lesson" }]);
+
+describe("[MUST-FAIL] a timed cut whose compose recorded a lesson is graded, not unconfirmed", () => {
+  test("the no-walk return sets callerCut only when no lesson was recorded since the dispatch started", () => {
+    const stop = INDEX.indexOf("if (_earlyCheckSupplyNoWalk) {");
+    const block = INDEX.slice(stop, stop + 2500);
+    expect(block).toContain("const _cutLessonKnown = newestLessonSince(_cutRow, _dispatchStartMs) !== null;");
+    expect(block).toContain("...(_earlyComposeCutAtCaller && !_cutLessonKnown ? { callerCut: true } : {}),");
+    // one gap-row read serves both the outcome and the lesson check
+    expect(block.split("readGapByIdForOracle(").length - 1).toBe(1);
+  });
+
+  test("a lesson at or after the dispatch start is found as a record", () => {
+    expect(typeof (ledger as Record<string, unknown>)["newestLessonSince"]).toBe("function");
+    const find = (ledger as Record<string, any>)["newestLessonSince"];
+    expect(find(KNOWN, START)?.stage).toBe("test_writing");
+    expect(find(AT_START, START)?.stage).toBe("test_writing");
+  });
+
+  test("the record and the outcome text come from the same scan", () => {
+    expect(typeof (ledger as Record<string, unknown>)["newestLessonSince"]).toBe("function");
+    const find = (ledger as Record<string, any>)["newestLessonSince"];
+    for (const row of [null, rowWith([]), OLDER, KNOWN, AT_START, rowWith([{ at: "not a time", stage: "x" }])]) {
+      const noReport = cutCallerOutcome(row, START, 342) === " stage=unknown (caller cut at 342s, no report)";
+      expect(find(row, START) === null).toBe(noReport);
+    }
+  });
+});
+
+describe("a known cut failure takes the uncut path; an unknown one stays unconfirmed", () => {
+  test("the known failure's reason names its stage and is remembered on the uncut path", () => {
+    const reason = cutCallerReason("fixture-gap-narrow", cutCallerOutcome(KNOWN, START, 342));
+    expect(reason).toContain("stage=test_writing");
+    const goal = "edit repos/fixture-vessel/src/d.ts to add the fixture symbol (cut, lesson recorded)";
+    expect(m.rememberDispatchFailures(goal, [], reason, "feature_compose", ["fileEditResult"], 1)).toEqual([reason]);
+    expect(remembered(goal).map((r) => r.reason)).toEqual([reason]);
+  });
+
+  test("with no lesson since start (none, or only older), the cut is retained and not remembered", () => {
+    for (const [i, row] of [null, OLDER].entries()) {
+      const reason = cutCallerReason("fixture-gap-narrow", cutCallerOutcome(row, START, 342));
+      expect(reason).toContain("stage=unknown (caller cut at 342s, no report)");
+      const goal = `edit repos/fixture-vessel/src/e${i}.ts to add the fixture symbol (cut, no lesson)`;
+      expect(m.rememberUnconfirmedDispatchFailures(goal, [], reason, "feature_compose", ["fileEditResult"], 1)).toEqual([]);
+      expect(remembered(goal)).toEqual([]);
+      const lines = evictLog(`fixture-hash-narrow-${i}`, `reach graded false: ${reason.slice(0, 120)}`, true);
+      expect(lines.join("\n")).toContain("(unconfirmed:");
+      expect(lines.join("\n")).not.toMatch(/EVICTED|strike/);
+    }
+  });
+
+  test("a deterministic marker still disconfirms an unconfirmed dispatch", () => {
+    const det = "deterministic:early-edit-intent-hollow the requested symbol is absent (narrow fixture)";
+    const goal = "edit repos/fixture-vessel/src/f.ts to add the fixture symbol (cut, deterministic)";
+    expect(m.rememberUnconfirmedDispatchFailures(goal, [], det, "feature_compose", ["fileEditResult"], 1)).toEqual([det]);
+    expect(m.reachDisconfirmed(det)).toBe(true);
   });
 });
