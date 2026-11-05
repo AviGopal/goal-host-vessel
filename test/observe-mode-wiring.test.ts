@@ -51,7 +51,8 @@ describe("each side effect asks observeSkip first", () => {
   test("failure memory: rememberGoalFailure (so rememberDispatchFailures) and markGoalReached", () => {
     expect(firstLines("function rememberGoalFailure(", 2)).toContain('if (observeSkip("failure_memory")) return;');
     expect(firstLines("function markGoalReached(", 3)).toContain('if (observeSkip("failure_memory")) return;');
-    expect(fnBody("export function rememberDispatchFailures(", 400)).toContain("rememberGoalFailure(goalText, r, pick, shapes, attempts)");
+    // Every reason goes through rememberGoalFailure (its observe gate); the call also passes the record's outcome source.
+    expect(fnBody("export function rememberDispatchFailures(", 600)).toContain("rememberGoalFailure(goalText, r, pick, shapes, attempts, undefined, source)");
   });
   test("reached-command cache: the bank, the donation and the evict/tombstone all skip", () => {
     expect(firstLines("function persistReachedCommand(", 2)).toContain('if (observeSkip("reached_command_bank")) return;');

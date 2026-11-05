@@ -333,7 +333,7 @@ import { buildInvestigationGrepCommand } from "./investigation-evidence.js";
 import { verifyVerbatimFileRead, verbatimReadTarget, fileReadOf, type FileRead, createVerbatimShadow, shadowBudgetFrom, type ShadowBudget } from "./verbatim-read";
 import { verifyAssertedDate, temporalGroundingBlock, timeRelativeOffset } from "./reach-date";
 import { hasLocalRead, isReadRoleShape, judgeModelOnly, judgeReach, judgeReachInParts, judgeShadowOf, storeFamilyOf } from "./reach-grounding";
-import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, observeOffGoalContent, targetSimilarityKey } from "./failure-recall";
+import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, observeOffGoalContent, targetSimilarityKey, legacyCallerCutLesson, failureRecallVariant, failureRecallDecision, failureRecallTrace, failureRecallCreditTrace, type FailureOutcomeSource } from "./failure-recall";
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeViewParts, DELIVERABLE_CAP, type JudgeCut, type JudgeViewPart, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
@@ -4901,7 +4901,8 @@ async function loadReachedCommandCache(): Promise<void> {
 // reach are not fed back), so a goal that now reaches gets its reuse back and a goal that goes
 // hollow again after a counterfeit reach is steered again. Fail-open throughout, like the caches.
 type GoalFailureRecord = { hash: string; reason: string; pick: string | null; shapes: string[]; attempts: number; at: string; deterministic: boolean; /** the attempt's inferred targets (CHANGE-35 / A2b-min) */ targets?: string[];
-  /** the goal-target-inference DECISION for the goal: the near-miss key (failure-recall.ts) */ inferred?: string[]; /** the goal's text, ids stripped, shown when the lesson reaches a DIFFERENT goal */ goal?: string };
+  /** the goal-target-inference DECISION for the goal: the near-miss key (failure-recall.ts) */ inferred?: string[]; /** the goal's text, ids stripped, shown when the lesson reaches a DIFFERENT goal */ goal?: string;
+  /** where the reason came from (failure-recall.ts); absent on every record written before it existed */ outcome_source?: FailureOutcomeSource };
 const goalFailureMemory = new Map<string, GoalFailureRecord[]>();
 const goalLastReachedAt = new Map<string, string>();
 // Every failure stamp per goal (uncapped by GOAL_FAILURE_PER_HASH, bounded below), for counting distinct failed RUNS since the last reach
@@ -4918,7 +4919,7 @@ function noteGoalFailureStamp(hash: string, at: string): void {
 const goalFailureMemoryPath = (): string => process.env.GOAL_FAILURE_MEMORY_PATH ?? "/workspace/.goal-host-failure-memory.jsonl";
 const GOAL_FAILURE_MEMORY_MAX_LOAD = 4000;
 const GOAL_FAILURE_PER_HASH = 5;
-function rememberGoalFailure(goalText: string, reason: string | undefined | null, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, decided: readonly string[] | null | undefined = inferredTargetDecisionCache.get(goalHashOf(goalText))?.shapes): void {
+function rememberGoalFailure(goalText: string, reason: string | undefined | null, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, decided: readonly string[] | null | undefined = inferredTargetDecisionCache.get(goalHashOf(goalText))?.shapes, source?: FailureOutcomeSource): void {
   if (observeSkip("failure_memory")) return; // OBSERVE (observe-mode.ts): nothing is remembered, in process or on disk
   const r = String(reason ?? "").trim();
   if (!goalText || !r) return;
@@ -4938,6 +4939,7 @@ function rememberGoalFailure(goalText: string, reason: string | undefined | null
   // The near-miss key is the inference DECISION (never word tokens), compared decision-to-decision at recall.
   if (decided && decided.length > 0) rec.inferred = decided.slice(0, 8);
   rec.goal = stripDispatchIds(goalText).slice(0, 300);
+  if (source) rec.outcome_source = source;
   list.push(rec); while (list.length > GOAL_FAILURE_PER_HASH) list.shift();
   goalFailureMemory.set(rec.hash, list);
   noteGoalFailureStamp(rec.hash, rec.at);
@@ -4981,19 +4983,19 @@ export function dispatchFailureReasons(walkLog: readonly unknown[], finalReason:
   return reasons;
 }
 /** Remember a not-reached dispatch's failure reasons (at most three, attempt 1 first) in the failure memory. */
-export function rememberDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined): string[] {
+export function rememberDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, source: FailureOutcomeSource = "graded"): string[] {
   const reasons = dispatchFailureReasons(walkLog, finalReason).slice(0, 3);
-  for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts);
+  for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts, undefined, source);
   return reasons;
 }
 /** rememberDispatchFailures for an UNCONFIRMED dispatch (its compose was cut at the caller: GoalSeekResult.callerCut):
  *  only reasons that disconfirm (reachDisconfirmed) are remembered. The cut graded nothing, and the compose may land
  *  after the caller stopped waiting. */
-export function rememberUnconfirmedDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, why = "the compose call was cut at the caller"): string[] {
+export function rememberUnconfirmedDispatchFailures(goalText: string, walkLog: readonly unknown[], finalReason: string | null | undefined, pick: string | undefined | null, shapes: string[] | null | undefined, attempts: number | undefined, why = "the compose call was cut at the caller", source: FailureOutcomeSource = "unconfirmed"): string[] {
   const all = dispatchFailureReasons(walkLog, finalReason).slice(0, 3);
   const reasons = all.filter((r) => reachDisconfirmed(r));
   if (reasons.length < all.length) console.log(`[goal-host-vessel] failure-memory: NOT REMEMBERED ${all.length - reasons.length} reason(s) of hash=${goalHashOf(goalText)} pick=${pick ?? "-"} (unconfirmed: ${why})`);
-  for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts);
+  for (const r of reasons) rememberGoalFailure(goalText, r, pick, shapes, attempts, undefined, source);
   return reasons;
 }
 /**
@@ -5038,10 +5040,76 @@ function markGoalReached(goalText: string): void {
  *  decision has the same target set as this goal's (near; failure-recall.ts). `targets` defaults to the goal's current
  *  decision; before its first inference there is none, so near is empty until the decision exists. */
 function recallGoalFailures(goalText: string, targets: readonly string[] | null | undefined = inferredTargetDecisionCache.get(goalHashOf(goalText))?.shapes): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
+  const all = recallAllGoalFailures(goalText, targets);
+  // goal-host:failure-recall variant-1 (failure-recall.ts), when this dispatch decided it: legacy caller-cut lessons out.
+  if ((dispatchContext.getStore() as DispatchContextStore | undefined)?.failureRecall?.variant !== 1) return all;
+  return { exact: all.exact.filter((r) => !legacyCallerCutLesson(r)), near: all.near.filter((r) => !legacyCallerCutLesson(r)) };
+}
+function recallAllGoalFailures(goalText: string, targets: readonly string[] | null | undefined): { exact: GoalFailureRecord[]; near: GoalFailureRecord[] } {
   const hash = goalHashOf(goalText);
   const since = (h: string) => goalLastReachedAt.get(h) ?? "";
   const exact = exactFailuresSince(goalFailureMemory.get(hash) ?? [], since(hash));
   return { exact, near: nearFailures(goalFailureMemory, hash, targets, since) };
+}
+/** The open activityVariantMask rows (development-vessel's pool, the same resolve ownSubstratePeers reads), or null. */
+async function readVariantMasks(): Promise<Array<{ id?: string; body?: unknown }> | null> {
+  try {
+    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ impulse: { pointer: { type: "poolImpulse", shape: "activityVariantMask", status: "open" } } }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!r.ok) { try { await r.body?.cancel(); } catch { /* swallow */ } return null; }
+    const j = (await r.json()) as { body?: { impulses?: unknown } };
+    return Array.isArray(j?.body?.impulses) ? (j.body.impulses as Array<{ id?: string; body?: unknown }>) : null;
+  } catch { return null; }
+}
+/** POST one recall trace to activity-api. The HTTP status, or null when nothing was sent. Never throws. */
+async function postRecallTrace(trace: Record<string, unknown>): Promise<number | null> {
+  try {
+    const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/activities/execution-traces`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify(trace),
+      signal: AbortSignal.timeout(5_000),
+    });
+    try { await r.body?.cancel(); } catch { /* swallow */ }
+    return r.status;
+  } catch { return null; }
+}
+/** THE DISPATCH'S RECALL DECISION, once, at its first recall: the variant in force (the mask, read now), and its own
+ *  trace when anything was recalled. A dispatch with no root record (none begun above it) or an observe dispatch
+ *  recalls as variant-0 and traces nothing. Never throws, never blocks on the trace post. */
+async function decideFailureRecall(goalText: string, surface: string): Promise<void> {
+  const store = dispatchContext.getStore() as DispatchContextStore | undefined;
+  const fr = store?.failureRecall;
+  if (!store || !fr || fr.variant !== undefined) return;
+  if (dispatchLearningMode() === "observe") { fr.variant = 0; fr.why = "observe dispatch: variant-0"; return; }
+  const nowIso = new Date().toISOString();
+  const pick = failureRecallVariant(nowIso, await readVariantMasks());
+  const all = recallAllGoalFailures(goalText, inferredTargetDecisionCache.get(goalHashOf(goalText))?.shapes);
+  const d = failureRecallDecision(pick.variant, pick.why, all.exact, all.near);
+  fr.variant = d.variant; fr.why = d.why; fr.matched = d.matched.length;
+  console.log(`[goal-host-vessel] ${surface}: failure-recall variant=${d.variant} (${d.why}) exact ${d.exact_before}->${d.exact_after} near ${d.near_before}->${d.near_after} legacy_cut=${d.matched.length}${d.reuse_enabled_by_filter ? " reuse_enabled_by_filter" : ""}`);
+  if (d.exact_before + d.near_before === 0) { fr.traceId = null; return; }
+  const trace = failureRecallTrace(d, goalHashOf(goalText), store.dispatchId, nowIso);
+  fr.traceId = String(trace["execution_id"]);
+  void postRecallTrace(trace).then((st) => {
+    if (st === null || st < 200 || st >= 300) { fr.traceId = null; console.warn(`[goal-host-vessel] failure-recall: own trace not posted (http=${st ?? "none"}); its credit is not posted either`); }
+  });
+}
+/** THE RECALL'S CREDIT: posted once, at the consuming dispatch's DECIDED verdict, only when variant-1's clause matched a
+ *  record (removed under variant-1, would have under variant-0). An undecided verdict, or nothing matched: ungraded. */
+function creditFailureRecall(reached: unknown, decided: boolean): void {
+  const fr = (dispatchContext.getStore() as DispatchContextStore | undefined)?.failureRecall;
+  if (!fr || fr.credited || !fr.traceId || !(fr.matched && fr.matched > 0)) return;
+  if (typeof reached !== "boolean" || !decided) { console.log(`[goal-host-vessel] failure-recall: ungraded (the dispatch's verdict is not decided)`); return; }
+  fr.credited = true;
+  const variant = fr.variant ?? 0;
+  void postRecallTrace(failureRecallCreditTrace(fr.traceId, variant, reached, fr.matched, new Date().toISOString())).then((st) => {
+    if (st === null || st < 200 || st >= 300) console.warn(`[goal-host-vessel] failure-recall: credit trace not posted (http=${st ?? "none"})`);
+  });
 }
 /** The targets a retry of this goal must not choose again: every target of the unbroken run of LATEST graded misses
  *  since its last reach (src/failed-targets.ts targetsToAvoid). A latest failure that is not a verdict, or a reach
@@ -14730,6 +14798,7 @@ async function runGoalWithRecoveryInner(
   // re-deriving blind. Paired with disableReuse on attempt 1: a cached recipe whose latest verdict
   // was hollow is not replayed on the strength of one earlier reach.
   // let, not const: the near-miss half is keyed on this goal's target DECISION, so it is recomputed once inference decides.
+  if (goal) await decideFailureRecall(goal, opts.surface);
   let _priorFailureFeedback = goal ? priorFailureFeedbackFor(goal) : "";
   const _priorExactFailures = goal ? recallGoalFailures(goal).exact.length : 0;
   if (_priorFailureFeedback && goal) {
@@ -20047,6 +20116,8 @@ async function handleRunGoal(req: Request): Promise<Response> {
         console.log(`[goal-host-vessel] reach DEFERRED to a person (walk-complete): ${record.executionId} is a judge-only reach; no /reach until a person's verdict or the window ends`);
       } else {
         deliverReachVerdict(record.executionId, record.reached, seek.completionShapes, "walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")), betaWithheld);
+        // The recall this dispatch consumed is graded by the dispatch's own decided verdict (failure-recall.ts).
+        creditFailureRecall(record.reached, !seek.abstain);
       }
       // A FALSE verdict must be able to un-bank what a TRUE verdict banked. Without this the
       // known-command library only ever grows: a command from a reach that later graded false
@@ -20070,7 +20141,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           // A compose cut at the caller is unconfirmed (seek.callerCut): only a disconfirming reason is a lesson.
           if (seek.callerCut === true) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
           // A non-attempt (isNonAttemptOutcome): only a disconfirming reason is a lesson.
-          else if (isNonAttemptOutcome(seek.outcome)) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts, nonAttemptWhy(seek.outcome));
+          else if (isNonAttemptOutcome(seek.outcome)) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts, nonAttemptWhy(seek.outcome), "non_attempt");
           else rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);
         }
         else if (record.reached === true) markGoalReached(record.goal);
@@ -20127,7 +20198,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
       // one pinned target, not the goal, and a remembered failure turns off reached-command replay for the goal.
       record.goalReachReason = thrownDispatchReason(err);
       if (!__isPinnedRefusal && typeof record.goal === "string" && record.goal) {
-        rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, record.selectedTemplateId, (record as { completionShapes?: string[] | null }).completionShapes ?? null, (record as { attempts?: number }).attempts);
+        rememberDispatchFailures(record.goal, walkStepSink, record.goalReachReason, record.selectedTemplateId, (record as { completionShapes?: string[] | null }).completionShapes ?? null, (record as { attempts?: number }).attempts, "dispatch_error");
       }
       // A throw is an honest negative verdict, and it was never delivered: the only
       // delivery site sat on the success path above this catch, so the executions the
@@ -20139,6 +20210,7 @@ async function handleRunGoal(req: Request): Promise<Response> {
           record.executionId = await persistFailedWalkTrace(String(goal ?? ""), walkStepSink, (record as { completionShapes?: string[] | null }).completionShapes ?? null, record.error, [], "walk-threw");
         } catch { /* leave executionId as-is */ }
       }
+      if (!__isPinnedRefusal) creditFailureRecall(false, true);
       if (!__isPinnedRefusal) deliverReachVerdict(record.executionId, false, (record as { completionShapes?: string[] | null }).completionShapes ?? [], "walk-threw", record.error, goalHashOf(String(goal ?? "")), betaWithheld);
       // A dispatch that THREW never reached the classifier below, so it used to
       // terminalize with no executionPath at all — indistinguishable, to every
@@ -21678,6 +21750,8 @@ export {
   runGoalWithRecovery,
   rememberGoalFailure,
   recallGoalFailures,
+  decideFailureRecall,
+  creditFailureRecall,
   runGroundedToolLoop,
   universalToolFallback,
   isDeterministicVerdict,

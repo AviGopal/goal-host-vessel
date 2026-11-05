@@ -23,7 +23,11 @@ export interface DispatchContextStore {
   recalledConceptIds?: Set<string>;
   /** every id this dispatch runs under (its root id and a caller-supplied alias), set at its root (noteDispatchIds) */
   dispatchIds?: ReadonlySet<string>;
+  /** the dispatch's failure-recall decision (failure-recall.ts): begun empty at its root, decided at its first recall */
+  failureRecall?: DispatchFailureRecall;
 }
+/** One dispatch's failure recall: its variant once decided, its own trace's id, and whether its credit was posted. */
+export interface DispatchFailureRecall { variant?: number; why?: string; traceId?: string | null; matched?: number; credited?: boolean }
 
 /** Whether `prev` belongs to a different dispatch than the one entering as `dispatchId`. */
 export function isForeignStore(prev: DispatchContextStore | undefined, dispatchId: string): boolean {
@@ -33,7 +37,7 @@ export function isForeignStore(prev: DispatchContextStore | undefined, dispatchI
 /** The store an entry site enters: `prev` (the current store, if any) with this site's defined fields laid over it. */
 export function enterDispatchContext(prev: DispatchContextStore | undefined, own: { dispatchId: string; decomposeGapId?: string; learningMode?: DispatchLearningMode; goal?: string }): DispatchContextStore {
   const next: DispatchContextStore = { ...prev, dispatchId: own.dispatchId };
-  if (isForeignStore(prev, own.dispatchId)) { delete next.decomposeGapId; delete next.recalledConceptIds; delete next.dispatchIds; }
+  if (isForeignStore(prev, own.dispatchId)) { delete next.decomposeGapId; delete next.recalledConceptIds; delete next.dispatchIds; delete next.failureRecall; }
   if (own.decomposeGapId && !next.decomposeGapId) next.decomposeGapId = own.decomposeGapId;
   if (own.learningMode && next.learningMode !== "observe") next.learningMode = own.learningMode;
   if (own.goal) next.goal = own.goal;
@@ -51,9 +55,10 @@ export function enterDispatchContext(prev: DispatchContextStore | undefined, own
 /** At most this many recalled concept ids are kept per dispatch, and sent on its reach verdict. */
 export const RECALLED_CONCEPT_IDS_CAP = 50;
 
-/** The dispatch's root entry begins its recall record, empty, on the store it just entered. */
+/** The dispatch's root entry begins its recall record, empty, on the store it just entered (and its failure-recall
+ *  record, shared by reference with every entry below it like the concept ids). */
 export function beginRecallRecord(store: DispatchContextStore | undefined): void {
-  if (store) store.recalledConceptIds = new Set<string>();
+  if (store) { store.recalledConceptIds = new Set<string>(); store.failureRecall = {}; }
 }
 
 /** The dispatch's root records the ids it runs under: its own and, when the caller supplied one, variables.dispatch_id. */
