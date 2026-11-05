@@ -1,8 +1,8 @@
 {
   "source": "development-vessel src/resolvers/pool-impulse.ts",
-  "dev_vessel_sha": "43a546c0e6c8530ed5c16768b60e08abf11f126c",
+  "dev_vessel_sha": "0746a7ffb845368fd92fe2a89807f5a025a77698",
   "runner_only_shapes": ["verdictCorpusStatus", "verdictCorpusWriteRefusal"],
   "runner_only_ids": ["verdictCorpusStatus"],
   "runner_only_id_prefixes": ["verdictCorpusWriteRefusal:"],
-  "trust_root_shapes": ["autonomyScope", "calibrationWindow", "daemonAuthPolicy", "fedIngressAuthPolicy", "operatorHold", "posteriorReplayAuthorization", "scriptRunnerAllowlist", "spendEnvelope", "substrateNodes", "verdictCorpusWriter"]
+  "trust_root_shapes": ["autonomyScope", "calibrationWindow", "daemonAuthPolicy", "fedIngressAuthPolicy", "operatorHold", "posteriorReplayAuthorization", "scriptRunnerAllowlist", "spendEnvelope", "substrateNodes", "verdictCorpusWriter", "activityVariantMask"]
 }

@@ -184,7 +184,7 @@ describe("(d) the lists cannot drift from development-vessel's", () => {
 
   it("the parser reads dev-vessel's form (pinned on a fixture of the pinned sha's declarations)", () => {
     const fixture = [
-      "export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set(['substrateNodes', 'autonomyScope', 'spendEnvelope', 'calibrationWindow', 'scriptRunnerAllowlist', 'operatorHold', 'posteriorReplayAuthorization', 'verdictCorpusWriter', 'fedIngressAuthPolicy', 'daemonAuthPolicy']);",
+      "export const TRUST_ROOT_POOL_SHAPES: ReadonlySet<string> = new Set(['substrateNodes', 'autonomyScope', 'spendEnvelope', 'calibrationWindow', 'scriptRunnerAllowlist', 'operatorHold', 'posteriorReplayAuthorization', 'verdictCorpusWriter', 'fedIngressAuthPolicy', 'daemonAuthPolicy', 'activityVariantMask']);",
       "export const VERDICT_CORPUS_STATUS_SHAPE = 'verdictCorpusStatus';",
       "export const VERDICT_CORPUS_STATUS_ID = 'verdictCorpusStatus';",
       "export const VERDICT_CORPUS_REFUSAL_SHAPE = 'verdictCorpusWriteRefusal';",
