@@ -184,7 +184,9 @@ export function pickConceptDbRow<T extends ProducerRow & { id?: unknown; vesselI
   const own = (x: T) => { const o = urlOrigin(x.peerEndpoint); return o !== null && !!ownPeers?.has(o); };
   const local = named.find((x) => isHttp(x) && producerClass(x) === 0);
   if (local) return { via: 'http', row: local };
-  const ownPeer = named.find((x) => isHttp(x) && x.discoveredVia === 'peer' && own(x));
+  // A peer row whose endpoint is loopback names the PEER's loopback, which is not reachable from here.
+  // Only a re-homed row that dials its own non-loopback endpoint (dialsOwnEndpoint) beats the relay.
+  const ownPeer = named.find((x) => isHttp(x) && own(x) && dialsOwnEndpoint(x));
   if (ownPeer) return { via: 'http', row: ownPeer };
   const relay = named.find(isRelay);
   if (relay) return { via: 'relay', row: relay };
