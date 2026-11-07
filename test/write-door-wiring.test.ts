@@ -41,9 +41,12 @@ describe("write doors are wired", () => {
     expect(src).toContain('noteWriteRefusal("satisfier", _fsBlocked.length);');
     expect(after("const vesselResolveShapeInner = async (shape: string)", 1200)).toContain('noteWriteRefusal("vessel_resolve");');
   });
-  test("admission: set only where the edit-intent route hands off to feature_compose, carried to every walk", () => {
+  test("admission: set only where the edit-intent route hands off to feature_compose (or, under the route's variant 1, where the same rules would have), carried to every walk", () => {
     expect(after('if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {', 120)).toContain("_changeAdmitted = true;");
-    expect(src.match(/_changeAdmitted = true/g)?.length).toBe(1);
+    // Variant 1 of goal-host-vessel:edit-intent-route (edit-intent-route.ts): no hand-off, the routing rules' would-be
+    // hand-off admits the change and the dispatch walks toward the landing. The only other admission site.
+    expect(after('if (wouldHandoff.route === "feature_compose" && wouldHandoff.target) {', 120)).toContain("_changeAdmitted = true;");
+    expect(src.match(/_changeAdmitted = true/g)?.length).toBe(2);
     expect(src).toContain("let _changeAdmitted = admittedChange({ admittedEditRoute: false, declaredOutputShapes: opts.expectedOutputShapes });");
     expect(src.match(/runGoalAsPoolWalk\(goal, \{\n\s*changeAdmitted: _changeAdmitted,/g)?.length).toBe(4);
     expect(src).toContain("const changeAdmitted = opts.changeAdmitted === true;");

@@ -136,7 +136,7 @@ describe("judge capture wiring pin: every decision site calls the closed capture
   });
 
   test("routing: the early edit-intent check records the route switch it decided with", () => {
-    callAfter(`const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";`, "judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: earlyEditIntentEnabled });", 2);
+    callAfter(`const earlyEditIntentEnabled = _editIntentRoute.route_enabled;`, "judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: earlyEditIntentEnabled });", 2);
   });
 
   test("binding: the /run-goal dispatch binds its record for every capture below it", () => {

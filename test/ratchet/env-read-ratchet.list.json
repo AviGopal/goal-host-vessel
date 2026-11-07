@@ -320,11 +320,6 @@
     "reason": "toggle: route activity-repair goals (read in src/index.ts)"
   },
   {
-    "name": "ROUTE_EDIT_INTENT_TO_COMPOSE",
-    "class": "behaviour",
-    "reason": "toggle: route edit-intent goals to feature_compose (read in src/index.ts)"
-  },
-  {
     "name": "SCAFFOLD_ENDPOINT",
     "class": "bootstrap",
     "reason": "peer endpoint URL: scaffold resolver (read in src/activities/loopC-vessel-designer.ts)"

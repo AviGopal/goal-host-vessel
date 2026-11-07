@@ -349,6 +349,7 @@ import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains,
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
 import { composeReportStage, cutCallerOutcome, cutCallerReason, newestLessonSince } from "./check-supply-ledger-reason";
+import { editIntentRouteDecision, editIntentRouteLine, inProcessLanding, landingSatisfiedBy, LANDING_TARGET_SHAPE, withLandingTarget } from "./edit-intent-route";
 import { admittedChange, DoorRefusals, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, templateRunRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 // Templates a write door refused, per dispatch: refused again on any re-offer, taken at the terminal record write.
 const doorRefusals = new DoorRefusals();
@@ -9183,6 +9184,17 @@ async function runGoalAsPoolWalkBody(
     if (!shape || producedShapes.has(shape)) return;
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary, prov));
+    // NO DOUBLE LANDING (edit-intent-route.ts): a step that already LANDED in process (patch_with_tools: landed:true or
+    // a new_git_sha in its output) produced the landing itself. When the walk targets the landing shape, record it as
+    // produced here, the one place targetMet and every missing-target pick read, so no second landing step
+    // (mitosis-tick / vessel_mitosis_cutover) is sought or run for this dispatch. writeDoorProduct, not `target`: this
+    // closure runs during seeding, before `target` is declared.
+    if (shape !== LANDING_TARGET_SHAPE && landingSatisfiedBy(shape, content, writeDoorProduct, producedShapes, prov?.producedBy)) {
+      const landing = inProcessLanding(content);
+      addToPool(LANDING_TARGET_SHAPE, { satisfied_by: shape, landed: true, new_git_sha: landing.new_git_sha }, `landed in process by ${shape}`, { producedBy: prov?.producedBy ?? "goal-host-walk" });
+      tap(`[goal-host-vessel] walk(${opts.surface}): ${LANDING_TARGET_SHAPE} satisfied by the in-process landing in ${shape} ` +
+        JSON.stringify({ new_git_sha: landing.new_git_sha }) + " - no second landing step for this dispatch");
+    }
     // The write's confirmed read-back, as the next step (walk-read-back.ts): the real read record, never a stub.
     const rb = readBackStepFor(shape, confirmedReadBacks, producedShapes);
     if (rb) {
@@ -15467,14 +15479,35 @@ async function runGoalWithRecoveryInner(
       terminalOutputShapes = undefined;
     }
     noteDispatchedTargets(goal, seededOutputShapes);
+    // The edit-intent route switch (edit-intent-route.ts), read once per dispatch: one decision line (mask id, state,
+    // why) into the dispatch's decision log. Never throws: an unreadable pool is variant 0.
+    const _editIntentRoute = editIntentRouteDecision(new Date().toISOString(), await readVariantMasks());
+    tap(editIntentRouteLine(opts.surface, _editIntentRoute));
     try {
       // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
       // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
       // The decision is the routing rules' (src/routing-rules/edit-intent.ts decideHandoff, clamped by the closed
       // routing core), pinned by the routing corpus; the predicate and its history live there.
-      const earlyEditIntentEnabled = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0";
+      // THE SWITCH IS A SHAPED RECORD (edit-intent-route.ts): the activityVariantMask row for
+      // goal-host-vessel:edit-intent-route, read here once per dispatch and used by the early route, the post-walk
+      // edit check and the late route below. Variant 0, no row, an unreadable pool: route as before; variant 1: walk.
+      const earlyEditIntentEnabled = _editIntentRoute.route_enabled;
       // CAPTURE (closed, src/judge/capture.ts): the route switch exactly as this check read it.
       judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: earlyEditIntentEnabled });
+      // VARIANT 1: no feature_compose hand-off, but the goal is still a change. Ask the same routing rules whether they
+      // WOULD have handed it off (their refusals of a goal that forbids change included); if so, admit the dispatch as
+      // a change and seed the landing shape as a walk target, so backward-chaining starts from the landing.
+      if (!earlyEditIntentEnabled) {
+        const wouldHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });
+        if (wouldHandoff.route === "feature_compose" && wouldHandoff.target) {
+          _changeAdmitted = true; // admitted on the edit-intent rules' own decision, walked instead of composed
+          seededOutputShapes = withLandingTarget(seededOutputShapes, isFsWriteShape);
+          goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
+          noteDispatchedTargets(goal, seededOutputShapes);
+          tap(`[goal-host-vessel] ${opts.surface}: edit-intent-route variant=1: change admitted, walking toward ${LANDING_TARGET_SHAPE} instead of feature_compose ` +
+            JSON.stringify({ goal_hash: goalHashOf(goal), target_file: wouldHandoff.target, targets: seededOutputShapes, mask_id: _editIntentRoute.mask_id, mask_state: _editIntentRoute.mask_state }));
+        }
+      }
       const earlyHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: earlyEditIntentEnabled });
       if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {
         _changeAdmitted = true; // admitted on the edit-intent route; a compose that falls through walks as a change
@@ -16280,7 +16313,7 @@ async function runGoalWithRecoveryInner(
           }
         }
       }
-      const editIntentGoal = process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0" && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
+      const editIntentGoal = _editIntentRoute.route_enabled && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
       // A >0-step walk that "reached" via a source_code / analysis READ satisfier does
       // NOT serve an edit-intent goal (read != edit) — this is how a code-edit goal got
       // hollow-satisfied as a source read, bypassing the edit-intent routing below. When
@@ -16288,7 +16321,10 @@ async function runGoalWithRecoveryInner(
       // read/analysis shapes, fall through to edit-intent routing instead of returning.
       const goalIsEditIntent = isEditIntentGoal(goal);
       const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
-      const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+      // Under edit-intent-route variant 1 the walk IS the change's route, so its landing shapes count as an edit too
+      // (a landed walk returns here instead of falling into the recovery loop and landing again). Variant 0: unchanged.
+      const EDIT_RESULT_SHAPES_IN_FORCE = _editIntentRoute.variant === 1 ? [...EDIT_RESULT_SHAPES, "cutoverapplied", "vesselmitosiscutoverresult"] : EDIT_RESULT_SHAPES;
+      const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES_IN_FORCE.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
       // PROSE-OVER-SOURCE GROUNDING (2026-07-27). EVIDENCE (live probes): summarize/explain-
       // a-named-file goals hollow-REACH — either mis-select an irrelevant learned composite,
       // or resolve a BARE tool-less llm_completion_dispatch that CONFABULATES from memory
@@ -16354,7 +16390,8 @@ async function runGoalWithRecoveryInner(
       // guarded: fires ONLY on 0-step walks that name a repos/<vessel>/.../<file>.<ext>,
       // a case that ALWAYS fails into a tick today — no regression surface. Flag-off or
       // any throw falls through to the existing authorFallback/recommend path unchanged.
-      if (process.env.ROUTE_EDIT_INTENT_TO_COMPOSE !== "0") {
+      // The late route reads the same switch record as the early one: under variant 1 nothing is handed to feature_compose.
+      if (_editIntentRoute.route_enabled) {
         const fileMatch = goal.match(/repos\/([\w.-]+)\/[\w./-]+\.\w+/);
         // The late route reads the same refusals as the early hand-off (goal-intent.ts): a goal that forbids every change,
         // or asks for a description and forbids change, is never handed to a landing compose here either.
