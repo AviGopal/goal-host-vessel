@@ -40,6 +40,13 @@ describe("isUsableBudget", () => {
     expect(isUsableBudget({ max_attempts_per_producer: -1 })).toBe(false);
   });
 
+  test("accepts a budget holding only walk fields, each alone; rejects each at zero", () => {
+    for (const k of ["max_no_progress_steps", "executor_correction_budget", "recall_budget_ms", "shape_recall_k", "recall_cache_ttl_ms"]) {
+      expect(isUsableBudget({ [k]: 3 })).toBe(true);
+      expect(isUsableBudget({ [k]: 0 })).toBe(false);
+    }
+  });
+
   test("REJECTS non-numeric and non-object shapes", () => {
     expect(isUsableBudget({ max_iters: "lots" })).toBe(false);
     expect(isUsableBudget({ max_iters: NaN })).toBe(false);
