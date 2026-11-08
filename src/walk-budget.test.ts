@@ -34,6 +34,12 @@ describe("isUsableBudget", () => {
     expect(isUsableBudget({ ...VALID, wall_clock_ms: 0 })).toBe(false);
   });
 
+  test("accepts max_attempts_per_producer alone and rejects it at zero or below", () => {
+    expect(isUsableBudget({ max_attempts_per_producer: 2 })).toBe(true);
+    expect(isUsableBudget({ max_attempts_per_producer: 0 })).toBe(false);
+    expect(isUsableBudget({ max_attempts_per_producer: -1 })).toBe(false);
+  });
+
   test("REJECTS non-numeric and non-object shapes", () => {
     expect(isUsableBudget({ max_iters: "lots" })).toBe(false);
     expect(isUsableBudget({ max_iters: NaN })).toBe(false);

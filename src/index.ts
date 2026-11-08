@@ -1341,7 +1341,7 @@ async function conceptDbUrl(): Promise<string | null> {
 // Same resolver, same fallback discipline as the floor's read — clamp each value to a sane range,
 // keep the literal default when the shape is absent or the field unusable, and say which happened.
 let _wbCache: { at: number; body: Record<string, unknown> | null } | null = null;
-async function shapedBudget(key: string, fallback: number, lo: number, hi: number): Promise<number> {
+async function readWalkBudgetBody(): Promise<Record<string, unknown> | null> {
   if (!_wbCache || Date.now() - _wbCache.at > 60_000) {
     let body: Record<string, unknown> | null = null;
     try {
@@ -1350,9 +1350,17 @@ async function shapedBudget(key: string, fallback: number, lo: number, hi: numbe
     } catch { body = null; }
     _wbCache = { at: Date.now(), body };
   }
-  const v = _wbCache.body?.[key];
+  return _wbCache.body;
+}
+/** One walkBudget field, clamped to [lo, hi], or null when the shape does not carry a usable value: a budget with no
+ *  literal default reads null as "not configured" (the same cached read as shapedBudget). */
+async function walkBudgetField(key: string, lo: number, hi: number): Promise<number | null> {
+  const v = (await readWalkBudgetBody())?.[key];
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
-  return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : fallback;
+  return Number.isFinite(n) && n >= lo && n <= hi ? Math.floor(n) : null;
+}
+async function shapedBudget(key: string, fallback: number, lo: number, hi: number): Promise<number> {
+  return (await walkBudgetField(key, lo, hi)) ?? fallback;
 }
 
 // WHETHER A RECALLED LESSON'S COMMAND MAY BE RUN AS WRITTEN — a SHAPE, not an env var.

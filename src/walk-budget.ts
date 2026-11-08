@@ -45,6 +45,9 @@ export interface WalkBudget {
   max_calls_per_iter?: number;
   iter_timeout_ms?: number;
   wall_clock_ms?: number;
+  /** How many times the walk may attempt one producer since its last success (walk-instances.ts). Absent: a producer
+   *  that failed is not re-attempted in that walk. No default exists in code. */
+  max_attempts_per_producer?: number;
 }
 
 /**
@@ -68,7 +71,7 @@ export function walkBudgetPath(workspaceRoot?: string): string {
 export function isUsableBudget(v: unknown): v is WalkBudget {
   if (typeof v !== "object" || v === null) return false;
   const b = v as Record<string, unknown>;
-  const fields = ["max_iters", "max_calls_per_iter", "iter_timeout_ms", "wall_clock_ms"] as const;
+  const fields = ["max_iters", "max_calls_per_iter", "iter_timeout_ms", "wall_clock_ms", "max_attempts_per_producer"] as const;
   let present = 0;
   for (const k of fields) {
     if (b[k] === undefined || b[k] === null) continue;
