@@ -61,38 +61,6 @@ describe('classifyExecutionPath', () => {
     })).toBe('satisfier');
   });
 
-  test('the ReAct floor is universal_tool_fallback — the EXACT shape it returns', () => {
-    // Verbatim from universalToolFallback's only non-null return: templateId
-    // "universal-tool-fallback", attempts 1, reached true. Written against the
-    // real source because an invented shape (selectedTemplateId: '') passed
-    // while production was misclassified as learned_pathway — the floor's own
-    // branch was unreachable.
-    expect(classifyExecutionPath({
-      selectedTemplateId: 'universal-tool-fallback',
-      attempts: 1,
-      reached: true,
-      executionId: 'universal-tool-fallback:2f1a9c',
-    })).toBe('universal_tool_fallback');
-  });
-
-  test('the floor is recognised by execution id even without the template id', () => {
-    expect(classifyExecutionPath({
-      selectedTemplateId: '',
-      attempts: 3,
-      reached: false,
-      executionId: 'universal-tool-fallback:exec_abc123',
-    })).toBe('universal_tool_fallback');
-  });
-
-  test('a landed direct edit is not swallowed by the reused-path heuristic', () => {
-    // All three named mechanisms return attempts===1 + reached===true, so this
-    // is the single ordering property the whole classifier rests on.
-    for (const tid of ['feature_compose', 'universal-tool-fallback', 'satisfier:x']) {
-      expect(classifyExecutionPath({ selectedTemplateId: tid, attempts: 1, reached: true }))
-        .not.toBe('learned_pathway');
-    }
-  });
-
   test('anything else is fresh_derivation', () => {
     expect(classifyExecutionPath({ selectedTemplateId: '', attempts: 4, reached: false }))
       .toBe('fresh_derivation');

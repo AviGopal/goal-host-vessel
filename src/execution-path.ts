@@ -58,9 +58,6 @@ export function classifyExecutionPath(seek: TerminalizedSeek): WalkTier {
   // the `universal_tool_fallback` branch was unreachable for the only case that
   // returns non-null.
   if (tid === "feature_compose") return "feature_compose";
-  if (tid === "universal-tool-fallback" || exec.startsWith("universal-tool-fallback:")) {
-    return "universal_tool_fallback";
-  }
   if (tid.startsWith("satisfier:")) return "satisfier";
 
   // OBSERVED REUSE OUTRANKS INFERRED REUSE. The walk knows whether it took a step

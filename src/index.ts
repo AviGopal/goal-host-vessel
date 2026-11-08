@@ -6860,7 +6860,6 @@ async function creditReachedTemplate(activityId: string, reason: string, goalTex
 // records fresh-derivation -> learned-reuse transitions instead of a null tier.
 function tierOf(id: string | undefined | null): WalkTier {
   const s = String(id ?? "");
-  if (s === "universal-tool-fallback") return "universal_tool_fallback";
   if (s.startsWith("satisfier:")) return "satisfier";
   // Reuse is NOT inferable from a template id: selecting a template whose name contains 'learned-' is ordinary Thompson derivation. Genuine reuse is tracked by commandReuseFired at the recordGoalPath call sites.
   if (s.includes("feature_compose")) return "feature_compose";
