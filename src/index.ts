@@ -10950,7 +10950,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
   observeDropFrom(target, opts.learningMode, dispatchContext.getStore()?.dispatchId, tap); // OBSERVE: no gap-write target
   if (opts.pin && !opts.pin.template) {
-    const _pinWhy = `pinned template ${opts.pin.id} unavailable`;
+    const _pinWhy = `pinned template ${opts.pin.id} unavailable: ${(opts.pin.unavailableReason ?? "unavailable").slice(0, 300)}`;
     pickFailures.set(`pin:${opts.pin.id}`, scrubReason(opts.pin.unavailableReason ?? "unavailable", [API_KEY]).slice(0, 512));
     const _pinRa = buildRouteAround({
       goalHash: goalHashOf(goal), target, produced: producedShapes, missing: [...target],
@@ -14048,9 +14048,12 @@ async function runGoalWithRecoveryInner(
   const _pinId = opts.firstTarget;
   if (goal && _pinId) {
     let _pinHit: ActivityTemplate | null = null;
-    let _pinReason = "not found in the catalogue or the template store";
+    // THE LOOKUP'S OWN OUTCOME, CLASSED HONESTLY (agf_54ob7ghkvne0): an answer with no template is a genuine miss; a
+    // throw (a refused connection, a masked or dead store) says nothing about the template, only that the store could
+    // not be asked.
+    let _pinReason = `template ${_pinId} not found`;
     try { _pinHit = (await host.catalogue.getTemplate(_pinId)) ?? (await getTemplateLocalFirst(_pinId)); }
-    catch (e) { _pinReason = String((e as Error)?.message ?? e); }
+    catch (e) { _pinReason = `template store unreachable (${String((e as Error)?.message ?? e)})`; }
     _pin = _pinHit ? { id: _pinId, template: _pinHit } : { id: _pinId, unavailableReason: scrubReason(_pinReason, [API_KEY]).slice(0, 512) };
   }
   if (goal) {

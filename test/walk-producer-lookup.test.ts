@@ -473,14 +473,16 @@ describe.skipIf(!HERMETIC)("F3: an unavailable pin ends unreached in the walk", 
     expect(served.json.body.shape).toBe("executionTrace");
     const rec = JSON.parse(served.json.body.content);
     expect(rec.reached).toBe(false);
-    expect(rec.goal_reach_reason).toBe(`pinned template ${PIN} unavailable`);
+    // EXPECTATION EXTENDED (agf_54ob7ghkvne0): the reason now names the lookup's class.
+    expect(rec.goal_reach_reason).toBe(`pinned template ${PIN} unavailable: template store unreachable (ECONNREFUSED: Unable to connect)`);
     const f = (rec.route_around?.failed_producers ?? []).find((x: { producer: string }) => x.producer === `pin:${PIN}`);
     expect(String(f?.reason)).toContain("ECONNREFUSED");
     expect(rec.attempts).toBe(0);
     expect(rec.sends).toEqual([]);
     expect(r.log).not.toContain("walk rawResolve");
     expect(r.record?.reached).toBe(false);
-    expect(r.record?.goalReachReason).toBe(`pinned template ${PIN} unavailable`);
+    // EXPECTATION EXTENDED (agf_54ob7ghkvne0): the reason now names the lookup's class.
+    expect(r.record?.goalReachReason).toBe(`pinned template ${PIN} unavailable: template store unreachable (ECONNREFUSED: Unable to connect)`);
   }, 120_000);
   // EXPECTATION FLIPPED (agf_l9iq6yssnrrw): a served pin runs as the walk's first pick, no longer in the recovery loop.
   test("control: a served pin runs as the walk's first pick", async () => {
@@ -534,4 +536,29 @@ describe.skipIf(!HERMETIC)("a served pin runs as the walk", () => {
     expect(SRC).not.toMatch(/if \(goal && \(\(!opts\.callerPinned/);
     expect(SRC).toContain("      if (_pin) return walk;");
   });
+});
+
+// agf_54ob7ghkvne0 (b): the pin's lookup outcome is classed honestly. A refused or dead template store says nothing about
+// the template ("template store unreachable (<reason>)"); only an answer without it is a genuine miss ("template <id> not
+// found"). No new request is made: no discovery-placed shape answers a template object (activityTemplate answers markdown).
+describe.skipIf(!HERMETIC)("the pin's lookup outcome is classed honestly", () => {
+  const PIN = "development-vessel:probe-reachable-unlearned";
+  const pinned = (id: string, templateRespond: Record<string, unknown>) => {
+    const s = scenario(id, { status: 404, json: NOT_FOUND });
+    (s.routes as Array<Record<string, unknown>>).unshift({ id: "aapi:template", method: "GET", urlRegex: "/v2/activities/templates/", respond: templateRespond });
+    (s.steps[0]!.body as Record<string, unknown>)["targetTemplateId"] = PIN;
+    return s;
+  };
+  test("MUST-FAIL: a refused store records \"template store unreachable\", not a miss", async () => {
+    const r = await replay(pinned("pin-store-refused", { throw: "ECONNREFUSED: Unable to connect" }));
+    const why = String(r.record?.goalReachReason ?? "");
+    expect(why).toContain("template store unreachable (ECONNREFUSED");
+    expect(why).not.toContain("not found");
+  }, 120_000);
+  test("MUST-FAIL: a store that answers without the template records a genuine miss", async () => {
+    const r = await replay(pinned("pin-store-miss", { status: 404, json: { error: "Template not found" } }));
+    const why = String(r.record?.goalReachReason ?? "");
+    expect(why).toBe(`pinned template ${PIN} unavailable: template ${PIN} not found`);
+    expect(why).not.toContain("unreachable");
+  }, 120_000);
 });
