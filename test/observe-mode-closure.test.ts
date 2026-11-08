@@ -75,8 +75,10 @@ describe("B2 traces: every trace goal-host persists for an observe dispatch carr
     // floor + failed walk -> persistSatisfierTrace -> satisfierTraceSink.record
     expect(fnBody("async function persistSatisfierTrace(", 900)).toContain("await satisfierTraceSink.record(trace);");
     expect(fnBody("async function persistFailedWalkTrace(", 600)).toContain("await persistSatisfierTrace({");
-    // engine (template) traces: the walk and the recovery loop pass the dispatch's tags, which /run-goal stamps
-    expect(src.match(/host\.runTemplate\([^)]*\{[\s\S]{0,260}?tags: opts\.tags,/g)?.length).toBe(2);
+    // engine (template) traces: the walk's two step runs, and the walk activity's own run (dispatchWalk), pass the
+    // dispatch's tags, which /run-goal stamps
+    expect(src.match(/host\.runTemplate\([^)]*\{[\s\S]{0,260}?tags: opts\.tags,/g)?.length).toBe(3);
+    expect(fnBody("async function dispatchWalk(", 900)).toMatch(/host\.runTemplate\(record, \{ goal \}, \{[^\n]*parentExecutionId: opts\.parentExecutionId, compositionChain: opts\.compositionChain, tags: opts\.tags,/);
     expect(src).toContain("tags: [...(opts.tags ?? []), ...correlationTag(pickCorrelationId)],");
     const stamp = src.indexOf("if (learningMode) effectiveTags.push(`learning_mode:${learningMode}`);");
     expect(stamp).toBeGreaterThan(0);

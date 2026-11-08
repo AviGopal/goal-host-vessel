@@ -15814,16 +15814,15 @@ const host = new GoalHost({
 // THE WALK ACTIVITY (walk-activity.ts): the one record and its one resolver, registered at boot (idempotent: both
 // registries are Maps keyed by id). The resolver IS the walk body; the walk's engine-minted execution id roots its steps.
 type WalkActivityOpts = Parameters<typeof runGoalAsPoolWalkBody>[1];
+// The walk's id parents its steps and is its trace's id; it is NOT a hop of the composition chain the composite and the
+// path record carry (they start at the caller's chain): activity-api credits every chain ancestor from each step's outcome.
 async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: WalkIdentity): Promise<WalkRun<GoalSeekResult>> {
-  try {
-    const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain, walk.executionId] });
-    return { result, outputs: [] };
-  } finally {
-    forgetLivePool(opts.variables.dispatch_id);
-  }
+  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain] });
+  return { result, outputs: [] };
 }
 host.catalogue.register(walkActivityTemplate());
-host.runtime.resolvers.register(walkActivityResolver<WalkActivityOpts, GoalSeekResult>(walkActivityBody, (variables) => ({ variables, surface: WALK_ACTIVITY_ID })));
+// The walk's pool stops being served when the walk ends, on every exit path (the resolver's finally).
+host.runtime.resolvers.register(walkActivityResolver<WalkActivityOpts, GoalSeekResult>(walkActivityBody, (variables) => ({ variables, surface: WALK_ACTIVITY_ID }), (opts) => forgetLivePool(opts.variables.dispatch_id)));
 /** Dispatch the walk activity (W2): every place that runs the walk runs the registered record through the engine, so the
  *  walk gets its own execution id, parented to `opts.parentExecutionId` within `opts.compositionChain`. */
 async function dispatchWalk(goal: string, opts: WalkActivityOpts): Promise<{ walk: GoalSeekResult; walkExecutionId: string }> {

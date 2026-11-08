@@ -78,6 +78,8 @@ export interface WalkIdentity {
 export function walkActivityResolver<O, R>(
   body: (goal: string, opts: O, identity: WalkIdentity) => Promise<WalkRun<R>>,
   fromVariables: (variables: Record<string, unknown>) => O,
+  /** Runs after the body on every exit path, the throw path included. */
+  release?: (opts: O) => void,
 ): Resolver {
   return {
     id: WALK_ACTIVITY_ID,
@@ -95,13 +97,16 @@ export function walkActivityResolver<O, R>(
       }
       const goal = call?.goal ?? goalOf(context);
       if (!goal) throw new Error(`${WALK_ACTIVITY_ID}: no goal bound (no goal input impulse and no goal variable)`);
+      const opts = call ? call.opts : fromVariables(context.variables);
       try {
-        const run = await body(goal, call ? call.opts : fromVariables(context.variables), identity);
+        const run = await body(goal, opts, identity);
         if (call) call.result = run.result;
         return run.outputs;
       } catch (e) {
         if (call) call.error = e;
         throw e;
+      } finally {
+        release?.(opts);
       }
     },
   };

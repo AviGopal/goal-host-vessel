@@ -20,8 +20,8 @@ function rig(body?: (goal: string, opts: { tag: string }, walk: WalkIdentity, ex
   const seen: Array<{ goal: string; opts: { tag: string }; walk: WalkIdentity }> = [];
   const defaultBody = async (goal: string, opts: { tag: string }, walk: WalkIdentity) => {
     seen.push({ goal, opts, walk });
-    // the walk's first step: parent = the walk's own execution id; chain = caller chain + walk id
-    const step = await ex.execute(stepTemplate, { parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain, walk.executionId] });
+    // the walk's first step: parent = the walk's own execution id; chain = the caller's chain (the walk is not a chain hop)
+    const step = await ex.execute(stepTemplate, { parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain] });
     const out: Impulse = { id: `trace-${walk.executionId}`, pointer: { type: WALK_TRACE_SHAPE }, metadata: { shape: WALK_TRACE_SHAPE }, loaded: true, content: { steps: [step.id] } };
     const produced: Impulse = { id: `produced-${walk.executionId}`, pointer: { type: "undeclaredShape" }, metadata: { shape: "undeclaredShape" }, loaded: true, content: "kept" };
     return { result: `walked:${goal}`, outputs: [out, produced] };
@@ -67,7 +67,7 @@ describe("T-W2-2 (unit form): a walk dispatch is an engine execution of goal-hos
     expect(walkTrace.parentExecutionId).toBe("caller-exec");
     const step = r.traces.find((t) => t.templateId === "step-a")!;
     expect(step.parentExecutionId).toBe(walkExecutionId);
-    expect(step.compositionChain).toEqual(["caller-exec", walkExecutionId]);
+    expect(step.compositionChain).toEqual(["caller-exec"]);
     expect(r.seen[0]!.opts.tag).toBe("a");
   });
   test("K7: an output impulse of a shape the record does not declare is kept by the engine with its own shape", async () => {

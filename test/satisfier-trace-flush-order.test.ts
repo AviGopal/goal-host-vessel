@@ -62,8 +62,23 @@ describe("satisfier step traces are flushed, awaited, before anything that names
 
   test("MUST-FAIL (wiring): every walk host.runTemplate is preceded by an awaited flush", () => {
     const sites = [...SRC.matchAll(/host\.runTemplate\(/g)].map((m) => m.index!);
-    expect(sites.length).toBe(2);
-    for (const at of sites) expect(SRC.slice(Math.max(0, at - 1600), at)).toMatch(/await flushSatisfierTraces\(\)/);
+    // EXACTLY 3 sites: the walk's two step runs, and the walk activity's own run in dispatchWalk. A 4th fails here.
+    expect(sites.length).toBe(3);
+    // The exempt site is dispatchWalk's `host.runTemplate(record,`: a retry names the prior walk's EXECUTION id, never a
+    // satisfier step trace.
+    const dispatchWalkAt = SRC.indexOf("async function dispatchWalk(");
+    expect(dispatchWalkAt).toBeGreaterThan(0);
+    const exempt = sites.filter((at) => SRC.startsWith("host.runTemplate(record,", at) && at > dispatchWalkAt && SRC.lastIndexOf("\nasync function ", at) === SRC.lastIndexOf("\nasync function dispatchWalk(", at));
+    expect(exempt.length).toBe(1);
+    const steps = sites.filter((at) => !exempt.includes(at));
+    expect(steps.length).toBe(2);
+    for (const at of steps) expect(SRC.slice(Math.max(0, at - 1600), at)).toMatch(/await flushSatisfierTraces\(\)/);
+    // Both composite records are still behind a flush that awaits every step trace except the composite's own.
+    for (const marker of ["await satisfierTraceSink.record(_failedComposite", "await satisfierTraceSink.record(composite as unknown"]) {
+      const at = SRC.indexOf(marker);
+      expect(at).toBeGreaterThan(0);
+      expect(SRC.slice(at - 400, at)).toMatch(/await flushSatisfierTraces\(lastTrace\)/);
+    }
   });
 
   test("MUST-FAIL (wiring): both walk composites flush before they are recorded, and the walk-end loop is awaited", () => {

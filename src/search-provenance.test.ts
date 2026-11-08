@@ -6,6 +6,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { walkActivityResolver } from "./walk-activity";
 import { forgetLivePool, isSatisfierSearchImpulse, livePool, rememberLivePool, searchProvenanceFor, searchResultUrls, walkStateImpulse, type PoolImpulseLike } from "./walk-pool";
 
 const URL_A = "https://www.example.org/report-2026.html";
@@ -79,11 +80,19 @@ describe("qa10: the impulse read serves only search results, and only while the 
     const served = pool.filter((i) => isSatisfierSearchImpulse(i)).map((i) => i.id);
     expect(served).toEqual([satisfierSearch.id]);
   });
-  it("the walk unregisters its pool in a finally, on every exit path", () => {
-    const at = src.indexOf("async function runGoalAsPoolWalk(goal: string, opts: Parameters<typeof runGoalAsPoolWalkBody>[1])");
-    expect(at).toBeGreaterThan(0);
-    const block = src.slice(at, at + 300);
-    expect(block).toMatch(/try \{\s*return await runGoalAsPoolWalkBody\(goal, opts\);\s*\} finally \{\s*forgetLivePool\(opts\.variables\.dispatch_id\);/);
+  it("the walk unregisters its pool in a finally, on every exit path", async () => {
+    // Wiring: the walk activity's resolver is registered with forgetLivePool as its release.
+    expect(src).toContain("host.runtime.resolvers.register(walkActivityResolver<WalkActivityOpts, GoalSeekResult>(walkActivityBody, (variables) => ({ variables, surface: WALK_ACTIVITY_ID }), (opts) => forgetLivePool(opts.variables.dispatch_id)));");
+    // Behaviour, through the real resolver and the real pool registry: a walk body that registers its pool and then
+    // THROWS leaves no pool served, and so does one that returns.
+    const release = (o: { variables: Record<string, unknown> }) => forgetLivePool(o.variables["dispatch_id"]);
+    const ctx = (id: string) => ({ executionId: id, compositionChain: [], inputImpulses: [], variables: { goal: "g" } }) as unknown as Parameters<ReturnType<typeof walkActivityResolver>["resolve"]>[0];
+    const throwing = walkActivityResolver<{ variables: Record<string, unknown> }, null>(async (_g, o) => { rememberLivePool(o.variables["dispatch_id"], [satisfierSearch]); expect(livePool("dispatch-throw")).toBeDefined(); throw new Error("walk threw"); }, () => ({ variables: { dispatch_id: "dispatch-throw" } }), release);
+    await expect(throwing.resolve(ctx("e1"))).rejects.toThrow("walk threw");
+    expect(livePool("dispatch-throw")).toBeUndefined();
+    const returning = walkActivityResolver<{ variables: Record<string, unknown> }, null>(async (_g, o) => { rememberLivePool(o.variables["dispatch_id"], [satisfierSearch]); return { result: null, outputs: [] }; }, () => ({ variables: { dispatch_id: "dispatch-return" } }), release);
+    await returning.resolve(ctx("e2"));
+    expect(livePool("dispatch-return")).toBeUndefined();
     pool_forget_check();
   });
 });
