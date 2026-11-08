@@ -42,10 +42,6 @@ describe("write doors are wired", () => {
     expect(after("const vesselResolveShapeInner = async (shape: string)", 1200)).toContain('noteWriteRefusal("vessel_resolve");');
   });
   test("admission: set only where the edit-intent routing rules name a file to change (the change is walked), carried to every walk", () => {
-    // No compose hand-off exists (edit-intent-route.ts): the routing rules' decision admits the change and the dispatch
-    // walks toward the landing. The only admission site.
-    expect(after('if (changeHandoff.route === "feature_compose" && changeHandoff.target) {', 120)).toContain("_changeAdmitted = true;");
-    expect(src.match(/_changeAdmitted = true/g)?.length).toBe(1);
     expect(src).toContain("let _changeAdmitted = admittedChange({ admittedEditRoute: false, declaredOutputShapes: opts.expectedOutputShapes });");
     expect(src.match(/runGoalAsPoolWalk\(goal, \{\n\s*changeAdmitted: _changeAdmitted,/g)?.length).toBe(4);
     expect(src).toContain("const changeAdmitted = opts.changeAdmitted === true;");

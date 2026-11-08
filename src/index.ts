@@ -321,7 +321,7 @@ import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations, verifyStatedBound, type JudgeShadow } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
 import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText } from "./goal-intent";
-import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
+import { resolveDoorGoal } from "./routing-core/entries";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
 import * as verdictConsistency from "./judge/verdict-consistency";
@@ -342,7 +342,6 @@ import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
-import { inProcessLanding, landingSatisfiedBy, LANDING_TARGET_SHAPE, withLandingTarget } from "./edit-intent-route";
 import { admittedChange, DoorRefusals, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, templateRunRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 // Templates a write door refused, per dispatch: refused again on any re-offer, taken at the terminal record write.
 const doorRefusals = new DoorRefusals();
@@ -8370,17 +8369,6 @@ async function runGoalAsPoolWalkBody(
     if (!shape || producedShapes.has(shape)) return;
     producedShapes.add(shape);
     poolImpulses.push(mkImpulse(shape, content, summary, prov));
-    // NO DOUBLE LANDING (edit-intent-route.ts): a step that already LANDED in process (patch_with_tools: landed:true or
-    // a new_git_sha in its output) produced the landing itself. When the walk targets the landing shape, record it as
-    // produced here, the one place targetMet and every missing-target pick read, so no second landing step
-    // (mitosis-tick / vessel_mitosis_cutover) is sought or run for this dispatch. writeDoorProduct, not `target`: this
-    // closure runs during seeding, before `target` is declared.
-    if (shape !== LANDING_TARGET_SHAPE && landingSatisfiedBy(shape, content, writeDoorProduct, producedShapes, prov?.producedBy)) {
-      const landing = inProcessLanding(content);
-      addToPool(LANDING_TARGET_SHAPE, { satisfied_by: shape, landed: true, new_git_sha: landing.new_git_sha }, `landed in process by ${shape}`, { producedBy: prov?.producedBy ?? "goal-host-walk" });
-      tap(`[goal-host-vessel] walk(${opts.surface}): ${LANDING_TARGET_SHAPE} satisfied by the in-process landing in ${shape} ` +
-        JSON.stringify({ new_git_sha: landing.new_git_sha }) + " - no second landing step for this dispatch");
-    }
     // The write's confirmed read-back, as the next step (walk-read-back.ts): the real read record, never a stub.
     const rb = readBackStepFor(shape, confirmedReadBacks, producedShapes);
     if (rb) {
@@ -13913,9 +13901,6 @@ async function runGoalWithRecoveryInner(
     // hoisted above this block so an exception here still leaves the walk
     // below able to run in opportunistic mode instead of the whole dispatch
     // crashing before runGoalAsPoolWalk or edit-intent routing ever run.
-    // goalForRouting is hoisted here for the same reason: assigned by gap-record
-    // hydration inside the try, read by the EARLY edit-intent check after it.
-    let goalForRouting = goal;
     try {
     let knownShapes: string[] | null = null;
     if (!seededOutputShapes || seededOutputShapes.length === 0) {
@@ -14162,11 +14147,6 @@ async function runGoalWithRecoveryInner(
             const _bare = _hydText.match(/\b([\w.-]+\/src\/[\w.\/-]+\.\w+)/)?.[1];
             if (_bare) hydFile = `repos/${_bare}`;
           }
-          // The hydrated hand-off goal is composed by the routing core (goalForRoutingOf), the same function the routing
-          // corpus replays.
-          if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? "") });
-          // CAPTURE (closed, src/judge/capture.ts): the gap record's routing hint, after it was applied or not.
-          judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? "") });
           tap(`[goal-host-vessel] gap-hydration: injected record ${hydGap.id} (cited file: ${hydFile ?? "none"})`);
         }
       }
@@ -14562,19 +14542,6 @@ async function runGoalWithRecoveryInner(
     try {
       // CAPTURE (closed, src/judge/capture.ts): no compose hand-off route exists; the change is walked.
       judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: false });
-      // A CHANGE GOAL IS WALKED. The edit-intent routing rules (src/routing-rules/edit-intent.ts decideHandoff, clamped
-      // by the closed routing core, pinned by the routing corpus) decide whether the goal names a file to change (their
-      // refusals of a goal that forbids change included); if so, the dispatch is admitted as a change and the landing
-      // shape is seeded as a walk target, so backward-chaining starts from the landing (edit-intent-route.ts).
-      const changeHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });
-      if (changeHandoff.route === "feature_compose" && changeHandoff.target) {
-        _changeAdmitted = true; // admitted on the edit-intent rules' own decision, walked as a change
-        seededOutputShapes = withLandingTarget(seededOutputShapes, isFsWriteShape);
-        goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
-        noteDispatchedTargets(goal, seededOutputShapes);
-        tap(`[goal-host-vessel] ${opts.surface}: edit-intent change admitted, walking toward ${LANDING_TARGET_SHAPE} ` +
-          JSON.stringify({ goal_hash: goalHashOf(goal), target_file: changeHandoff.target, targets: seededOutputShapes }));
-      }
       // WRITE DOOR (target): an inferred write shape is not a target of a goal not admitted as a change — dropped
       // before the pathway store, the floor shortcut, the walk and the recovery loop read it. With fs_edit kept, a
       // read-only goal walked toward the live tree; dropping it leaves the goal's other targets, or none.
