@@ -163,6 +163,8 @@ export interface AggregateReportInput {
   produced: unknown;
   /** Resolve the section's authoritative source; null when it could not be read. */
   fetchSource: (shape: string, pointer: Record<string, unknown>) => Promise<unknown>;
+  /** A source shape the caller's write door refuses: a report source is READ, so such a section abstains unsent. */
+  refuseSource?: (shape: string) => boolean;
   onAbstain?: (why: string) => void;
 }
 
@@ -183,6 +185,7 @@ export async function verifyAggregateReport(input: AggregateReportInput): Promis
   for (const s of cls.sections) {
     const mine = rowsOf(getPath(produced, s.field));
     if (!mine) return { reached: false, reason: `deterministic:report-incomplete — section ${s.field} carries no rows` };
+    if (input.refuseSource?.(s.source.shape)) return abstain(`source ${s.source.shape} REFUSED — a report source is read, never written (write door); not sent`);
     let raw: unknown;
     try { raw = await input.fetchSource(s.source.shape, s.source.pointer); } catch (e) { return abstain(`source ${s.source.shape} errored: ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
     if (raw === null || raw === undefined) return abstain(`source ${s.source.shape} could not be read`);

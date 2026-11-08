@@ -5,6 +5,7 @@ import {
   verifyAggregateReport, reportClassFrom, reportClassForTargets, producedContentOf, rowsOf, getPath, REPORT_CLASS_SHAPE,
   type ReportClass,
 } from "../src/aggregate-report-verifier";
+import { refusedWrite } from "../src/write-door";
 
 // Synthetic shapes only: a report class is data, and nothing here names a live goal class.
 const CLASS_ROW = {
@@ -138,5 +139,38 @@ describe("the hook observes and never decides (source pin)", () => {
     expect(body.length).toBeGreaterThan(100);
     expect(/\bverdict\s*=[^=]/.test(body)).toBe(false);
     expect(body).toContain('verdict: "partial"');
+  });
+});
+
+// A REPORT SOURCE IS READ, NEVER WRITTEN. The class row is data from the pool, so its source shape is whatever the row
+// says; the walk's observer hands the verifier its write door (write-door.ts refusedWrite) and a write-shaped source is
+// refused before any send.
+describe("a write-shaped report source is refused before any send", () => {
+  const writeRow = (source: string): ReportClass => reportClassFrom({ ...CLASS_ROW, sections: [{ ...CLASS_ROW.sections[0], source: { shape: source, pointer: { path: "report-source.txt", content: "x" } } }] }) as ReportClass;
+  for (const source of ["fs_write", "fs_edit", "git_commit", "widgetTally_write"]) {
+    it(`must-fail: a row naming ${source} abstains and the source is never fetched`, async () => {
+      const fetched: string[] = [];
+      const why: string[] = [];
+      const v = await verifyAggregateReport({
+        cls: writeRow(source), produced: produced([["a", 1010], ["b", 500], ["c", 199]]),
+        refuseSource: (s) => refusedWrite(s), fetchSource: async (s) => { fetched.push(s); return truth; }, onAbstain: (w) => why.push(w),
+      });
+      expect(fetched).toEqual([]);
+      expect(v).toBeNull();
+      expect(why.join(" ")).toContain(`source ${source} REFUSED`);
+    });
+  }
+  it("control: a read-shaped source is fetched and compared as before", async () => {
+    const fetched: string[] = [];
+    const v = await verifyAggregateReport({ cls, produced: produced([["a", 1010], ["b", 500], ["c", 199]]), refuseSource: (s) => refusedWrite(s), fetchSource: async (s) => { fetched.push(s); return truth; } });
+    expect(fetched).toEqual(["widgetTally"]);
+    expect(v?.reached).toBe(true);
+  });
+  it("must-fail: the walk's observer passes the write door to the verifier, ahead of its fetch", () => {
+    const src = readFileSync(join(import.meta.dir, "../src/index.ts"), "utf8");
+    const body = src.slice(src.indexOf("async function observeAggregateReport("), src.indexOf("async function observeAggregateReport(") + 2000);
+    const door = body.indexOf("refuseSource: (shape) => refusedWrite(shape),");
+    expect(door).toBeGreaterThan(0);
+    expect(door).toBeLessThan(body.indexOf("fetchSource: async (shape, pointer) =>"));
   });
 });

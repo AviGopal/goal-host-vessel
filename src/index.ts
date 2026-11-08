@@ -4625,6 +4625,8 @@ async function observeAggregateReport(goal: string, targetShapes: string[], pool
     cls,
     // The observer converts the pool itself: the reach CALLS are the only sites handed poolEvidenceOf(...) (pinned).
     produced: producedContentOf(poolEvidenceOf(poolImps), cls.target_shape),
+    // The source shape comes from a pool ROW (data): the walk's write door is checked before any send.
+    refuseSource: (shape) => refusedWrite(shape),
     fetchSource: async (shape, pointer) => {
       const r = await ufExecuteTool(shape, pointer, new Set([shape]));
       return r.ok ? parseMaybeJson(r.result) : null;
