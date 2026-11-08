@@ -482,9 +482,56 @@ describe.skipIf(!HERMETIC)("F3: an unavailable pin ends unreached in the walk", 
     expect(r.record?.reached).toBe(false);
     expect(r.record?.goalReachReason).toBe(`pinned template ${PIN} unavailable`);
   }, 120_000);
-  test("control: a pin the template store serves still runs in the recovery loop, outside the walk", async () => {
+  // EXPECTATION FLIPPED (agf_l9iq6yssnrrw): a served pin runs as the walk's first pick, no longer in the recovery loop.
+  test("control: a served pin runs as the walk's first pick", async () => {
     const r = await replay(pinned("pin-served", { json: { id: PIN, name: "probe", inputShapes: ["goal"], outputShapes: ["hopZ"], tasks: [{ id: "t1", description: "hop", resolver: "hopZ" }] } }));
     expect(r.log).not.toContain(`pinned template ${PIN} unavailable`);
-    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(0);
+    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(1);
+    expect(r.log).toContain(`pinned template ${PIN} is this walk's first pick`);
   }, 120_000);
+});
+
+// agf_l9iq6yssnrrw: an AVAILABLE pin runs AS THE WALK: the fetched template is the walk's first pick, run by the walk's
+// own template step (traced as a step of the walk execution), and the walk then goes on toward the goal's targets.
+// A pinned step is not a selection: it credits no posterior. The recovery loop's pin branch is gone.
+describe.skipIf(!HERMETIC)("a served pin runs as the walk", () => {
+  const PIN = "tpl-pinned-noop";
+  const NOOP = { id: PIN, name: "pinned noop", inputShapes: ["goal"], outputShapes: [], tasks: [{ id: "t1", description: "noop", resolver: "noop" }] };
+  const served = (id: string, judgeReached: boolean) => {
+    const s = scenario(id, { status: 404, json: NOT_FOUND });
+    const rs = s.routes as Array<Record<string, unknown>>;
+    rs.unshift({ id: "aapi:template", method: "GET", urlRegex: "/v2/activities/templates/", respond: { json: NOOP } });
+    rs.find((x) => x["id"] === "judge")!["respond"] = { llm: JSON.stringify({ reached: judgeReached, reason: judgeReached ? "hop answered" : "the answer does not address the goal", completion_shapes: [] }) };
+    (s.steps[0]!.body as Record<string, unknown>)["targetTemplateId"] = PIN;
+    return s;
+  };
+  const feedbackFor = (r: Replay, id: string) => r.requests.filter((q) => q.url.includes("/v2/activities/feedback") && q.body?.activity_id === id);
+  test("MUST-FAIL: the served pin is walk step 1 (its run is a child of the walk execution), one walk, no recovery-loop run", async () => {
+    const r = await replay(served("pin-walk-step", true));
+    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(1);
+    expect(r.log).toContain(`pinned template ${PIN} is this walk's first pick`);
+    const walkId = r.walkTraceOutputs[0]!.executionId;
+    const pinRun = r.requests.find((q) => q.body?.template_id === PIN && q.url.includes("/v2/activities/execution-traces"));
+    expect(pinRun?.body?.parent_execution_id).toBe(walkId);
+    expect(r.walkTraceServed.find((x) => x.status === 200)!.json.body.shape).toBe("executionTrace");
+    expect(r.log).not.toMatch(/goal-reach\([^)]*\) attempt \d+\/\d+/);
+    expect(r.requests.filter((q) => q.url.includes(`/v2/activities/templates/${PIN}`)).length).toBe(1);
+  }, 120_000);
+  test("a pinned step credits no posterior; a selector pick still does", async () => {
+    const r = await replay(served("pin-no-credit", false));
+    expect(feedbackFor(r, PIN).length).toBe(0);
+    // Both credit sites skip a pinned step (here the symmetric β-withhold rule fires first, so the guard is also pinned).
+    expect(SRC).toContain("} else if (pinnedStepIds.has(lastPick)) {");
+    expect(SRC).toContain("if (pinnedStepIds.has(_stepId)) { tap(");
+    // Control: a corpus walk whose selector pick (satisfier:shellResult) is graded hollow by a deterministic oracle.
+    const c = JSON.parse(readFileSync(join(HARNESS_DIR, "scenarios", "oracle-count-files-mismatch.json"), "utf8"));
+    const rc = await replay(c);
+    expect(feedbackFor(rc, "satisfier:shellResult").length).toBeGreaterThanOrEqual(1);
+  }, 240_000);
+  test("the recovery loop's pin branch is gone and every dispatch with a goal walks (callerPinned alone included)", () => {
+    expect(SRC).toContain("let nextTarget: string | undefined = (goal ? undefined : opts.firstTarget) ?? authoredFallbackTarget;");
+    expect(SRC).not.toContain("let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;");
+    expect(SRC).not.toMatch(/if \(goal && \(\(!opts\.callerPinned/);
+    expect(SRC).toContain("      if (_pin) return walk;");
+  });
 });

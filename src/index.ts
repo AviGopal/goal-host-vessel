@@ -262,7 +262,6 @@ import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfG
 import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } from "./refusal-decline";
 import { conceptRecallPointer } from "./concept-recall-pointer";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
-import { templateReachVerdict } from "./template-reach-rule";
 import { isNonAttemptOutcome } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
@@ -7841,7 +7840,7 @@ interface WalkStep {
   at: number;
   selected: {
     templateId: string;
-    source: "thompson" | "satisfier" | "bridge" | "recovery" | "improvise";
+    source: "thompson" | "satisfier" | "bridge" | "recovery" | "improvise" | "pinned";
     sampledScore?: number;
     alpha?: number;
     beta?: number;
@@ -8041,9 +8040,10 @@ async function runGoalAsPoolWalkBody(
     changeAdmitted?: boolean;
     /** THE WALK ACTIVITY (walk-activity.ts): set only by walkActivityBody, which returns the pool's produced impulses as
      *  the walk execution's outputs. */
-    /** A PINNED dispatch whose template the dispatcher could not fetch (agf_7b4l8praaak5): the walk takes no step, derives
-     *  nothing from the goal, and ends unreached naming the pin, with the absence on its route-around record. */
-    pinUnavailable?: { id: string; reason: string };
+    /** A PINNED dispatch (agf_7b4l8praaak5, agf_l9iq6yssnrrw): the dispatcher's one lookup of the pin. With a template, the
+     *  walk's FIRST pick is that template, run by the walk's own template step; with unavailableReason, the walk takes no
+     *  step, derives nothing from the goal, and ends unreached naming the pin, with the absence on its route-around. */
+    pin?: { id: string; template?: ActivityTemplate; unavailableReason?: string };
     exposePool?: (pool: readonly Impulse[], sends: readonly WalkSend[], context: () => { target: readonly string[]; unmetInputs: readonly UnmetInput[]; boundDemands: ReadonlyArray<{ shape: string; binding: Record<string, unknown>; for_hop: string; field: string; since: number }> }) => void;
   },
 ): Promise<GoalSeekResult> {
@@ -10949,16 +10949,16 @@ If one of those sibling shapes is the action that would create what the goal ask
   // WRITE DOOR (target): every walk call site's target passes here, a prepended pathway head and the retry framings included.
   const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
   observeDropFrom(target, opts.learningMode, dispatchContext.getStore()?.dispatchId, tap); // OBSERVE: no gap-write target
-  if (opts.pinUnavailable) {
-    const _pinWhy = `pinned template ${opts.pinUnavailable.id} unavailable`;
-    pickFailures.set(`pin:${opts.pinUnavailable.id}`, scrubReason(opts.pinUnavailable.reason, [API_KEY]).slice(0, 512));
+  if (opts.pin && !opts.pin.template) {
+    const _pinWhy = `pinned template ${opts.pin.id} unavailable`;
+    pickFailures.set(`pin:${opts.pin.id}`, scrubReason(opts.pin.unavailableReason ?? "unavailable", [API_KEY]).slice(0, 512));
     const _pinRa = buildRouteAround({
       goalHash: goalHashOf(goal), target, produced: producedShapes, missing: [...target],
       satisfierFailures, pickFailures, termination: _pinWhy, secrets: [API_KEY],
       unmetInputs, reattemptRefusals: [...new Set(reattemptRefusals.values())], boundDemands,
     });
     appendRouteAround(opts.variables.dispatch_id, _pinRa);
-    tap(`[goal-host-vessel] walk(${opts.surface}): ${_pinWhy} (${opts.pinUnavailable.reason.slice(0, 160)}) — no step taken, nothing derived from the goal`);
+    tap(`[goal-host-vessel] walk(${opts.surface}): ${_pinWhy} (${(opts.pin.unavailableReason ?? "").slice(0, 160)}) — no step taken, nothing derived from the goal`);
     return { result: null, status: "failed", completionShapes: null, attempts: 0, reached: false, goalReachReason: _pinWhy, routeAround: _pinRa };
   }
   // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): snapshot the
@@ -11221,7 +11221,21 @@ If one of those sibling shapes is the action that would create what the goal ask
   }
   const _adapting = _adaptPlan?.mode != null && _adaptPlan.mode !== "exact";
   const _adaptBody = new Set<string>(_adapting ? _adaptPlan!.steps.map((x) => x.id) : []);
+  // A PINNED TEMPLATE IS THE WALK'S FIRST PICK (agf_l9iq6yssnrrw): the dispatcher fetched it once; the walk runs it as
+  // its first step through its own template step below, then walks on toward the goal's targets as usual. A pinned step
+  // that cannot run or fails ends the walk unreached with the pin's failure recorded: nothing substitutes for it (Q-4).
+  let forcedPin: { pick: WalkCandidate; template: ActivityTemplate } | undefined;
+  if (opts.pin?.template) {
+    const _fp = readCandidateShapes({ ...opts.pin.template, template_id: opts.pin.id });
+    if (_fp) forcedPin = { pick: _fp, template: opts.pin.template };
+  }
+  let pinFailedReason: string | undefined;
+  let lastFailedTraceReason: string | undefined;
+  // A PINNED STEP IS NOT A SELECTION: the walk ran it because the caller pinned it, so its outcome credits no posterior
+  // (no α, no β from the pick); every selector pick is credited as before.
+  const pinnedStepIds = new Set<string>();
   while (chain.length < MAX_STEPS && !targetMet()) {
+    if (pinFailedReason) { walkTerminationReason = pinFailedReason; tap(`[goal-host-vessel] walk(${opts.surface}): ${pinFailedReason} — the walk ends here; nothing substitutes for the pin`); break; }
     if (!attemptLedger.budgetLeft(chain.length, MAX_STEPS)) { walkTerminationReason = "step budget (re-attempts)"; break; }
     // Edge-blend half-life, resolved from the policy volume at USE TIME (law 1) rather
     // than read from a compiled-in constant. Unconfigured -> the previous literal, so
@@ -11232,6 +11246,12 @@ If one of those sibling shapes is the action that would create what the goal ask
     mirrorWalkState();
     const iterPoolBefore = [...producedShapes];
     let pickSource: WalkStep["selected"]["source"] = "thompson";
+    const _forcedNow = forcedPin;
+    forcedPin = undefined;
+    let pick: WalkCandidate | undefined = _forcedNow?.pick;
+    let candidates: WalkCandidate[] = _forcedNow ? [_forcedNow.pick] : [];
+    if (_forcedNow) { pickSource = "pinned"; pinnedStepIds.add(_forcedNow.pick.id); tap(`[goal-host-vessel] walk(${opts.surface}): pinned template ${_forcedNow.pick.id} is this walk's first pick`); }
+    selection: if (!_forcedNow) {
     // (0) VESSEL-RESOLVE SATISFIER — resolve-FIRST, before ANY candidate /
     //     horizontal-bundle / bridge-author step. When a missing target shape
     //     has a LIVE resolver advertised by a connected vessel, satisfy it by a
@@ -11627,7 +11647,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     }
     // (a) CANDIDATE GENERATION — shape-driven: consumers of the current pool.
-    let candidates: WalkCandidate[] = [];
+    candidates = [];
     try {
       const _sig1 = (await getCachedStateSignature())?.signature_hash;
       // No `state_signature` (OP-1): the situational hash is not the 16-hex shape-pool key and nothing reads it
@@ -11964,7 +11984,6 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     }
 
-    let pick: WalkCandidate | undefined;
     if (target.size > 0) {
       const feasibleProducer = (c: WalkCandidate): boolean =>
         notScaffold(c) && !isIrrelevantLearnedComposite(c) && advancesTarget(c) && (c.inputShapes.length === 0 || c.inputShapes.every((s) => producedShapes.has(s)));
@@ -12298,6 +12317,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       break;
     }
 
+    } // selection
+    if (!pick) break;
     // (d) EXECUTE the pick SEEDED WITH THE POOL — fetch the template by id, run it
     //     with the accumulated pool impulses + thread parent/composition ids so the
     //     steps form a recorded chain.
@@ -12306,7 +12327,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     pickOutputs.set(pick.id, [...(pick.outputShapes ?? [])]);
     let template: ActivityTemplate | null = null;
     try {
-      template = await getTemplateLocalFirst(pick.id);
+      template = _forcedNow ? _forcedNow.template : await getTemplateLocalFirst(pick.id);
     } catch (e) {
       console.warn(`[goal-host-vessel] walk(${opts.surface}): getTemplate(${pick.id}) failed: ${(e as Error).message}`);
     }
@@ -12341,6 +12362,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (await templateRunRefused(pick.id, pick.outputShapes ?? [], async () => template, changeAdmitted, pickSource === "improvise" ? "composite_pick" : pickSource === "bridge" ? "bridge_pick" : "template_pick", doorRefused, writeDoorHash, tap, writeDoorProduct)) {
       exclude.add(normActivityId(pick.id));
       pickFailures.set(pick.id, "refused at the write door: its run writes outside the goal's product on a goal not admitted as a change");
+      if (_forcedNow) pinFailedReason = `pinned template ${pick.id} refused at the write door`;
       tap(`[goal-host-vessel] walk(${opts.surface}): ${pick.id} REFUSED at the write door before execution — not dispatched, excluding`);
       continue;
     }
@@ -12363,6 +12385,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     } catch (e) {
       exclude.add(normActivityId(pick.id));
       pickFailures.set(pick.id, `runTemplate threw: ${String((e as Error).message ?? e).slice(0, 200)}`);
+      if (_forcedNow) throw e; // a thrown pinned step ends the dispatch with its error (Q-4: nothing substitutes)
       console.warn(`[goal-host-vessel] walk(${opts.surface}): runTemplate(${pick.id}) threw: ${(e as Error).message} — excluding`);
       continue;
     }
@@ -12371,6 +12394,17 @@ If one of those sibling shapes is the action that would create what the goal ask
     lastExecId = trace.id;
     noteForeignConsumption(pick.id, trace);
     if (trace.status === "failed") pickFailures.set(pick.id, String(trace.reason ?? "template execution failed").slice(0, 200));
+    // A FAILED TRACE CARRIES ITS REASON (B2), in the walk as it did in the recovery loop: the failure mode's reason (or
+    // the first failed task's "<taskId>(<resolver>): <error>") is logged and, if the walk ends unreached, is its reason,
+    // which the dispatch record and the failure memory then carry.
+    if (trace.status === "failed") {
+      const _failedWhy = failedTraceReason(trace);
+      if (_failedWhy) {
+        lastFailedTraceReason = _failedWhy;
+        tap(`[goal-host-vessel] goal-reach(${opts.surface}) walk step ${chain.length + 1} via ${pick.id}: TRACE FAILED \u2014 ${_failedWhy}`);
+      }
+    }
+    if (trace.status === "failed" && _forcedNow) pinFailedReason = `pinned template ${pick.id} failed: ${pickFailures.get(pick.id)}`;
     if (trace.status === "failed" && _adaptBody.has(normActivityId(pick.id))) tap(`[goal-host-vessel] walk(${opts.surface}): ADAPT body step ${pick.id} failed (${pickFailures.get(pick.id)}) — excluded; the walk continues as before`);
     if (trace.id) chainExecIds.push(trace.id);
     totalDurationMs += trace.durationMs ?? 0;
@@ -12600,7 +12634,10 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the hollow-walklog cap does not apply to a walk that has one (verifyGoalReachedUnrestricted).
       const confirmedTerminalWrites = confirmedTerminalWritesOf(verifiedWrites, confirmedReadBacks, (sh) => terminalShapes.has(sh) || target.has(sh));
       const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [], confirmedTerminalWrites };
-      let verdict = earlyReachVerdict
+      // A walk that ended because its PINNED step failed is not judged: the failed trace's own reason is the verdict (the
+      // recovery loop's rule for a failed run: its reach gate ran only on a completed trace).
+      let verdict = (pinFailedReason && lastFailedTraceReason ? ({ reached: false, reason: lastFailedTraceReason, completion_shapes: [] } as GoalReachVerdict) : null)
+        ?? earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target], poolEvidenceOf(poolImpulses), walkWriteEvidence());
       // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
       // before failing closed, so a correct/grounded answer is not lost to a momentary verifier outage.
@@ -12887,6 +12924,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         let _hollowBetaApplied = false;
         if (_declined) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — its own answer DECLINED (${_declined.class}: ${_declined.reason.slice(0, 160)}); a correct refusal is not a hollow`);
+        } else if (pinnedStepIds.has(lastPick)) {
+          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but no β for ${lastPick} — a pinned step is not a selector pick`);
         } else if (!_noOracle && !_betaWithheldForSymmetry) {
           if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
           else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal).then((d) => { _hollowBetaApplied = d.dBeta > 0; return d; }));
@@ -13069,6 +13108,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             .filter((id) => { if (_alreadyCredited.has(id)) { tap(`[goal-host-vessel] walk(${opts.surface}): α-credit for ${id} already applied in this dispatch — not credited twice`); return false; } return true; });
           if (_involved.length === 0) tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit — no involved step is creditable (unverified writes only)`);
           for (const _stepId of _involved) {
+            if (pinnedStepIds.has(_stepId)) { tap(`[goal-host-vessel] walk(${opts.surface}): no α-credit for ${_stepId} — a pinned step is not a selector pick`); continue; }
             const _abCredit = await creditReachedTemplate(_stepId, verdict.reason ?? "goal reached", goal);
             opts.learningSink?.alphaBetaDelta.push(_abCredit);
             // Report what HAPPENED, not what was attempted (a rejected or lost credit is named so).
@@ -13656,7 +13696,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     selectedTemplateId: chain.length > 0 ? chain[chain.length - 1] : undefined,
     completionShapes,
     attempts: chain.length - carriedSteps,
-    goalReachReason,
+    goalReachReason: !reached && lastFailedTraceReason ? lastFailedTraceReason : goalReachReason,
     reached,
     answerBody,
     grounded: walkGroundedVerdict,
@@ -14001,19 +14041,19 @@ async function runGoalWithRecoveryInner(
     const _pf = recallGoalFailures(goal);
     tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL — ${_pf.exact.length} prior hollow verdict(s) for goal_hash=${goalHashOf(goal)} + ${_pf.near.length} near-miss; fed into attempt 1${_priorExactFailures > 0 ? ", reached-command replay disabled" : ""}: ${_priorFailureFeedback.slice(0, 220).replace(/\n/g, " | ")}`);
   }
-  // A PINNED DISPATCH (either door's firstTarget, or callerPinned) tries its pin ONCE, the error caught. A pin the
-  // catalogue or the template lookup holds runs as before (the recovery loop below). An unavailable pin no longer reaches
-  // the recovery loop's template fetch: the dispatch goes through the walk, which ends unreached naming the pin.
-  let _pinUnavailable: { id: string; reason: string } | undefined;
+  // A PINNED DISPATCH (either door's firstTarget) tries its pin ONCE, the error caught, and every dispatch with a goal,
+  // pinned or not (callerPinned alone included), goes through the walk: a template the lookup holds is the walk's first
+  // pick; an unavailable one ends the walk unreached naming the pin (agf_7b4l8praaak5, agf_l9iq6yssnrrw).
+  let _pin: { id: string; template?: ActivityTemplate; unavailableReason?: string } | undefined;
   const _pinId = opts.firstTarget;
   if (goal && _pinId) {
-    let _pinHit: unknown = null;
+    let _pinHit: ActivityTemplate | null = null;
     let _pinReason = "not found in the catalogue or the template store";
     try { _pinHit = (await host.catalogue.getTemplate(_pinId)) ?? (await getTemplateLocalFirst(_pinId)); }
     catch (e) { _pinReason = String((e as Error)?.message ?? e); }
-    if (!_pinHit) _pinUnavailable = { id: _pinId, reason: scrubReason(_pinReason, [API_KEY]).slice(0, 512) };
+    _pin = _pinHit ? { id: _pinId, template: _pinHit } : { id: _pinId, unavailableReason: scrubReason(_pinReason, [API_KEY]).slice(0, 512) };
   }
-  if (goal && ((!opts.callerPinned && !opts.firstTarget) || _pinUnavailable)) {
+  if (goal) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
     // and pick the highest-Thompson tick regardless of goal relevance. Infer the
@@ -14667,7 +14707,7 @@ async function runGoalWithRecoveryInner(
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
         const _firstDispatch = await dispatchWalk(goal, {
         changeAdmitted: _changeAdmitted,
-        ...(_pinUnavailable ? { pinUnavailable: _pinUnavailable } : {}),
+        ...(_pin ? { pin: _pin } : {}),
         recalledLessons: _dispatchLessons,
         priorVerdictFeedback: _priorFailureFeedback || undefined,
         variables: opts.variables,
@@ -14707,8 +14747,9 @@ async function runGoalWithRecoveryInner(
           })(),
       });
       let walk = _firstDispatch.walk;
-      // An unavailable pin ends here: no retry, re-frame or recovery derives the goal in its place (Q-4).
-      if (_pinUnavailable) return walk;
+      // A pinned dispatch ends with its walk: no retry, re-frame or recovery replaces the pin (Q-4; a pin was never
+      // re-selected).
+      if (_pin) return walk;
       // Q-3: every retry below is a SIBLING walk dispatch whose parentExecutionId is this first walk's execution id.
       const _firstWalkId = _firstDispatch.walkExecutionId;
       const _retryTap = (kind: string, retryId: string, retry: GoalSeekResult): void => tap(`[goal-host-vessel] ${opts.surface}: walk-retry tap: retry=${kind} first_walk=${_firstWalkId} retry_walk=${retryId} turned_unreached_into_reached=${retry.reached === true}`);
@@ -15127,6 +15168,9 @@ async function runGoalWithRecoveryInner(
         try { authoredFallbackTarget = await opts.authorFallback(); } catch { /* author failed → recovery loop proceeds without a target */ }
       }
     } catch (e) {
+      // A pinned dispatch's thrown pinned step is the dispatch's error (as the recovery loop's thrown run was); nothing
+      // replaces the pin.
+      if (_pin) throw e;
       console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`); console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error stack: ${String((e as Error).stack ?? "").split("\n").slice(0, 4).join(" | ")}`);
     }
   }
@@ -15139,7 +15183,9 @@ async function runGoalWithRecoveryInner(
   }
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
-  let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;
+  // A pinned dispatch with a goal never gets here (it ends with its walk above); only a goal-less "execute template"
+  // dispatch still names its template here.
+  let nextTarget: string | undefined = (goal ? undefined : opts.firstTarget) ?? authoredFallbackTarget;
   // Templates a door refused earlier in this dispatch (a walk's template_pick or composite door) stay refused here.
   const _doorRefused = doorRefusals.forDispatch(String(opts.variables?.dispatch_id ?? ""));
   const doorRefusedHeads: string[] = _changeAdmitted ? [] : _doorRefused.list();
@@ -15323,17 +15369,8 @@ async function runGoalWithRecoveryInner(
             .join("\n")
             .slice(0, 4000);
         }
-        // A TEMPLATE WITH ITS OWN REACH RULE IS GRADED BY ITS PRODUCT, NOT BY THE JUDGE (template-reach-rule.ts): the
-        // rule reads the run's produced impulses (the emit-time capture, else the store) and the judge is skipped. Its
-        // verdict is an ordinary deterministic one, so it takes the label, β and α paths below like any other.
-        const _ruleV = templateReachVerdict(selId, (execId && reachContentEntries.get(execId)) || ((result.trace as { tasks?: Array<{ outputImpulseIds?: string[]; success?: boolean }> }).tasks ?? [])
-          .filter((t) => t.success !== false).flatMap((t) => t.outputImpulseIds ?? [])
-          .map((id) => (host as { runtime?: { store?: { get(id: string): { content?: unknown; metadata?: { shape?: string } } | undefined } } }).runtime?.store?.get(id))
-          .filter((imp): imp is { content?: unknown; metadata?: { shape?: string } } => !!imp)
-          .map((imp) => ({ shape: imp.metadata?.shape, content: imp.content })));
-        if (_ruleV) tap(`[goal-host-vessel] goal-reach(${opts.surface}) attempt ${attempt}/${maxAttempts}: DETERMINISTIC via ${selId}: rule=${_ruleV.rule} reached=${_ruleV.reached} (verdict=${_ruleV.value}); LLM judge skipped`);
         // The engine's produced shapes are real emits of the run's tasks, so its mutation shapes are its writes.
-        const verdict: GoalReachVerdict | null = _ruleV ?? await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined, undefined, undefined, undefined, undefined, undefined, { persistedWrites: producedShapes.filter(isMutationShape) }, "recovery");
+        const verdict: GoalReachVerdict | null = await verifyGoalReached(goal, producedShapes, taskSummary, contentDigest || undefined, undefined, undefined, undefined, undefined, undefined, { persistedWrites: producedShapes.filter(isMutationShape) }, "recovery");
         if (verdict) recordDeterministicLabel(String(goal), execId, selId, verdict);
         completionShapes = verdict?.completion_shapes ?? null;
         reached = verdict?.reached === true;

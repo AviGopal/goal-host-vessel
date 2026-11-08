@@ -5,19 +5,21 @@
 // async /run-goal catch set only `error`. So the failure memory stored nothing for those dispatches and the recovery
 // loop's next attempt classified a reasonless failure.
 //
-// runGoalWithRecovery is DRIVEN here: a pinned first target with maxAttempts 1 skips the walk and the retry branch,
-// and GoalHost.prototype.runGoal is spied to return the fixture trace (or throw). The /run-goal record path cannot be
+// runGoalWithRecovery is DRIVEN here: a pinned first target runs as the walk's first step (no retry branch), and
+// GoalHost.prototype.runTemplate is spied to answer the pinned template's run with the fixture trace (or throw). The /run-goal record path cannot be
 // driven without writing the dispatch store under /workspace, so its two uses of the shared builder are pinned in the
 // source, and the builder itself is driven into the failure memory and recalled.
 //
 // Hermetic: fetch is stubbed to refuse for the whole file (restored after), and the failure memory file is a temp path
 // (index.ts reads GOAL_FAILURE_MEMORY_PATH at use, so this holds even when another file imported the module first).
 // Import is dynamic for the reason given in index-pure-exports.test.ts.
-import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// DRIVER: the pinned run now goes through the walk, whose lookups retry with real backoff against the refused network.
+setDefaultTimeout(60_000);
 const TMP = mkdtempSync(join(tmpdir(), "failed-trace-reason-"));
 process.env["GOAL_FAILURE_MEMORY_PATH"] = join(TMP, "failure-memory.jsonl");
 process.env["REACHED_CMD_CACHE_PATH"] ||= join(TMP, "reached-commands.jsonl");
@@ -38,9 +40,14 @@ afterAll(() => {
 
 type Trace = { id: string; status: string; failureMode?: { type: string; reason: string }; tasks: Array<Record<string, unknown>> };
 async function runPinned(goal: string, trace: Trace | Error) {
-  const spy = spyOn(GoalHost.prototype as unknown as { runGoal: (...a: unknown[]) => Promise<unknown> }, "runGoal").mockImplementation(async () => {
+  // DRIVER: a pinned dispatch runs its pin as the walk's first step (agf_l9iq6yssnrrw), through the walk's own template
+  // step, so the fixture trace (or throw) is what host.runTemplate answers for the pinned template; every other run (the
+  // walk activity's own) goes through unchanged.
+  const _origRunTemplate = GoalHost.prototype.runTemplate;
+  const spy = spyOn(GoalHost.prototype as unknown as { runTemplate: (...a: unknown[]) => Promise<unknown> }, "runTemplate").mockImplementation(async function (this: unknown, ...a: unknown[]) {
+    if ((a[0] as { id?: string } | undefined)?.id !== "tpl-fixture") return (_origRunTemplate as (...x: unknown[]) => Promise<unknown>).apply(this, a);
     if (trace instanceof Error) throw trace;
-    return { selectedTemplateId: "tpl-fixture", trace };
+    return trace;
   });
   // FIXTURE: the pinned template is in the host's catalogue (a pin the dispatcher cannot fetch goes through the walk
   // instead, agf_7b4l8praaak5); the first catalogue lookup of the id registers it in that catalogue.
