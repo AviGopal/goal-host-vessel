@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ActivityExecutor, ExecutionRuntime, InMemoryTemplateProvider, type ActivityTemplate, type ExecutionTrace, type Impulse } from "@avigopal/ias-executor-ts";
-import { WALK_ACTIVITY_ID, WALK_TRACE_SHAPE, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, type WalkIdentity } from "../src/walk-activity";
+import { WALK_ACTIVITY_ID, WALK_TRACE_SHAPE, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, type WalkIdentity } from "../src/walk-activity";
 
 const stepTemplate: ActivityTemplate = { id: "step-a", name: "step-a", tasks: [{ id: "t", description: "t", resolver: "step-a-resolver" }] };
 
@@ -108,5 +108,37 @@ describe("T-W2-2 (unit form): a walk dispatch is an engine execution of goal-hos
     expect(goals).toEqual(["outer"]);
     expect(innerStatus).toBe("failed");
     expect(r.traces.filter((t) => t.templateId === WALK_ACTIVITY_ID && t.status === "failed").length).toBe(1);
+  });
+});
+
+describe("W2-3 (R2): the walk execution's outputs are its trace record and its produced impulses, read by shape", () => {
+  const pool: Impulse[] = [
+    { id: "p-goal", pointer: { type: "memo" }, metadata: { shape: "goal", producedBy: "seed" }, loaded: true, content: { goal: "g" } },
+    { id: "p-did", pointer: { type: "memo" }, metadata: { shape: "dispatch_id", producedBy: "seed" }, loaded: true, content: "d1" },
+    { id: "p-shell", pointer: { type: "memo" }, metadata: { shape: "shellResult", producedBy: "satisfier:shellResult" }, loaded: true, content: { stdout: "42" } },
+    { id: "p-answer", pointer: { type: "memo" }, metadata: { shape: "goal_answer", producedBy: "goal-host-walk" }, loaded: true, content: "the answer is 42" },
+  ];
+  const verdict = { status: "completed", reached: true, goalReachReason: "deterministic:ok", selectedTemplateId: "satisfier:shellResult", completionShapes: ["shellResult"], attempts: 1 };
+  test("walkOutputs: the trace record first, then every non-seed pool impulse, as copies", () => {
+    const out = walkOutputs({ executionId: "exec_w", compositionChain: ["caller"] }, verdict, pool);
+    expect(out.map((i) => i.metadata.shape)).toEqual([WALK_TRACE_SHAPE, "shellResult", "goal_answer"]);
+    expect((out[0]!.content as { reached: boolean; outputs: Array<{ shape: string }> }).reached).toBe(true);
+    expect((out[0]!.content as { outputs: Array<{ shape: string }> }).outputs.map((o) => o.shape)).toEqual(["shellResult", "goal_answer"]);
+    expect(out.some((i) => i.metadata.degraded === true)).toBe(false);
+    out[1]!.metadata.shape = "mutated";
+    expect(pool[2]!.metadata.shape).toBe("shellResult");
+  });
+  test("a consumer reads the walk's outputs BY SHAPE from the engine execution (no relabel, nothing dropped)", async () => {
+    const r = rig(async (_goal, _opts, walk) => ({ result: "done", outputs: walkOutputs(walk, verdict, pool) }));
+    const { walkExecutionId } = await r.dispatch("count", "w23");
+    const trace = r.traces.find((t) => t.id === walkExecutionId)!;
+    expect(trace.status).toBe("completed");
+    const byShape = (shape: string) => trace.outputImpulseIds.map((id) => r.runtime.store.get(id)).filter((i) => i?.metadata.shape === shape);
+    expect(byShape("shellResult").map((i) => i!.content)).toEqual([{ stdout: "42" }]);
+    expect(byShape("goal_answer").map((i) => i!.content)).toEqual(["the answer is 42"]);
+    const rec = byShape(WALK_TRACE_SHAPE);
+    expect(rec.length).toBe(1);
+    expect((rec[0]!.content as { execution_id: string }).execution_id).toBe(walkExecutionId);
+    expect(byShape("goal").length).toBe(0);
   });
 });

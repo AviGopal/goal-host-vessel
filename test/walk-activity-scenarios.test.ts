@@ -37,6 +37,8 @@ describe.skipIf(!HERMETIC)("the walk activity in every verdict-diff scenario", (
         const parent = w["parent_execution_id"];
         if (typeof parent === "string" && nonWalkIds.has(parent)) problems.push(`${r.id}: walk ${String(w["execution_id"])} started under a non-walk execution ${parent}`);
         if (/nested walk/.test(JSON.stringify(w))) problems.push(`${r.id}: nested-walk refusal ${String(w["execution_id"])}`);
+        // W2-3 (R2): every completed walk execution carries its trace record among its outputs.
+        if (w["status"] !== "failure" && !(Array.isArray(w["output_impulse_shapes"]) && (w["output_impulse_shapes"] as unknown[]).includes("executionTrace"))) problems.push(`${r.id}: walk ${String(w["execution_id"])} has no executionTrace output`);
       }
       if (logs.some((l) => /is a nested walk, and nesting is off/.test(l))) problems.push(`${r.id}: a nested-walk refusal was logged`);
       const dispatchedIds = new Set(dispatched.map((m) => m[1]!));

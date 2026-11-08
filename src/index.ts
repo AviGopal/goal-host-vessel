@@ -5474,7 +5474,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
-import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, type WalkIdentity, type WalkRun } from "./walk-activity";
+import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, type WalkIdentity, type WalkRun } from "./walk-activity";
 import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
@@ -8193,6 +8193,9 @@ async function runGoalAsPoolWalkBody(
      *  the edit-intent route, or the caller declared a write shape. Absent ⇒ not admitted: no write shape is
      *  targeted, picked or composed by this walk. */
     changeAdmitted?: boolean;
+    /** THE WALK ACTIVITY (walk-activity.ts): set only by walkActivityBody, which returns the pool's produced impulses as
+     *  the walk execution's outputs. */
+    exposePool?: (pool: readonly Impulse[]) => void;
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -8336,6 +8339,7 @@ async function runGoalAsPoolWalkBody(
   // web_resource search-provenance check makes. The array is registered by reference, so every later
   // push is visible to that read.
   rememberLivePool(opts.variables.dispatch_id, poolImpulses);
+  opts.exposePool?.(poolImpulses);
   // PROVENANCE (walk-pool.ts, agentic-floor B1): ids unique per dispatch, `producedBy` the real
   // producer, and the producing execution / consumed ids where the step knows them.
   const mkImpulse = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): Impulse => ({
@@ -15817,8 +15821,9 @@ type WalkActivityOpts = Parameters<typeof runGoalAsPoolWalkBody>[1];
 // The walk's id parents its steps and is its trace's id; it is NOT a hop of the composition chain the composite and the
 // path record carry (they start at the caller's chain): activity-api credits every chain ancestor from each step's outcome.
 async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: WalkIdentity): Promise<WalkRun<GoalSeekResult>> {
-  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain] });
-  return { result, outputs: [] };
+  let pool: readonly Impulse[] = [];
+  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p) => { pool = p; } });
+  return { result, outputs: walkOutputs(walk, result, pool) };
 }
 host.catalogue.register(walkActivityTemplate());
 // The walk's pool stops being served when the walk ends, on every exit path (the resolver's finally).

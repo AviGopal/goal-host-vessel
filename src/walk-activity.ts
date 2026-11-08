@@ -124,6 +124,42 @@ function goalOf(context: ResolverContext): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+/** What the walk returned, as the trace record carries it. */
+export interface WalkVerdict {
+  status: string;
+  reached: boolean;
+  goalReachReason?: string;
+  selectedTemplateId?: string;
+  completionShapes: string[] | null;
+  attempts: number;
+}
+
+/** THE WALK'S OUTPUTS (R2): the trace record (shape executionTrace) first, then every impulse the walk's pool holds that
+ *  is not a seed (the goal and the dispatch's variables enter the pool as `producedBy: "seed"`). Copies: the pool is not
+ *  touched. The engine keeps each with its own shape (the task declares no output shapes, K7). The trace record is never
+ *  degraded, so the engine's all-degraded check cannot refuse the walk's outputs. */
+export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: readonly Impulse[]): Impulse[] {
+  const produced = pool.filter((i) => (i.metadata as Record<string, unknown> | undefined)?.["producedBy"] !== "seed");
+  const trace: Impulse = {
+    id: `${walk.executionId}-trace`,
+    pointer: { type: WALK_TRACE_SHAPE, execution_id: walk.executionId },
+    metadata: { shape: WALK_TRACE_SHAPE, summary: `walk ${walk.executionId}: ${verdict.reached ? "reached" : "not reached"}`, producedBy: WALK_ACTIVITY_ID },
+    loaded: true,
+    content: {
+      execution_id: walk.executionId,
+      composition_chain: [...walk.compositionChain],
+      status: verdict.status,
+      reached: verdict.reached,
+      goal_reach_reason: verdict.goalReachReason ?? null,
+      selected_template_id: verdict.selectedTemplateId ?? null,
+      completion_shapes: verdict.completionShapes,
+      attempts: verdict.attempts,
+      outputs: produced.map((i) => ({ id: i.id, shape: (i.metadata as Record<string, unknown> | undefined)?.["shape"] ?? null })),
+    },
+  };
+  return [trace, ...produced.map((i) => ({ ...i, metadata: { ...i.metadata } }))];
+}
+
 /** The goal as the walk's input impulse. */
 export function goalImpulse(goal: string, id: string): Impulse {
   return { id, pointer: { type: "goal", goal }, metadata: { shape: "goal" }, loaded: true, content: goal };

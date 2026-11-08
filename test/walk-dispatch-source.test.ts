@@ -21,7 +21,7 @@ describe("T-W2-1: the walk runs only as the walk activity", () => {
   test("MUST-FAIL: the walk body is called once, from the walk activity's resolver body", () => {
     const calls = count(/\brunGoalAsPoolWalkBody\(goal, /g);
     expect(calls).toBe(1);
-    expect(fnBody("walkActivityBody")).toContain("await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain] });");
+    expect(fnBody("walkActivityBody")).toContain("await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p) => { pool = p; } });");
   });
   test("MUST-FAIL: the dispatcher dispatches the walk four times (first walk + feedback / suppress / reframe retries), each retry parented to the first walk", () => {
     const inner = fnBody("runGoalWithRecoveryInner");
