@@ -6,12 +6,6 @@
 //   - resolveDoorGoal / resolveDoorRouting: the /run-goal door. It runs the pathless resolution
 //     (goal-file-resolution.ts, lane-open, called unchanged) over the caller's search functions, wrapped so every
 //     answer is recorded, then asks decideDoor which goal to dispatch;
-//   - handoffRoute: the early edit-intent hand-off. It asks decideHandoff whether the goal goes to feature_compose;
-//   - goalForRoutingOf: the gap-record hydration of the hand-off goal (moved from index.ts so replay and production
-//     compose it the same way);
-//   - routeEditIntent: the composed replay entry (door, then hydration, then hand-off), exactly as production chains
-//     the two sites. The corpus and the held-out replay call this, never the rules directly, so a rule that is green in
-//     the corpus is the rule production calls.
 // Every answer from the rules passes a clamp (exact keys and types, and only choices the input offered). An answer
 // that fails it is replaced by the floor (floor.ts, today's behaviour) and counted. The rules are handed a deep-frozen
 // copy of the input; the clamp and the floor read the core's own. The answer is structured-cloned once before the clamp
@@ -19,20 +13,18 @@
 // takes the floor.
 import { resolvePathlessCodeChangeGoal, isPathlessCodeChangeGoal, extractSearchTerms, type FileSearch } from "../goal-file-resolution";
 import { isEditIntentGoal } from "../goal-intent";
-import { isGapInvestigationGoal } from "../goal-target-inference";
-import { decideDoor, decideHandoff } from "../routing-rules/edit-intent";
-import { floorDoor, floorHandoff } from "./floor";
+import { decideDoor } from "../routing-rules/edit-intent";
+import { floorDoor } from "./floor";
 import { validLocalizationRecord } from "./localization";
 import type {
-  DoorDecision, DoorInput, EditIntentInput, HandoffDecision, HandoffInput, Hydration, RouteDecision, RoutingLlm, RoutingPorts,
+  DoorDecision, DoorInput, RoutingLlm, RoutingPorts,
 } from "./types";
 
 export const ROUTING_RECORD_SCHEMA = 1;
 
 /** Fall-backs to the floor since process start, by site. A non-zero count means the open rules answered out of schema. */
-export const routingFellBack = { door: 0, handoff: 0 };
+export const routingFellBack = { door: 0 };
 
-const REPO_FILE = /^repos\/[\w.-]+\/[\w.\/-]+\.\w+$/;
 const keysAre = (o: unknown, keys: readonly string[]): o is Record<string, unknown> =>
   !!o && typeof o === "object" && !Array.isArray(o) && Object.keys(o).length === keys.length && keys.every((k) => Object.prototype.hasOwnProperty.call(o, k));
 
@@ -46,16 +38,6 @@ export function clampDoor(input: DoorInput, out: unknown): DoorDecision | null {
     return { goal: out.goal, target: out.target, needs_localization: false };
   }
   return null;
-}
-
-/** The hand-off clamp: a route from the closed set; a compose target is a repos file the goal itself names. */
-export function clampHandoff(input: HandoffInput, out: unknown): HandoffDecision | null {
-  if (!keysAre(out, ["route", "target"])) return null;
-  if (out.route === "walk") return out.target === null ? { route: "walk", target: null } : null;
-  if (out.route !== "feature_compose") return null;
-  if (!input.route_enabled || typeof out.target !== "string" || !REPO_FILE.test(out.target)) return null;
-  if (!input.goal_for_routing.includes(out.target)) return null;
-  return { route: "feature_compose", target: out.target };
 }
 
 /**
@@ -82,34 +64,6 @@ export function doorDecision(input: DoorInput): { decision: DoorDecision; fell_b
   routingFellBack.door++;
   console.warn(`[routing] door rules answer refused by the clamp — using the floor (fell_back door=${routingFellBack.door})`);
   return { decision: floorDoor(input), fell_back: true };
-}
-
-/** decideHandoff over a frozen copy, clamped against the core's own input; the floor on a refused answer. index.ts calls this at the early edit-intent hand-off. */
-export function handoffRoute(input: HandoffInput): HandoffDecision {
-  let out: unknown;
-  try { out = structuredClone(decideHandoff(frozenCopy(input))); } catch { out = undefined; }
-  const ok = clampHandoff(input, out);
-  if (ok) return ok;
-  routingFellBack.handoff++;
-  console.warn(`[routing] hand-off rules answer refused by the clamp — using the floor (fell_back handoff=${routingFellBack.handoff})`);
-  return floorHandoff(input);
-}
-
-/**
- * The hand-off goal: the dispatched goal, plus the gap record's cited file and summary when the record cites a repos
- * file and the goal names none. Substrate-detected gaps cite their site in the summary, so a gap-id goal routes to
- * feature_compose with the gap's own context.
- */
-export function goalForRoutingOf(goal: string, hydration: Hydration | null): string {
-  // An INVESTIGATION ask ("investigate and decompose gap X", "investigate gap X before composing") is not a repair:
-  // boredom emits it on purpose when a gap has no edit site. Hydrating it with "fix per gap record" put an edit verb
-  // into it and routed diagnosis asks to feature_compose, where they cannot reach (measured 2026-10-16: 10 distinct
-  // goals on one node in 24 h, refused at admission). Repair goals ("close gap X", "address … gap X") still hydrate.
-  if (isGapInvestigationGoal(goal)) return goal;
-  if (hydration && hydration.cited_file && !/repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal)) {
-    return `${goal} (gap cites file: ${hydration.cited_file}; fix per gap record: ${hydration.summary.slice(0, 300)})`;
-  }
-  return goal;
 }
 
 /** The lead path restateWithTargetFile writes ("Edit <file> to satisfy the following request."). */
@@ -204,69 +158,4 @@ export async function resolveDoorRouting(
     restated_goal: restatedGoal, ports, llm, decision, fell_back,
   };
   return { goal: decision.goal, record };
-}
-
-/** The door as index.ts calls it: resolvePathlessCodeChangeGoal's signature, the dispatch goal back. */
-export async function resolveDoorGoal(
-  goal: string,
-  search: FileSearch,
-  tap?: (message: string) => void,
-  symbolSearch?: FileSearch,
-  proposeSymbols?: (goal: string) => Promise<readonly string[]>,
-  readFileText?: (path: string) => Promise<string | undefined>,
-): Promise<string> {
-  return (await resolveDoorRouting(goal, search, tap, symbolSearch, proposeSymbols, readFileText)).goal;
-}
-
-/** A replay read the record does not answer. */
-export class UnrecordedPort extends Error {
-  constructor(public readonly port: string, public readonly key: string) {
-    super(`UnrecordedPort ${port}[${key}]`);
-    this.name = "UnrecordedPort";
-  }
-}
-
-/** The recorded ports as the resolver's search functions. Every miss throws UnrecordedPort. */
-export function replayPorts(ports: RoutingPorts, llm: RoutingLlm | null) {
-  const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
-  const search: FileSearch = async (term, scope, callers) => {
-    const k = searchKey(term, scope, callers);
-    if (!own(ports.search, k)) throw new UnrecordedPort("search", k);
-    return ports.search[k]!;
-  };
-  const symbolSearch: FileSearch = async (word, scope) => {
-    const k = symbolKey(word, scope);
-    if (!own(ports.symbol_search, k)) throw new UnrecordedPort("symbol_search", k);
-    return ports.symbol_search[k]!;
-  };
-  const proposeSymbols = async (_g: string): Promise<readonly string[]> => {
-    if (!llm || llm.propose_symbols === null) throw new UnrecordedPort("llm", "propose_symbols");
-    return llm.propose_symbols;
-  };
-  const readFileText = async (path: string): Promise<string | undefined> => {
-    if (!own(ports.read_file, path)) throw new UnrecordedPort("read_file", path);
-    return ports.read_file[path] ?? undefined;
-  };
-  return { search, symbolSearch, proposeSymbols, readFileText };
-}
-
-/**
- * THE ENTRY (editIntent): the route production takes for this record, replayed. Door (the pathless resolution over the
- * recorded ports, then decideDoor), then the gap-record hydration, then the hand-off. A port the record does not answer
- * fails the replay. The resolver swallows a throwing search and leaves the goal unrestated, so an unrecorded port is
- * also caught here, after the fact, and rethrown: it can never read as "no file".
- */
-export async function routeEditIntent(input: EditIntentInput, ports: RoutingPorts, llm: RoutingLlm | null): Promise<RouteDecision> {
-  const p = replayPorts(ports, llm);
-  let unrecorded: UnrecordedPort | null = null;
-  const guard = <A extends unknown[], R>(f: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => {
-    try { return await f(...a); } catch (e) { if (e instanceof UnrecordedPort) unrecorded ??= e; throw e; }
-  };
-  const { goal, record } = await resolveDoorRouting(
-    input.goal, guard(p.search), undefined, guard(p.symbolSearch), guard(p.proposeSymbols), guard(p.readFileText), input.localization,
-  );
-  if (unrecorded) throw unrecorded;
-  const h = handoffRoute({ goal_for_routing: goalForRoutingOf(goal, input.hydration), route_enabled: input.route_enabled });
-  // needs_localization is the door's verdict on the goal as written; it is reported even when hydration routes.
-  return { route: h.route, target: h.target, needs_localization: record.decision.needs_localization };
 }

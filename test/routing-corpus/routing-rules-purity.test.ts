@@ -12,14 +12,14 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
-import { clampDoor, clampHandoff } from "../../src/routing-core/entries";
-import { floorDoor, floorHandoff } from "../../src/routing-core/floor";
+import { clampDoor } from "../../src/routing-core/entries";
+import { floorDoor } from "../../src/routing-core/floor";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const RULES_DIR = "src/routing-rules";
 const ALLOWED_VALUE_IMPORTS = new Set(["../goal-file-resolution", "../goal-intent"]);
 const EDGE_FILE = "src/routing-core/entries.ts";
-const EDGE_NAMES = ["decideDoor", "decideHandoff"];
+const EDGE_NAMES = ["decideDoor"];
 const BANNED_IDS = new Set(["process", "globalThis", "Bun", "Date", "performance", "fetch", "require", "eval", "Function", "setTimeout", "setInterval", "setImmediate", "queueMicrotask", "Worker", "WebAssembly", "XMLHttpRequest", "crypto"]);
 
 function files(dir: string): string[] {
@@ -163,7 +163,7 @@ describe("EDGE: only the core imports the rules, taking exactly the two decision
     expect(ruleEdges(m)).not.toEqual([`${EDGE_FILE}: ${[...EDGE_NAMES].sort().join(",")}`]);
   });
   test("MUTANT the core taking a third name is red", () => {
-    const m = SRC.map(([f, t]) => [f, f === EDGE_FILE ? t.replace("import { decideDoor, decideHandoff } from", "import { decideDoor, decideHandoff, VERSION } from") : t] as [string, string]);
+    const m = SRC.map(([f, t]) => [f, f === EDGE_FILE ? t.replace("import { decideDoor } from", "import { decideDoor, VERSION } from") : t] as [string, string]);
     expect(ruleEdges(m)).not.toEqual([`${EDGE_FILE}: ${[...EDGE_NAMES].sort().join(",")}`]);
   });
 });
@@ -173,8 +173,6 @@ describe("CLAMP: an out-of-schema answer is refused and the floor answers", () =
   test("positive controls: the floor's own answers pass the clamp", () => {
     expect(clampDoor(door, floorDoor(door))).toEqual(floorDoor(door));
     expect(clampDoor(door, { goal: "g", target: null, needs_localization: true })).toEqual({ goal: "g", target: null, needs_localization: true });
-    const h = { goal_for_routing: "Fix repos/v/src/x.ts now", route_enabled: true };
-    expect(clampHandoff(h, floorHandoff(h))).toEqual({ route: "feature_compose", target: "repos/v/src/x.ts" });
   });
   const badDoor: Array<[string, unknown]> = [
     ["extra key", { ...floorDoor(door), deterministic: true }],
@@ -185,14 +183,4 @@ describe("CLAMP: an out-of-schema answer is refused and the floor answers", () =
     ["not an object", "feature_compose"],
   ];
   for (const [label, out] of badDoor) test(`door MUTANT ${label} is refused`, () => { expect(clampDoor(door, out)).toBeNull(); });
-  const h = { goal_for_routing: "Fix repos/v/src/x.ts now", route_enabled: true };
-  const badHandoff: Array<[string, unknown, typeof h]> = [
-    ["unknown route", { route: "patch_with_tools", target: "repos/v/src/x.ts" }, h],
-    ["a target the goal does not name", { route: "feature_compose", target: "repos/v/src/index.ts" }, h],
-    ["a compose while the route is disabled", { route: "feature_compose", target: "repos/v/src/x.ts" }, { ...h, route_enabled: false }],
-    ["walk with a target", { route: "walk", target: "repos/v/src/x.ts" }, h],
-    ["extra key", { route: "walk", target: null, why: "x" }, h],
-    ["a non-file target", { route: "feature_compose", target: "repos/v" }, { ...h, goal_for_routing: "Fix repos/v now" }],
-  ];
-  for (const [label, out, inp] of badHandoff) test(`hand-off MUTANT ${label} is refused`, () => { expect(clampHandoff(inp, out)).toBeNull(); });
 });

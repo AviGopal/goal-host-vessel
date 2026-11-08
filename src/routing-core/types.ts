@@ -2,9 +2,6 @@
 // closed core so an open rule cannot widen what it is given or what it may answer. The core's clamp (entries.ts)
 // enforces the output types at run time; these declarations are their compile-time half.
 
-/** Where a goal goes after the hand-off. A new value is a closed (core) change. */
-export type RouteName = "feature_compose" | "walk";
-
 /**
  * A LOCALIZATION RECORD (shape `localizationRecord`): which file a need is about, and the evidence that it is the site
  * (what was read, and why it shows the site). Persisted on the gap record (gap.localization) and on the trace; the
@@ -40,38 +37,6 @@ export type DoorDecision = {
   /** True when the goal must be localized (a file + evidence recorded) before it may be routed to a file edit. */
   needs_localization: boolean;
 };
-
-export type HandoffInput = {
-  /** The goal the early edit-intent check reads: the dispatched goal plus any gap-record hydration suffix. */
-  goal_for_routing: string;
-  /** Whether the early edit-intent route is enabled on this node (read by the core at use time). */
-  route_enabled: boolean;
-};
-
-export type HandoffDecision = {
-  route: RouteName;
-  /** The repos/<vessel>/<path>.<ext> file the compose edits; null when route is "walk". */
-  target: string | null;
-};
-
-/** A gap record's hydration of the hand-off goal: the file the record cites and its summary. */
-export type Hydration = { cited_file: string; summary: string };
-
-/** The editIntent record: everything the composed route reads, and nothing it fetches (the ports carry the reads). */
-export type EditIntentInput = {
-  schema: 1;
-  entry: "editIntent";
-  /** The goal as dispatched, before any restatement. */
-  goal: string;
-  route_enabled: boolean;
-  /** Gap-record hydration found for the dispatched goal, or null (no gap id, no record, or no cited file). */
-  hydration: Hydration | null;
-  /** The localizationRecord found for this need, as recorded (validated by the core before any rule sees it), or null. */
-  localization: unknown;
-};
-
-/** The composed route, as the corpus pins it. */
-export type RouteDecision = { route: RouteName; target: string | null; needs_localization: boolean };
 
 /**
  * Recorded answers to every read the pathless resolution makes (DESIGN §4.3 ports). Keys:

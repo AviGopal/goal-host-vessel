@@ -5,8 +5,6 @@
 // structural guard between that route and a landing held. Typography also defeated the predicate: "don’t" ≠ "don't".
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
-import { handoffRoute } from "../src/routing-core/entries";
-import { floorHandoff } from "../src/routing-core/floor";
 import { canonicalGoalText, goalDemandsLandedEdit, isEditIntentGoal, prohibitsAnyMutation } from "../src/goal-intent";
 import * as judge from "../src/judge/entries";
 import { reachInput } from "../src/judge/inputs";
@@ -18,13 +16,6 @@ const READ_ONLY = [
   // PARAPHRASE (typography): the same prohibition typed with a curly apostrophe (U+2019).
   "Report what repos/parcel-vessel/src/depot.ts keeps per destination region; don’t edit or update any file.",
 ];
-const EDITS = [
-  "Edit repos/widget-vessel/src/ledger.ts to add a colour field to the widget record.",
-  "Fix the rounding in repos/parcel-vessel/src/depot.ts without changing its public API.",
-  // CONTROL (typography): an edit request typed with curly quotes still composes.
-  "Edit repos/widget-vessel/src/ledger.ts so the “colour” field defaults to ‘none’.",
-];
-const route = (goal: string) => handoffRoute({ goal_for_routing: goal, route_enabled: true });
 // The reach gate asks the open rules' goalAsksForChange through its one closed entry (src/judge/entries.ts): a goal
 // that asks for a change, judged with no write and nothing landed, is hollow as a CHANGE goal (":change" is only
 // returned when the goal asks for a change in behaviour), so prose can never reach it.
@@ -114,24 +105,6 @@ const PROHIBITED_WHATEVER_FOLLOWS = [
 ];
 
 describe("the early hand-off and a goal that forbids every change", () => {
-  for (const g of READ_ONLY) {
-    it(`[MUST-FAIL] routes to the walk, not feature_compose — ${g.slice(0, 70)}…`, () => {
-      expect(route(g)?.route ?? "walk").toBe("walk");
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
-    });
-  }
-  for (const g of EDITS) {
-    it(`[CONTROL] a genuine edit still composes onto its file — ${g.slice(0, 70)}…`, () => {
-      expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
-    });
-  }
-  for (const g of DESCRIBE_UNDER_PROHIBITION) {
-    it(`[MUST-FAIL] a description request under a change prohibition walks — ${g.slice(0, 70)}…`, () => {
-      expect(route(g)?.route ?? "walk").toBe("walk");
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
-    });
-  }
   for (const g of DESCRIBE_UNDER_PROHIBITION) {
     it(`[MUST-FAIL] the late detectors agree: not an edit intent, no landed edit demanded — ${g.slice(0, 60)}…`, () => {
       expect(isEditIntentGoal(g)).toBe(false);
@@ -140,8 +113,6 @@ describe("the early hand-off and a goal that forbids every change", () => {
   }
   for (const g of DESCRIBE_WITHOUT_EDIT_VERB) {
     it(`[CONTROL] a description request with no edit verb walks and is no edit — ${g.slice(0, 60)}…`, () => {
-      expect(route(g)?.route ?? "walk").toBe("walk");
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
       expect(isEditIntentGoal(g)).toBe(false);
       expect(goalDemandsLandedEdit(g)).toBe(false);
     });
@@ -151,16 +122,12 @@ describe("the early hand-off and a goal that forbids every change", () => {
       expect(goalDemandsLandedEdit(g)).toBe(true);
       expect(reachHollowsAsChange(g)).toBe(true);
       if (compose) {
-        expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });
-        expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
         expect(isEditIntentGoal(g)).toBe(true);
       }
     });
   }
   for (const g of SCOPED_BY_A_PARTICULAR_OBJECT) {
     it(`[MUST-FAIL] a qualifier on a particular object scopes the edit: it composes and demands a landed edit — ${g.slice(48, 110)}…`, () => {
-      expect(route(g)).toEqual({ route: "feature_compose", target: "repos/goal-host-vessel/src/edge-blend.ts" });
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
       expect(isEditIntentGoal(g)).toBe(true);
       expect(goalDemandsLandedEdit(g)).toBe(true);
       expect(reachHollowsAsChange(g)).toBe(true);
@@ -168,24 +135,18 @@ describe("the early hand-off and a goal that forbids every change", () => {
   }
   for (const g of PROHIBITED_ON_EVERYTHING) {
     it(`[CONTROL] a no-change instruction on everything the goal could change still walks — ${g.slice(0, 60)}…`, () => {
-      expect(route(g)?.route ?? "walk").toBe("walk");
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
       expect(isEditIntentGoal(g)).toBe(false);
       expect(goalDemandsLandedEdit(g)).toBe(false);
     });
   }
   for (const g of PROHIBITED_WHATEVER_FOLLOWS) {
     it(`[MUST-FAIL] (walk control) a prohibition on the whole walks and is no edit — ${g.slice(0, 64)}…`, () => {
-      expect(route(g)?.route ?? "walk").toBe("walk");
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("walk");
       expect(isEditIntentGoal(g)).toBe(false);
       expect(goalDemandsLandedEdit(g)).toBe(false);
     });
   }
   for (const g of EDITS_UNDER_DESCRIPTION) {
     it(`[CONTROL] a real edit still composes onto its file — ${g.slice(0, 70)}…`, () => {
-      expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });
-      expect(floorHandoff({ goal_for_routing: g, route_enabled: true }).route).toBe("feature_compose");
       expect(isEditIntentGoal(g)).toBe(true);
     });
   }
@@ -205,9 +166,5 @@ describe("canonicalGoalText: one definition", () => {
   it("[WIRING] /run-goal canonicalizes once at ingress; the rules and the floor read the shared predicate", () => {
     const idx = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
     expect(idx).toContain('const rawGoal = typeof body.goal === "string" ? canonicalGoalText(body.goal) : undefined;');
-    for (const f of ["../src/routing-rules/edit-intent.ts", "../src/routing-core/floor.ts"]) {
-      const src = readFileSync(new URL(f, import.meta.url), "utf8");
-      expect(src).toContain("const g = canonicalGoalText(input.goal_for_routing);\n  if (prohibitsAnyMutation(g)) return { route: \"walk\", target: null };");
-    }
   });
 });

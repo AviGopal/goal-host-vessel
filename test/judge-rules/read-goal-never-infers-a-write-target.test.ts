@@ -153,17 +153,15 @@ describe("the closed artifact rule agrees with the open gate over the existing g
   };
   it("every corpus goal and every sweep goal: goalDemandsArtifact === goalRequiresArtifact(goal, [])", () => {
     const verdict = corpusGoals("../verdict-corpus/cases");
-    const routing = corpusGoals("../routing-corpus/cases");
     const literal = literalGoals();
     expect(verdict.size).toBeGreaterThanOrEqual(40);
-    expect(routing.size).toBeGreaterThanOrEqual(10);
     expect(literal.size).toBeGreaterThanOrEqual(30);
-    const all = [...new Set([...verdict, ...routing, ...literal])];
+    const all = [...new Set([...verdict, ...literal])];
     const split = all.filter((g) => RG.goalDemandsArtifact(g) !== WG.goalRequiresArtifact(g, []));
     expect(split).toEqual([]);
     // Both answers occur, so the agreement is not one constant matching another.
     const yes = all.filter((g) => WG.goalRequiresArtifact(g, [])).length;
-    console.log(`[agreement] ${all.length} goals (verdict ${verdict.size}, routing ${routing.size}, literal ${literal.size}); demand an artifact: ${yes}`);
+    console.log(`[agreement] ${all.length} goals (verdict ${verdict.size}, literal ${literal.size}); demand an artifact: ${yes}`);
     expect(yes).toBeGreaterThan(0);
     expect(yes).toBeLessThan(all.length);
   });

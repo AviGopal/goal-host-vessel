@@ -3,13 +3,10 @@
 // means the same thing in the corpus, the schema the producer writes to, and production.
 //   - a minimal evaluator of the schema's own keywords (type, required, anyOf/required, additionalProperties,
 //     minLength, minItems, pattern, items, format date-time) judges each fixture; the validator must agree on every one;
-//   - the corpus's localization cases mean what they say: a record the case expects to route is valid, a record the
-//     case expects to need localization is not, or names another file.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validLocalizationRecord } from "../../src/routing-core/localization";
-import { loadCases, verifyChain } from "./runner";
 
 type Schema = Record<string, any>;
 const SCHEMA = JSON.parse(readFileSync(join(import.meta.dir, "localization-record.schema.json"), "utf8")) as Schema;
@@ -66,23 +63,4 @@ describe("localizationRecord: schema and validator agree", () => {
     const loose = (v: unknown) => !!v && typeof v === "object" && typeof (v as { file?: unknown }).file === "string";
     expect(FIXTURES.some(([, v, want]) => loose(clean(v)) !== want)).toBe(true);
   });
-});
-
-describe("the corpus's localization cases mean what they say", () => {
-  const dir = import.meta.dir;
-  const cases = loadCases(dir, verifyChain(dir)).filter((c) => c.entry === "editIntent" && (c.input as { localization?: unknown }).localization != null);
-  test("there are localization cases", () => { expect(cases.length).toBeGreaterThanOrEqual(4); });
-  for (const c of cases) {
-    const loc = (c.input as { localization: unknown }).localization;
-    test(`${c.id}: the record's validity matches the expectation`, () => {
-      const routes = c.expect.route === "feature_compose";
-      const ok = validLocalizationRecord(loc) && schemaAccepts(SCHEMA, loc);
-      if (routes) { expect(ok).toBe(true); expect((loc as { file: string }).file).toBe(c.expect.target as string); return; }
-      if (!ok) return; // an invalid record: the case expects no file edit, as for no record
-      // a VALID record on a case that expects no file edit must name another file than the one this goal resolves onto
-      const sibling = cases.find((o) => o.expect.route === "feature_compose" && (o.input as { goal: string }).goal === (c.input as { goal: string }).goal);
-      expect(sibling).toBeDefined();
-      expect((loc as { file: string }).file).not.toBe(sibling!.expect.target as string);
-    });
-  }
 });
