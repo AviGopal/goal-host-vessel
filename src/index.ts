@@ -8349,7 +8349,7 @@ async function runGoalAsPoolWalkBody(
   let walkTerminationReason: string | undefined;
   /** The attempt in progress (one vesselResolveShape call): its sends, whether a refusal was structural, and the
    *  instance key of the send that produced. Sends of the attempt's own shape and its action sibling belong to it. */
-  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }>; provisional?: boolean } | null = null;
+  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }>; provisional?: boolean; repeatRefused?: boolean } | null = null;
   let lastAttemptWasReattempt = false;
   /** Hop inputs the walk could not bind (walk-instances.ts UnmetInput), for the route-around record. */
   const unmetInputs: UnmetInput[] = [];
@@ -9184,7 +9184,8 @@ async function runGoalAsPoolWalkBody(
     }
     if (attemptSendOf(shape, site) && curAttempt?.provisional && !(await instanceMaySend(curAttempt.shape, withWorld(instanceKey(shape, pointer, sent.names), curAttempt.world)))) {
       noteRawResolveFailure(shape, "the same instance was already sent after its success in this walk");
-      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — the same instance re-run is not re-attempted`);
+      if (curAttempt) curAttempt.repeatRefused = true;
+      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — the same instance re-run is not re-attempted (pool version ${poolVersion()})`);
       return null;
     }
     sent.reachedEgress = true;
@@ -9397,12 +9398,15 @@ If one of those sibling shapes is the action that would create what the goal ask
     curAttempt = null;
     const r = await vesselResolveShapeInner(shape);
     if (r) unboundFor(opts.variables?.dispatch_id)?.noteAccepted(shape);
-    const _a = curAttempt as { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }> } | null;
+    const _a = curAttempt as { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }>; repeatRefused?: boolean } | null;
     curAttempt = null;
     const _out = _a ? attemptOutcome({ ok: r != null && emptyResultSetReason(r.content) === null, structural: _a.structural, sends: _a.sends }) : null;
-    if (_a && _out === "curable") walkObservations.push({ id: `walk-observation-${walkObservations.length + 1}`, shape: "walkObservation", producer: `satisfier:${shape}`, instanceKey: [..._a.sends].reverse().find((x) => x.key)?.key ?? null, reason: lastRawResolveReason ?? "refused" });
+    // A same-instance repeat refused before egress produced no evidence: no observation, no bound demand, no re-arm.
+    const _noEvidence = !!_a?.repeatRefused && !_a.sends.some((x) => x.reachedEgress);
+    if (_noEvidence) tap(`[goal-host-vessel] walk(${opts.surface}): satisfier:${shape} repeat refused before egress — no observation, pool version stays ${poolVersion()}`);
+    if (_a && _out === "curable" && !_noEvidence) walkObservations.push({ id: `walk-observation-${walkObservations.length + 1}`, shape: "walkObservation", producer: `satisfier:${shape}`, instanceKey: [..._a.sends].reverse().find((x) => x.key)?.key ?? null, reason: lastRawResolveReason ?? "refused" });
     if (_a && _out) attemptLedger.end(`satisfier:${shape}`, _out, poolVersion(), _a.sends, _a.world);
-    if (_a && _out === "curable") for (const b of _a.boundInputs) noteBoundDemand(shape, b.field, b.shape, b.key, lastRawResolveReason ?? "refused");
+    if (_a && _out === "curable" && !_noEvidence) for (const b of _a.boundInputs) noteBoundDemand(shape, b.field, b.shape, b.key, lastRawResolveReason ?? "refused");
     return r && _a?.okKey ? { ...r, instanceKey: _a.okKey } : r;
   };
   const vesselResolveShapeInner = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {

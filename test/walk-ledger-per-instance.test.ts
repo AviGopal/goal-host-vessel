@@ -19,7 +19,7 @@ const HERMETIC = !existsSync("/workspace") && !existsSync("/vessels");
 
 interface Rec { url: string; method: string; route: string; body: any }
 
-async function replay(sc: unknown): Promise<{ requests: Rec[]; log: string }> {
+async function replay(sc: unknown): Promise<{ requests: Rec[]; log: string; record: any }> {
   const ws = mkdtempSync(join(tmpdir(), "ledger-per-instance-"));
   try {
     const scPath = join(ws, "scenario.json");
@@ -30,11 +30,11 @@ async function replay(sc: unknown): Promise<{ requests: Rec[]; log: string }> {
     });
     const [code, , stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     if (!existsSync(out)) throw new Error(`child produced no output (exit ${code}): ${stderr.slice(-1500)}`);
-    const rec = JSON.parse(readFileSync(out, "utf8")) as { fatal?: string; requests?: Rec[] };
+    const rec = JSON.parse(readFileSync(out, "utf8")) as { fatal?: string; requests?: Rec[]; steps?: Array<{ record?: unknown }> };
     if (rec.fatal) throw new Error(`child fatal: ${rec.fatal}`);
     const logPath = out.replace(/\.json$/, ".log.json");
     const logs = existsSync(logPath) ? (JSON.parse(readFileSync(logPath, "utf8")) as { logs?: string[] }).logs ?? [] : [];
-    return { requests: rec.requests ?? [], log: logs.join("\n") };
+    return { requests: rec.requests ?? [], log: logs.join("\n"), record: rec.steps?.[0]?.record ?? null };
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
@@ -99,12 +99,13 @@ describe.skipIf(!HERMETIC)("a re-run after a success is decided per instance (ca
 /** noteS is produced by its action sibling noteS_make (the direct read always fails). hopR, on another vessel, needs noteS
  *  and refuses it (curable), so its bound demand re-runs satisfier:noteS after that success. The re-run's direct read
  *  fails again (an identical failed instance) and the action pick answers the SAME sibling call again. */
-const sibling = () => ({
+const sibling = (walkBudget?: Record<string, unknown>) => ({
   id: "ledger-per-instance-sibling",
   description: "walk ledger per-instance test (not part of the verdict-diff corpus)",
   fleet: { vessels: [
     { id: "note-vessel", endpoint: "http://note-vessel.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["noteS", "noteS_make"] },
     { id: "hop-vessel", endpoint: "http://hop-vessel.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["hopR"] },
+    ...(walkBudget ? [{ id: "budget-vessel", endpoint: "http://budget.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["walkBudget"] }] : []),
   ] },
   routes: [
     { id: "llm:target-inference", method: "POST", caller: "goal-host:goal_target_inference",
@@ -117,6 +118,7 @@ const sibling = () => ({
     { id: "llm:action", method: "POST", caller: "goal-host:action_shape_selection", respond: { llm: JSON.stringify({ shape: "noteS_make", args: { title: "t1" } }) } },
     { id: "hop:noteS_make", method: "POST", type: "noteS_make", respond: { json: { success: true, shape: "noteS_make", body: { made: "t1" } } } },
     { id: "hop:noteS", method: "POST", type: "noteS", respond: { json: { success: false, error: "noteS: t1 is not readable here" } } },
+    ...(walkBudget ? [{ id: "walkBudget", method: "POST", type: "walkBudget", respond: { json: { resolved: true, shape: "walkBudget", body: walkBudget } } }] : []),
     { id: "hop:hopR", method: "POST", type: "hopR", respond: { json: { success: false, error: "hopR: n is not the note this hop needs" } } },
     { id: "judge", method: "POST", caller: "goal-host:reach_verification", respond: { llm: "{\"reached\": false, \"reason\": \"hopR refused\", \"completion_shapes\": []}" } },
     { id: "floor:answer", method: "POST", caller: "goal-host:floor_tool_loop", respond: { json: { success: true, shape: "llmTextCompletion", body: { text: "UNKNOWN" } } } },
@@ -134,5 +136,41 @@ describe.skipIf(!HERMETIC)("a re-run after a success checks its action sibling's
     expect(walk1).toContain('"producer":"satisfier:noteS"');
     // one sibling call in the first walk (a recovery walk after it starts a fresh ledger)
     expect(count(walk1, 'satisfier action "noteS_make" produced')).toBe(1);
+  }, 180_000);
+});
+
+/** As `sibling`, with noteS's input `src` bound from seedT (served by its own vessel): a curable failure of noteS with
+ *  src bound raises a bound demand that re-arms seedT. walkBudget max_attempts_per_producer 1 is SEEDED, so the repeat
+ *  of noteS's instance (sent once) is refused by the cap, before egress. */
+const seeded = () => {
+  const sc = sibling({ max_attempts_per_producer: 1 });
+  sc.fleet.vessels.push({ id: "seed-vessel", endpoint: "http://seed-vessel.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["seedT"] });
+  const routes = sc.routes.map((r: any) => r.id === "schema:noteS"
+    ? { ...r, respond: { json: { success: true, shape: "resolver_schema", body: { shape: "noteS", known: true, fields: [{ name: "title", required: true, type: "string" }, { name: "src", required: true, type: "string", from_shape: "seedT" }] } } } }
+    : r.id === "llm:target-inference" ? { ...r, respond: { llm: JSON.stringify({ target_shapes: ["seedT", "noteS", "hopR"], confidence: 0.9, alternatives: [] }) } } : r);
+  routes.unshift(
+    { id: "schema:seedT", method: "POST", type: "resolver_schema", body: ['"shape":"seedT"'], respond: { json: { success: true, shape: "resolver_schema", body: { shape: "seedT", known: true, fields: [] } } } },
+    { id: "hop:seedT", method: "POST", type: "seedT", respond: { json: { success: true, shape: "seedT", body: "SEED-1" } } },
+  );
+  return { ...sc, id: "ledger-per-instance-seeded", routes };
+};
+
+describe.skipIf(!HERMETIC)("a refused repeat moves no pool version", () => {
+  test("a same-instance repeat refused before egress adds no observation and re-arms no other producer (cap seeded)", async () => {
+    const r = await replay(seeded());
+    const walk1 = firstWalk(r.log);
+    // the repeat was refused by the seeded cap, before egress
+    expect(walk1).toContain('"producer":"satisfier:noteS","instance":"noteS#');
+    expect(String((r.record?.routeArounds ?? [])[0]?.reattempt_refused ?? [])).toContain("satisfier:noteS: cap 1 reached (same instance");
+    const before = /walk rawResolve noteS \(satisfier-direct\): NOT sent — the same instance re-run is not re-attempted \(pool version (\d+)\)/.exec(walk1);
+    const after = /satisfier:noteS repeat refused before egress — no observation, pool version stays (\d+)/.exec(walk1);
+    expect(before).not.toBeNull();
+    expect(after).not.toBeNull();
+    expect(after![1]).toBe(before![1]);
+    // 0 other producers became re-eligible: no bound demand from the refused repeat, so seedT is never re-selected
+    expect(walk1).not.toContain("bound demand — noteS refused");
+    expect(walk1).not.toContain("noteS refused with a bound input — re-selecting");
+    expect(walk1).not.toContain('"producer":"satisfier:seedT"');
+    expect(count(walk1, "type\":\"seedT")).toBe(0);
   }, 180_000);
 });
