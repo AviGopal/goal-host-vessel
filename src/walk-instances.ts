@@ -15,7 +15,9 @@
  *      walk budget's max_attempts_per_producer. An absent budget field means no re-attempt. A re-run after a success
  *      under the SAME world-state key is a re-attempt too (counted and capped); a changed world-state key makes it a
  *      new instance. A transient outcome observed nothing, so it does not move the version the next attempt is
- *      compared against.
+ *      compared against. After a success under the same world-state key the next attempt is decided PER INSTANCE at
+ *      its send (qa R-B1): a send this producer never made (another command or cwd) is a new instance, a first
+ *      attempt; the same send again is a re-attempt of that instance.
  *   3. DEMANDS: an unmet input of a hop becomes a demanded shape. A demand is met only by an instance added after the
  *      demand was raised and, when the demand carries a binding, only by an instance whose bound fields equal it.
  */
@@ -160,6 +162,41 @@ export class AttemptLedger {
     if (outcome !== "transient") s.lastAttemptVersion = poolVersion;
     this.byProducer.set(p, s);
     if (outcome !== "ok") for (const x of sends) if (x.key && x.reachedEgress && !x.ok && !x.transient) this.failed.add(x.key);
+    const sent = this.sentByProducer.get(p) ?? new Map<string, number>();
+    for (const k of new Set(sends.filter((x) => x.key && x.reachedEgress).map((x) => x.key!))) sent.set(k, (sent.get(k) ?? 0) + 1);
+    this.sentByProducer.set(p, sent);
+  }
+
+  // ── per instance (qa R-B1): a re-run after a success is decided per instance, at the send ──
+  // The instance key exists only once the walk has bound the send's inputs, so a producer whose last attempt succeeded
+  // under the same world-state key is admitted provisionally here and its send decides: a key this producer never sent
+  // is a new instance (first, uncounted); the same key is a re-attempt of that instance (cap and step budget).
+  private readonly sentByProducer = new Map<string, Map<string, number>>();
+  /** The producer's last attempt succeeded under this world-state key: its next attempt is decided per instance. */
+  reRunAfterSuccess(p: string, world = ""): boolean {
+    const s = this.byProducer.get(p);
+    return !!s && s.attempts > 0 && s.lastOutcome === "ok" && (s.lastWorld ?? "") === world;
+  }
+  /** Start an attempt whose instance is decided at its send: a new instance until the send says otherwise. */
+  beginInstance(p: string): void {
+    const s = this.byProducer.get(p) ?? { attempts: 0, lastAttemptVersion: -1 };
+    s.attempts = 1;
+    this.byProducer.set(p, s);
+  }
+  /** first: this producer never sent this instance; needs-cap: it did (a re-run of the same instance). */
+  instanceDecision(p: string, key: string): "first" | "needs-cap" {
+    return (this.sentByProducer.get(p)?.get(key) ?? 0) > 0 ? "needs-cap" : "first";
+  }
+  /** The cap's verdict on re-running the same instance: an absent cap (null) means off. */
+  instanceWithinCap(p: string, key: string, cap: number | null): boolean {
+    if (cap === null || !Number.isFinite(cap)) return false;
+    return (this.sentByProducer.get(p)?.get(key) ?? 0) < cap;
+  }
+  /** A re-run of the same instance was admitted at its send: counted like any re-attempt. */
+  countReattempt(p: string): void {
+    this.reattempts++;
+    const s = this.byProducer.get(p);
+    if (s) s.attempts++;
   }
 
   /** An identical instance (same key) already failed in an earlier, completed attempt of this walk. */

@@ -8347,7 +8347,7 @@ async function runGoalAsPoolWalkBody(
   let walkTerminationReason: string | undefined;
   /** The attempt in progress (one vesselResolveShape call): its sends, whether a refusal was structural, and the
    *  instance key of the send that produced. Sends of the attempt's own shape and its action sibling belong to it. */
-  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }> } | null = null;
+  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }>; provisional?: boolean } | null = null;
   let lastAttemptWasReattempt = false;
   /** Hop inputs the walk could not bind (walk-instances.ts UnmetInput), for the route-around record. */
   const unmetInputs: UnmetInput[] = [];
@@ -8360,6 +8360,7 @@ async function runGoalAsPoolWalkBody(
     const d = attemptLedger.decide(p, poolVersion(), currentWorld(p), _bd?.binding ? _bd.seq : undefined);
     if (d === "first") return true;
     if (d !== "needs-cap") return false;
+    if (attemptLedger.reRunAfterSuccess(p, currentWorld(p))) return true; // R-B1: decided per instance at its send (instanceMaySend)
     const cap = await walkBudgetField("max_attempts_per_producer", 1, 20);
     const st = attemptLedger.state(p);
     const tapKey = `${p}@${poolVersion()}`;
@@ -8372,7 +8373,36 @@ async function runGoalAsPoolWalkBody(
     if (!attemptLedger.budgetAllowsReattempt(chain.length, MAX_STEPS)) { const _why = `${p}: step budget (chain ${chain.length} + re-attempts ${attemptLedger.reattempts}, max ${MAX_STEPS})`; if (!reattemptRefusals.has(tapKey)) tap(`[goal-host-vessel] walk(${opts.surface}): re-attempt refused at pool version ${poolVersion()}: ${_why}`); reattemptRefusals.set(tapKey, _why); return false; }
     return true;
   };
+  /** R-B1: a re-run after a success sends once its inputs are bound; the instance key decides it, tapped once per
+   *  instance and decision. A new instance is first; the same instance is a re-attempt (cap, then step budget). */
+  const instanceTapped = new Set<string>();
+  const instanceMaySend = async (shape: string, key: string): Promise<boolean> => {
+    const p = `satisfier:${shape}`;
+    let decision = attemptLedger.instanceDecision(p, key) === "first" ? "first" : "refused";
+    if (decision === "refused") {
+      const cap = await walkBudgetField("max_attempts_per_producer", 1, 20);
+      if (cap === null) reattemptRefusals.set(`${p}@${key}`, `${p}: cap absent (same instance ${key})`);
+      else if (!attemptLedger.instanceWithinCap(p, key, cap)) reattemptRefusals.set(`${p}@${key}`, `${p}: cap ${cap} reached (same instance ${key})`);
+      else if (!attemptLedger.budgetAllowsReattempt(chain.length, MAX_STEPS)) reattemptRefusals.set(`${p}@${key}`, `${p}: step budget (chain ${chain.length} + re-attempts ${attemptLedger.reattempts}, max ${MAX_STEPS})`);
+      else decision = "re-attempt";
+    }
+    if (!instanceTapped.has(`${key}|${decision}`)) { instanceTapped.add(`${key}|${decision}`); tap(`[goal-host-vessel] walk(${opts.surface}): ledger ${JSON.stringify({ producer: p, instance: key, decision })}`); }
+    if (decision === "refused") return false;
+    if (curAttempt) curAttempt.provisional = false;
+    if (decision === "re-attempt") {
+      attemptLedger.countReattempt(p);
+      lastAttemptWasReattempt = true;
+      tap(`[goal-host-vessel] walk(${opts.surface}): RE-ATTEMPT satisfier:${shape} (pool version ${poolVersion()}, re-attempts this walk ${attemptLedger.reattempts})`);
+    }
+    return true;
+  };
   const attemptBegin = (shape: string): void => {
+    if (attemptLedger.reRunAfterSuccess(`satisfier:${shape}`, currentWorld(`satisfier:${shape}`))) {
+      attemptLedger.beginInstance(`satisfier:${shape}`);
+      lastAttemptWasReattempt = false;
+      curAttempt = { shape, sends: [], structural: false, world: currentWorld(`satisfier:${shape}`), boundInputs: [], provisional: true };
+      return;
+    }
     lastAttemptWasReattempt = attemptLedger.begin(`satisfier:${shape}`, currentWorld(`satisfier:${shape}`)).reattempt;
     if (lastAttemptWasReattempt) tap(`[goal-host-vessel] walk(${opts.surface}): RE-ATTEMPT satisfier:${shape} (pool version ${poolVersion()}, re-attempts this walk ${attemptLedger.reattempts})`);
     curAttempt = { shape, sends: [], structural: false, world: currentWorld(`satisfier:${shape}`), boundInputs: [] };
@@ -9146,6 +9176,11 @@ async function runGoalAsPoolWalkBody(
     if (attemptSendOf(shape, site) && attemptLedger.failedBefore(withWorld(instanceKey(shape, pointer, sent.names), curAttempt?.world ?? ""))) {
       noteRawResolveFailure(shape, "identical instance already failed in this walk");
       tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — identical instance already failed in this walk`);
+      return null;
+    }
+    if (attemptSendOf(shape, site) && curAttempt?.provisional && shape === curAttempt.shape && !(await instanceMaySend(shape, withWorld(instanceKey(shape, pointer, sent.names), curAttempt.world)))) {
+      noteRawResolveFailure(shape, "the same instance was already sent after its success in this walk");
+      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — the same instance re-run is not re-attempted`);
       return null;
     }
     sent.reachedEgress = true;

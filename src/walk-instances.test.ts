@@ -266,3 +266,48 @@ describe("U10 the sibling rule (two instances of an executor shape)", () => {
     expect(recordCommand(commands, new Map(), "shellResult", "ls")).toBe(true);
   });
 });
+
+describe("U10 a re-run after a success is decided per instance (qa R-B1)", () => {
+  const k = (command: string) => withWorld(instanceKey("bounded_shell", { command, cwd: "/r" }, FIELDS), "");
+  const p = "satisfier:bounded_shell";
+  test("seven distinct commands after successes are each a first instance; none is counted as a re-attempt", () => {
+    const l = new AttemptLedger();
+    let v = 1;
+    for (let i = 1; i <= 7; i++) {
+      if (i > 1) {
+        // the producer-level decision is unchanged; the walk admits the attempt provisionally and its send decides
+        expect(l.reRunAfterSuccess(p, "")).toBe(true);
+        expect(l.instanceDecision(p, k(`step-${i}`))).toBe("first");
+        l.beginInstance(p);
+      } else {
+        expect(l.decide(p, v, "")).toBe("first");
+        l.begin(p, "");
+      }
+      v++;
+      l.end(p, "ok", v, [{ reachedEgress: true, ok: true, transient: false, key: k(`step-${i}`) }], "");
+    }
+    expect(l.reattempts).toBe(0);
+  });
+  test("the same instance again is a re-attempt: off with the cap absent, within the cap counted against the budget", () => {
+    const l = new AttemptLedger();
+    l.begin(p, ""); l.end(p, "ok", 2, [{ reachedEgress: true, ok: true, transient: false, key: k("step-1") }], "");
+    expect(l.instanceDecision(p, k("step-1"))).toBe("needs-cap");
+    expect(l.instanceWithinCap(p, k("step-1"), null)).toBe(false);
+    expect(l.instanceWithinCap(p, k("step-1"), 1)).toBe(false);
+    expect(l.instanceWithinCap(p, k("step-1"), 2)).toBe(true);
+    l.countReattempt(p);
+    expect(l.reattempts).toBe(1);
+  });
+  test("a failed producer is not decided per instance: the producer-level rule (new evidence, then the cap) holds", () => {
+    const l = new AttemptLedger();
+    l.begin(p, ""); l.end(p, "curable", 2, [{ reachedEgress: true, ok: false, transient: false, key: k("step-1") }], "");
+    expect(l.reRunAfterSuccess(p, "")).toBe(false);
+    expect(l.decide(p, 2, "")).toBe("no-new-impulse");
+  });
+  test("after an admitted write (a changed world-state key) the re-run is a first attempt as before, not per instance", () => {
+    const l = new AttemptLedger();
+    l.begin(p, ""); l.end(p, "ok", 2, [], "");
+    expect(l.reRunAfterSuccess(p, "w1")).toBe(false);
+    expect(l.decide(p, 2, "w1")).toBe("first");
+  });
+});
