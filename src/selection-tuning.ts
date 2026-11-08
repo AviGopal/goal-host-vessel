@@ -74,8 +74,6 @@ export interface SelectionTuning {
   /** How many times a spooled reach verdict that matched no row ({updated:0}) is redelivered before it is retired:
    *  the execution row may land after the verdict, so one miss is not final, but an id that never lands must go. */
   reachSpoolNoRowRetries: number;
-  /** J1: the TOTAL size (chars) of the floor's observations block (floor-walk-context.ts), so the floor prompt stays
-   *  bounded however many impulses a walk carried or how much failure history a goal has. */
   floorObservationsMaxChars: number;
   /** Judge consistency (src/judge/verdict-consistency.ts): how many verdicts decide a key on which the reach judge
    *  disagreed with itself (the stored one, the current one, and k-2 fresh samples). */

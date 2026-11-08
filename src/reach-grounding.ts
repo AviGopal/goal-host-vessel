@@ -299,7 +299,6 @@ export const NON_ANSWER_PHRASES = /\b(?:it|that|this|the answer) (?:really )?dep
 const LLM_WRITER_SHAPES: ReadonlySet<string> = new Set([...ANSWER_SHAPES, "llm_completion_dispatch"]);
 /** Dispatch seeds and placeholders: present in every chain, evidence of nothing. */
 const SEED_SHAPES: ReadonlySet<string> = new Set(["goal", "dispatch_id", "universal_fallback_result"]);
-/** The floor's banner (index.ts universalToolFallback): stripped from the answer text, never read as evidence. */
 const ZERO_TOOLS_BANNER = "[GROUNDING: ZERO tools were executed";
 const FLOOR_OBSERVATIONS_MARKER = "\n--- grounded tool outputs ---";
 

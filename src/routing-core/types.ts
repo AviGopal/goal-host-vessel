@@ -43,8 +43,6 @@ export type DoorDecision = {
  *   search:        `${scope ?? "*"}|${preferCallSites ? 1 : 0}|${term}`  -> repo-relative files
  *   symbol_search: `${scope ?? "*"}|${word}`                             -> repo-relative files
  *   read_file:     path -> text (null = unreadable)
- * A read the record does not answer throws UnrecordedPort: a rule that starts reading something new is red, not
- * silently defaulted.
  */
 export type RoutingPorts = {
   search: Record<string, readonly string[]>;

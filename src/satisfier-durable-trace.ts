@@ -19,7 +19,6 @@
 import { createHash } from "node:crypto";
 import type { ExecutionTrace } from "@avigopal/ias-executor-ts";
 
-/** The floor's final_text cap (index.ts universal-tool-fallback), so one reader renders both tiers. */
 export const ANSWER_TEXT_CAP = 4000;
 /** Steps kept on the durable trace, bounded like the failed-walk trace's step list. */
 export const DURABLE_STEP_CAP = 40;

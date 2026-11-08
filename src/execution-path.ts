@@ -49,14 +49,6 @@ export function classifyExecutionPath(seek: TerminalizedSeek): WalkTier {
   const tid = typeof seek.selectedTemplateId === "string" ? seek.selectedTemplateId : "";
   const exec = typeof seek.executionId === "string" ? seek.executionId : "";
 
-  // NAMED MECHANISMS FIRST, generic heuristic last. Every one of these returns
-  // a concrete selectedTemplateId with attempts===1, and on success reached===
-  // true — which is exactly the "reused a known path" heuristic below. Testing
-  // that heuristic first swallowed all of them: the floor, satisfier resolves
-  // and direct edits were every one reported as `learned_pathway`, so the
-  // substrate has been counting its own fallbacks as evidence of learning and
-  // the `universal_tool_fallback` branch was unreachable for the only case that
-  // returns non-null.
   if (tid === "feature_compose") return "feature_compose";
   if (tid.startsWith("satisfier:")) return "satisfier";
 

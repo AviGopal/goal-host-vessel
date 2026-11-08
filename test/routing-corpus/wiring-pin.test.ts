@@ -1,6 +1,5 @@
 // PROTECTED: production routes through the entries the routing corpus pins (DESIGN §6.3). A corpus-green rule that
 // production does not call is a hollow gate, so this reads src/index.ts as text and asserts, by anchor (never by line):
-//   - the /run-goal door calls the core's resolveDoorGoal (not resolvePathlessCodeChangeGoal directly);
 //   - the moved expressions (the inline hand-off predicate and the inline hydration text) are gone from index.ts.
 // Every anchor must be FOUND: a missing anchor is red, never vacuous. Each assertion is shown red on a mutant.
 import { describe, expect, test } from "bun:test";

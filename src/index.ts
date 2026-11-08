@@ -2481,10 +2481,6 @@ async function verifyCountFilesReach(goal: string, dig: string): Promise<GoalRea
   // countable goal to the LLM verifier (which rubber-stamps a wrong number: observed a
   // reached-command-cache replay that counted the drifted /vessels mirror — 10 vs clone 9,
   // 244 vs clone 269 — greened "the correct count" with no ground-truth comparison → hollow).
-  // verifyGoalReached is called on TWO digest shapes: the walk-surface judge view ("- shellResult:
-  // 10") AND the universalToolFallback digest (finalText + grounded tool outputs, e.g. "There are
-  // 10 .ts files"). Extract from SHORT count-context lines in BOTH, skipping long JSON-blob lines
-  // (activity_metrics etc.) whose incidental integers would poison the match.
   const countLines = dig.split("\n").map((l) => l.trim()).filter((t) => {
     if (t.length === 0 || t.length > 160) return false;
     if (/error|command is required|not found|no such|cannot|invalid/i.test(t)) return false;
@@ -10658,8 +10654,6 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (corrected != null) { recordExecutorCommand(mergedArgs); console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
       }
     }
-    // J2a DERIVE BEFORE ASK: the inputs the resolver named as required are tried against the pool here and by the
-    // investigation below; only an input BOTH leave unbound is recorded as missing (needs-information.ts).
     const _niRec = lastRawResolveReason ? unboundFor(opts.variables?.dispatch_id) : undefined;
     const _niFields = _niRec ? requiredFieldsFromCorrection(lastRawResolveReason ?? undefined) : [];
     const _niBound = _niFields.length > 0 ? bindArgsFromPool(_niFields, poolImpulses) : {};
@@ -14107,11 +14101,6 @@ async function runGoalWithRecoveryInner(
     // --- end capability catalog consultation ---
 
     // --- gap-record hydration (walk-no-gap-record-hydration-from-goal-text) ---
-    // When the goal references a substrateGap id, resolve the record FIRST and
-    // inject its summary/metadata into the walk context; if the record cites a
-    // repos/<vessel> source file (and the goal itself does not), surface it to the
-    // EARLY edit-intent check via goalForRouting so gap-id goals route to
-    // feature_compose with the gap's own context. Fail-open on any error.
     try {
       const gapIdMatch = goal.match(/\b(gap-[a-z0-9][a-z0-9-]{5,})\b/i) ?? goal.match(/\bgap\s+([a-z0-9][a-z0-9-]{8,})\b/i);
       const hydrateGapId = gapIdMatch?.[1];
@@ -14127,18 +14116,6 @@ async function runGoalWithRecoveryInner(
         if (hydGap && hydGap.id) {
           const hydMeta = JSON.stringify(hydGap.classification_metadata ?? {});
           walkConceptContext += `\nGap record ${hydGap.id}: ${String(hydGap.summary ?? "").slice(0, 500)} | metadata: ${hydMeta.slice(0, 400)}`;
-          // Substrate-detected gaps (env-gate scans, coverage detectors) cite the site
-          // in their summary as a BARE `<vessel>/src/<path>` with NO `repos/` prefix
-          // (e.g. "e.g. development-vessel/src/resolvers/rhythm-conductor-tick.ts:125").
-          // The original match — and the EARLY edit-intent check it feeds — both require
-          // the `repos/` prefix, so these citations were dropped ("cited file: none"), the
-          // close-goal never routed to feature_compose, and it walked to a diagnostic
-          // HOLLOW (problem_detection/error_log) instead of composing the fix. This is the
-          // authoritative file for the gap (it names the exact offending site), so prefer
-          // it over the coincidental unique-hit text-search restatement upstream. Accept
-          // the bare form and normalise to `repos/`. Require `/src/` so a stray token is
-          // not read as a path; fail-open (routing hint only, feature_compose rejects a
-          // path that does not exist).
           const _hydText = `${hydMeta}\n${String(hydGap.summary ?? "")}`;
           let hydFile = _hydText.match(/repos\/[\w.-]+\/[\w.\/-]+\.\w+/)?.[0];
           if (!hydFile) {

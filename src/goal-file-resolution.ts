@@ -1,38 +1,3 @@
-/**
- * Resolving a code-change goal that did not name a file.
- *
- * WHY THIS EXISTS (2026-08-09). `isEditIntentGoal` ANDs a mutation verb with a
- * literal `repos/<vessel>/<path>.<ext>`:
- *
- *     /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|fix|…)\b/i.test(goal)
- *
- * so a goal that asks for a change but does not already contain the path is not
- * an edit goal at all. Measured on two live hub dispatches: "Fix this so
- * consumers resolve an address they can actually reach" inferred
- * ["shellResult","memoryNote_write"], and "Write and land the code change, do
- * not just describe it" inferred ["llm_completion_dispatch"] with NO
- * alternatives. Neither produced a commit. No edit shape appeared in either
- * primary set or either alternatives list, because for a pathless goal the edit
- * family is never a candidate to rank in the first place.
- *
- * That is law 13 as a boolean: "if a goal only works after an operator rewrites
- * it with file paths, that rewriting is a gap in the system, not a workflow to
- * institutionalize."
- *
- * WHY NOT JUST RELAX THE `&&`. The path is not consulted once — `goal.match(
- * /repos\/[\w.-]+\/[\w./-]+/)` recurs at roughly a dozen sites in index.ts. A
- * predicate that admits pathless goals hands every one of those a null match, so
- * the goal would enter the edit path and misfire deeper in, which is strictly
- * worse than declining it early. The path requirement is load-bearing.
- *
- * So this module does the decomposition the operator is currently doing by hand:
- * recognise a pathless code-change goal, extract the terms worth searching for,
- * and restate the goal with the resolved path so that EVERY existing downstream
- * consumer — the predicate, the path extractors, feature_compose — works
- * unchanged. The filesystem search itself is deliberately NOT here: it is
- * injected, so this module stays pure and directly testable (index.ts boots a
- * server on import and cannot be tested).
- */
 
 /** Mutation verbs — kept in sync with `isEditIntentGoal` in ./goal-intent. */
 const MUTATION_VERB =
@@ -420,50 +385,12 @@ export type FileSearch = (
   preferCallSites?: boolean,
 ) => Promise<readonly string[]>;
 
-/**
- * Turn a pathless code-change goal into a path-bearing one, or return it unchanged.
- *
- * FAIL-CLOSED ON PURPOSE, in three places: the goal must satisfy the
- * conservative predicate, the search must return EXACTLY ONE file, and any
- * search error returns the original goal. The cost asymmetry drives this — a
- * goal left pathless behaves exactly as it does today (it walks and reports,
- * which is the status quo), while a goal restated onto the WRONG file routes a
- * confident edit into feature_compose, which drafts and commits. One is a
- * missed opportunity; the other writes code nobody asked for.
- *
- * Terms are tried in specificity order and the FIRST unique hit wins.
- * Ambiguity is treated as failure rather than resolved by ranking: with two
- * candidate files there is no evidence here for choosing between them, and
- * picking the first is exactly the guess this whole module exists to prevent.
- * THIS FUNCTION IS FAIL-CLOSED. See the module docstring for a full explanation of why.
- */
 export async function resolvePathlessCodeChangeGoal(
   goal: string,
   search: FileSearch,
   tap?: (message: string) => void,
-  /** Optional: files DECLARING a symbol containing this word. See the last-resort block. */
   symbolSearch?: FileSearch,
-  /**
-   * Optional: propose CODE IDENTIFIERS a symptom probably corresponds to.
-   *
-   * A goal phrases things as symptoms; the code uses identifiers. Where a goal
-   * says something like "execution path" records and "tenant" marking, the code says
-   * `goal_execution_paths` and `org_id`. No lexical rule bridges that — it is a
-   * translation, and it is the single reason symptom-level repair goals are left
-   * unrestated and therefore never reach the compose path.
-   *
-   * The proposal only widens the CANDIDATE WORDS. Every gate below is unchanged:
-   * a proposed word still has to declare in EXACTLY ONE file, or win
-   * corroboration as a strict leader across >=2 words. A model that guesses
-   * wildly therefore changes nothing — it cannot restate a goal onto a file the
-   * search does not independently single out.
-   */
   proposeSymbols?: (goal: string) => Promise<readonly string[]>,
-  /**
-   * Optional: read a file's text so a PROSE term's unique hit can be verified to occur
-   * outside comments. Omitted -> verification is skipped and behaviour is unchanged, so
-   * this is fail-open by construction.
-   */
   readFileText?: (path: string) => Promise<string | undefined>,
 ): Promise<string> {
   return goal;

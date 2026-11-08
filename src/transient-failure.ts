@@ -6,11 +6,6 @@
 // retry is the honest response. A non-transient failure (a 4xx naming a bad request, a
 // resolver rejecting its arguments) is information about the REQUEST and must not be
 // retried verbatim.
-//
-// Before this module the walk's last-chance un-poison and the edit-intent compose retry
-// each carried their own regex, and neither recognised an HTTP 5xx: a single 503 from the
-// shell resolver ended a deterministic registry-count walk at 0 steps, and with the floor
-// no longer offering a shell (floor-tools.ts) nothing routed around it.
 
 /** Failure text that names a condition of the moment, not of the request. */
 export const TRANSIENT_FAILURE_PATTERN =
