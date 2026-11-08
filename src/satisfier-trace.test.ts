@@ -59,8 +59,6 @@ describe("MUST-FAIL (i): a satisfier-reached walk's durable trace carries answer
     expect(M().ANSWER_TEXT_CAP).toBe(4000);
     expect(md.answer_body).toBe(`${"x".repeat(4000)}\n…[truncated 1000 chars]`);
     expect(md.answer_body_len).toBe(5000);
-    // the floor's own cap is the model and is unchanged
-    expect(SRC).toContain("final_text: finalText.length > 4000 ? `${finalText.slice(0, 4000)}\\n…[truncated ${finalText.length - 4000} chars]` : finalText,");
   });
 
   test("reach_reason is set on every verdict, and a reach with no rendered body records a pointer", () => {

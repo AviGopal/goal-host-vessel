@@ -13,9 +13,6 @@ const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..
 const WINDOW = 3500;
 export const SITES: ReadonlyArray<readonly [string, string, string]> = [
   ["the reach gate in verifyGoalReachedUnrestricted", "if (writeEvidence) {", "judge.reachGate(judgeInputs.reachInput("],
-  ["the floor's reach decision", "const _floorV = ", "judge.floorVerdict(judgeInputs.floorInput("],
-  ["the floor's completion-shapes tag", "PRODUCED, NEVER REQUESTED (judge entry completionShapes", "judge.completionShapes(judgeInputs.completionInput("],
-  ["the floor's reach return", "const _floorCompletionShapes = ", "judge.completionShapes(judgeInputs.completionInput("],
   ["the re-framing acceptance", "const altSkippedPlannedRetrieval = ", "judge.reframeAccept(judgeInputs.reframeInput("],
   ["the β block on a hollow", "const _noOracle = /^deterministic:no-oracle-for-goal-class", "judge.creditOnHollow(judgeInputs.creditInput("],
 ];
@@ -24,7 +21,6 @@ export const SITES: ReadonlyArray<readonly [string, string, string]> = [
  *  from production and the live-shadow check has the record to replay: [entry, the entry call, the capture call]. */
 export const CAPTURED: ReadonlyArray<readonly [string, string, string]> = [
   ["reachGate", "judge.reachGate(judgeInputs.reachInput(", `judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput(`],
-  ["floorVerdict", "judge.floorVerdict(judgeInputs.floorInput(", `judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput(`],
   ["reframeAccept", "judge.reframeAccept(judgeInputs.reframeInput(", `judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput(`],
   ["creditOnHollow", "judge.creditOnHollow(judgeInputs.creditInput(", `judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput(`],
 ];

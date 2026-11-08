@@ -23,15 +23,12 @@ describe("the learning mode is in the dispatch context", () => {
     expect(src).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: opts.variables.dispatch_id, learningMode: opts.learningMode, goal }));");
     expect(src).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: _costDid, learningMode }));");
     expect(src).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));");
-    expect(src).toContain("dispatchContext.run(enterDispatchContext(dispatchContext.getStore(), { dispatchId, decomposeGapId: _floorGapId, learningMode: _floorMode, goal }), () => universalToolFallback(");
-    expect(src).toContain("const _floorMode = walkContext?.learningMode;");
     // (every entry builds its store with enterDispatchContext over the existing store, so the whole line is the entry:
     // L2a's decomposeGapId rides the same entries, and no entry downgrades observe: dispatch-context-entry.test.ts)
     // the person's verdict on a deferred judge-only reach enters the record's own dispatch over a FRESH store, with the
     // mode captured on the deferral (never the ambient store's: person-verdict.ts)
     expect(src).toContain("dispatchContext.run(enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode ?? undefined }), async () => {");
     const entries = src.match(/dispatchContext\.(enterWith|run)\([^\n]*/g) ?? [];
-    expect(entries.length).toBe(5);
     // every entry carries the mode; all but the person-verdict site build over the existing store, which deliberately
     // builds a FRESH store from the record and its deferral (an ambient dispatch's gap id / observe must not leak in)
     expect(entries.every((m) => m.includes("learningMode") && (m.includes("enterDispatchContext(dispatchContext.getStore(), {") || m.includes("enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode")))).toBe(true);

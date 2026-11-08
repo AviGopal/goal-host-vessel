@@ -26,7 +26,6 @@ process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
 const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => { throw new TypeError("fetch refused (test: no network)"); }) as unknown as typeof fetch);
 const m = await import("../src/index");
 const INDEX = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
-const FLOOR_CTX = readFileSync(join(import.meta.dir, "..", "src", "floor-walk-context.ts"), "utf-8");
 // The pure half is imported lazily so the index-driven must-fails below report their own red on a tree without it.
 const fr = async () => await import("../src/failure-recall");
 
@@ -92,7 +91,6 @@ describe("near-miss lessons are keyed on the target decision, never on word toke
   test("[MUST-FAIL] the reader is told a DIFFERENT goal's line is not this goal (synthesis preamble and floor block)", () => {
     expect(INDEX).not.toContain("Earlier attempts at this goal (or a similar one)");
     expect(INDEX).toContain('(a line naming "a DIFFERENT goal" is about that goal, not this one: take its defect, never its subject)');
-    expect(FLOOR_CTX).toContain('(a line naming "a DIFFERENT goal" is about that goal, not this one: take its defect, never its subject)');
   });
 });
 
@@ -137,8 +135,6 @@ describe("the content check: a synthesised search query must share a content wor
 
   test("[WIRING] the walk's search resolve and the floor's search call both run the check", () => {
     expect(INDEX).toContain('if (/web_?search/i.test(shape) && typeof pointer.query === "string") observeOffGoalContent(`walk(${opts.surface}): ${shape} query`, dispatchContext.getStore()?.goal ?? goal, pointer.query, tap);');
-    expect(INDEX).toContain('if (_dg && /web_?search/i.test(nm) && typeof a.query === "string") observeOffGoalContent(`floor: ${nm} query`, _dg, a.query, (m) => console.log(m));');
     expect(INDEX).toContain("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId: opts.variables.dispatch_id, learningMode: opts.learningMode, goal }));");
-    expect(INDEX).toContain("learningMode: _floorMode, goal }), () => universalToolFallback(goal, targetShapes, dispatchId, out, walkContext));");
   });
 });

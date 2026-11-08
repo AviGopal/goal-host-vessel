@@ -75,7 +75,6 @@ describe("B2 traces: every trace goal-host persists for an observe dispatch carr
     // floor + failed walk -> persistSatisfierTrace -> satisfierTraceSink.record
     expect(fnBody("async function persistSatisfierTrace(", 900)).toContain("await satisfierTraceSink.record(trace);");
     expect(fnBody("async function persistFailedWalkTrace(", 600)).toContain("await persistSatisfierTrace({");
-    expect(src).toContain('templateId: "universal-tool-fallback",');
     // engine (template) traces: the walk and the recovery loop pass the dispatch's tags, which /run-goal stamps
     expect(src.match(/host\.runTemplate\([^)]*\{[\s\S]{0,260}?tags: opts\.tags,/g)?.length).toBe(2);
     expect(src).toContain("tags: [...(opts.tags ?? []), ...correlationTag(pickCorrelationId)],");

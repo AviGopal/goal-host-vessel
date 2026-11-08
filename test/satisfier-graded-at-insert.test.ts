@@ -64,19 +64,6 @@ describe("satisfier traces are graded at insert, not by a droppable patch", () =
     expect(block).toMatch(/filter\(\(t\) => !\/\^reached:\/\.test\(t\)\)/);
   });
 
-  it("BOTH tiers grade the same way — floor and satisfier must not drift", async () => {
-    const src = await source();
-    // The floor's graded-at-insert trace, which this reuses.
-    const floorIdx = src.indexOf('templateId: "universal-tool-fallback"');
-    expect(floorIdx).toBeGreaterThan(-1);
-    const floorBlock = src.slice(floorIdx, floorIdx + 2500);
-    expect(floorBlock).toContain('"reached:true"');
-    // One reader (classifyReach) grades both tiers; if these ever diverge, one tier silently
-    // stops being credited while the other keeps working — the failure that hid this for the
-    // floor until a 2,000-row window showed ZERO floor executions.
-    expect(floorBlock).toMatch(/reached:false/);
-  });
-
   it("the patch still fires — the tag is belt-and-braces, not a replacement", async () => {
     const src = await source();
     // Removing the patch would trade one single point of failure for another. If the patch

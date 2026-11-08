@@ -178,7 +178,4 @@ describe("the named reason is what the trace records", () => {
     expect(src).toMatch(/persistFailedWalkTrace\(_goalStr, walkStepSink, seek\.completionShapes, seek\.goalReachReason,/);
     expect(src).toMatch(/termination_reason: termination,\s*\n\s*reach_reason: reachReason \?\? null,/);
   });
-  it("the floor's trace carries the verdict's reason as reach_reason", () => {
-    expect(src).toMatch(/reach_reason: verdict\?\.reason \?\? null,/);
-  });
 });

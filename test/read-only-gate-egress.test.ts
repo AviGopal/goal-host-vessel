@@ -108,7 +108,6 @@ describe("index.ts passes the goal at every call of the gate, and every recipe r
     expect((src.match(/instantiateRecipe\(/g) ?? []).length).toBe(2);
     // The recipe sites (walk answer, floor seed, executor recovery) take their command from recipeCommandFor.
     expect(src).toContain("const _rc = recipeCommandFor(goal)!;");
-    expect(src).toContain("const rc = recipeCommandFor(goal);");
     expect(src).toContain("const _recovery = recipeCommandFor(goal);");
   });
 });

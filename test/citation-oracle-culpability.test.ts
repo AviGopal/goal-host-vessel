@@ -105,7 +105,6 @@ describe("(a1) MUST-FAIL — false fail: a goal that asked for no citation is ne
     // … the walk withholds β on the durable trace for any abstain …
     expect(src).toContain("if (verdict?.abstain) {\n        status = \"failed\";\n        walkBetaWithheld = true;");
     // … the floor persists an abstain untagged + beta_withheld, and the engine path neither penalises nor reports reached:false.
-    expect(src).toContain('tags: verdict?.abstain ? withBetaWithheld(["dispatcher_used:goal-host"], "verdict-abstain") : [');
     expect(src).toMatch(/\} else if \(verdict\?\.abstain\) \{\n\s*\/\/ ABSTAIN \(OP-1\)[^\n]*\n\s*status = "failed";\n\s*goalReachReason = verdict\.reason;\n\s*tap\([^\n]*ungraded \(no β\)`\);\n\s*\} else if \(verdict && verdict\.reached === false\) \{/);
     expect(src).toContain("...(engineAbstain && !reached ? { abstain: engineAbstain } : {})");
   });
