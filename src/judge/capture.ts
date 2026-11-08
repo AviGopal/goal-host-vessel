@@ -622,19 +622,6 @@ function routingInputOf(t: CaptureTarget, goal: string): RoutingInputRecord {
   return rec;
 }
 
-/** The walk hydrated a gap record named by the goal; `applied` = its cited file was put on the routing goal. */
-export function noteGapHydration(h: { goal: string; gapId: string; citedFile: string | null; applied: boolean; summary: string }): void {
-  try {
-    const t = boundTarget();
-    if (!t) return;
-    const rec = routingInputOf(t, h.goal);
-    rec.gap_hint = { gap_id: h.gapId, cited_file: h.citedFile, applied: h.applied, summary: h.applied ? h.summary : null };
-    capRecord(rec as unknown as Record<string, unknown>);
-    capDispatchTotal(t.metadata!);
-    counters.captured++;
-  } catch (e) { captureError("editIntent", e); }
-}
-
 /** The early edit-intent check read its route switch (the in-process value it decided with; no new read). */
 export function noteRouteEnabled(h: { goal: string; enabled: boolean }): void {
   try {

@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import {
   JUDGE_INPUT_SCHEMA, ROUTING_INPUT_SCHEMA,
   captureJudgeInput, creditOnHollowInput, floorShortcutInput, floorVerdictInput, noteCitationPort,
-  noteGapHydration, noteLlmJudge, noteRoutingHandOff, observeWriteReadback, reachGateInput, reframeAcceptInput, routingRecorder,
+  noteLlmJudge, noteRoutingHandOff, observeWriteReadback, reachGateInput, reframeAcceptInput, routingRecorder,
   withCaptureTarget, attachRoutingInput,
   type CaptureTarget, type ReachGateCaptureArgs,
 } from "../../src/judge/capture";
@@ -178,22 +178,6 @@ describe("routing_input schema (entry editIntent)", () => {
     expect(rec.routed_to).toBe("feature_compose");
     expect(rec.compose_gap_id).toBe("route-edit-fixture");
     expect(rec.edit_site).toBe(FILE);
-  });
-
-  test("a hydrated gap record's cited file is recorded as the routing hint, then the hand-off", async () => {
-    const target: CaptureTarget = {};
-    const rr = routingRecorder();
-    const goal = "Close gap gap-fixture-stale-stage by fixing the stage timer";
-    attachRoutingInput(target, rr.finish(goal, goal));
-    expect(target.metadata!.routing_input!.gap_hint).toBeNull();
-    await withCaptureTarget(target, async () => {
-      noteGapHydration({ goal, gapId: "gap-fixture-stale-stage", citedFile: FILE, applied: true, summary: "the stage timer never resets" });
-      noteRoutingHandOff({ goal, composeGapId: "gap-fixture-stale-stage", editSite: FILE });
-    });
-    const rec = target.metadata!.routing_input!;
-    expect(keys(rec)).toEqual(ROUTING_FIELDS);
-    expect(rec.gap_hint).toEqual({ gap_id: "gap-fixture-stale-stage", cited_file: FILE, applied: true, summary: "the stage timer never resets" });
-    expect(rec.routed_to).toBe("feature_compose");
   });
 
   test("a hand-off with no door record still records a complete routing_input", async () => {

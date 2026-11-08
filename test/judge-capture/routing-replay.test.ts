@@ -8,7 +8,7 @@
 //   - gap_hint.summary when the hydration was applied (the routing goal is built from it).
 import { describe, expect, test } from "bun:test";
 import {
-  CAPTURE_READ_CAP_CHARS, CAPTURE_TRUNCATION_MARKER, attachRoutingInput, noteGapHydration, noteRouteEnabled,
+  CAPTURE_READ_CAP_CHARS, CAPTURE_TRUNCATION_MARKER, attachRoutingInput, noteRouteEnabled,
   noteRoutingHandOff, routingRecorder, withCaptureTarget, type CaptureTarget, type RoutingInputRecord,
 } from "../../src/judge/capture";
 import { resolvePathlessCodeChangeGoal } from "../../src/goal-file-resolution";
@@ -42,19 +42,5 @@ describe("routing_input carries what a replay reads", () => {
     attachRoutingInput(target, await pathless(TEXT));
     await withCaptureTarget(target, async () => { noteRouteEnabled({ goal: PATHLESS, enabled: true }); });
     expect(target.metadata!.routing_input!.route_enabled).toBe(true);
-  });
-
-  test("an applied hydration records the gap summary; one not applied records none", async () => {
-    const goal = "Close gap gap-fixture-stale-stage by fixing the stage timer";
-    const applied: CaptureTarget = {};
-    await withCaptureTarget(applied, async () => {
-      noteGapHydration({ goal, gapId: "gap-fixture-stale-stage", citedFile: FILE, applied: true, summary: "the stage timer never resets" });
-      noteRouteEnabled({ goal, enabled: true });
-      noteRoutingHandOff({ goal, composeGapId: "gap-fixture-stale-stage", editSite: FILE });
-    });
-    expect(applied.metadata!.routing_input!.gap_hint).toEqual({ gap_id: "gap-fixture-stale-stage", cited_file: FILE, applied: true, summary: "the stage timer never resets" });
-    const notApplied: CaptureTarget = {};
-    await withCaptureTarget(notApplied, async () => { noteGapHydration({ goal: `${goal} in ${FILE}`, gapId: "gap-fixture-stale-stage", citedFile: FILE, applied: false, summary: "x" }); });
-    expect(notApplied.metadata!.routing_input!.gap_hint!.summary).toBeNull();
   });
 });
