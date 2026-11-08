@@ -137,7 +137,8 @@ describe("applied-write: the walk routes through the ledger", () => {
   });
 
   test("CONTROL: the satisfier entry, arg-correction and action-then-read re-read ask before re-applying", () => {
-    expect(src).toContain('if (refuseReapply(shape, "satisfier")) return null;');
+    expect(src).toContain('if (refuseReapply(shape, "satisfier")) return attemptStructural();');
+    expect(src).toContain('const attemptStructural = (): null => { if (curAttempt) curAttempt.structural = true; return null; };');
     expect(src).toContain('!refuseReapply(shape, "arg-correction")');
     expect(src).toContain('refuseReapply(shape, "action-then-read re-read")');
   });

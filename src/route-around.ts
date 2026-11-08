@@ -33,6 +33,10 @@ export interface RouteAroundRecord {
   /** The latest route the dispatch took from this stall; `routes_taken` keeps the sequence. */
   route_taken: RouteTaken;
   routes_taken: RouteTaken[];
+  /** Hop inputs the walk could not bind; `shape` null when the producer's contract names no from_shape. */
+  unmet_inputs?: Array<{ hop: string; field: string; shape: string | null; reason: string }>;
+  /** Producers whose due re-attempt was refused (cap absent, cap reached, step budget), with why. */
+  reattempt_refused?: string[];
 }
 
 export const ROUTE_AROUND_FAILED_CAP = 24;
@@ -73,6 +77,8 @@ export function buildRouteAround(a: {
   termination: string;
   kind?: RouteAroundRecord["kind"];
   now?: number;
+  unmetInputs?: ReadonlyArray<{ hop: string; field: string; shape: string | null; reason: string }>;
+  reattemptRefusals?: ReadonlyArray<string>;
 }): RouteAroundRecord {
   const failed: FailedProducer[] = [];
   const clean = (r: string) => scrubReason(String(r), a.secrets ?? []).slice(0, 240);
@@ -89,6 +95,8 @@ export function buildRouteAround(a: {
     termination: scrubReason(a.termination, a.secrets ?? []).slice(0, 300),
     route_taken: "stop",
     routes_taken: [],
+    ...(a.unmetInputs && a.unmetInputs.length > 0 ? { unmet_inputs: a.unmetInputs.map((u) => ({ ...u, reason: clean(u.reason) })) } : {}),
+    ...(a.reattemptRefusals && a.reattemptRefusals.length > 0 ? { reattempt_refused: a.reattemptRefusals.slice(0, ROUTE_AROUND_FAILED_CAP).map(clean) } : {}),
   };
 }
 

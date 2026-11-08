@@ -81,7 +81,7 @@ export function poolImpulseId(dispatchId: unknown, shape: string): string {
 
 /** Who put an impulse in the pool. `producedBy` is the real producer (`satisfier:<shape>`, a
  *  template id, `seed`), never the constant; the execution id and consumed ids are set when known. */
-export interface PoolProvenance { producedBy: string; producerExecutionId?: string; consumedIds?: string[] }
+export interface PoolProvenance { producedBy: string; producerExecutionId?: string; consumedIds?: string[]; /** walk-instances.ts instance key; absent: one per (shape, producer) */ instanceKey?: string }
 
 /** The pool ids (first impulse per shape, the pool's first-wins rule) of the given shapes. */
 export function poolIdsOf(pool: readonly PoolImpulseLike[], shapes: Iterable<string>): string[] {

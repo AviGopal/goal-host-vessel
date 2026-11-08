@@ -175,6 +175,9 @@ export class InstanceIndex {
   newest(shape: string): InstanceRecord | undefined { const l = this.byShape.get(shape); return l?.[l.length - 1]; }
 }
 
+/** A hop input the walk could not bind: the field, and the shape the producer's contract binds it from (null: none). */
+export interface UnmetInput { hop: string; field: string; shape: string | null; reason: string }
+
 /** A demand key is {shape, binding?}: an absent binding is shape-level. */
 export interface Demand { shape: string; binding?: Record<string, unknown>; since: number; forHop: string; reason: string }
 

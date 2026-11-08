@@ -45,6 +45,7 @@ describe("[CONTROL] filesystem writes stay refused at vesselResolve", () => {
     const door = at("if (!changeAdmitted && refusedWrite(shape, writeDoorProduct)) {", fs);
     expect(fs).toBeGreaterThan(0);
     expect(door).toBeGreaterThan(fs);
-    expect(INDEX.slice(fs, door)).toContain("return null;");
+    expect(INDEX.slice(fs, door)).toContain("return attemptStructural();");
+    expect(INDEX).toContain('const attemptStructural = (): null => { if (curAttempt) curAttempt.structural = true; return null; };');
   });
 });

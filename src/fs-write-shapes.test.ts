@@ -19,7 +19,8 @@ describe("filesystem-write shapes", () => {
     const start = src.indexOf("const vesselResolveShape = async (shape: string)");
     expect(start).toBeGreaterThan(0);
     const body = src.slice(start, src.indexOf("const ep = await endpointForShape(shape);", start));
-    expect(body).toMatch(/if \(isFsWriteShape\(shape\)\) \{[\s\S]*?return null;/);
+    expect(body).toMatch(/if \(isFsWriteShape\(shape\)\) \{[\s\S]*?return attemptStructural\(\);/);
+    expect(src).toContain('const attemptStructural = (): null => { if (curAttempt) curAttempt.structural = true; return null; };');
   });
 
   it("the satisfier pick uses the same set", () => {

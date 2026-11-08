@@ -185,7 +185,7 @@ export function isBookkeepingOnly(content: unknown): boolean {
 /** One field of a producer's resolver_schema contract. `synthesize_from` is the producer's own declaration of how a missing
  *  value may be made from what the walk holds: "goal_and_upstream", or the list of its sources (["goal", "upstream"], either
  *  alone). A field without one is never synthesized, whatever it is called. */
-export type RequiredInputField = { name: string; required?: boolean; type?: string; synthesize_from?: string | ReadonlyArray<string> };
+export type RequiredInputField = { name: string; required?: boolean; type?: string; synthesize_from?: string | ReadonlyArray<string>; /** the shape this field is bound from (read by the walk; ignored here) */ from_shape?: string };
 /** The owning vessel's resolver_schema answer: { shape, known, envelope?, fields }. */
 export type RequiredInputContract = { shape?: string; known?: boolean; envelope?: string; fields?: ReadonlyArray<RequiredInputField> };
 export type RequiredInputDecision =

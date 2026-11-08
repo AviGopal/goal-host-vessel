@@ -104,13 +104,33 @@
     },
     {
       "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "activityVariantMask",
+            "status": "open",
+            "type": "poolImpulse"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 6,
+      "status": 404,
+      "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
       "body": null,
       "headers": {},
       "kind": "read",
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 6,
+      "seq": 7,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -122,7 +142,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 7,
+      "seq": 8,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities/deliverable-shapes"
     },
@@ -139,7 +159,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 8,
+      "seq": 9,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -156,7 +176,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 9,
+      "seq": 10,
       "status": 404,
       "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
@@ -173,7 +193,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 10,
+      "seq": 11,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -194,7 +214,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 11,
+      "seq": 12,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -215,7 +235,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 12,
+      "seq": 13,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -227,7 +247,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 13,
+      "seq": 14,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/goal-paths?goal_text=Some%20of%20the%20system's%20learned%20procedures%20fail%20every%20time%2C%20and%20the%20evidence%20that%20they%20fail%20is%20already%20recorded%2C%20yet%20the%20system%20keeps%20choosing%20them.%20Make%20that%20evidence%20stop%20the%20system%20choosing%20them%2C%20and%20let%20it%20fall%20back%20to%20the%20way%20that%20works.&limit=500"
     },
@@ -250,7 +270,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 14,
+      "seq": 15,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -267,7 +287,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:target-inference",
-      "seq": 15,
+      "seq": 16,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -286,7 +306,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-recommend",
-      "seq": 16,
+      "seq": 17,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/goal-paths/recommend"
     },
@@ -302,7 +322,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 17,
+      "seq": 18,
       "status": 404,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -319,7 +339,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 18,
+      "seq": 19,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -337,7 +357,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 19,
+      "seq": 20,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -349,7 +369,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 20,
+      "seq": 21,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -361,7 +381,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 21,
+      "seq": 22,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -383,13 +403,41 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 22,
+      "seq": 23,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
       "body": {
+        "completion_shapes": [
+          "concept_write"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "concept_write"
+        ],
+        "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works."
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 24,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
+    },
+    {
+      "auth": true,
+      "body": {
         "impulse": {
           "pointer": {
             "shape": "concept_write",
@@ -402,7 +450,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 23,
+      "seq": 25,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -421,9 +469,21 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 24,
+      "seq": 26,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": false,
+      "body": null,
+      "headers": {},
+      "kind": "read",
+      "method": "GET",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 27,
+      "status": 404,
+      "url": "http://discovery.test.invalid/registry/shape-descriptions"
     },
     {
       "auth": true,
@@ -442,7 +502,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 25,
+      "seq": 28,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -451,7 +511,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2614,
-        "sha256": "1d4a420140ebe4b65089f51d09dc0e38fd31f6d1cd51b9748b4e42d685631a15",
+        "sha256": "bc02d103d5d7a56b85a918c3159bf6e3bb335d6d31109783a54f8c0d161ddef5",
         "type": "llm_completion"
       },
       "headers": {},
@@ -459,9 +519,28 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:arg-extraction",
-      "seq": 26,
+      "seq": 29,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "concept_write",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 30,
+      "status": 404,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -480,7 +559,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-write",
-      "seq": 27,
+      "seq": 31,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -489,7 +568,7 @@
       "body": {
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-write-1-1791633600135",
+        "execution_id": "walk-satisfier-write-1-1791633600155",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -579,7 +658,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 28,
+      "seq": 32,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -596,9 +675,28 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 29,
+      "seq": 33,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "impulse": {
+          "pointer": {
+            "shape": "concept",
+            "type": "resolver_schema"
+          }
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "unmatched",
+      "seq": 34,
+      "status": 404,
+      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
@@ -616,7 +714,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-readback",
-      "seq": 30,
+      "seq": 35,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -626,7 +724,7 @@
         "pointer": {
           "activity_id": "satisfier:concept_write",
           "confidence": 0.98,
-          "execution_id": "walk-satisfier-1-1791633600150",
+          "execution_id": "walk-satisfier-1-1791633600175",
           "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
           "labeler": "deterministic",
           "notes": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
@@ -639,7 +737,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 31,
+      "seq": 36,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -656,7 +754,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:feedback",
-      "seq": 32,
+      "seq": 37,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/feedback"
     },
@@ -678,7 +776,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-write",
-      "seq": 33,
+      "seq": 38,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -688,7 +786,7 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-1-1791633600150",
+        "execution_id": "walk-satisfier-1-1791633600175",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
@@ -723,6 +821,12 @@
               "output_shapes": [
                 "concept_write"
               ],
+              "resolved_config": {
+                "body": "Strategy: when a learned procedure's recorded failures dominate, lower its selection weight and fall back to the satisfier that works.",
+                "dispatch_id": "00000000-0000-4000-8000-000000000001",
+                "title": "strategy-stop-selecting-failing-procedures",
+                "type": "concept_write"
+              },
               "resolver_id": "concept_write",
               "resolver_tier": "pattern",
               "response": "",
@@ -740,22 +844,129 @@
               "success": true,
               "task_id": "satisfier-resolve",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [
+                "satisfier-resolve"
+              ],
+              "description": "read back concept_write through concept (record strategy-stop-selecting-failing-procedures, walk site write-read-back)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [
+                "concept"
+              ],
+              "resolver_id": "concept",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "concept"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve-read-back",
+              "toolCalls": []
             }
           ]
         },
         "failure_mode": {
+          "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
           "type": "execution_error"
         },
         "input_impulse_shapes": [],
         "metadata": {
+          "answer_body": null,
+          "answer_body_len": 0,
+          "answer_pointer": [
+            "walk-pk7964-1lk1m02-concept_write-3"
+          ],
+          "bound_inputs": [],
+          "content_digest": {
+            "len": 305,
+            "sha256_16": "78e3d9e4f0c11f74"
+          },
           "goal_target_shapes": [
             "concept_write"
           ],
+          "reach_reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
           "satisfier": true,
-          "shape": "concept_write"
+          "shape": "concept_write",
+          "steps": [
+            {
+              "bound_inputs": [],
+              "content_digest": {
+                "len": 305,
+                "sha256_16": "78e3d9e4f0c11f74"
+              },
+              "id": "walk-satisfier-1-1791633600175",
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-concept_write-3"
+              ],
+              "resolver": "concept_write",
+              "shape": "concept_write"
+            }
+          ],
+          "write_tasks": [
+            {
+              "bound_fields": [
+                "body",
+                "dispatch_id",
+                "title",
+                "type"
+              ],
+              "deliverable": true,
+              "endpoint": "http://concept-db.test.invalid",
+              "output_ref": "strategy-stop-selecting-failing-procedures",
+              "pointer_digest": {
+                "len": 274,
+                "sha256_16": "3cf4525cfba6d02f"
+              },
+              "read_back": {
+                "confirmed_id": "strategy-stop-selecting-failing-procedures",
+                "read_shape": "concept",
+                "read_task_id": "satisfier-resolve-read-back",
+                "site": "write-read-back",
+                "write_task_id": "satisfier-resolve"
+              },
+              "refusal": null,
+              "resolved_config": {
+                "body": "Strategy: when a learned procedure's recorded failures dominate, lower its selection weight and fall back to the satisfier that works.",
+                "dispatch_id": "00000000-0000-4000-8000-000000000001",
+                "title": "strategy-stop-selecting-failing-procedures",
+                "type": "concept_write"
+              },
+              "shape": "concept_write",
+              "site": "satisfier-direct",
+              "success": true,
+              "task_id": "satisfier-resolve"
+            }
+          ]
         },
         "output_impulse_shapes": [
-          "concept_write"
+          "concept_write",
+          "concept"
         ],
         "status": "failure",
         "success": false,
@@ -781,7 +992,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 34,
+      "seq": 39,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -798,25 +1009,8 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 35,
+      "seq": 40,
       "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "poolImpulse",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 36,
-      "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
     {
@@ -848,9 +1042,26 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 37,
+      "seq": 41,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 42,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -866,7 +1077,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 38,
+      "seq": 43,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -878,7 +1089,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 39,
+      "seq": 44,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -890,7 +1101,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 40,
+      "seq": 45,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -912,9 +1123,37 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 41,
+      "seq": 46,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "concept_write"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "concept_write"
+        ],
+        "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works."
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 47,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
     {
       "auth": true,
@@ -931,7 +1170,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 42,
+      "seq": 48,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -950,7 +1189,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 43,
+      "seq": 49,
       "status": 404,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -971,7 +1210,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-recall",
-      "seq": 44,
+      "seq": 50,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -980,7 +1219,7 @@
       "body": {
         "caller": "goal-host:pointer_arg_extraction",
         "chars": 2614,
-        "sha256": "d1ce1d87f04d7af3e988ce1ca8647ce0e11ac8339ed5316dfeb9798f7191276d",
+        "sha256": "e0ece0df236c1768837d23f070d126d5c541900c545700efa0e85e58b9d78b17",
         "type": "llm_completion"
       },
       "headers": {},
@@ -988,7 +1227,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "llm:arg-extraction",
-      "seq": 45,
+      "seq": 51,
       "status": 200,
       "url": "http://llm.test.invalid/resolve"
     },
@@ -1009,7 +1248,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-write",
-      "seq": 46,
+      "seq": 52,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -1018,7 +1257,7 @@
       "body": {
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-write-2-1791633600230",
+        "execution_id": "walk-satisfier-write-2-1791633600260",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [],
@@ -1108,7 +1347,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 47,
+      "seq": 53,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1125,7 +1364,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 48,
+      "seq": 54,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1145,7 +1384,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "concept-db:concept-readback",
-      "seq": 49,
+      "seq": 55,
       "status": 200,
       "url": "http://concept-db.test.invalid/v2/impulses/resolve"
     },
@@ -1155,7 +1394,7 @@
         "pointer": {
           "activity_id": "satisfier:concept_write",
           "confidence": 0.98,
-          "execution_id": "walk-satisfier-1-1791633600245",
+          "execution_id": "walk-satisfier-1-1791633600275",
           "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
           "labeler": "deterministic",
           "notes": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
@@ -1168,7 +1407,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:label-write",
-      "seq": 50,
+      "seq": 56,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
     },
@@ -1185,7 +1424,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:feedback",
-      "seq": 51,
+      "seq": 57,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/feedback"
     },
@@ -1207,7 +1446,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:concept-write",
-      "seq": 52,
+      "seq": 58,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1217,11 +1456,11 @@
         "composition_chain": [],
         "cost_usd": 0,
         "duration_ms": 0,
-        "execution_id": "walk-satisfier-1-1791633600245",
+        "execution_id": "walk-satisfier-1-1791633600275",
         "execution_trace": {
           "filesModified": [],
           "impulsesCreated": [
-            "walk-pk7964-1lk1m02-concept_write-6"
+            "walk-pk7964-1lk1m02-concept_write-7"
           ],
           "tasks": [
             {
@@ -1247,18 +1486,24 @@
                 "filesModified": []
               },
               "output_impulse_ids": [
-                "walk-pk7964-1lk1m02-concept_write-6"
+                "walk-pk7964-1lk1m02-concept_write-7"
               ],
               "output_shapes": [
                 "concept_write"
               ],
+              "resolved_config": {
+                "body": "Strategy: when a learned procedure's recorded failures dominate, lower its selection weight and fall back to the satisfier that works.",
+                "dispatch_id": "00000000-0000-4000-8000-000000000001",
+                "title": "strategy-stop-selecting-failing-procedures",
+                "type": "concept_write"
+              },
               "resolver_id": "concept_write",
               "resolver_tier": "pattern",
               "response": "",
               "result": {
                 "metadata": {
                   "output_impulse_ids": [
-                    "walk-pk7964-1lk1m02-concept_write-6"
+                    "walk-pk7964-1lk1m02-concept_write-7"
                   ],
                   "resolver_id": "concept_write"
                 },
@@ -1269,22 +1514,129 @@
               "success": true,
               "task_id": "satisfier-resolve",
               "toolCalls": []
+            },
+            {
+              "actualPrompt": "",
+              "consumed_from_task_ids": [
+                "satisfier-resolve"
+              ],
+              "description": "read back concept_write through concept (record strategy-stop-selecting-failing-procedures, walk site write-read-back)",
+              "inputState": {
+                "environment": {},
+                "filesAvailable": [],
+                "git": {
+                  "branch": "unknown",
+                  "commit": "unknown",
+                  "dirty": false
+                },
+                "impulses": [],
+                "variables": {}
+              },
+              "input_impulse_ids": [],
+              "input_shapes": [],
+              "outputState": {
+                "filesCreated": [],
+                "filesDeleted": [],
+                "filesModified": []
+              },
+              "output_impulse_ids": [],
+              "output_shapes": [
+                "concept"
+              ],
+              "resolver_id": "concept",
+              "resolver_tier": "pattern",
+              "response": "",
+              "result": {
+                "metadata": {
+                  "output_impulse_ids": [],
+                  "resolver_id": "concept"
+                },
+                "status": "success"
+              },
+              "skipped": false,
+              "status": "success",
+              "success": true,
+              "task_id": "satisfier-resolve-read-back",
+              "toolCalls": []
             }
           ]
         },
         "failure_mode": {
+          "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
           "type": "execution_error"
         },
         "input_impulse_shapes": [],
         "metadata": {
+          "answer_body": null,
+          "answer_body_len": 0,
+          "answer_pointer": [
+            "walk-pk7964-1lk1m02-concept_write-7"
+          ],
+          "bound_inputs": [],
+          "content_digest": {
+            "len": 305,
+            "sha256_16": "78e3d9e4f0c11f74"
+          },
           "goal_target_shapes": [
             "concept_write"
           ],
+          "reach_reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
           "satisfier": true,
-          "shape": "concept_write"
+          "shape": "concept_write",
+          "steps": [
+            {
+              "bound_inputs": [],
+              "content_digest": {
+                "len": 305,
+                "sha256_16": "78e3d9e4f0c11f74"
+              },
+              "id": "walk-satisfier-1-1791633600275",
+              "output_impulse_ids": [
+                "walk-pk7964-1lk1m02-concept_write-7"
+              ],
+              "resolver": "concept_write",
+              "shape": "concept_write"
+            }
+          ],
+          "write_tasks": [
+            {
+              "bound_fields": [
+                "body",
+                "dispatch_id",
+                "title",
+                "type"
+              ],
+              "deliverable": true,
+              "endpoint": "http://concept-db.test.invalid",
+              "output_ref": "strategy-stop-selecting-failing-procedures",
+              "pointer_digest": {
+                "len": 274,
+                "sha256_16": "3cf4525cfba6d02f"
+              },
+              "read_back": {
+                "confirmed_id": "strategy-stop-selecting-failing-procedures",
+                "read_shape": "concept",
+                "read_task_id": "satisfier-resolve-read-back",
+                "site": "write-read-back",
+                "write_task_id": "satisfier-resolve"
+              },
+              "refusal": null,
+              "resolved_config": {
+                "body": "Strategy: when a learned procedure's recorded failures dominate, lower its selection weight and fall back to the satisfier that works.",
+                "dispatch_id": "00000000-0000-4000-8000-000000000001",
+                "title": "strategy-stop-selecting-failing-procedures",
+                "type": "concept_write"
+              },
+              "shape": "concept_write",
+              "site": "satisfier-direct",
+              "success": true,
+              "task_id": "satisfier-resolve"
+            }
+          ]
         },
         "output_impulse_shapes": [
-          "concept_write"
+          "concept_write",
+          "concept"
         ],
         "status": "failure",
         "success": false,
@@ -1310,7 +1662,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:trace-write",
-      "seq": 53,
+      "seq": 59,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces"
     },
@@ -1327,25 +1679,8 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 54,
+      "seq": 60,
       "status": 404,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "poolImpulse",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 55,
-      "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
     {
@@ -1377,9 +1712,26 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:goal-path-record",
-      "seq": 56,
+      "seq": 61,
       "status": 201,
       "url": "http://activity-api.test.invalid/v2/goal-paths"
+    },
+    {
+      "auth": true,
+      "body": {
+        "pointer": {
+          "shape": "poolImpulse",
+          "type": "vesselCapability"
+        }
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "fleet:vesselCapability",
+      "seq": 62,
+      "status": 200,
+      "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
@@ -1395,7 +1747,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 57,
+      "seq": 63,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -1407,7 +1759,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 58,
+      "seq": 64,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/activities?retired=false&deprecated=false"
     },
@@ -1419,7 +1771,7 @@
       "method": "GET",
       "phase": "step1:runGoal",
       "route": "fleet:registry-shapes",
-      "seq": 59,
+      "seq": 65,
       "status": 200,
       "url": "http://discovery.test.invalid/registry/shapes"
     },
@@ -1441,9 +1793,37 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 60,
+      "seq": 66,
       "status": 404,
       "url": "http://activity-api.test.invalid/v2/impulses/resolve"
+    },
+    {
+      "auth": true,
+      "body": {
+        "completion_shapes": [
+          "concept_write"
+        ],
+        "exclude_activities": [],
+        "expected_output_shapes": [
+          "concept_write"
+        ],
+        "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
+        "impulse_shapes": [
+          "goal",
+          "dispatch_id"
+        ],
+        "limit": 12,
+        "min_success_rate": 0,
+        "task_description": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works."
+      },
+      "headers": {},
+      "kind": "read",
+      "method": "POST",
+      "phase": "step1:runGoal",
+      "route": "default:recommend",
+      "seq": 67,
+      "status": 200,
+      "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
     {
       "auth": true,
@@ -1464,7 +1844,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 61,
+      "seq": 68,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1492,7 +1872,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:recommend",
-      "seq": 62,
+      "seq": 69,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/recommend"
     },
@@ -1514,7 +1894,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 63,
+      "seq": 70,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1536,7 +1916,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 64,
+      "seq": 71,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1558,7 +1938,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "default:discover-by-shapes",
-      "seq": 65,
+      "seq": 72,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/discover-by-shapes"
     },
@@ -1574,7 +1954,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 66,
+      "seq": 73,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -1601,7 +1981,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 67,
+      "seq": 74,
       "status": 404,
       "url": "http://dev-vessel.test.invalid/v2/impulses/resolve"
     },
@@ -1618,7 +1998,7 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "fleet:vesselCapability",
-      "seq": 68,
+      "seq": 75,
       "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
@@ -1635,153 +2015,32 @@
       "method": "POST",
       "phase": "step1:runGoal",
       "route": "unmatched",
-      "seq": 69,
-      "status": 404,
-      "url": "http://discovery.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "concept_write",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 70,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "concept_write",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 71,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "impulse": {
-          "pointer": {
-            "shape": "concept_write",
-            "type": "resolver_schema"
-          }
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 72,
-      "status": 404,
-      "url": "http://concept-db.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "llm_completion_dispatch",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 73,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "walkBudget",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "fleet:vesselCapability",
-      "seq": 74,
-      "status": 200,
-      "url": "http://discovery.test.invalid/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "pointer": {
-          "shape": "walkBudget",
-          "type": "vesselCapability"
-        }
-      },
-      "headers": {},
-      "kind": "read",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
-      "seq": 75,
-      "status": 404,
-      "url": "http://discovery.test.invalid/v2/impulses/resolve"
-    },
-    {
-      "auth": true,
-      "body": {
-        "caller": "goal-host:floor_tool_loop",
-        "chars": 4186,
-        "sha256": "2ecfcb23fa26ebb3f2f39e1ddbbb891cce3847161ee178008bb14f01a5f43664",
-        "type": "llm_completion_dispatch"
-      },
-      "headers": {},
-      "kind": "llm",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "unmatched",
       "seq": 76,
       "status": 404,
-      "url": "http://llm.test.invalid/resolve"
+      "url": "http://discovery.test.invalid/v2/impulses/resolve"
     },
     {
       "auth": true,
       "body": {
         "pointer": {
-          "goal": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
-          "type": "goal_path_sha"
+          "shape": "concept_write",
+          "type": "vesselCapability"
         }
       },
       "headers": {},
       "kind": "read",
       "method": "POST",
       "phase": "step1:runGoal",
-      "route": "unmatched",
+      "route": "fleet:vesselCapability",
       "seq": 77,
-      "status": 404,
+      "status": 200,
       "url": "http://discovery.test.invalid/resolve"
     },
     {
       "auth": true,
       "body": {
         "completion_shapes": [],
-        "execution_id": "walk-satisfier-1-1791633600245",
+        "execution_id": "walk-satisfier-1-1791633600275",
         "goal_hash": "7f511a64",
         "reached": false,
         "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it"
@@ -1794,34 +2053,6 @@
       "seq": 78,
       "status": 200,
       "url": "http://activity-api.test.invalid/v2/activities/execution-traces/reach"
-    },
-    {
-      "auth": true,
-      "body": {
-        "cost_usd": 0,
-        "duration_ms": 0,
-        "endpoint_output_shapes": [],
-        "expected_output_shapes": [
-          "concept_write"
-        ],
-        "goal_category": "meta",
-        "goal_text": "Some of the system's learned procedures fail every time, and the evidence that they fail is already recorded, yet the system keeps choosing them. Make that evidence stop the system choosing them, and let it fall back to the way that works.",
-        "inference_confidence": 0.9,
-        "path_activities": [
-          "universal-tool-fallback"
-        ],
-        "reached": false,
-        "success": false,
-        "walk_tier": "universal_tool_fallback"
-      },
-      "headers": {},
-      "kind": "sink",
-      "method": "POST",
-      "phase": "step1:runGoal",
-      "route": "default:goal-path-record",
-      "seq": 79,
-      "status": 201,
-      "url": "http://activity-api.test.invalid/v2/goal-paths"
     }
   ],
   "scenario": "n10-shaped-mechanism-change-prose-concept",
@@ -1839,7 +2070,7 @@
       },
       "label": null,
       "markers": [
-        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "no-pick :: [log] [goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 from_prose=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "mint :: [log] [goal-host-vessel] pathwayReusePolicy unresolved (http 404) — FALLING BACK to literal acceptance (minSuccessful=1 minTotal=1) (law-1 fallback, logged)",
         "no-pick :: [log] [rebind] outcome selected=no candidates=0",
         "abstain :: [log] [ephemeris-oracle] ABSTAINED for goal_hash=7f511a64 — not an Earth-centred live AU distance for a known body, or Horizons was unreachable/unparseable; the LLM judge grades this one",
@@ -1851,19 +2082,14 @@
         "mint :: [log] [goal-host-vessel] /run-goal: hollow satisfier verdict for \"concept_write\" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)",
         "no-pick :: [log] [goal-host-vessel] /run-goal: walk: no pick — missing shapes [concept_write] have no producer or constructible payload; terminating walk",
         "route-around :: [log] [goal-host-vessel] /run-goal: walk: ROUTE-AROUND stall missing=[concept_write] failed_producers=0 ()",
-        "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [concept_write]",
-        "floor :: [log] [goal-host-vessel] floor: ENTER universalToolFallback goalHash=7f511a64 targetShapes=[\"concept_write\"]",
-        "floor :: [log] [goal-host-vessel] floor: TOOLS [fs_read(hand), substrateGap(hand), concept_write(write)] source=hand",
-        "floor :: [log] [goal-host-vessel] floor: walkBudget resolve failed (no resolver for shape) — FALLING BACK to literal budget iters=4 calls=8 iterMs=90000 wallMs=210000",
-        "floor :: [log] [goal-host-vessel] floor: dispatch FAILED http=404 iter=0 — 4xx is a channel fault; loop aborts with no observations",
-        "floor :: [log] [goal-host-vessel] floor: exit=empty_loop goalHash=7f511a64"
+        "no-pick :: [log] [goal-host-vessel] walk(/run-goal): 0-step termination — no producer or constructible payload for missing shapes [concept_write]"
       ],
       "op": "runGoal",
       "record": {
         "attemptCount": 1,
         "attempts": 1,
         "completionShapes": [],
-        "executionId": "walk-satisfier-1-1791633600245",
+        "executionId": "walk-satisfier-1-1791633600275",
         "executionPath": "satisfier",
         "goalReachReason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it",
         "inferenceConfidence": 0.9,
@@ -1887,7 +2113,7 @@
         "reached": false,
         "routeArounds": [
           {
-            "at": 1791633600350,
+            "at": 1791633600385,
             "failed_producers": [],
             "goal_hash": "7f511a64",
             "kind": "stall",
@@ -1915,7 +2141,7 @@
         "reachDeliveries": [
           {
             "completion_shapes": [],
-            "execution_id": "walk-satisfier-1-1791633600245",
+            "execution_id": "walk-satisfier-1-1791633600275",
             "goal_hash": "7f511a64",
             "reached": false,
             "reason": "deterministic:write-goal-no-artifact — the goal asks for a change (targets [concept_write]), and a change/write goal is reached only by a landed sha or a persisted write of its own target; the writes this run made ([concept_write]) are prose or unrelated to it, so a plan or prose answer cannot reach it"
@@ -1938,14 +2164,13 @@
           "POST /resolve concept_create_write",
           "POST /v2/activities/execution-traces",
           "POST /v2/goal-paths",
-          "POST /v2/activities/execution-traces/reach",
-          "POST /v2/goal-paths"
+          "POST /v2/activities/execution-traces/reach"
         ],
         "status": "failed"
       },
       "walkLog": [
         "[walk-concepts] no concepts recalled for goal_hash=7f511a64 (terms tried: procedures,evidence,recorded)",
-        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
+        "[goal-host-vessel] /run-goal: shape recall tier=degraded k=12 recalled=0 from_goal_paths=0 from_prose=0 reason=\"the shape index returned no candidates for this goal\" candidates=[]",
         "[goal-host-vessel] /run-goal: goal-target inference {\"goal_hash\":\"7f511a64\",\"inferred_target_shapes\":[\"concept_write\"],\"confidence\":0.9,\"alternatives\":[],\"recall_tier\":\"degraded\",\"chooser_tier\":null}",
         "[goal-host-vessel] walk(/run-goal): bodyHonestyPolicy NOT advertised in discovery — FALLING BACK to the literal denial-field list [\"success\",\"ok\",\"error\",\"failure_mode\",\"status\"] (law-1 fallback, logged)",
         "[goal-host-vessel] walk(/run-goal): VESSEL-RESOLVE SATISFIER produced \"concept_write\" directly (connected vessel resolve) — no bridge needed",

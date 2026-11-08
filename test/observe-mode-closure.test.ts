@@ -274,7 +274,11 @@ describe("gapDecomposition: an observe walk's decomposition runs dry, and one th
     expect((om as any).OBSERVE_MODE_BLIND_SHAPES?.has("gapDecomposition")).toBe(false); // runnable, not blind
   });
   test("[MUST-FAIL] rawResolve stamps the walk's pointer after it is built and before the egress", () => {
-    const body = fnBody("const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>, site = \"walk\")", 12000);
+    const _rr = src.indexOf("const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>, site = \"walk\")");
+    const _rrEnd = src.indexOf("const refuseReapply = (shape: string, site: string)", _rr);
+    expect(_rr).toBeGreaterThan(0);
+    expect(_rrEnd).toBeGreaterThan(_rr);
+    const body = src.slice(_rr, _rrEnd);
     const built = body.indexOf("const pointer: Record<string, unknown> = buildResolvePointer(shape, base as Record<string, unknown>, extraArgs);");
     const stamp = body.indexOf("Object.assign(pointer, observeDecomposeFields(shape, opts.learningMode));");
     expect(built).toBeGreaterThan(0);

@@ -21,11 +21,11 @@ describe("write doors are wired", () => {
     expect(src).toContain('forward = writeDoorFilter(forward, (c) => c.outputShapes, changeAdmitted, "template_pick"');
   });
   test("composite pick: missing targets and the composite's outputs both pass the door", () => {
-    expect(src).toContain('const _missingC = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "composite_pick"');
+    expect(src).toContain('const _missingC = writeDoorShapes([...target].filter((s) => !shapeMet(s)), changeAdmitted, "composite_pick"');
     expect(after("const _c = await authorComposite(", 400)).toContain('writeDoorFilter([_c.pick], (p) => p.outputShapes, changeAdmitted, "composite_pick"');
   });
   test("bridge pick: no wrapper is minted around a write resolver", () => {
-    expect(src).toContain('const missingTargets = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "bridge_pick"');
+    expect(src).toContain('const missingTargets = writeDoorShapes([...target].filter((s) => !shapeMet(s)), changeAdmitted, "bridge_pick"');
   });
   test("recovery pick: recommendExcluding refuses write producers and every call site passes the admission", () => {
     expect(src).toContain('writeDoorFilter([x], () => recShapes.map(String), writeDoor.admitted, "recovery_pick"');

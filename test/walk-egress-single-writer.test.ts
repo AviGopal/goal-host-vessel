@@ -233,7 +233,7 @@ describe("(e) every synthesised walk egress goes through the guard", () => {
 
   it("rawResolve maps the refusal to its own failure path: recorded with the guard's reason, no transport label", () => {
     const body = region("const rawResolve = async (shape: string, endpoint: string, resolvePath: string", "const refuseReapply = (shape: string, site: string)");
-    expect(body).toMatch(/if \(isWalkEgressRefused\(e\)\) \{\s*noteRawResolveFailure\(shape, e\.message[^\n]*\n[^\n]*\n\s*return null;/);
+    expect(body).toMatch(/if \(isWalkEgressRefused\(e\)\) \{\s*sent\.structural = true;\s*noteRawResolveFailure\(shape, e\.message[^\n]*\n[^\n]*\n\s*return null;/);
   });
 });
 

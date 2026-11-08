@@ -331,6 +331,7 @@ import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeVie
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
+import { AttemptLedger, DemandBook, InstanceIndex, attemptOutcome, boundFieldsOf, defaultInstanceKey, instanceKey, newestPerShape, type AttemptSend, type UnmetInput } from "./walk-instances";
 import { asksForSecretValue } from "./secret-extraction";
 import { proseProducerOf, recalledCandidates } from "./shape-recall";
 import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
@@ -8151,7 +8152,7 @@ async function runGoalAsPoolWalkBody(
     /** A RE-FRAMED walk only: the goal's own target shapes it was re-framed FROM. Carried on the walk's write
      *  evidence, so the reach gate (judge entry reachGate) holds the re-framed walk to the goal's own targets. */
     reframedFrom?: readonly string[];
-    /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (pre-seeds satisfierTried) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
+    /** Shapes for which the vessel-resolve satisfier must be SKIPPED this walk (suppressed in the attempt ledger: never attempted) — set on hollow-satisfier retry so the walk falls through to the candidate / bridge-mint route. */
     suppressSatisfierShapes?: string[];
     /** FEEDBACK EDGE (hill-climb retry): the prior attempt's reach verdict reason, injected into the
      * synthesis prompt so the retry CORRECTS the named defect instead of re-deriving blind. Set only on
@@ -8322,6 +8323,9 @@ async function runGoalAsPoolWalkBody(
   // producedShapes is the set of shapes currently available to consume; poolImpulses
   // are the concrete impulses (with content) we seed into each step's execution.
   const producedShapes = new Set<string>();
+  // SEVERAL INSTANCES OF A SHAPE (walk-instances.ts): every instance this walk added, and the shapes a hop demanded.
+  const poolInstances = new InstanceIndex();
+  const demands = new DemandBook();
   /** WRITE READ-BACKS this walk actually performed and that confirmed the write (verifyWritePersistedRead, the
    *  shaped read of the same store by rawResolve that returned the written id), keyed by the write shape: the read
    *  shape and the record the read returned. addToPool records the read as its own pool step right after the write,
@@ -8352,15 +8356,15 @@ async function runGoalAsPoolWalkBody(
     content: shape === 'memoryNote' ? (content as {value: string}).value : content,
   });
   /** Stamp what a step learned after its impulse entered the pool (the satisfier's trace id is
-   *  minted after addToPool). Touches only the impulse this walk produced for `shape`. */
-  const stampProvenance = (shape: string, p: Partial<PoolProvenance>): void => {
-    const imp = poolImpulses.find((i) => String((i.metadata as { shape?: unknown }).shape) === shape);
+   *  minted after addToPool). Touches only the impulse with this id (addToPool returns it). */
+  const stampProvenance = (id: string | undefined, p: Partial<PoolProvenance>): void => {
+    const imp = id ? poolImpulses.find((i) => i.id === id) : undefined;
     if (!imp) return;
     const m = imp.metadata as Record<string, unknown>;
     if (p.producerExecutionId) m.producerExecutionId = p.producerExecutionId;
     if (p.consumedIds) m.consumedIds = [...p.consumedIds];
   };
-  const addToPool = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): void => {
+  const addToPool = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance, sendKey?: string): string | undefined => {
     const widEv = opts.variables.dispatch_id;
     if (typeof widEv === "string") {
       const recEv = executionStore.get(widEv);
@@ -8368,16 +8372,31 @@ async function runGoalAsPoolWalkBody(
         recEv.poolEvents = [...(recEv.poolEvents ?? []), { shape, source: summary ?? `pool impulse (${shape})`, at: Date.now() }].slice(-64);
       }
     }
-    if (!shape || producedShapes.has(shape)) return;
+    if (!shape) return;
+    // Only an exact duplicate INSTANCE is skipped; an adder that names no instance keeps one per (shape, producer).
+    const _key = sendKey ?? prov?.instanceKey ?? defaultInstanceKey(shape, prov?.producedBy);
+    if (poolInstances.hasKey(_key)) return;
     producedShapes.add(shape);
-    poolImpulses.push(mkImpulse(shape, content, summary, prov));
+    const _imp = mkImpulse(shape, content, summary, prov);
+    poolImpulses.push(_imp);
+    const _n = poolInstances.add(shape, { id: _imp.id, key: _key, version: poolVersion(), bound: boundByKey.get(_key) });
+    if (_n >= 2) tap(`[goal-host-vessel] walk(${opts.surface}): pool: instance #${_n} of ${shape} from ${prov?.producedBy ?? "goal-host-walk"}`);
     // The write's confirmed read-back, as the next step (walk-read-back.ts): the real read record, never a stub.
     const rb = readBackStepFor(shape, confirmedReadBacks, producedShapes);
     if (rb) {
       producedShapes.add(rb.shape);
-      poolImpulses.push(mkImpulse(rb.shape, rb.content, rb.summary, { producedBy: `read-back:${shape}` }));
+      const _rbImp = mkImpulse(rb.shape, rb.content, rb.summary, { producedBy: `read-back:${shape}` });
+      poolImpulses.push(_rbImp);
+      poolInstances.add(rb.shape, { id: _rbImp.id, key: instanceKey(rb.shape, { confirmedId: confirmedReadBacks.get(shape)?.confirmedId }, ["confirmedId"]), version: poolVersion() });
     }
+    return _imp.id;
   };
+  /** The pool's version: it only grows (the pool is append-only). */
+  const poolVersion = (): number => poolImpulses.length;
+  /** Bound fields of each successful send's instance key, so a bound demand can be compared to the instance. */
+  const boundByKey = new Map<string, Record<string, unknown>>();
+  /** A shape is met when it is present and, if a hop demanded it, an instance added after the demand matches it. */
+  const shapeMet = (s: string): boolean => demands.shapeMet(s, producedShapes.has(s), poolInstances);
   // DATA-FLOW BINDING: expose each pool impulse's CONTENT as a variable keyed by
   // its shape, so a downstream task's `{{shape}}` placeholder interpolates from
   // the UPSTREAM activity's output content. This is what turns activities from
@@ -8388,7 +8407,7 @@ async function runGoalAsPoolWalkBody(
     // to a stringified object — breaking tasks that bind from the goal text (e.g.
     // author_producer's goal_file_extract entry step). Explicit opts.variables win.
     const v: Record<string, unknown> = { goal, ...opts.variables };
-    for (const imp of poolImpulses) {
+    for (const imp of newestPerShape(poolImpulses)) {
       const sh = (imp.metadata as { shape?: string } | undefined)?.shape;
       if (sh && !(sh in v)) v[sh] = imp.content;
     }
@@ -8419,7 +8438,10 @@ async function runGoalAsPoolWalkBody(
   // flow in) and, when an LLM is available, additionally LLM-extract the pointer
   // args for THIS shape from the goal text. The vessel itself is the validator:
   // a wrong/empty pointer → success:false / empty → we return null → fallback.
-  const satisfierTried = new Set<string>();
+  // THE ATTEMPT LEDGER (walk-instances.ts), keyed by producer `satisfier:<shape>`: a producer is attempted again only
+  // after the pool gained an impulse since its last attempt, within walkBudget max_attempts_per_producer (absent: no
+  // re-attempt after a failure). Shapes the caller suppresses are never attempted this walk.
+  const attemptLedger = new AttemptLedger((opts.suppressSatisfierShapes ?? []).map((s) => `satisfier:${s}`));
   // CLOSED VOCABULARY (closed-vocabulary.ts): per write shape, the resolver_schema fields arg synthesis read and the
   // allowed values the shape's own refusals named this walk, so every later write of the shape is held to them.
   const advertisedSchemaFields = new Map<string, unknown>();
@@ -8431,15 +8453,57 @@ async function runGoalAsPoolWalkBody(
   // Each executed pick's declared output shapes (walkFailureMode: attribute a pick failure only to a shape never produced).
   const pickOutputs = new Map<string, string[]>();
   let routeAround: RouteAroundRecord | undefined;
-  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
-  // Bounded single-shot un-poison (Regime-2 flap fix, 2026-07-27): ste
-  // does satisfierTried.add(shape) BEFORE resolving, so a single TRANSIENT null (LLM
-  // lane cooldown, transport blip) permanently blacklists the shape and the last-chance
-  // direct-resolve scan is skipped — the walk declares "no producer" after ONE flake.
-  // Allow exactly one retry per shape when the prior failure was transient.
-  const satisfierRetry = new Map<string, number>();
   let walkTerminationReason: string | undefined;
-  for (const s of opts.suppressSatisfierShapes ?? []) satisfierTried.add(s);
+  /** The attempt in progress (one vesselResolveShape call): its sends, whether a refusal was structural, and the
+   *  instance key of the send that produced. Sends of the attempt's own shape and its action sibling belong to it. */
+  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string } | null = null;
+  let lastAttemptWasReattempt = false;
+  /** Hop inputs the walk could not bind (walk-instances.ts UnmetInput), for the route-around record. */
+  const unmetInputs: UnmetInput[] = [];
+  /** Producers whose due re-attempt the cap refused, for the route-around record (and the one tap per pool version). */
+  const reattemptRefusals = new Map<string, string>();
+  /** May the satisfier attempt this shape now? The cap is read only when a re-attempt is otherwise due. */
+  const mayAttempt = async (shape: string): Promise<boolean> => {
+    const p = `satisfier:${shape}`;
+    const d = attemptLedger.decide(p, poolVersion());
+    if (d === "first") return true;
+    if (d !== "needs-cap") return false;
+    const cap = await walkBudgetField("max_attempts_per_producer", 1, 20);
+    const st = attemptLedger.state(p);
+    const tapKey = `${p}@${poolVersion()}`;
+    if (cap === null) {
+      if (!reattemptRefusals.has(tapKey)) tap(`[goal-host-vessel] walk(${opts.surface}): walkBudget.max_attempts_per_producer absent: ${p} would be re-eligible (pool version ${poolVersion()} > ${st?.lastAttemptVersion}) — not re-attempted`);
+      reattemptRefusals.set(tapKey, `${p}: cap absent (attempts ${st?.attempts ?? 0}, last attempt at pool version ${st?.lastAttemptVersion}, pool version ${poolVersion()})`);
+      return false;
+    }
+    if (!attemptLedger.withinCap(p, cap)) { reattemptRefusals.set(tapKey, `${p}: cap ${cap} reached (attempts ${st?.attempts ?? 0})`); return false; }
+    if (!attemptLedger.budgetAllowsReattempt(chain.length, MAX_STEPS)) { reattemptRefusals.set(tapKey, `${p}: step budget (chain ${chain.length} + re-attempts ${attemptLedger.reattempts}, max ${MAX_STEPS})`); return false; }
+    return true;
+  };
+  const attemptBegin = (shape: string): void => {
+    lastAttemptWasReattempt = attemptLedger.begin(`satisfier:${shape}`).reattempt;
+    if (lastAttemptWasReattempt) tap(`[goal-host-vessel] walk(${opts.surface}): RE-ATTEMPT satisfier:${shape} (pool version ${poolVersion()}, re-attempts this walk ${attemptLedger.reattempts})`);
+    curAttempt = { shape, sends: [], structural: false };
+  };
+  /** A structural refusal (never re-eligible this walk); returns null for the refusing return. */
+  const attemptStructural = (): null => { if (curAttempt) curAttempt.structural = true; return null; };
+  /** A send that belongs to the attempt in progress: its own shape or its action sibling, never a write read-back. */
+  const attemptSendOf = (shape: string, site: string): boolean =>
+    curAttempt !== null && readBackDepth === 0 && (shape === curAttempt.shape || site === "satisfier-action" || site === "satisfier-action-retry");
+  let readBackDepth = 0;
+  /** Unmet inputs of a hop become demanded shapes (the seam an admission precondition calls too). A field whose
+   *  contract names no from_shape fails closed: recorded, no demand. */
+  const noteUnmetInput = (hopShape: string, missing: ReadonlyArray<{ field: string; shape: string | null }>, reason: string, binding?: Record<string, unknown>): void => {
+    for (const m of missing) {
+      unmetInputs.push({ hop: hopShape, field: m.field, shape: m.shape, reason: reason.slice(0, 200) });
+      if (!m.shape) { tap(`[goal-host-vessel] walk(${opts.surface}): unmet input ${hopShape}.${m.field} — its contract names no from_shape, so no shape is demanded`); continue; }
+      const [E] = writeDoorShapes([m.shape], changeAdmitted, "target", writeDoorHash, tap);
+      if (!E) continue;
+      target.add(E);
+      demands.note({ shape: E, since: poolVersion(), forHop: hopShape, reason: reason.slice(0, 200), ...(binding ? { binding } : {}) });
+      tap(`[goal-host-vessel] walk(${opts.surface}): unmet input ${hopShape}.${m.field} — demanding ${E} (newer than pool version ${poolVersion()})`);
+    }
+  };
 
   async function llmExtractPointerArgs(shape: string, correction?: string): Promise<Record<string, unknown> | null> {
     if (!LLM_VESSEL_ENDPOINT) return null;
@@ -8664,7 +8728,7 @@ async function runGoalAsPoolWalkBody(
       // invocations, 0 bindings. The resolver itself names the field when it refuses
       // ("command is required"), and that text is already threaded back here as `correction`.
       const _reqFields = requiredFields.length > 0 ? requiredFields : requiredFieldsFromCorrection(correction);
-      const _bound = bindArgsFromPool(_reqFields, poolImpulses);
+      const _bound = bindArgsFromPool(_reqFields, newestPerShape(poolImpulses));
       const _boundCount = Object.keys(_bound).length;
       if (_boundCount > 0) {
         console.log(
@@ -8958,6 +9022,8 @@ async function runGoalAsPoolWalkBody(
     const isPersistingWrite = /_write$/.test(writeShape) || writeShape === "write_note";
     if (!isPersistingWrite) return null;
 
+    // The read-back's sends are not sends of the satisfier attempt in progress (attemptSendOf reads the depth).
+    readBackDepth++;
     try {
       // The id the write's answer names (applied-write.ts writtenRecordIdOf): top level, under `body`, one
       // object level below it, or in a JSON `content` string. For title-keyed stores (memoryNote/concept) the
@@ -9009,13 +9075,15 @@ async function runGoalAsPoolWalkBody(
     } catch {
       // fail-open: infrastructure error must not block the walk
       return null;
+    } finally {
+      readBackDepth--;
     }
   }
   /** Every rawResolve of a write shape, accepted or refused, is a write task of the step that sent it
    *  (applied-write.ts recordOutcome): the pointer it sent and what came back, so the trace shows the effect. */
   const rawResolve = async (shape: string, endpoint: string, resolvePath: string, extraArgs: Record<string, unknown>, site = "walk"): Promise<unknown | null> => {
   // The resolve itself is rawResolveOnce, kept at its own indentation; its outcome is recorded after it returns.
-  const sent: { pointer?: Record<string, unknown> } = {};
+  const sent: { pointer?: Record<string, unknown>; names?: string[]; reachedEgress?: boolean; structural?: boolean } = {};
   const rawResolveOnce = async (): Promise<unknown | null> => {
     lastRawResolveReason = null;
     lastRawResolveTransient = false;
@@ -9128,10 +9196,29 @@ async function runGoalAsPoolWalkBody(
     // bound, synthesized where the contract declares how, or the producer is not invoked; the refusal is this resolve's
     // failure reason, which the satisfier's arg-correction reads.
     const _rawUrl = resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`;
-    const _bind = bindRequiredInputs({ shape, pointer, contract: await requiredInputContract(shape, _rawUrl), goal, upstream: poolImpulses });
+    const _contract = await requiredInputContract(shape, _rawUrl);
+    // FROM_SHAPE (the producer's own contract names the shape a field is bound from): an unbound such field takes the
+    // NEWEST instance of that shape, so a re-attempt after the evidence arrives carries it.
+    const _fromShape = new Map<string, string>();
+    if (_contract?.known === true && Array.isArray(_contract.fields)) {
+      const _env = typeof _contract.envelope === "string" ? _contract.envelope.trim() : "";
+      const _holder = _env ? (pointer[_env] !== null && typeof pointer[_env] === "object" && !Array.isArray(pointer[_env]) ? pointer[_env] as Record<string, unknown> : null) : pointer;
+      for (const f of _contract.fields) {
+        if (!f || typeof f.name !== "string" || typeof f.from_shape !== "string" || f.from_shape.length === 0) continue;
+        _fromShape.set(f.name, f.from_shape);
+        const _have = _holder?.[f.name];
+        if (_holder && (_have === undefined || _have === null || (typeof _have === "string" && _have.trim().length === 0))) {
+          const _newest = poolInstances.newest(f.from_shape);
+          const _imp = _newest ? poolImpulses.find((i) => i.id === _newest.id) : undefined;
+          if (_imp && shapeMet(f.from_shape)) _holder[f.name] = _imp.content;
+        }
+      }
+    }
+    const _bind = bindRequiredInputs({ shape, pointer, contract: _contract, goal, upstream: poolImpulses });
     if (!_bind.invoke) {
       noteRawResolveFailure(shape, _bind.reason);
       tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT invoked — ${_bind.reason}`);
+      if (attemptSendOf(shape, site)) noteUnmetInput(shape, _bind.missing.map((field) => ({ field, shape: _fromShape.get(field) ?? null })), _bind.reason);
       return null;
     }
     if (_bind.synthesized.length > 0) {
@@ -9139,6 +9226,17 @@ async function runGoalAsPoolWalkBody(
       for (const k of Object.keys(pointer)) delete pointer[k];
       Object.assign(pointer, _bind.pointer);
     }
+    // INSTANCE KEY (walk-instances.ts): the producer's contract fields when known, else what the walk synthesized.
+    sent.names = _contract?.known === true && Array.isArray(_contract.fields)
+      ? _contract.fields.map((f) => String(f?.name ?? "")).filter(Boolean)
+      : [...new Set([...Object.keys(extraArgs ?? {}), ..._bind.synthesized])];
+    // AN IDENTICAL INSTANCE IS NOT RE-SENT: a send of an earlier attempt with the same key failed (not transiently).
+    if (attemptSendOf(shape, site) && attemptLedger.failedBefore(instanceKey(shape, pointer, sent.names))) {
+      noteRawResolveFailure(shape, "identical instance already failed in this walk");
+      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — identical instance already failed in this walk`);
+      return null;
+    }
+    sent.reachedEgress = true;
     let resp: Response;
     try {
       // SINGLE-WRITER POOL ROWS (walk-egress-guard.ts): a write the walk may never make is refused before egress.
@@ -9154,6 +9252,7 @@ async function runGoalAsPoolWalkBody(
       });
     } catch (e) {
       if (isWalkEgressRefused(e)) {
+        sent.structural = true;
         noteRawResolveFailure(shape, e.message.slice(0, 200));
         console.log(`[goal-host-vessel] walk rawResolve ${shape} (${site}): ${e.message.slice(0, 200)}`);
         return null;
@@ -9163,11 +9262,20 @@ async function runGoalAsPoolWalkBody(
       return null;
     }
     let bodyText = await resp.text();
+    // THE REPAIRED RESEND PASSES THE SAME DOOR AS THE FIRST SEND (bindRequiredInputs): a repaired pointer the door
+    // refuses is never sent; the refusal is this resolve's failure and the original answer stands.
+    const resendThroughDoor = (p: Record<string, unknown>): Promise<Response> | null => {
+      const _rb = bindRequiredInputs({ shape, pointer: p, contract: _contract, goal, upstream: poolImpulses });
+      if (_rb.invoke) { if (_rb.synthesized.length > 0) { for (const k of Object.keys(p)) delete p[k]; Object.assign(p, _rb.pointer); } return null; }
+      noteRawResolveFailure(shape, _rb.reason);
+      tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): repaired resend NOT invoked — ${_rb.reason}`);
+      return Promise.reject(new Error(`repaired resend refused at the door: ${_rb.reason}`));
+    };
     // A 422 that names the allowed values is repaired from them ONCE: the values are kept for the walk, and the
     // pointer is resent only when the repair changed it (never the same pointer twice, never a second retry).
     if (!resp.ok && _vocabAd) {
       try {
-        const _rep = await repairAndResendOnce(pointer, resp.status, bodyText, _vocabAd, (p) => walkEgressFetch(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
+        const _rep = await repairAndResendOnce(pointer, resp.status, bodyText, _vocabAd, (p) => resendThroughDoor(p) ?? walkEgressFetch(shape, resolvePath.startsWith('http://') || resolvePath.startsWith('https://') ? resolvePath : `${endpoint}${resolvePath}`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
           body: JSON.stringify(walkResolveBody(shape, p, { caller: "goal-host:walk_llm_completion", task_type: "walk_llm_completion", ...(dispatchContext.getStore()?.dispatchId ? { dispatch_id: dispatchContext.getStore()!.dispatchId } : {}) })),
@@ -9256,6 +9364,12 @@ async function runGoalAsPoolWalkBody(
     return content;
   };
   const result = await rawResolveOnce();
+  if (attemptSendOf(shape, site) && curAttempt) {
+    if (sent.structural) curAttempt.structural = true;
+    const _k = sent.names && sent.pointer ? instanceKey(shape, sent.pointer, sent.names) : undefined;
+    curAttempt.sends.push({ reachedEgress: sent.reachedEgress === true, ok: result != null, transient: result == null && lastRawResolveTransient, ...(_k ? { key: _k } : {}) });
+    if (result != null && _k && shape === curAttempt.shape) { curAttempt.okKey = _k; boundByKey.set(_k, boundFieldsOf(sent.pointer, sent.names ?? [])); }
+  }
   if (isAppliedWriteShape(shape)) appliedWrites.recordOutcome(shape, { site, endpoint, pointer: sent.pointer, result, reason: result == null ? lastRawResolveReason : null });
   return result;
   };
@@ -9328,17 +9442,18 @@ If one of those sibling shapes is the action that would create what the goal ask
     return f.text;
   };
   // J2a: a shape the satisfier produced has nothing missing (a refusal that a later attempt repaired is not an ask).
-  const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
+  const vesselResolveShape = async (shape: string): Promise<{ content: unknown; effect?: string; instanceKey?: string } | null> => {
+    curAttempt = null;
     const r = await vesselResolveShapeInner(shape);
     if (r) unboundFor(opts.variables?.dispatch_id)?.noteAccepted(shape);
-    return r;
+    const _a = curAttempt as { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string } | null;
+    curAttempt = null;
+    if (_a) attemptLedger.end(`satisfier:${shape}`, attemptOutcome({ ok: r != null && emptyResultSetReason(r.content) === null, structural: _a.structural, sends: _a.sends }), poolVersion(), _a.sends);
+    return r && _a?.okKey ? { ...r, instanceKey: _a.okKey } : r;
   };
   const vesselResolveShapeInner = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
-    if (!shape || producedShapes.has(shape) || satisfierTried.has(shape)) return null;
-    satisfierTried.add(shape);
-    // After satisfierTried.add, so a refused shape stays tried: the producer scan's un-poison relies on
-    // this function re-adding it.
-    if (refuseReapply(shape, "satisfier")) return null;
+    if (!shape || !(await mayAttempt(shape))) return null; attemptBegin(shape);
+    if (refuseReapply(shape, "satisfier")) return attemptStructural();
     stepBound = new Set<string>();
     // NO WALK-SIDE FILESYSTEM WRITE, FROM EITHER SATISFIER SITE (fs-write-shapes.ts).
     // The satisfier pick already excluded these shapes; the vessel-resolver producer
@@ -9347,13 +9462,13 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (isFsWriteShape(shape)) { // = write-door.ts isWriteShape: unconditional, admitted or not
       noteWriteRefusal("vessel_resolve");
       tap(`[goal-host-vessel] walk: vesselResolve REFUSED filesystem-write shape ${shape} — a walk-side write has no snapshot/rollback and cannot be credited without a landed sha; edits must route through feature_compose / patch_with_tools`);
-      return null;
+      return attemptStructural();
     }
     // WRITE DOOR (vesselResolve, write-door.ts): on a goal not admitted, no change shape and no store write outside the goal's product.
     if (!changeAdmitted && refusedWrite(shape, writeDoorProduct)) {
       noteWriteRefusal("vessel_resolve");
       tap(writeDropLine("vessel_resolve", [shape], writeDoorHash));
-      return null;
+      return attemptStructural();
     }
     // DETERMINISTIC PRODUCER-LOOKUP: "how many/which vessels advertise|serve shape X" is
     // answered from the discovery registry via the walk's own AUTHED in-process resolve —
@@ -9374,7 +9489,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       }
     }
     const ep = await endpointForShape(shape);
-    if (!ep) return null;
+    if (!ep) return attemptStructural();
     // For a deferred TERMINAL write, the body must be the produced intermediate
     // findings (composition), not the LLM's goal-text guess. Computed once here.
     const boundBody = terminalShapes.has(shape) ? boundFindingsFromIntermediates() : "";
@@ -10664,7 +10779,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     }
     const _niRec = lastRawResolveReason ? unboundFor(opts.variables?.dispatch_id) : undefined;
     const _niFields = _niRec ? requiredFieldsFromCorrection(lastRawResolveReason ?? undefined) : [];
-    const _niBound = _niFields.length > 0 ? bindArgsFromPool(_niFields, poolImpulses) : {};
+    const _niBound = _niFields.length > 0 ? bindArgsFromPool(_niFields, newestPerShape(poolImpulses)) : {};
     const _niUnbound = _niFields.filter((f) => !(f in _niBound));
     for (const f of _niFields) if (f in _niBound) _niRec?.noteDerived(shape, f);
     _niRec?.noteUnderived(shape, _niUnbound, "pool_bind");
@@ -10854,7 +10969,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   // With an explicit target, "met" = all target shapes produced. With NO target,
   // never short-circuit here — walk opportunistically (progress-driven), stopping
   // on MAX_STEPS or the consecutive-no-progress break below.
-  const targetMet = (): boolean => target.size > 0 && [...target].every((s) => producedShapes.has(s));
+  const targetMet = (): boolean => target.size > 0 && [...target].every((s) => shapeMet(s));
 
   const chain: string[] = [];          // selected activity ids = the composition
   const chainExecIds: string[] = [...(opts.compositionChain ?? [])]; // recorded composition chain (execution ids)
@@ -10928,8 +11043,10 @@ If one of those sibling shapes is the action that would create what the goal ask
     const ids = stepEdges.get(i)?.outputImpulseIds ?? [];
     return ids.length === 0 || ids.every((id) => { const imp = poolImpulses.find((p) => p.id === id); return !imp || isBookkeepingOnly(imp.content); });
   };
-  const recordStepEdge = (inputShapes: string[], outputShapes: string[]): void => {
-    stepEdges.set(chain.length - 1, stepEdgeOf(poolImpulses, inputShapes, outputShapes));
+  const recordStepEdge = (inputShapes: string[], outputShapes: string[], outputIds?: string[]): void => {
+    const _e = stepEdgeOf(newestPerShape(poolImpulses), inputShapes, outputShapes);
+    if (outputIds && outputIds.length > 0) _e.outputImpulseIds = [...outputIds];
+    stepEdges.set(chain.length - 1, _e);
   };
   /** For β only: a receipt-only step is exempt from blame ONLY as a write satellite (every output a write shape). A step
    *  that claims a read deliverable and returns only a receipt is the hollow producer, so it is culpable. α keeps stepIsStub. */
@@ -11019,7 +11136,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       };
     });
     (rec as { poolOutputs?: unknown }).poolOutputs = poolOutputs;
-    rec.pendingTargets = [...target].filter((s) => !producedShapes.has(s));
+    rec.pendingTargets = [...target].filter((s) => !shapeMet(s));
     // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
     // the record EACH iteration so goalWalkState surfaces WHY the walk is doing
     // what it's doing WHILE it runs. Previously rec.walkLog was assigned once, at
@@ -11050,7 +11167,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     injectedPoolImpulses.delete(wid);
     for (const inj of queued) {
       producedShapes.add(inj.shape);
-      poolImpulses.push(mkImpulse(inj.shape, inj.content, inj.summary ?? `human-contributed impulse (${inj.shape})`, inj.producedBy ? { producedBy: inj.producedBy } : undefined));
+      const _injImp = mkImpulse(inj.shape, inj.content, inj.summary ?? `human-contributed impulse (${inj.shape})`, inj.producedBy ? { producedBy: inj.producedBy } : undefined);
+      poolImpulses.push(_injImp);
+      poolInstances.add(inj.shape, { id: _injImp.id, key: instanceKey(inj.shape, { injection: _injImp.id }, ["injection"]), version: poolVersion() });
       tap(`[goal-host-vessel] walk(${opts.surface}): human-injected impulse added to pool shape=${inj.shape} by=${inj.producedBy ?? "unattributed"}`);
     }
   };
@@ -11060,7 +11179,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   // the whole chain. Carried steps are not new attempts.
   let carriedSteps = 0;
   for (const c of carryForTarget(opts.carryFrom ?? [], target)) {
-    const fresh = c.impulses.filter((imp) => { const sh = String((imp.metadata as { shape?: unknown } | undefined)?.shape ?? ""); return sh && !producedShapes.has(sh) && !satisfierTried.has(sh); });
+    const fresh = c.impulses.filter((imp) => { const sh = String((imp.metadata as { shape?: unknown } | undefined)?.shape ?? ""); return sh && !producedShapes.has(sh) && attemptLedger.decide(`satisfier:${sh}`, poolVersion()) === "first"; });
     if (fresh.length === 0) continue;
     const poolBefore = shapeArr();
     const outShapes: string[] = [];
@@ -11068,6 +11187,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const sh = String((imp.metadata as { shape?: unknown }).shape);
       producedShapes.add(sh);
       poolImpulses.push({ ...(imp as Impulse), metadata: { ...(imp.metadata ?? {}), carriedFrom: c.executionId } } as Impulse);
+      poolInstances.add(sh, { id: String((imp as Impulse).id), key: instanceKey(sh, { carried: (imp as Impulse).id }, ["carried"]), version: poolVersion() });
       outShapes.push(sh);
     }
     chain.push(c.stepId);
@@ -11090,6 +11210,7 @@ If one of those sibling shapes is the action that would create what the goal ask
   const _adapting = _adaptPlan?.mode != null && _adaptPlan.mode !== "exact";
   const _adaptBody = new Set<string>(_adapting ? _adaptPlan!.steps.map((x) => x.id) : []);
   while (chain.length < MAX_STEPS && !targetMet()) {
+    if (!attemptLedger.budgetLeft(chain.length, MAX_STEPS)) { walkTerminationReason = "step budget (re-attempts)"; break; }
     // Edge-blend half-life, resolved from the policy volume at USE TIME (law 1) rather
     // than read from a compiled-in constant. Unconfigured -> the previous literal, so
     // this is inert until a value is authored. TTL-cached, so re-resolving per
@@ -11109,22 +11230,27 @@ If one of those sibling shapes is the action that would create what the goal ask
     //     Strictly additive: a failed/empty resolve returns null and the walk
     //     proceeds to the unchanged candidate/bridge/escalate path below.
     if (target.size > 0) {
-      const missingForSatisfier = [...target].filter((s) => !producedShapes.has(s));
+      const missingForSatisfier = [...target].filter((s) => !shapeMet(s));
       // DERIVATION DEFERRAL (composition, 2026-06-30): while ANY intermediate
       // (non-terminal) target shape is still unproduced, DO NOT satisfy a terminal
       // emit target yet — the terminal write must consume the intermediate's
       // produced content (real findings), not be written prematurely from goal text
       // (which is what made the prior composed note HOLLOW). No-op when terminalShapes
       // is empty (the common single-shape case): every shape passes the filter.
+      // Only shapes the attempt ledger lets the satisfier attempt now take part in the deferrals below: a shape that
+      // is not re-eligible must not hold back one that is.
+      const _mayNow = new Set<string>();
+      for (const s of missingForSatisfier) if (await mayAttempt(s)) _mayNow.add(s);
+      const _mayMissing = missingForSatisfier.filter((s) => _mayNow.has(s));
       const intermediatesPending = terminalShapes.size > 0 &&
-        missingForSatisfier.some((s) => !terminalShapes.has(s));
+        _mayMissing.some((s) => !terminalShapes.has(s));
       let eligibleForSatisfier = intermediatesPending
-        ? missingForSatisfier.filter((s) => !terminalShapes.has(s))
-        : missingForSatisfier;
+        ? _mayMissing.filter((s) => !terminalShapes.has(s))
+        : _mayMissing;
       // COMPUTE-DEFERRAL (fix A, composition-ordering): an executor/compute shape (shellResult)
       // consumes another intermediate's output as its operand (e.g. wc -c on a fetched h1). Defer it
       // behind non-executor intermediates so its command is synthesized AFTER the operand lands in
-      // the pool. Mirrors terminal deferral: pure selection-ordering, never mutates satisfierTried,
+      // the pool. Mirrors terminal deferral: pure selection-ordering, never touches the attempt ledger,
       // no loop risk. No-op when the executor is the only/last pending shape (single-step shell goal
       // where the operand is already present) — guarded by the some(!isExecutor) check.
       if (eligibleForSatisfier.some((sh) => !isExecutorShape(sh))) {
@@ -11204,7 +11330,7 @@ If one of those sibling shapes is the action that would create what the goal ask
             // suppressed for a speculative composite: leaked/unbindable composites (the store has
             // ~383) get "preferred", fail to execute, and the walk reframes into confabulation.
             // Reliable direct compute of the intermediate beats a multi-cover composite here.
-            if (preferComposition && !_mintedCoverPick && eligibleForSatisfier.some((s) => !_provenBadShapes.has(s) && !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && !satisfierTried.has(s) && !minted.has(s))) {
+            if (preferComposition && !_mintedCoverPick && eligibleForSatisfier.some((s) => !_provenBadShapes.has(s) && !terminalShapes.has(s) && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s)) && _mayNow.has(s) && !minted.has(s))) {
               preferComposition = false;
               tap(`[goal-host-vessel] walk(${opts.surface}): PREFER-COMPOSITION declined — a directly-satisfiable intermediate is available; running the real compute first (a leaked composite would derail into reframe->confabulation)`);
             }
@@ -11287,7 +11413,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _satEligible = eligibleForSatisfier.filter((s) =>
         !SATISFIER_FORBIDDEN_FS_WRITE.has(String(s)) && !_doorBlocked.includes(s)
         && (liveForSatisfier.has(s) || shapeEndpointMap.has(s) || discoveredProxyShapes.includes(s))
-        && !satisfierTried.has(s) && !minted.has(s));
+        && _mayNow.has(s) && !minted.has(s));
       // DISABLED ON EVIDENCE — see the note above. Kept resolvable (and logged) rather
       // than deleted so the next attempt starts from the measurement, not from scratch.
       const SATISFIER_REUSE_ORDERING_ENABLED = false;
@@ -11361,7 +11487,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           lastRawResolveReason = _emptyRead.slice(0, 200);
         }
         if (resolved && !_emptyRead) {
-          addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`, { producedBy: `satisfier:${satisfiableNow}` });
+          const _satImpId = addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`, { producedBy: `satisfier:${satisfiableNow}` }, resolved.instanceKey);
           if (resolved.effect) effectLedger.add(resolved.effect);
           // Record the satisfier as a GENUINE step: synthesize a minimal
           // ExecutionTrace so the walk's downstream accounting (chain.length > 0 →
@@ -11453,10 +11579,10 @@ If one of those sibling shapes is the action that would create what the goal ask
             ? boundConsumption(stepBound, chainProduced, satisfiableNow, terminalShapes)
             : [];
           ledgerStep(_consumedInputs.length > 0 ? _consumedInputs : undefined, [satisfiableNow]);
-          recordStepEdge(_consumedInputs, [satisfiableNow]);
-          stampProvenance(satisfiableNow, { producerExecutionId: synthTrace.id, consumedIds: poolIdsOf(poolImpulses, _consumedInputs) });
-          if (_consumedInputs.length > 0) { const _inIds = poolImpulses.filter((i) => _consumedInputs.includes(String((i.metadata as { shape?: unknown }).shape))).map((i) => i.id); synthTrace.inputImpulseIds = _inIds; const _t0 = synthTrace.tasks[0]; if (_t0) { _t0.inputImpulseIds = _inIds; (_t0 as { inputShapes?: string[] }).inputShapes = [..._consumedInputs]; } }
-          { const _outImp = poolImpulses.find((i) => String((i.metadata as { shape?: unknown }).shape) === satisfiableNow); if (_outImp) { synthTrace.outputImpulseIds = [_outImp.id]; const _t1 = synthTrace.tasks[0]; if (_t1) _t1.outputImpulseIds = [_outImp.id]; } }
+          recordStepEdge(_consumedInputs, [satisfiableNow], _satImpId ? [_satImpId] : undefined);
+          stampProvenance(_satImpId, { producerExecutionId: synthTrace.id, consumedIds: poolIdsOf(newestPerShape(poolImpulses), _consumedInputs) });
+          if (_consumedInputs.length > 0) { const _inIds = newestPerShape(poolImpulses).filter((i) => _consumedInputs.includes(String((i.metadata as { shape?: unknown }).shape))).map((i) => i.id); synthTrace.inputImpulseIds = _inIds; const _t0 = synthTrace.tasks[0]; if (_t0) { _t0.inputImpulseIds = _inIds; (_t0 as { inputShapes?: string[] }).inputShapes = [..._consumedInputs]; } }
+          { const _outImp = poolImpulses.find((i) => i.id === _satImpId); if (_outImp) { synthTrace.outputImpulseIds = [_outImp.id]; const _t1 = synthTrace.tasks[0]; if (_t1) _t1.outputImpulseIds = [_outImp.id]; } }
           exclude.add(normActivityId(satId));
           chainExecIds.push(synthTrace.id);
           lastTrace = synthTrace;
@@ -11477,6 +11603,12 @@ If one of those sibling shapes is the action that would create what the goal ask
           continue; // shape is now in the pool; re-evaluate target/candidates
         }
         console.log(`[goal-host-vessel] walk(${opts.surface}): vessel-resolve satisfier for "${satisfiableNow}" returned no content — proceeding to candidate/bridge path`);
+        if (lastAttemptWasReattempt) {
+          // A failed RE-attempt is a step without progress, so MAX_NO_PROGRESS_STEPS bounds a run of them.
+          const _rc = decideContinuation({ producedShape: "", noProgressCount: consecutiveNoProgress, terminationReason: null, satisfiesTarget: false, madeProgress: false, maxNoProgressSteps: MAX_NO_PROGRESS_STEPS, maxWalkSteps: Number.POSITIVE_INFINITY, stepIndex: chain.length - 1 });
+          consecutiveNoProgress = _rc.noProgressCount;
+          if (_rc.terminationReason) { walkTerminationReason = _rc.terminationReason; tap(`[goal-host-vessel] walk(${opts.surface}): ${_rc.terminationReason} (failed re-attempts) — stopping`); break; }
+        }
       }
     }
     // (a) CANDIDATE GENERATION — shape-driven: consumers of the current pool.
@@ -11535,7 +11667,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // target with no live resolver (the intended ceiling-reuse case); a bridgeable target
     // still routes to bridge-authoring. Best-effort: any error leaves `candidates` as-is.
     if (target.size > 0) {
-      const missingT = [...target].filter((s) => !producedShapes.has(s));
+      const missingT = [...target].filter((s) => !shapeMet(s));
       const haveTargetProducer = missingT.length > 0 &&
         candidates.some((c) => c.outputShapes.some((s) => missingT.includes(s)));
       if (missingT.length > 0 && !haveTargetProducer) {
@@ -11577,7 +11709,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // advance TOWARD it; do NOT grab unrelated progress-makers (that wanders into
     // junk and starves the backward-chain/mint path). Without a target, walk
     // opportunistically (any forward progress).
-    const missingTargetsB = [...target].filter((s) => !producedShapes.has(s));
+    const missingTargetsB = [...target].filter((s) => !shapeMet(s));
     const makesProgress = (c: WalkCandidate): boolean =>
       c.outputShapes.some((s) => s !== "activityExecutionSummary" && !producedShapes.has(s));
     const advancesTarget = (c: WalkCandidate): boolean =>
@@ -11674,7 +11806,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // posterior — that is an activity-api propagateCreditAlongChain change and is
     // OUT OF SCOPE here (this branch only fans out execution + joins by shape).
     if (target.size > 0) {
-      const missing = [...target].filter((s) => !producedShapes.has(s));
+      const missing = [...target].filter((s) => !shapeMet(s));
       const T = missing[0];
       // The OR-edge = the PRODUCERS of T (forward discovery), unioned with any
       // backward candidates that also produce T. Filter to currently-executable
@@ -11778,7 +11910,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           for (const s of branchShapes) {
             if (!producedShapes.has(s)) branchProducedNew = true;
             if (s === T) branchProducedT = true;
-            addToPool(s, { producedBy: c.id, executionId: t.id }, `produced by ${c.id} (horizontal)`, { producedBy: c.id, ...(t.id ? { producerExecutionId: t.id } : {}), consumedIds: poolIdsOf(poolImpulses, declaredBound(c.inputShapes, iterPoolBefore)) });
+            addToPool(s, { producedBy: c.id, executionId: t.id }, `produced by ${c.id} (horizontal)`, { producedBy: c.id, ...(t.id ? { producerExecutionId: t.id } : {}), consumedIds: poolIdsOf(newestPerShape(poolImpulses), declaredBound(c.inputShapes, iterPoolBefore)), instanceKey: instanceKey(s, { consumedIds: poolIdsOf(newestPerShape(poolImpulses), declaredBound(c.inputShapes, iterPoolBefore)) }, ["consumedIds"]) });
           }
           recordStepEdge(declaredBound(c.inputShapes, iterPoolBefore), t.status !== "failed" ? branchShapes : []);
           if (branchProducedNew) producedCount++;
@@ -11936,7 +12068,7 @@ If one of those sibling shapes is the action that would create what the goal ask
 
     // (c) BACKWARD-CHAIN — find a producer of a missing target shape.
     if (!pick) {
-      const missingTargets = [...target].filter((s) => !producedShapes.has(s));
+      const missingTargets = [...target].filter((s) => !shapeMet(s));
       if (missingTargets.length > 0) {
         try {
           const _sig2 = (await getCachedStateSignature())?.signature_hash;
@@ -11991,7 +12123,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     //       capability gaps (no live resolver) fall through to escalate/stop.
     if (!pick && target.size > 0) {
       // WRITE DOOR (bridge pick): no wrapper is minted around a write resolver for a goal not admitted as a change.
-      const missingTargets = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "bridge_pick", writeDoorHash, tap);
+      const missingTargets = writeDoorShapes([...target].filter((s) => !shapeMet(s)), changeAdmitted, "bridge_pick", writeDoorHash, tap);
       // A bridge wraps a RESOLVER, so X must be served by one (unregistered-step.ts), not merely be some activity's
       // output: a bridge to an unregistered shape is ineligible here, as its template is at the execute step below.
       const live = await liveShapes();
@@ -12029,7 +12161,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     {
       // WRITE DOOR (composite pick): a write shape is neither composed for nor accepted from the composite author on a
       // goal not admitted as a change — the novel-target path makes the composite's outputs the target.
-      const _missingC = writeDoorShapes([...target].filter((s) => !producedShapes.has(s)), changeAdmitted, "composite_pick", writeDoorHash, tap);
+      const _missingC = writeDoorShapes([...target].filter((s) => !shapeMet(s)), changeAdmitted, "composite_pick", writeDoorHash, tap);
       const _novelC = unboundByDispatch.get(String(opts.variables?.dispatch_id ?? ""))?.novel ?? null;
       const _why = composeTrigger({ tried: walkComposeTried, goal, hasPick: !!pick, missing: _missingC, targetSize: target.size, novel: !!_novelC, steps: chain.length });
       if (_why) {
@@ -12060,7 +12192,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // resolver to bridge (true capability gap). File a scope-narrowed
       // substrateGap so the gap_to_feature → feature_compose → mitosis pipeline
       // authors the missing producer; a re-dispatch then reaches the goal.
-      const missingNow = [...target].filter((s) => !producedShapes.has(s));
+      const missingNow = [...target].filter((s) => !shapeMet(s));
       let filedGap: string | null = null;
       if (missingNow.length > 0) {
         const liveNow = await liveShapes();
@@ -12079,7 +12211,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       // --- vessel-resolver producer scan (gap walk-blind-to-vessel-resolver-producers) ---
       let _vrCandidateInjected = false;
       if (missingNow.length > 0) {
-        const missingShape = missingNow[0]!;
+        let _scanShape: string | undefined;
+        for (const s of missingNow) if (await mayAttempt(s)) { _scanShape = s; break; }
+        const missingShape = _scanShape ?? missingNow[0]!;
         try {
           const _vrDiscoResp = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
             method: "POST",
@@ -12093,31 +12227,16 @@ If one of those sibling shapes is the action that would create what the goal ask
             if (_vrVessels.length > 0) {
               const _vrV = _vrVessels[0]!;
               const _vrEndpoint = _vrV.endpoint ?? "";
-              // Regime-2 un-poison: if step-0 already blacklisted this shape but the
-              // prior rawResolve failure was TRANSIENT (not a genuine capability gap),
-              // clear the flag once so this last-chance scan re-attempts the resolve.
-              // vesselResolveShape re-adds to satisfierTried, so it re-blacklists after;
-              // a real outage still nulls via rawResolve → honest "no producer".
-              // The failure is read where it was RECORDED for this shape (transientFailureByShape), not
-              // from lastRawResolveReason, which the self-correction loop has rewritten by now; the
-              // classification is the shared one (transient-failure.ts), which knows HTTP 5xx.
-              const _priorTransientReason = transientFailureByShape.get(missingShape)
-                ?? (isTransientFailure(lastRawResolveReason) ? String(lastRawResolveReason) : null);
-              const _priorTransient = _priorTransientReason !== null;
-              const _vrRetried = satisfierRetry.get(missingShape) ?? 0;
-              if (_vrEndpoint && satisfierTried.has(missingShape) && _priorTransient && _vrRetried < 1) {
-                satisfierRetry.set(missingShape, _vrRetried + 1);
-                satisfierTried.delete(missingShape);
-                tap(`[goal-host-vessel] walk: un-poisoning ${missingShape} for one bounded retry (prior failure transient: ${String(_priorTransientReason).slice(0, 90)})`);
-              }
-              if (_vrEndpoint && !satisfierTried.has(missingShape)) {
+              // The attempt ledger decides whether this shape may be attempted now (a transient failure leaves it
+              // re-eligible within walkBudget max_attempts_per_producer; mayAttempt picked missingShape above).
+              if (_vrEndpoint && _scanShape !== undefined) {
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
                 const _vrSeqBefore = rawResolveSeq;
                 const _vrWriteMark = appliedWrites.mark();
                 const _vrResolved = await vesselResolveShape(missingShape);
                 if (!_vrResolved) satisfierFailures.set(missingShape, resolveFailureSince(_vrSeqBefore));
                 if (_vrResolved) {
-                  addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`, { producedBy: `satisfier:${missingShape}` });
+                  const _vrImpId = addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`, { producedBy: `satisfier:${missingShape}` }, _vrResolved.instanceKey);
                   const _vrSatId = `satisfier:${missingShape}`;
                   const _vrSynthTrace: ExecutionTrace = {
                     id: `walk-satisfier-${++satisfierSeq}-${Date.now()}`,
@@ -12144,8 +12263,8 @@ If one of those sibling shapes is the action that would create what the goal ask
                   chain.push(_vrSatId);
                   { const _w = appliedWrites.tasksSince(_vrWriteMark); attachWriteTasks(_vrSynthTrace, _w); if (_w.length > 0) stepWrites.set(chain.length - 1, _w); } // same as the satisfier site
                   ledgerStep(undefined, [missingShape]);
-                  recordStepEdge([], [missingShape]);
-                  stampProvenance(missingShape, { producerExecutionId: _vrSynthTrace.id, consumedIds: [] });
+                  recordStepEdge([], [missingShape], _vrImpId ? [_vrImpId] : undefined);
+                  stampProvenance(_vrImpId, { producerExecutionId: _vrSynthTrace.id, consumedIds: [] });
                   exclude.add(normActivityId(_vrSatId));
                   chainExecIds.push(_vrSynthTrace.id);
                   lastTrace = _vrSynthTrace;
@@ -12177,6 +12296,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       routeAround = buildRouteAround({
         goalHash: goalHashOf(goal), target, produced: producedShapes, missing: missingNow,
         satisfierFailures, pickFailures, termination: walkTerminationReason ?? "no pick", secrets: [API_KEY],
+        unmetInputs, reattemptRefusals: [...new Set(reattemptRefusals.values())],
       });
       appendRouteAround(opts.variables.dispatch_id, routeAround);
       tap(`[goal-host-vessel] ${opts.surface}: walk: ROUTE-AROUND ${routeAround.kind} missing=[${routeAround.missing_producer.join(",")}] failed_producers=${routeAround.failed_producers.length} (${routeAround.failed_producers.slice(0, 3).map((f) => `${f.producer}: ${f.reason.slice(0, 60)}`).join(" | ")})`);
@@ -12265,7 +12385,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     const beforeSize = producedShapes.size;
     // What this template step bound: its declared inputs that the pool held before it ran.
     const _pickBound = declaredBound(pick.inputShapes, iterPoolBefore);
-    const _pickConsumedIds = poolIdsOf(poolImpulses, _pickBound);
+    const _pickConsumedIds = poolIdsOf(newestPerShape(poolImpulses), _pickBound);
     // Advance the pool ONLY by shapes the activity GENUINELY produced — actual
     // output shapes from SUCCESSFUL tasks of this execution. No optimistic
     // declared-shape advancement: a composition step counts only if the data was
@@ -12288,7 +12408,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         const shape = imp.metadata?.shape;
         if (!shape || shape === "activityExecutionSummary") continue;
         if (imp.content === undefined || imp.content === null) continue;
-        addToPool(shape, imp.content, `produced by ${pick.id}`, { producedBy: pick.id, producerExecutionId: trace.id, consumedIds: _pickConsumedIds });
+        addToPool(shape, imp.content, `produced by ${pick.id}`, { producedBy: pick.id, producerExecutionId: trace.id, consumedIds: _pickConsumedIds, instanceKey: instanceKey(shape, { consumedIds: _pickConsumedIds }, ["consumedIds"]) });
         // A2: the composite produced REAL content of its deliverable: describe the shape's meaning, claimed by it
         if (walkComposed && pick.id === walkComposed.id && walkComposed.residual && walkComposed.outputShapes.includes(shape)) {
           const _desc = { shape, residual: walkComposed.residual, by: walkComposed.id };
@@ -12354,7 +12474,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // judge can green on an intermediate (e.g. a confabulated llm_completion asserting
       // the computed value) before the real compute+emit happened — forcing the value to
       // come from the real producer, not an LLM assertion.
-      const _terminalsPending = terminalShapes.size > 0 && [...terminalShapes].some((s) => !producedShapes.has(s));
+      const _terminalsPending = terminalShapes.size > 0 && [...terminalShapes].some((s) => !shapeMet(s));
       if (!_terminalsPending) {
       // Incremental reach-check (2026-06-25): judge reach NOW, while the just-
       // produced — and, for a sense-back bridge, freshly SENSED — evidence is at
@@ -12568,9 +12688,9 @@ If one of those sibling shapes is the action that would create what the goal ask
       // outage) must NOT override a confirmed answer. Exempt deterministic reaches from the
       // partial-coverage flip; keep the guard for LLM-judged reaches (the real rubber-stamp risk).
       if (reached === true && target.size >= 2 && verdict?.deterministic !== true) {
-        const coveredTargets = [...target].filter((s) => producedShapes.has(s));
+        const coveredTargets = [...target].filter((s) => shapeMet(s));
         if (coveredTargets.length > 0 && coveredTargets.length < target.size) {
-          const uncovered = [...target].filter((s) => !producedShapes.has(s));
+          const uncovered = [...target].filter((s) => !shapeMet(s));
           reached = false;
           const _pcReason = `partial-coverage — reached on a STRICT SUBSET of the required target shapes: produced ${JSON.stringify(coveredTargets)} of ${JSON.stringify([...target])}; missing ${JSON.stringify(uncovered)} (single-shape satisfier short-circuit dropped the goal's remaining half)`;
           if (verdict) {

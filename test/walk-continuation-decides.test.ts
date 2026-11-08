@@ -31,7 +31,9 @@ function stopsAt(steps: Array<{ progressed: boolean; targetProduced?: string }>,
 
 describe("the walk's continuation is one decision", () => {
   it("[MUST-FAIL] both step sites call decideContinuation; no inline copy or literal 2 is left", () => {
-    expect(SRC.split("decideContinuation({").length - 1).toBe(2);
+    // the two step sites, and the failed RE-ATTEMPT (a re-attempt that adds nothing is a no-progress step)
+    expect(SRC.split("decideContinuation({").length - 1).toBe(3);
+    expect(SRC.split("const _rc = decideContinuation({ producedShape: \"\", noProgressCount: consecutiveNoProgress, terminationReason: null, satisfiesTarget: false, madeProgress: false,").length - 1).toBe(1);
     expect(SRC).not.toContain("consecutiveNoProgress >= 2");
     expect(SRC).not.toContain("2 consecutive no-progress steps — stopping");
     expect(SRC).not.toContain('walkTerminationReason = "no pool progress for 2 consecutive steps";');
@@ -39,7 +41,7 @@ describe("the walk's continuation is one decision", () => {
 
   it("[MUST-FAIL] the no-progress limit is the walk budget's, with a recorded default", () => {
     expect(SRC).toContain('const MAX_NO_PROGRESS_STEPS = await shapedBudget("max_no_progress_steps", 2, 1, 40);');
-    expect(SRC.split("maxNoProgressSteps: MAX_NO_PROGRESS_STEPS").length - 1).toBe(2);
+    expect(SRC.split("maxNoProgressSteps: MAX_NO_PROGRESS_STEPS").length - 1).toBe(3);
   });
 
   it("[MUST-FAIL] the single-pick decision runs before the target test, which only skips the interim reach check", () => {

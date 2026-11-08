@@ -175,12 +175,17 @@ describe.skipIf(!HERMETIC)("self-correction never runs a rewrite that changes th
   }, 120_000);
 
   test("(h) the producer-scan re-entry (vessel-resolver candidate) refuses too", async () => {
-    // A 503 from the shell resolver is TRANSIENT, so after the satisfier gives up the producer scan
-    // un-poisons shellResult and re-enters vesselResolveShape (the "injecting vesselResolve step"
-    // path), which synthesises a fresh command. Every LLM answer after the first is the external host.
-    // A 503 is an ANSWER, so the satisfier still corrects it; its refusal is final, so the post-loop
-    // arg-correction is skipped there and its origin gate is exercised by (i) instead.
-    const r = await replay(scenario("egress-producer-scan", GOAL9, [STEP9[0]!, STEP9[1]!], [], { status: 503, text: "upstream unavailable" }));
+    // A 503 from the shell resolver is TRANSIENT, so the attempt ledger (walk-instances.ts) leaves shellResult
+    // re-eligible within walkBudget max_attempts_per_producer (served here as 2), and the producer scan re-enters
+    // vesselResolveShape (the "injecting vesselResolve step" path), which synthesises a fresh command. Every LLM
+    // answer after the first is the external host. A 503 is an ANSWER, so the satisfier still corrects it; its
+    // refusal is final, so the post-loop arg-correction is skipped there and its origin gate is exercised by (i).
+    const sc = scenario("egress-producer-scan", GOAL9, [STEP9[0]!, STEP9[1]!], [], { status: 503, text: "upstream unavailable" });
+    const r = await replay({
+      ...sc,
+      fleet: { vessels: [{ id: "budget-vessel", endpoint: "http://budget.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["walkBudget"] }] },
+      routes: [{ id: "walkBudget", method: "POST", type: "walkBudget", respond: { json: { resolved: true, shape: "walkBudget", body: { max_attempts_per_producer: 2 } } } }, ...sc.routes],
+    } as ReturnType<typeof scenario>);
     assertNoRealEgress(r);
     expect(r.shellCommands.some((c) => c.includes("127.0.0.1:8100/landing-paths/audit"))).toBe(true);
     expect(ranInvented(r)).toEqual([]);
