@@ -24,18 +24,6 @@ describe("route-around record", () => {
     expect(src).toContain("...(routeAround ? { routeAround } : {}),");
     expect(src).toContain("routeArounds: (rec as { routeArounds?: RouteAroundRecord[] }).routeArounds ?? []");
   });
-  test("each route around a stall is named: re-frame, satisfier retry, feedback retry, the floor", () => {
-    for (const r of ['"reframe"', '"retry:satisfier-suppressed"', '"retry:feedback"', '"universal-tool-fallback"']) {
-      expect(src).toContain(`noteRouteTaken(walk.routeAround, ${r})`);
-    }
-    const n = src.indexOf('noteRouteTaken(walk.routeAround, "universal-tool-fallback")');
-    expect(src.slice(n, n + 300)).toContain("const uf = await universalToolFallback(");
-  });
-  test("must-fail control: a REUSE floor is recorded as floor_as_pathway, never as a stall", () => {
-    const n = src.indexOf('kind: "floor_as_pathway"');
-    expect(n).toBeGreaterThan(0);
-    expect(src.slice(n, n + 400)).toContain("const reused = await universalToolFallback(");
-  });
 });
 
 describe("qa follow-ups (source)", () => {

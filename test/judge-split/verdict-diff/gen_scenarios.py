@@ -279,43 +279,6 @@ scen("satisfier-producer-structured-error",
              r("producer:error", ['"prompt"'], type="llm_completion_dispatch", respond={"json": {"success": True, "shape": "structuredError", "body": {"resolver": "llm_completion_dispatch", "failure_mode": "verifier_negative", "detail": "quota exhausted"}}}, bodyNot=["goal-host:floor_tool_loop"]),
              floor_says("Shorter wavelengths scatter more (Rayleigh), so blue dominates the sky.")])
 
-# ───────────────────────── floor (§1.1 5390-5719) ─────────────────────────
-scen("floor-reached-ungrounded",
-     "The satisfier cannot be invoked (no prompt bound, producer refuses), the walk routes around to the ReAct floor, which answers without tools; the LLM judge grades it reached (0 grounded reads).",
-     ["floor reach (§1.1 5390-5719 universalToolFallback, floorReached)", "ROUTE-AROUND stall", "recordGoalPath withheld by the causal-attempt ledger"],
-     [run(EXPLAIN, tags=["operator:verdict-diff"])],
-     routes=[SCHEMA_DISPATCH, judge(True, "the answer explains Rayleigh scattering of short wavelengths"),
-             floor_says("Sunlight scatters off air molecules; shorter blue wavelengths scatter most (Rayleigh scattering), so the sky looks blue.")])
-
-PRICE_GOAL = "What was the launch list price of the ThinkPad X1 Carbon Gen 9 in US dollars?"
-scen("floor-fabricated-transcript",
-     "The floor answer narrates a tool call and a tool response but zero tools ran; the judge says reached; the floor refuses the reach (FABRICATED TOOL TRANSCRIPT).",
-     ["§1.1 5580-5621 floor verdict: fabricated-transcript refusal", "ablation.forceFloor"],
-     [run(PRICE_GOAL, ablation={"forceFloor": True})],
-     routes=[infer([]), judge(True, "states a price"),
-             floor_says("I made a tool call search_ebay(\"ThinkPad X1 Carbon Gen 9\") and the tool response listed $412. The asking price is about $412.")])
-
-scen("floor-honest-recall-reached",
-     "The floor answers from memory without claiming a tool; the judge reaches -> floor reached (ungrounded), not a fabrication.",
-     ["§1.1 floorReached without a transcript claim"],
-     [run(PRICE_GOAL, ablation={"forceFloor": True})],
-     routes=[infer([]), judge(True, "gives a plausible price range, caveated"),
-             floor_says("Without live data: used Gen 9 units typically list between $350 and $500.")])
-
-scen("floor-force-floor-judged-hollow",
-     "ablation.forceFloor; the floor answers, the judge says not reached -> floor not reached, failed floor trace persisted.",
-     ["floor verdict not reached", "ablation forceFloor tags"],
-     [run(PRICE_GOAL, ablation={"forceFloor": True})],
-     routes=[infer([]), judge(False, "no live listing was retrieved; the figure is from memory"),
-             floor_says("Probably around $400.")])
-
-scen("floor-no-dispatch-producer",
-     "No llm_completion_dispatch producer in the fleet: the floor exits no_dispatch_url; honest no-producer failure.",
-     ["floor exit=no_dispatch_url", "no-pick"],
-     [run(PRICE_GOAL)],
-     routes=[infer([])],
-     fleet={"vessels": [{"id": "llm-resolver-vessel", "endpoint": "http://llm.test.invalid", "resolve_endpoint": "/resolve", "shapes": ["llm_completion"]}]})
-
 IO_GOAL = "What is the distance from Earth to Io right now in AU?"
 scen("oracle-ephemeris-abstain",
      "An Earth-centred live-distance goal: the ephemeris oracle owns the class; Horizons is unreachable -> the oracle abstains and the floor answer is graded.",

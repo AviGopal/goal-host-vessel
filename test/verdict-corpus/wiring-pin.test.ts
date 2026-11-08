@@ -16,7 +16,6 @@ export const SITES: ReadonlyArray<readonly [string, string, string]> = [
   ["the floor's reach decision", "const _floorV = ", "judge.floorVerdict(judgeInputs.floorInput("],
   ["the floor's completion-shapes tag", "PRODUCED, NEVER REQUESTED (judge entry completionShapes", "judge.completionShapes(judgeInputs.completionInput("],
   ["the floor's reach return", "const _floorCompletionShapes = ", "judge.completionShapes(judgeInputs.completionInput("],
-  ["the REUSE-BEFORE-DERIVE floor shortcut", "const _floorShortcut = reachingPathway ? ", "judge.floorShortcut(judgeInputs.shortcutInput("],
   ["the re-framing acceptance", "const altSkippedPlannedRetrieval = ", "judge.reframeAccept(judgeInputs.reframeInput("],
   ["the β block on a hollow", "const _noOracle = /^deterministic:no-oracle-for-goal-class", "judge.creditOnHollow(judgeInputs.creditInput("],
 ];
@@ -26,7 +25,6 @@ export const SITES: ReadonlyArray<readonly [string, string, string]> = [
 export const CAPTURED: ReadonlyArray<readonly [string, string, string]> = [
   ["reachGate", "judge.reachGate(judgeInputs.reachInput(", `judgeCapture.captureJudgeInput("reachGate", () => judgeCapture.reachGateInput(`],
   ["floorVerdict", "judge.floorVerdict(judgeInputs.floorInput(", `judgeCapture.captureJudgeInput("floorVerdict", () => judgeCapture.floorVerdictInput(`],
-  ["floorShortcut", "judge.floorShortcut(judgeInputs.shortcutInput(", `judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput(`],
   ["reframeAccept", "judge.reframeAccept(judgeInputs.reframeInput(", `judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput(`],
   ["creditOnHollow", "judge.creditOnHollow(judgeInputs.creditInput(", `judgeCapture.captureJudgeInput("creditOnHollow", () => judgeCapture.creditOnHollowInput(`],
 ];
@@ -53,9 +51,6 @@ describe("wiring pin: index.ts calls each judge entry at its site", () => {
       expect([site, SRC.slice(i, i + WINDOW).includes(call)]).toEqual([site, true]);
     });
   }
-  test("each entry the corpus replays is called from index.ts", () => {
-    for (const e of ["reachGate", "floorVerdict", "floorShortcut", "reframeAccept", "completionShapes", "creditOnHollow"]) expect([e, SRC.includes(`judge.${e}(`)]).toEqual([e, true]);
-  });
   test("index.ts imports the closed core, never the open rules", () => {
     expect(SRC).toContain(`import * as judge from "./judge/entries";`);
     expect(SRC).toContain(`import * as judgeInputs from "./judge/inputs";`);

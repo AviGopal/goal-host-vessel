@@ -11345,10 +11345,6 @@ If one of those sibling shapes is the action that would create what the goal ask
         if (corrected != null) { recordExecutorCommand(mergedArgs); console.log(`[goal-host-vessel] walk(${opts.surface}): satisfier "${shape}" succeeded after arg-correction`); return { content: corrected }; }
       }
     }
-    // (a.5) INVESTIGATION FALLBACK: deterministic resolver failed because a required
-    //       argument (e.g. filePath) cannot be bound from the goal text — the goal
-    //       names a vessel/contract, not a file. Let a tool-enabled LLM investigate
-    //       and produce the content itself before falling through to a hollow bridge.
     // J2a DERIVE BEFORE ASK: the inputs the resolver named as required are tried against the pool here and by the
     // investigation below; only an input BOTH leave unbound is recorded as missing (needs-information.ts).
     const _niRec = lastRawResolveReason ? unboundFor(opts.variables?.dispatch_id) : undefined;
@@ -11357,55 +11353,6 @@ If one of those sibling shapes is the action that would create what the goal ask
     const _niUnbound = _niFields.filter((f) => !(f in _niBound));
     for (const f of _niFields) if (f in _niBound) _niRec?.noteDerived(shape, f);
     _niRec?.noteUnderived(shape, _niUnbound, "pool_bind");
-    let _niInvestigated = false;
-    if (LLM_VESSEL_ENDPOINT && !terminalShapes.has(shape) && !shape.endsWith("_write") && lastRawResolveReason && /required|missing|must (be|provide|include)|is not (a )?(valid|provided)|no .*(path|file|arg)/i.test(lastRawResolveReason)) {
-      try {
-        _niInvestigated = true;
-        // GROUNDED investigation: the SAME executing loop as the ReAct fallback, with READ-and-
-        // inspect tools (the _write impulse-shape boundary is preserved; UNIVERSAL_READ_TOOLS, no shell — floor-tools.ts).
-        // It EXECUTES tools and yields content ONLY when at least one read
-        // actually grounded (inv.groundedOk >= 1) — never an un-executed LLM answer (the root of
-        // the ".rs count = 6" hollow-green was returning an ungrounded LLM guess here).
-        // TELL IT WHERE THE CODE IS (2026-08-09, law 8).
-        //
-        // This prompt demanded grounding — "never answer from memory", "an answer not
-        // grounded in what your tools actually returned is INVALID" — while telling the
-        // model NOTHING about where any source lives. That is an impossible instruction,
-        // and the model did the only thing left: it guessed filenames.
-        //
-        // Five walks in a row died this way on a goal about slow deletes, and the guesses
-        // degraded as it grew more desperate: 'trace_store_schema.sql', then
-        // 'trace_store_deletion_logic.py' (a .py in an all-TypeScript fleet), then
-        // 'execution_table_schema.sql', 'trace_store.py', 'error_log', and finally
-        // './find . -name "*execution*"' passed as a FILE PATH — the model trying to
-        // search through the only channel it had.
-        //
-        // Confabulation is downstream of information starvation, not model weakness. The
-        // fix is not a sterner instruction; it is making the load-bearing fact available
-        // at the moment of use. The layout below is verified on the substrate:
-        //   /vessels/<vessel>/           the running tree (src/, sql/) — what executes
-        //   /workspace/git/vessels/<vessel>/  the git checkout mirror-to-live deploys FROM
-        // and the shell resolver already runs with cwd=/workspace, so find/grep from
-        // there work today and always did.
-        const invLayout = `\n\nWHERE THE CODE IS. This substrate runs a fleet of vessels. Each vessel's RUNNING source is at /vessels/<vessel>/src (schemas and migrations at /vessels/<vessel>/sql), and its git checkout is at /workspace/git/vessels/<vessel>. Vessel names are directory names, e.g. activity-api, goal-host-vessel, development-vessel, analysis-vessel, local-tools-vessel. There is no shell tool.\n\nHOW TO FIND A FILE. Never guess a filename: take paths from the goal, from the layout above, or from a file you have already read (imports name their modules), then fs_read the ABSOLUTE path and codeSearchResult it for the symbol. A filename you did not obtain from a tool result is a guess, and an answer built on one is INVALID even if it sounds right. If your searches genuinely find nothing, say so plainly rather than inventing a path.`;
-        const invPrompt = `You are investigating to produce the content for the impulse shape "${shape}" that the following goal needs. The deterministic resolver for this shape could not run because a required argument is missing: ${lastRawResolveReason}. You MUST use your tools (fs_read, codeSearchResult) to FIND and READ the relevant source/files yourself BEFORE answering — do not ask for them, and never answer from memory; an answer not grounded in what your tools actually returned is INVALID.${invLayout}\n\nGoal:\n${goal}\n\nWhen finished, respond with ONLY the concrete content (file contents, analysis, or answer) grounded in your tool results — no preamble, no code fences.`;
-        const inv = await runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, []);
-        if (inv && inv.groundedOk >= 1) {
-          const invContent = inv.finalText.trim() || inv.observations.join("\n\n").slice(0, 6000);
-          if (invContent.length > 0) {
-            // COMMAND<->INTENT (law 8): surface the command(s) the investigation RAN into the same
-            // executorCommands channel the direct/corrected paths use, so the walk's final reach
-            // grader applies command-intent + degenerate/self-emitted (echo/printf) skepticism to
-            // this content too — an echo-laundered shell answer is no longer invisible.
-            if (inv.commandEvidence) executorCommands.set(shape, inv.commandEvidence.slice(0, 1000));
-            tap(`[goal-host-vessel] walk: satisfier produced "${shape}" via GROUNDED tool-enabled investigation (${inv.groundedOk} read(s), reason: ${lastRawResolveReason})`);
-            return { content: invContent, effect: effectTupleOf(shape, ep?.endpoint, invContent) };
-          }
-        }
-      } catch { /* fail-open: fall through to action-then-read / bridge */ }
-    }
-    // the investigation ran and produced nothing grounded: those inputs were not derivable here
-    if (_niInvestigated) _niRec?.noteUnderived(shape, _niUnbound, "investigation");
     // (b) ACTION-THEN-READ: the target didn't resolve (e.g. a read-only shape for a
     //     not-yet-existing artifact). Find a sibling live shape on the SAME vessel
     //     that PRODUCES it (LLM-mapped from the goal), invoke that action, then
@@ -15314,85 +15261,6 @@ async function runGoalWithRecoveryInner(
       if (!reachingPathway && goal && !opts.ablation?.disableReuse) {
         reachingPathway = await recommendReachingPath(goal, seededOutputShapes ?? null);
       }
-      // FLOOR AS A LEARNED PATHWAY. A retrieved pathway whose only activity is the floor
-      // was un-actionable everywhere else: `universal-tool-fallback` is not a pool-walk
-      // candidate, so preferPathway cannot select it, and the floor's own call site sits
-      // BELOW the walk and fires only after the walk has already failed. The store could
-      // therefore recommend the floor, correctly, and nothing could act on it — the goal
-      // still paid for a full derivation first and the reuse was decorative.
-      //
-      // Reuse here means SKIPPING the derivation the store says is unnecessary, which is
-      // the only thing that makes reuse cheaper rather than merely differently-routed.
-      // Guarded on the pathway being EXACTLY the floor (a floor step inside a longer
-      // composition is the walk's business, not a shortcut) and on the goal not being an
-      // edit — the floor reads and reasons, it does not land commits. The reuse gate has
-      // already applied its successful/total thresholds before we get here.
-      // The floor cannot deliver an ARTIFACT. Its reach returns above the terminal-output
-      // bridge, so skipping the walk for a goal that asked for a durable note reaches,
-      // grades itself honestly, and writes nothing — observed once, live, as a clean
-      // green with no note. Artifact goals keep the full walk; the shortcut is for
-      // question goals, where the answer IS the deliverable (judge entry floorShortcut; the rule is
-      // src/judge-rules/floor.ts: also no *_write/mutation target, and never a BORROWED pathway for a
-      // change/write goal — a gap-writing goal once borrowed a half-cover floor donor and skipped its
-      // walk on a prose reach count).
-      const _floorShortcut = reachingPathway ? judge.floorShortcut(judgeInputs.shortcutInput({
-        goal,
-        activities: (reachingPathway.activities ?? []).map((a) => normActivityId(String(a ?? ""))),
-        borrowed: reachingPathway.borrowed !== false,
-        targets: seededOutputShapes ?? [],
-      })) : { allowed: false, why: "no pathway" };
-      // CAPTURE (closed, src/judge/capture.ts): the shortcut's inputs and its decision, after the decision.
-      const _shortcutPathway = reachingPathway;
-      if (_shortcutPathway) judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput({
-        goal,
-        activities: (_shortcutPathway.activities ?? []).map(String),
-        borrowed: _shortcutPathway.borrowed !== false,
-        targets: seededOutputShapes ?? [],
-      }), _floorShortcut);
-      // VERDICT-CORPUS CREDIT HOLD (src/judge/credit-hold.ts): a held class withholds REUSE donor eligibility.
-      const floorIsTheProvenPathway = _floorShortcut.allowed && !(creditHold.heldFor([...(reachingPathway?.borrowed !== false ? ["shortcut:borrowed-floor"] : ["shortcut:own-floor"])], "reach", "floorShortcut"));
-      if (!floorIsTheProvenPathway && reachingPathway && (reachingPathway.activities ?? []).length === 1 && normActivityId(String(reachingPathway.activities[0] ?? "")) === "universal-tool-fallback" && !isEditIntentGoal(goal) && !goalRequestsDurableArtifact(goal)) {
-        tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE REFUSED — the store recommends the floor, but ${_floorShortcut.why}; walking instead`);
-      }
-      if (floorIsTheProvenPathway) {
-        tap(`[goal-host-vessel] ${opts.surface}: REUSE-BEFORE-DERIVE — the store recommends the floor for this goal (${reachingPathway?.successfulExecutions}/${reachingPathway?.totalExecutions} reached); running it directly and skipping the walk`);
-        try {
-          // A REUSED floor is a route taken without a walk: record it as such, so it is never read
-          // as a stall (agentic-floor D P5 must-fail: a REUSE floor emits kind floor_as_pathway).
-          const _floorRec = buildRouteAround({ goalHash: goalHashOf(goal), target: seededOutputShapes ?? [], produced: [], missing: [], satisfierFailures: new Map(), pickFailures: new Map(), termination: "learned pathway is the floor", kind: "floor_as_pathway" });
-          noteRouteTaken(_floorRec, "universal-tool-fallback");
-          appendRouteAround(opts.variables.dispatch_id, _floorRec);
-          // J1: a reused floor has no walk before it, but the goal's earlier failures are still its lessons.
-          const reused = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, undefined, { priorFeedback: priorFailureFeedbackFor(goal), decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
-          if (reused?.reached) {
-            if (opts.learningMode !== "observe") {
-              void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "learned_pathway", reused.completionShapes ?? [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
-              console.log(`[goal-host-vessel] recordGoalPath (floor REUSE) shapes=${JSON.stringify(reused.completionShapes ?? [])} goal="${goal.slice(0, 60)}"`);
-            }
-            return reused;
-          }
-          // Not reached: fall through to the ordinary walk. A recommendation that does not
-          // pan out must cost a walk, never the goal.
-          //
-          // ATTRIBUTION MUST NOT DEPEND ON THE OUTCOME (2026-09-03). This call previously
-          // passed NO parent while the reached branch above passes `reachingPathway`, so a
-          // borrowed pathway was credited when it worked and anonymous when it did not.
-          // Measured consequence: of 9,396 goal_execution_paths rows only 4 carry
-          // reused_from_goal_hash, against 23 observed "pathway reuse: accepted" events —
-          // and all 4 are reaches. Any evaluation over reuse lineage therefore reads ~100%
-          // by construction, which is exactly the 4/4 figure that looked like evidence.
-          //
-          // This is the SECOND source of the same skew in this arm: recordGoalPath's own
-          // note records an 8x optimism bias from rejected writes dropping failures at
-          // 12.5% against ~100% for successes. Same tier and shapes as before — only the
-          // lineage argument changes, so a failed reuse is now attributable to the donor
-          // it borrowed from.
-          if (opts.learningMode !== "observe") void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? [], reachingPathway ? { goalHash: reachingPathway.goalHash, pathSignature: reachingPathway.pathSignature } : null);
-          tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway did NOT reach — falling through to the full walk`);
-        } catch (e) {
-          tap(`[goal-host-vessel] ${opts.surface}: reused floor pathway threw (${(e as Error).message.slice(0, 120)}) — falling through to the full walk`);
-        }
-      }
       const _headAct = (reachingPathway?.activities as unknown[] | undefined)?.[0];
         const _pathHeadSat = typeof _headAct === "string" && _headAct.startsWith("satisfier:") ? _headAct.slice("satisfier:".length) : null;
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
@@ -15744,59 +15612,6 @@ async function runGoalWithRecoveryInner(
       // falling into the recovery loop and landing again).
       const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult", "cutoverapplied", "vesselmitosiscutoverresult"];
       const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
-      // PROSE-OVER-SOURCE GROUNDING (2026-07-27). EVIDENCE (live probes): summarize/explain-
-      // a-named-file goals hollow-REACH — either mis-select an irrelevant learned composite,
-      // or resolve a BARE tool-less llm_completion_dispatch that CONFABULATES from memory
-      // (the keystone threads content only into exec fields, never the prompt; the grounded
-      // ReAct loop fires only on non-reach). So walk.reached can be TRUE yet ungrounded. For a
-      // prose-over-file goal, ALSO run universalToolFallback (which dispatches WITH read tools,
-      // is FORCED to read the real file, gates on groundedOk>0, and re-judges via the reach
-      // gate) and PREFER its grounded answer. Monotonic + safe: the fallback returns a result
-      // ONLY when it genuinely read data AND reached; otherwise null → fall through to the
-      // existing walk result unchanged. Tight guard: a prose VERB + a source operand, and NOT
-      // an extract/count/edit ask (those have honest compute/edit paths already).
-      const goalIsProseOverSource =
-        /\b(summar(?:y|ise|ize|ising|izing)?|explain|describe|what\s+is\b|what'?s\b|purpose\s+of|gist\s+of|overview\s+of|tell me about|walk me through)\b/i.test(goal) &&
-        /(repos\/[\w.-]+|\.(?:md|json|ts|tsx|js|jsx|txt|ya?ml|toml|sh|py)\b|\bREADME\b|\bCLAUDE\b|package\.json|based on (?:its|the)\b|\bvessel\b|\bthe file\b)/i.test(goal) &&
-        !/\b(edit|add |insert|append|change|modify|replace|\bfix\b|remove|delete|update|rename|refactor|\bcount\b|how many|number of|value of|extract|report the value|report whether)\b/i.test(goal);
-      if ((walk.reached === false || walk.grounded === false || goalIsProseOverSource) && !goalIsEditIntent) {
-        try {
-          noteRouteTaken(walk.routeAround, "universal-tool-fallback");
-          const _ufOut: { reason?: string; abstain?: true } = {};
-          // J1: the floor sees what the walk gathered, why it stopped, and what earlier attempts at this goal got wrong.
-          const uf = await universalToolFallback(goal, seededOutputShapes ?? [], typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined, _ufOut, { carry: walk.carry, reason: walk.goalReachReason ?? null, walkEndedHollow: walk.reached === false, priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });
-      // An ABSTAINED floor (§9.2) is ungraded: no failed path row (its POST would add failure_delta / thompson_beta).
-      if (!uf?.reached && opts.learningMode !== "observe" && !_ufOut.abstain) void recordGoalPath(goal, ["universal-tool-fallback"], false, 0, 0, "universal_tool_fallback", [], seededOutputShapes ?? []);
-          if (uf?.reached) {
-            if (goalIsProseOverSource && walk.reached) tap(`[goal-host-vessel] ${opts.surface}: prose-over-source — PREFERRING grounded universal-tool answer over the walk's hollow prose reach`);
-            // RECORD THE FLOOR'S PATH. This `return` sits above every recordGoalPath call
-            // site in the function, so a floor reach wrote 0 of 4,768 path rows: the tier
-            // that answers goals no learned pathway covers could never BECOME a learned
-            // pathway. Reuse retrieves from goal_execution_paths, so without this row the
-            // floor re-derives the same answer from scratch every time, forever — which
-            // is the exact "convergent re-derivation looks like learning" trap.
-            //
-            // The tier is `universal_tool_fallback` rather than a generic derivation, so
-            // the floor's contribution stays distinguishable from the walk's in every
-            // downstream measurement. That named tier existed and was UNREACHABLE until
-            // this call site; nothing could produce it.
-            if (opts.learningMode !== "observe") {
-              void recordGoalPath(goal, ["universal-tool-fallback"], true, 0, 0, "universal_tool_fallback", uf.completionShapes ?? [], seededOutputShapes ?? []);
-              console.log(`[goal-host-vessel] recordGoalPath (floor reach) shapes=${JSON.stringify(uf.completionShapes ?? [])} goal="${goal.slice(0, 60)}"`);
-            }
-            return uf;
-          }
-          // THE FLOOR'S REASON SUPERSEDES. The floor ran last, so a not-reached dispatch's reason is the floor's, not the
-          // walk's earlier one (a grounded floor answer used to be recorded as the walk's "error-envelope"). The walk's
-          // reason is kept inside it, so the reached-command cache's deterministic-disconfirmation read is unchanged.
-          // Tapped as NOT REACHED (not HOLLOW) so the failure memory takes it once, from the final reason.
-          if (!uf?.reached && walk.reached !== true && _ufOut.reason) {
-            tap(`[goal-host-vessel] ${opts.surface}: floor: NOT REACHED — ${_ufOut.reason}`);
-            walk.walkReachReason = String(walk.goalReachReason || "no reason recorded");
-            walk.goalReachReason = `${_ufOut.reason} (walk: ${String(walk.goalReachReason ?? "no reason recorded").slice(0, 240)})`.slice(0, 600);
-          }
-        } catch { /* fail-open */ }
-      }
       if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
       // ACTIVITY-REPAIR interception (2026-07-02): the activity analogue of the
       // edit-intent change, one artifact level up. Vessels are maintained by
@@ -20529,8 +20344,6 @@ export {
   recallGoalFailures,
   decideFailureRecall,
   creditFailureRecall,
-  runGroundedToolLoop,
-  universalToolFallback,
   isDeterministicVerdict,
   dispatchContext,
   readGapByIdForOracle,

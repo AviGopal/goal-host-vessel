@@ -198,8 +198,4 @@ describe("(iii) a run that ends ungraded writes no α/β and no goal-path row (s
     expect(src).toContain('if (opts.learningMode !== "observe" && goal && selId && !attemptAbstained) void recordGoalPath(goal, [selId], reached,');
     expect(src.match(/void recordGoalPath\(goal, \[selId\], reached,/g) ?? []).toHaveLength(1);
   });
-  test("[MUST-FAIL] the floor: an abstained floor verdict is carried out, and the failed floor row is not written for it", () => {
-    expect(src).toContain("if (out && verdict?.abstain) out.abstain = true;");
-    expect(src).toContain('if (!uf?.reached && opts.learningMode !== "observe" && !_ufOut.abstain) void recordGoalPath(goal, ["universal-tool-fallback"], false,');
-  });
 });

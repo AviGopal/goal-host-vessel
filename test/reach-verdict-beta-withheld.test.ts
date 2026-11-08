@@ -159,12 +159,6 @@ describe("the withhold record is filled at the decision, threaded to every walk,
     // Never cleared, deleted from, or replaced anywhere.
     expect(/betaWithheld\??\.(clear|delete)\(/.test(SRC)).toBe(false);
     expect(/betaWithheld\s*=(?!=)/.test(SRC.replace("const betaWithheld = new Map<string, string>();", ""))).toBe(false);
-    // The fallback step between the walk and the walk-complete delivery leaves it alone.
-    const fb = SRC.indexOf('noteRouteTaken(walk.routeAround, "universal-tool-fallback");');
-    expect(fb).toBeGreaterThan(-1);
-    const end = SRC.indexOf("if (walk.attempts > 0 &&", fb);
-    expect(end).toBeGreaterThan(fb);
-    expect(SRC.slice(fb, end).includes("betaWithheld")).toBe(false);
     // And the walk-complete delivery that follows it reads the same record.
     expect(SRC.includes('"walk-complete", seek.goalReachReason, goalHashOf(String(goal ?? "")), betaWithheld);')).toBe(true);
   });

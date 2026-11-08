@@ -84,7 +84,6 @@ describe("J2a wiring (index.ts)", () => {
   const src = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
   it("[WIRING] the a.5 site records pool-bind and investigation attempts; a produced shape clears its record", () => {
     expect(src).toContain('_niRec?.noteUnderived(shape, _niUnbound, "pool_bind");');
-    expect(src).toContain('if (_niInvestigated) _niRec?.noteUnderived(shape, _niUnbound, "investigation");');
     expect(src).toContain("if (r) unboundFor(opts.variables?.dispatch_id)?.noteAccepted(shape);");
   });
   it("[WIRING] the terminal record write classifies needs-information only when not reached, and drops the record", () => {

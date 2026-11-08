@@ -108,7 +108,6 @@ export const CREDIT_SITES: ReadonlyArray<readonly [string, string]> = [
   ["async function creditReachedTemplate(", `creditHold.heldForGoal(goalText, "reach", "creditReachedTemplate")`],
   ["async function recordGoalPath(", `creditHold.heldForGoal(goalText, reached ? "reach" : "hollow", "recordGoalPath")`],
   ["async function mintReachedTrace(", `creditHold.heldForGoal(goalText, "reach", "mintReachedTrace")`],
-  ["const _floorShortcut = reachingPathway ? ", `creditHold.heldFor(`],
 ];
 describe("every credit site consults the hold", () => {
   for (const [anchor, guard] of CREDIT_SITES) test(anchor, () => {

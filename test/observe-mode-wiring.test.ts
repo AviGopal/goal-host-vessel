@@ -37,7 +37,6 @@ describe("the learning mode is in the dispatch context", () => {
     expect(entries.every((m) => m.includes("learningMode") && (m.includes("enterDispatchContext(dispatchContext.getStore(), {") || m.includes("enterDispatchContext(undefined, { dispatchId: record.dispatchId, learningMode: d.learningMode")))).toBe(true);
     // and the fresh-store form is that one site only, never a reusable escape
     expect(src.split("enterDispatchContext(undefined,").length - 1).toBe(1);
-    expect(src.match(/priorFeedback: priorFailureFeedbackFor\(goal\), (skipFailedReplays: \[\.\.\._failedReplays\], )?decomposeGapId: typeof opts\.variables\["decompose_gap_id"\] === "string" \? opts\.variables\["decompose_gap_id"\] : undefined, learningMode: opts\.learningMode \}/g)?.length).toBe(2);
   });
   test("the /run-goal background run enters it before any side effect of the dispatch", () => {
     const i = src.indexOf("dispatchContext.enterWith(enterDispatchContext(dispatchContext.getStore(), { dispatchId, learningMode }));");

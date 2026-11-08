@@ -78,23 +78,6 @@ describe("reached-command bank is gated, and a retry skips only the banked comma
     expect(src).toContain('} else if (!_suppressReuse && shape === "shellResult" && recipeCommandFor(goal) !== null && !_recipeFailedHere(');
     expect(src).toContain('if (_deg && !_suppressReuse && shape === "shellResult") {\n        const _recovery = recipeCommandFor(goal);');
   });
-  // THE FLOOR SEED IS THE THIRD RECIPE CONSUMER. It ran recipeCommandFor(goal) and handed the output to the floor as "A
-  // VERIFIED MEASUREMENT" without consulting the failed list, so a recipe the walk had just blocked was still the floor's
-  // verified value on the retry.
-  test("[MUST-FAIL on 0fb57bd] a recipe that failed in this dispatch is not seeded into the floor's verified block on the retry", () => {
-    const seed = src.indexOf("const rc = recipeCommandFor(goal);");
-    const gate = src.indexOf('const _seedFailed = rc ? replayBlocked(walkContext?.skipFailedReplays, "shellResult", rc) : undefined;', seed);
-    const run = src.indexOf('await ufExecuteTool("shellResult", { command: rc }', seed);
-    const verified = src.indexOf("A VERIFIED MEASUREMENT for this class of goal", seed);
-    expect(seed).toBeGreaterThan(0);
-    expect(gate).toBeGreaterThan(seed);
-    expect(run).toBeGreaterThan(gate);
-    expect(verified).toBeGreaterThan(run);
-    expect(src.slice(gate, run)).toContain("if (rc && !_seedFailed) {");
-    expect(src.slice(gate, run)).toContain("floor: NOT seeding the family recipe");
-    // The post-walk floor (the retry's floor) is handed the dispatch's failed replays.
-    expect(src).toContain('priorFeedback: priorFailureFeedbackFor(goal), skipFailedReplays: [..._failedReplays], decomposeGapId: typeof opts.variables["decompose_gap_id"] === "string" ? opts.variables["decompose_gap_id"] : undefined, learningMode: opts.learningMode });');
-  });
   test("control: the first walk is unchanged — reuse off only on an exact-hash failure history, and no skip list", () => {
     expect(src).toContain("ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,");
     const first = src.indexOf("let walk = await runGoalAsPoolWalk(goal, {");

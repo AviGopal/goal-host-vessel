@@ -30,25 +30,6 @@ describe("the floor's offered tools", () => {
     const cs = UNIVERSAL_READ_TOOLS.find((t) => t.name === "codeSearchResult")!;
     expect(cs.description).toContain("line_count");
   });
-
-  it("index.ts builds both grounded loops from this list and defines no second copy", () => {
-    const src = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
-    expect(src).toContain('import { UNIVERSAL_READ_TOOLS } from "./floor-tools"');
-    expect(src).not.toMatch(/const\s+UNIVERSAL_READ_TOOLS\s*=/);
-    // Both model-driven loops take their tools from the shared list.
-    // Pin changed under the user ruling of 2026-10-16T06:06:38Z (CHANGE-29): the floor's tools are the hand list
-    // filtered by what discovery advertises, plus the own-substrate target tools; still only from this list.
-    // Pin changed under the user ruling of 2026-10-26T19:05:13Z: the floor's list is UNIVERSAL_FLOOR_TOOLS.
-    expect(src).toContain("const tools: any[] = UNIVERSAL_FLOOR_TOOLS.filter((t) => handNames.has(t.name));");
-    expect(src).toContain("runGroundedToolLoop(invPrompt, UNIVERSAL_READ_TOOLS, [])");
-    // The floor's and the investigation's prompts no longer steer the model to a shell tool.
-    const floorPrompt = src.slice(src.indexOf("You are the substrate's universal executor."), src.indexOf("When finished, respond with the final answer/result"));
-    expect(floorPrompt.length).toBeGreaterThan(100);
-    expect(floorPrompt).not.toContain("shellResult");
-    const invPrompt = src.slice(src.indexOf("const invLayout = "), src.indexOf("runGroundedToolLoop(invPrompt"));
-    expect(invPrompt.length).toBeGreaterThan(100);
-    expect(invPrompt).not.toContain("shellResult");
-  });
 });
 
 describe("the floor's repo-wide code search (user ruling 10-02)", () => {

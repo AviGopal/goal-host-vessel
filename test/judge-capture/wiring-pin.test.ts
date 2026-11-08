@@ -88,11 +88,6 @@ describe("judge capture wiring pin: every decision site calls the closed capture
     expect(entry < decided && decided < cap).toBe(true);
   });
 
-  test("floorShortcut: recorded after the shortcut decision and before it is acted on", () => {
-    const cap = callAfter("const _floorShortcut = reachingPathway ? judge.floorShortcut(", `judgeCapture.captureJudgeInput("floorShortcut", () => judgeCapture.floorShortcutInput({`, 12);
-    expect(lineOf("const floorIsTheProvenPathway = _floorShortcut.allowed")).toBeGreaterThan(cap);
-  });
-
   test("reframeAccept: recorded after the acceptance inputs and before the acceptance branch", () => {
     const cap = callAfter("const _reframe = judge.reframeAccept(", `judgeCapture.captureJudgeInput("reframeAccept", () => judgeCapture.reframeAcceptInput({`, 2);
     const branch = LINES.findIndex((l, i) => i > cap && l.includes("if (altWalkResult.abstain) {"));

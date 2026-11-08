@@ -89,14 +89,6 @@ describe("an abstain triggers no retry and is named, not logged as an outage (so
     expect(src).toMatch(/if \(verdict\?\.abstain\) \{\n\s*status = "failed";\n\s*walkBetaWithheld = true;\n\s*\} else if \(verdict && verdict\.reached === false\)/);
     expect(src).toContain("...(walkAbstain ? { abstain: walkAbstain } : {}),");
   });
-  test("the dispatch returns an abstained walk before FEEDBACK-RETRY, the satisfier retry, the re-frame and the floor", () => {
-    const a = src.indexOf("if (walk.abstain) {");
-    expect(a).toBeGreaterThan(0);
-    expect(src.slice(a, a + 300)).toContain("return walk;");
-    for (const later of ["walk: FEEDBACK-RETRY", "re-running with suppressSatisfierShapes", "re-framing to alternative target shapes", "const uf = await universalToolFallback("]) {
-      expect(src.indexOf(later, a)).toBeGreaterThan(a);
-    }
-  });
   test("an abstain from any retry walk is honoured BEFORE the attempts>0 choice can drop it", () => {
     expect(src).toMatch(/if \(fbWalk\.abstain\) return fbWalk;[^\n]*\n\s*walk = fbWalk\.attempts > 0 \? fbWalk : walk;/);
     expect(src).toMatch(/if \(retryWalk\.abstain\) return retryWalk;[^\n]*\n\s*walk = retryWalk\.attempts > 0 \? retryWalk : walk;/);
