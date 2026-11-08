@@ -320,3 +320,24 @@ describe.skipIf(!HERMETIC)("F1: the walk's executor sends are in its trace outpu
     }
   }, 120_000);
 });
+
+// (a) agf_2aezfw2lg9ui: the executor's extract-guard asks for the value through routedComplete (llm_completion producers
+// discovered at use time), not the llm_completion_dispatch wrapper whose only producer is gone.
+describe.skipIf(!HERMETIC)("(a): the extract-guard's value extraction goes through routedComplete", () => {
+  test("MUST-FAIL: zero llm_completion_dispatch requests and one llm_completion request from the extract-guard", async () => {
+    const s = shellScenario("extract-guard-routed");
+    const rs = s.routes as Array<Record<string, unknown>>;
+    const DUMP = Array.from({ length: 40 }, (_, i) => `entry ${String.fromCharCode(97 + (i % 26))} has the status ok and the owner team`).join("\n");
+    rs.find((x) => x["id"] === "tools:shell")!["respond"] = { json: { stdout: DUMP, stderr: "", exit_code: 0 } };
+    rs.unshift({ id: "llm:extract-value", method: "POST", caller: "goal-host:uf_tool_llm_completion", respond: { llm: "team" } });
+    (s.steps[0]!.body as { goal: string }).goal = "How many entries does the status report list?";
+    const r = await replay(s);
+    expect(r.log).toMatch(/extract-guard: degMatch=true/);
+    const typed = (t: string) => r.requests.filter((q) => q.body?.type === t || q.body?.impulse?.pointer?.type === t || q.body?.pointer?.type === t);
+    expect(typed("llm_completion_dispatch").length).toBe(0);
+    // one llm_completion request per extract-guard firing (each firing asks once)
+    const firings = r.log.split("extract-guard: degMatch=true").length - 1;
+    expect(firings).toBeGreaterThanOrEqual(1);
+    expect(r.requests.filter((q) => q.body?.caller === "goal-host:uf_tool_llm_completion" && q.body?.type === "llm_completion").length).toBe(firings);
+  }, 120_000);
+});

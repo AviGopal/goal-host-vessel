@@ -10424,7 +10424,11 @@ If one of those sibling shapes is the action that would create what the goal ask
         console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" extract-guard: degMatch=${_deg ? /raw body with no line that states a value/.test(_deg) : "no-deg"} dumpLen=${_dumpBody.length} probeLen=${_probeBody.length} deg=${JSON.stringify((_deg ?? "").slice(0, 90))}`);
         if (_deg && /raw body with no line that states a value/.test(_deg) && _dumpBody && _dumpBody.length > 200) {
           const _xq = `From the API response below, extract ONLY the single value that answers this goal, copied EXACTLY as it appears in the text. Output that value alone — no words, no units, no punctuation, no explanation. If the response does not contain the value, output exactly NONE.\n\nGOAL: ${goal}\n\nRESPONSE:\n${_dumpBody.slice(0, 12000)}`;
-          const _xr = await ufExecuteTool("llm_completion_dispatch", { prompt: _xq, max_tokens: 60 }, new Set<string>(["llm_completion_dispatch"]));
+          // routedComplete (llm-router.ts): llm_completion producers discovered at use time and Thompson-selected, as the
+          // reach judges use; the dispatch wrapper's only producer is gone. Same prompt, same 60-token bound.
+          const _xrr = await routedComplete(goalHashOf(goal), "uf_tool_llm_completion", { prompt: _xq, maxTokens: 60 });
+          const _xj: any = _xrr.json;
+          const _xr = { ok: _xrr.ok, result: _xj?.body?.content ?? _xj?.content ?? _xj?.body?.text ?? "" };
           if (_xr.ok) {
             // FETCHED TEXT NEVER REACHES A SHELL (fetched-value.ts). The value was bound as
             // `echo "<value>"` and run through the shell resolver, so a fetched body carrying
