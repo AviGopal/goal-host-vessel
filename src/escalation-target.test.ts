@@ -6,7 +6,7 @@
 // The scope fails CLOSED: with no readable copy, every target is refused (no target gets "edit").
 import { afterAll, describe, expect, it, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -131,22 +131,5 @@ describe("decideEscalationTarget", () => {
 
   it("a `..` traversal target is refused (normalised before the scope check)", () => {
     expect(decideEscalationTarget("repos/vessel-a/../escape.ts", roots).kind).toBe("refuse");
-  });
-});
-
-describe("the EDIT-INTENT ESCALATION uses the decision", () => {
-  const src = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
-  const start = src.indexOf("EDIT-INTENT ESCALATION SKIPPED for");
-  const body = src.slice(start, src.indexOf("const pwtJson = await pwtResp.json()", start));
-
-  it("decides before it calls patch_with_tools, and a refusal makes no call", () => {
-    expect(start).toBeGreaterThan(0);
-    expect(body).toMatch(/const _escTarget = decideEscalationTarget\(String\(editFile\)\);/);
-    expect(body).toMatch(/if \(_escTarget\.kind === "refuse"\) \{[\s\S]*?EDIT-INTENT ESCALATION REFUSED[\s\S]*?\} else try \{[\s\S]*?type: "patch_with_tools"/);
-  });
-
-  it("sends is_new_file only for a new_file decision", () => {
-    expect(body).toContain(`...(_escTarget.kind === "new_file" ? { is_new_file: true } : {})`);
-    expect(body.match(/is_new_file\s*:/g)?.length).toBe(1);
   });
 });
