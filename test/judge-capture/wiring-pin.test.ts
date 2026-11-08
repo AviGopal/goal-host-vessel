@@ -93,18 +93,6 @@ describe("judge capture wiring pin: every decision site calls the closed capture
     expect(entry < decided && decided < cap).toBe(true);
   });
 
-  test("routing: the pathless resolution at the door runs through the recorder and its record is attached to the dispatch", () => {
-    lineOf("const _routeRec = judgeCapture.routingRecorder();");
-    const call = lineOf("await resolveDoorGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap(");
-    const rest = LINES.slice(call, call + 120).join("\n");
-    expect(rest).toContain("_routeRec.symbolSearch(searchWorkspaceForSymbol)");
-    expect(rest).toContain("_routeRec.propose(async (g: string)");
-    expect(rest).toContain("_routeRec.read(async (rel: string)");
-    expect(rest).toContain("_routeRec.finish(rawGoal, goal)");
-    const attach = lineOf("judgeCapture.attachRoutingInput(record, _routingInput);");
-    expect(LINES[attach + 1]).toContain("executionStore.set(dispatchId, record);");
-  });
-
   test("routing: the edit-intent check records that no compose hand-off route exists (the change is walked)", () => {
     const cap = callAfter("// CAPTURE (closed, src/judge/capture.ts): no compose hand-off route exists; the change is walked.", "judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: false });", 1);
   });

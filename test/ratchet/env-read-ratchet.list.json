@@ -365,11 +365,6 @@
     "reason": "filesystem root/path: super-repo clone (read in src/escalation-target.ts)"
   },
   {
-    "name": "SYMBOL_PROPOSAL_SAMPLES",
-    "class": "behaviour",
-    "reason": "symbol proposal sample count (read in src/index.ts)"
-  },
-  {
     "name": "VESSELS_CLONE_ROOT",
     "class": "bootstrap",
     "reason": "filesystem root/path: vessel clones root (read in src/escalation-target.ts)"

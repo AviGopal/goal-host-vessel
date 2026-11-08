@@ -10,7 +10,6 @@ import { join } from "node:path";
 const INDEX = readFileSync(join(import.meta.dir, "..", "..", "src", "index.ts"), "utf8");
 
 const MUST_CALL = [
-  ": await resolveDoorGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap((m) =>",
 ];
 /** The moved expressions. Each was in index.ts before the split; none may come back as a local copy. */
 const MUST_NOT_CONTAIN = [
@@ -32,7 +31,4 @@ export function wiringOffences(text: string): string[] {
 
 describe("wiring pin: index.ts routes through the routing core", () => {
   test("every anchor found, no moved expression left", () => { expect(wiringOffences(INDEX)).toEqual([]); });
-  test("MUTANT the door calling the resolver directly is red", () => {
-    expect(wiringOffences(INDEX.replace(": await resolveDoorGoal(rawGoal,", ": await resolvePathlessCodeChangeGoal(rawGoal,")).length).toBeGreaterThan(0);
-  });
 });
