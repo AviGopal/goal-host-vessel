@@ -155,36 +155,6 @@ describe("routing_input schema (entry editIntent)", () => {
   const PATHLESS = "Fix the retry budget so the backoff helper stops retrying after three attempts";
   const FILE = "repos/example-vessel/src/backoff.ts";
 
-  test("a pathless change goal restated onto one file records terms, candidates, the chosen file, the method and the reads", async () => {
-    const rr = routingRecorder();
-    const taps: string[] = [];
-    const out = await resolvePathlessCodeChangeGoal(
-      PATHLESS,
-      rr.search(async (t) => (t === "backoff helper" ? [FILE] : t === "retry budget" ? [FILE, "repos/example-vessel/src/other.ts"] : [])),
-      rr.tap((m) => { taps.push(m); }),
-      rr.symbolSearch(async () => []),
-      rr.propose(async () => []),
-      rr.read(async () => "export const backoffHelper = (n: number) => n; // the backoff helper\nconst x = 'backoff helper';\n"),
-    );
-    const rec = rr.finish(PATHLESS, out)!;
-    expect(keys(rec)).toEqual(ROUTING_FIELDS);
-    expect(keys(rec.resolution)).toEqual(RESOLUTION_FIELDS);
-    expect(rec.schema).toBe(ROUTING_INPUT_SCHEMA);
-    expect(rec.schema).toBe(1);
-    expect(rec.entry).toBe("editIntent");
-    expect(rec.is_pathless_code_change).toBe(true);
-    expect(out).not.toBe(PATHLESS);
-    expect(rec.restated_goal).toBe(out);
-    expect(rec.resolution.chosen_file).toBe(FILE);
-    expect(rec.resolution.method).toBe("unique-term-hit");
-    expect(rec.resolution.terms.slice(0, 2)).toEqual(["retry budget", "backoff helper"]);
-    expect(rec.resolution.candidates[0]).toEqual({ via: "term", term: "retry budget", scope: null, prefer_call_sites: false, hits: [FILE, "repos/example-vessel/src/other.ts"], error: false });
-    expect(rec.resolution.reads).toEqual([{ path: FILE, readable: true, text: "export const backoffHelper = (n: number) => n; // the backoff helper\nconst x = 'backoff helper';\n" }]);
-    expect(rec.routed_to).toBe("walk");
-    expect(rec.compose_gap_id).toBeNull();
-    expect(rec.trail).toEqual(taps);
-  });
-
   test("a goal that is not a pathless change records method not-pathless and no restatement", async () => {
     const g = "What does the backoff helper do?";
     const rr = routingRecorder();

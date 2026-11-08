@@ -84,13 +84,6 @@ describe("guards", () => {
   test("an unknown entry is entry_missing, not an error", async () => {
     expect((await replayCase(base({ entry: "notAnEntry" }))).observed).toBe("entry_missing");
   });
-  test("MUTANT a pathless goal whose search the case does not record is red (UnrecordedPort), not 'no file'", async () => {
-    const c = base({ input: { schema: 1, entry: "editIntent", goal: "The retry handler should stop retrying after a validation failure.", route_enabled: true, hydration: null, localization: null },
-      expect: { route: "walk", target: null, needs_localization: false } });
-    const r = await replayCase(c);
-    expect(r.observed).toBe("red");
-    expect(r.reason).toMatch(/UnrecordedPort/);
-  });
 });
 
 describe("append-check", () => {

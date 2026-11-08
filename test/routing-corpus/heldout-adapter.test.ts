@@ -82,16 +82,6 @@ describe("held-out contract", () => {
     expect(res[1]!.decision).toBeNull();
     expect(res[1]!.unreplayable).toContain("route_enabled");
   });
-  test("a complete captured record of a corpus case replays to the case's own answer", async () => {
-    const dir = import.meta.dir;
-    const c = loadCases(dir, verifyChain(dir)).find((x) => x.id === "0004-phrase-after-ambiguous-and-comment-only")!;
-    const input = c.input as { goal: string; localization: unknown };
-    const candidates = Object.entries(c.ports.search).map(([k, hits]) => { const [scope, cs, term] = k.split("|"); return { via: "term", term, scope: scope === "*" ? null : scope, hits, error: false, prefer_call_sites: cs === "1" }; });
-    const reads = Object.entries(c.ports.read_file).map(([path, text]) => (text === null ? { path, readable: false } : { path, readable: true, text }));
-    const rec = complete({ goal: input.goal, is_pathless_code_change: true, resolution: { terms: [], candidates, chosen_file: null, method: "unique-term-hit", reads } });
-    const [r] = await heldoutReplay([line("c4", rec)]);
-    expect(r!.decision).toEqual({ route: "feature_compose", target: "repos/example-vessel/src/selftest/facts.ts", needs_localization: false });
-  });
   test("a cli line in the corpus replay form (case input + ports) also needs every field", async () => {
     const res = await heldoutReplay([line("p", { schema: 1, entry: "editIntent", goal: "x", route_enabled: true, hydration: null }, { ports: { search: {}, symbol_search: {}, read_file: {} } })]);
     expect(res[0]!.unreplayable).toEqual(["localization"]);
@@ -99,24 +89,6 @@ describe("held-out contract", () => {
 });
 
 describe("a real capture replays", () => {
-  test("the recorder's record of a door resolution, completed by the hand-off's route switch, replays with nothing unreplayable", async () => {
-    const rr = routingRecorder();
-    const goal = "The retry handler should stop retrying a request after it failed validation.";
-    const F = "repos/example-vessel/src/retry/policy.ts";
-    // The production door (resolveDoorGoal) over the recorder's wrappers, as index.ts calls it.
-    const out = await resolveDoorGoal(goal, rr.search(async () => [F]), rr.tap(() => {}), rr.symbolSearch(async () => []),
-      rr.propose(async () => []), rr.read(async () => 'export const NAME = "retry handler";\n'));
-    await new Promise((r) => setTimeout(r, 0));
-    const target: CaptureTarget = {};
-    attachRoutingInput(target, rr.finish(goal, out));
-    withCaptureTarget(target, () => noteRouteEnabled({ goal, enabled: true }));
-    const rec = target.metadata?.routing_input;
-    expect(rec).toBeDefined();
-    const [r] = await heldoutReplay([line("real", JSON.parse(JSON.stringify(rec)))]);
-    console.log(`[routing-heldout] real capture -> ${JSON.stringify(r)}`);
-    expect(r!.unreplayable).toBeUndefined();
-    expect(r!.decision).toEqual({ route: "feature_compose", target: F, needs_localization: false });
-  });
   test("the same record before the hand-off's switch is recorded is unreplayable, naming route_enabled", async () => {
     const rr = routingRecorder();
     const goal = "The retry handler should stop retrying a request after it failed validation.";

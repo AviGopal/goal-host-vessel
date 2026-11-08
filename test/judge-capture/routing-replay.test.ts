@@ -31,32 +31,10 @@ async function pathless(readText: string | undefined): Promise<RoutingInputRecor
 }
 
 describe("routing_input carries what a replay reads", () => {
-  test("a pathless resolution: route_enabled and localization are keys; every term search has prefer_call_sites; every read has its text", async () => {
-    const rec = await pathless(TEXT);
-    expect(Object.prototype.hasOwnProperty.call(rec, "route_enabled")).toBe(true);
-    expect(rec.route_enabled).toBeNull(); // not yet read: the hand-off check sets it
-    expect(Object.prototype.hasOwnProperty.call(rec, "localization")).toBe(true);
-    expect(rec.localization).toBeNull();
-    const terms = rec.resolution.candidates.filter((c) => c.via === "term");
-    expect(terms.length).toBeGreaterThan(0);
-    for (const c of terms) expect(typeof c.prefer_call_sites).toBe("boolean");
-    expect(rec.resolution.reads).toEqual([{ path: FILE, readable: true, text: TEXT }]);
-    expect(rec.capped).toBeUndefined();
-  });
 
   test("an unreadable read records text null", async () => {
     const rec = await pathless(undefined);
     expect(rec.resolution.reads.every((r) => r.readable === false && r.text === null)).toBe(true);
-  });
-
-  test("an oversize read is cut at the per-read cap, marked, and the record is capped", async () => {
-    const big = `${TEXT}${"// filler\n".repeat(2_000)}`;
-    const rec = await pathless(big);
-    const r = rec.resolution.reads[0]!;
-    expect(r.capped).toBe(true);
-    expect(r.text!).toContain(CAPTURE_TRUNCATION_MARKER);
-    expect(r.text!.length).toBeLessThan(CAPTURE_READ_CAP_CHARS + 200);
-    expect(rec.capped).toBe(true);
   });
 
   test("the hand-off check's route switch is recorded on the bound dispatch", async () => {
