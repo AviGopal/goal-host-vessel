@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   AttemptLedger, DemandBook, InstanceIndex, attemptOutcome, bindingMatches, defaultInstanceKey, instanceKey, newestPerShape,
+  recordCommand, withWorld,
 } from "./walk-instances";
+import { failedBankReplays } from "./reached-command-store";
 
 const FIELDS = ["command", "cwd", "timeout"];
 
@@ -72,12 +74,15 @@ describe("U3 attempts stop at max_attempts_per_producer", () => {
     expect(l.decide("p", 2)).toBe("needs-cap");
     expect(l.withinCap("p", null)).toBe(false);
   });
-  test("a success resets the count", () => {
+  test("a success does not reset the count: a re-run under the same world-state key is a re-attempt", () => {
     const l = new AttemptLedger();
     l.begin("p"); l.end("p", "curable", 1);
     l.begin("p"); l.end("p", "ok", 3);
-    expect(l.decide("p", 3)).toBe("first");
     expect(l.reattempts).toBe(1);
+    expect(l.decide("p", 3)).toBe("no-new-impulse");
+    expect(l.decide("p", 4)).toBe("needs-cap");
+    expect(l.withinCap("p", 2)).toBe(false);
+    expect(l.withinCap("p", 3)).toBe(true);
   });
   test("a transient outcome does not advance the version: re-eligible within the cap with no new impulse", () => {
     const l = new AttemptLedger();
@@ -181,5 +186,83 @@ describe("U7 the budget bound", () => {
       }
       expect(chainLength + l.reattempts).toBeLessThanOrEqual(MAX_STEPS);
     }
+  });
+});
+
+describe("U8 the world-state key", () => {
+  const cmd = { command: "bun test", cwd: "/r" };
+  test("the same command before and after an admitted write is two instances; with no write between it is one", () => {
+    const before = withWorld(instanceKey("bounded_shell", cmd, FIELDS), "");
+    const again = withWorld(instanceKey("bounded_shell", cmd, FIELDS), "");
+    const after = withWorld(instanceKey("bounded_shell", cmd, FIELDS), "walk-x-fix_write-3");
+    expect(again).toBe(before);
+    expect(after).not.toBe(before);
+    expect(withWorld("k", "")).toBe("k");
+  });
+  test("the same command twice with no write between is a re-attempt counted against the cap", () => {
+    const l = new AttemptLedger();
+    expect(l.decide("p", 1, "")).toBe("first");
+    l.begin("p", ""); l.end("p", "ok", 2, [], "");
+    // a bound demand raised after the success re-arms it; the re-run is a RE-attempt (cap and budget)
+    const demandSeq = l.tick();
+    expect(l.decide("p", 2, "", demandSeq)).toBe("needs-cap");
+    expect(l.withinCap("p", null)).toBe(false);
+    expect(l.withinCap("p", 1)).toBe(false);
+    expect(l.withinCap("p", 2)).toBe(true);
+    expect(l.begin("p", "").reattempt).toBe(true);
+    expect(l.reattempts).toBe(1);
+  });
+  test("after a success, a changed world-state key is a new instance: a first attempt, its count started again", () => {
+    const l = new AttemptLedger();
+    l.begin("p", ""); l.end("p", "ok", 2, [], "");
+    expect(l.decide("p", 2, "w1")).toBe("first");
+    expect(l.begin("p", "w1").reattempt).toBe(false);
+    expect(l.reattempts).toBe(0);
+    l.end("p", "ok", 3, [], "w1");
+    expect(l.decide("p", 3, "w1")).toBe("no-new-impulse");
+  });
+  test("a changed world does not re-arm a FAILED producer for free: it stays a capped re-attempt", () => {
+    const l = new AttemptLedger();
+    l.begin("p", ""); l.end("p", "curable", 2, [], "");
+    expect(l.decide("p", 3, "w1")).toBe("needs-cap");
+    expect(l.withinCap("p", null)).toBe(false);
+  });
+  test("a bound demand raised BEFORE the producer's last attempt does not re-arm it", () => {
+    const l = new AttemptLedger();
+    const early = l.tick();
+    l.begin("p", ""); l.end("p", "curable", 2, [], "");
+    expect(l.decide("p", 2, "", early)).toBe("no-new-impulse");
+  });
+});
+
+describe("U9 a bound demand keeps its binding", () => {
+  test("a later shape-level note does not replace an open bound demand; a later bound one does", () => {
+    const d = new DemandBook();
+    d.note({ shape: "bounded_shell", binding: { command: "bun test" }, since: 4, forHop: "land", reason: "stale run", seq: 1 });
+    d.note({ shape: "bounded_shell", since: 5, forHop: "land", reason: "unbindable" });
+    expect(d.get("bounded_shell")?.binding).toEqual({ command: "bun test" });
+    expect(d.get("bounded_shell")?.since).toBe(4);
+    d.note({ shape: "bounded_shell", binding: { command: "bun test -t x" }, since: 6, forHop: "land", reason: "again", seq: 2 });
+    expect(d.get("bounded_shell")?.binding).toEqual({ command: "bun test -t x" });
+  });
+});
+
+describe("U10 the sibling rule (two instances of an executor shape)", () => {
+  test("a second instance's different command never overwrites the entry that equals the banked replay", () => {
+    const banked = new Map([["bounded_shell", "bun test"]]);
+    const commands = new Map<string, string>();
+    expect(recordCommand(commands, banked, "bounded_shell", "bun test")).toBe(true); // instance 1: the replay ran
+    expect(recordCommand(commands, banked, "bounded_shell", "git log -1")).toBe(false); // instance 2: another command
+    expect(commands.get("bounded_shell")).toBe("bun test");
+    expect(failedBankReplays(banked, commands)).toEqual([]);
+  });
+  test("a command that is not the banked replay is still last-wins (corrections replace a failed replay)", () => {
+    const banked = new Map([["bounded_shell", "bun test"]]);
+    const commands = new Map<string, string>();
+    expect(recordCommand(commands, banked, "bounded_shell", "bun tset")).toBe(true);
+    expect(recordCommand(commands, banked, "bounded_shell", "bun test --bail")).toBe(true);
+    expect(commands.get("bounded_shell")).toBe("bun test --bail");
+    expect(failedBankReplays(banked, commands).map((f) => f.shape)).toEqual(["bounded_shell"]);
+    expect(recordCommand(commands, new Map(), "shellResult", "ls")).toBe(true);
   });
 });

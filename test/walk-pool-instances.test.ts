@@ -181,3 +181,97 @@ describe.skipIf(!HERMETIC)("re-attempts are bounded by new evidence and the cap"
     expect(walk1).toContain("ROUTE-AROUND stall missing=[hopZ]");
   }, 120_000);
 });
+
+// ── W1a-4: the world-state key, the bound demand and the no-progress guard ──
+const RUN_FIELDS = { testRun: [{ name: "cmd", required: true, type: "string" }] };
+const testRunSends = (r: Replay): Rec[] => sendsOf(r, "testRun");
+
+/** A test run, a fix (an update the write door admits as the goal's product) and a hop that needs both. The hop refuses
+ *  a run made before the fix and accepts one made after it. */
+export const h2 = (cap = 3) => hopScenario(`h2-bound-demand-${cap}`, {
+  targets: ["testRun", "hopY", "fix_update"],
+  shapes: ["hopY", "testRun", "fix_update"],
+  schemas: {
+    hopY: [{ name: "out", required: true, type: "string", from_shape: "testRun" }, { name: "fix", required: true, type: "string", from_shape: "fix_update" }],
+    ...RUN_FIELDS,
+    fix_update: [{ name: "patch", required: true, type: "string" }],
+  },
+  routes: [
+    { id: "hop:testRun", method: "POST", type: "testRun", sequence: [
+      { json: { success: true, shape: "testRun", body: "RUN-1 before the fix" } },
+      { json: { success: true, shape: "testRun", body: "RUN-2 after the fix" } },
+    ] },
+    { id: "hop:fix_update", method: "POST", type: "fix_update", respond: { json: { success: true, shape: "fix_update", body: { id: "fix-1", applied: true } } } },
+    { id: "hop:hopY-after-fix", method: "POST", type: "hopY", body: ["RUN-2 after the fix"], respond: { json: { success: true, shape: "hopY", body: { answer: "hopY ran on the run after the fix" } } } },
+    { id: "hop:hopY", method: "POST", type: "hopY", respond: { json: { success: false, error: "hopY: out is a run from before the fix" } } },
+  ],
+  argAnswers: [{ cmd: "run-tests", patch: "p1" }],
+  walkBudget: { max_attempts_per_producer: cap },
+});
+
+/** The same, with no fix: the hop's refusal raises the bound demand, and the re-run of the same command finds no change. */
+export const guard = (walkBudget: Record<string, unknown>) => hopScenario("h2-guard-no-write", {
+  targets: ["hopQ"],
+  shapes: ["hopQ", "testRun"],
+  schemas: { hopQ: [{ name: "out", required: true, type: "string", from_shape: "testRun" }], ...RUN_FIELDS },
+  routes: [
+    { id: "hop:testRun", method: "POST", type: "testRun", respond: { json: { success: true, shape: "testRun", body: "TEST-RUN-OUTPUT" } } },
+    { id: "hop:hopQ", method: "POST", type: "hopQ", respond: { json: { success: false, error: "hopQ: out is not a test run of the current tree" } } },
+  ],
+  argAnswers: [{ cmd: "run-tests" }],
+  walkBudget,
+});
+
+describe.skipIf(!HERMETIC)("a refused hop succeeds after its evidence arrives, via the bound demand", () => {
+  test("H2: the hop refuses the run made before the fix; the bound demand re-runs the test after it; the hop then runs on the new run", async () => {
+    const r = await replay(h2());
+    const walk1 = firstWalk(r.log);
+    expect(walk1).toContain('bound demand — hopY refused with hopY.out bound to testRun; demanding a new instance of testRun with binding {"cmd":"run-tests"}');
+    // the fix is an admitted write: its input is never demanded again
+    expect(walk1).not.toContain("hopY.fix bound to fix_update");
+    expect(walk1).toContain("pool: instance #2 of testRun from satisfier:testRun");
+    const hop = sendsOf(r, "hopY").filter((q) => q.body.impulse.pointer.out !== undefined);
+    expect(hop.length).toBeGreaterThanOrEqual(2);
+    // the refused attempt (its sends) carried the run from before the fix; the last send carries the newest run
+    expect(JSON.stringify(hop[0]!.body.impulse.pointer.out)).toContain("RUN-1 before the fix");
+    expect(JSON.stringify(hop[hop.length - 1]!.body.impulse.pointer.out)).toContain("RUN-2 after the fix");
+    // the re-run went through selection (the satisfier or the producer scan), after the fix
+    const runs = testRunSends(r);
+    const fix = sendsOf(r, "fix_update");
+    expect(r.requests.indexOf(fix[0]!)).toBeLessThan(r.requests.indexOf(runs[1]!));
+    expect(walk1).toMatch(/reach-input: .*shapes=[^ ]*hopY/);
+  }, 120_000);
+});
+
+describe.skipIf(!HERMETIC)("the world-state key: an admitted write makes the same command a new instance", () => {
+  test("the same command before and after an admitted write is two instances; twice with no write between it is a re-attempt counted against the cap", async () => {
+    // before and after the fix: two testRun sends with the same command, both pooled
+    const withWrite = await replay(h2());
+    const w = firstWalk(withWrite.log);
+    const runs = testRunSends(withWrite).slice(0, 2);
+    expect(runs.map((q) => q.body.impulse.pointer.cmd)).toEqual(["run-tests", "run-tests"]);
+    expect(w).toContain("pool: instance #2 of testRun from satisfier:testRun");
+    expect(w).not.toContain("RE-ATTEMPT satisfier:testRun");
+    // no write between: the same command again is a RE-ATTEMPT (it counts against the cap and the step budget)
+    const noWrite = await replay(guard({ max_attempts_per_producer: 2 }));
+    const g = firstWalk(noWrite.log);
+    expect(g).toContain("RE-ATTEMPT satisfier:testRun");
+    expect(g).not.toContain("pool: instance #2 of testRun");
+    // and with cap 1 the same due re-run is refused by the cap (the hop's own re-attempt needs cap 2, so serve it 1)
+    const capped = await replay(guard({ max_attempts_per_producer: 1 }));
+    expect(firstWalk(capped.log)).not.toContain("RE-ATTEMPT satisfier:testRun");
+  }, 120_000);
+});
+
+describe.skipIf(!HERMETIC)("a successful re-attempt that adds an identical instance makes no progress", () => {
+  test("H2 guard: the deduped re-run is not a step and uses up max_no_progress_steps", async () => {
+    const r = await replay(guard({ max_attempts_per_producer: 3, max_no_progress_steps: 1 }));
+    const walk1 = firstWalk(r.log);
+    expect(walk1).toContain("bound demand — hopQ refused with hopQ.out bound to testRun");
+    expect(walk1).toContain("re-attempt of satisfier:testRun produced an identical instance already in the pool — no progress");
+    expect(walk1).toContain("no_progress_limit_reached (1 consecutive steps without progress, limit 1) (failed re-attempts) — stopping");
+    expect(walk1).not.toContain("pool: instance #2 of testRun");
+    // the deduped re-run sent the same command again
+    expect(testRunSends(r).map((q) => q.body.impulse.pointer.cmd)).toEqual(["run-tests", "run-tests"]);
+  }, 120_000);
+});

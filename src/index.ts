@@ -331,7 +331,7 @@ import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeVie
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
 import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
-import { AttemptLedger, DemandBook, InstanceIndex, attemptOutcome, boundFieldsOf, defaultInstanceKey, instanceKey, newestPerShape, type AttemptSend, type UnmetInput } from "./walk-instances";
+import { AttemptLedger, DemandBook, InstanceIndex, attemptOutcome, boundFieldsOf, defaultInstanceKey, instanceKey, newestPerShape, recordCommand, stableJSON, withWorld, type AttemptSend, type UnmetInput } from "./walk-instances";
 import { asksForSecretValue } from "./secret-extraction";
 import { proseProducerOf, recalledCandidates } from "./shape-recall";
 import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, composeTrigger, describeMintedShape, retireComposite } from "./composite-authoring";
@@ -8374,13 +8374,16 @@ async function runGoalAsPoolWalkBody(
     }
     if (!shape) return;
     // Only an exact duplicate INSTANCE is skipped; an adder that names no instance keeps one per (shape, producer).
-    const _key = sendKey ?? prov?.instanceKey ?? defaultInstanceKey(shape, prov?.producedBy);
+    const _key = poolKeyFor(shape, prov, sendKey);
     if (poolInstances.hasKey(_key)) return;
     producedShapes.add(shape);
     const _imp = mkImpulse(shape, content, summary, prov);
     poolImpulses.push(_imp);
     const _n = poolInstances.add(shape, { id: _imp.id, key: _key, version: poolVersion(), bound: boundByKey.get(_key) });
     if (_n >= 2) tap(`[goal-host-vessel] walk(${opts.surface}): pool: instance #${_n} of ${shape} from ${prov?.producedBy ?? "goal-host-walk"}`);
+    // WORLD STATE: a hop's output (a satisfier, or a template step with its instance key; not a seed, stub or read-back)
+    // whose shape the write door classes as a write was admitted by that door, so it changed the world.
+    if ((prov?.producedBy?.startsWith("satisfier:") || prov?.instanceKey !== undefined) && refusedWrite(shape)) worldWrites.push({ id: _imp.id, by: prov?.producedBy ?? "" });
     // The write's confirmed read-back, as the next step (walk-read-back.ts): the real read record, never a stub.
     const rb = readBackStepFor(shape, confirmedReadBacks, producedShapes);
     if (rb) {
@@ -8393,6 +8396,13 @@ async function runGoalAsPoolWalkBody(
   };
   /** The pool's version: it only grows (the pool is append-only). */
   const poolVersion = (): number => poolImpulses.length;
+  /** The pool key addToPool dedupes on: the send's instance key, else the adder's, else one per (shape, producer). */
+  const poolKeyFor = (shape: string, prov?: PoolProvenance, sendKey?: string): string => sendKey ?? prov?.instanceKey ?? defaultInstanceKey(shape, prov?.producedBy);
+  /** Pool ids (and producers) of the hop outputs the write door admitted as writes, in order (walk-instances.ts withWorld). */
+  const worldWrites: Array<{ id: string; by: string }> = [];
+  /** The world-state key for a producer: the newest admitted write's pool id, or "" (none). A producer's OWN write does
+   *  not change the world it is compared against, so a write never re-arms itself. */
+  const currentWorld = (producer: string): string => { for (let i = worldWrites.length - 1; i >= 0; i--) if (worldWrites[i]!.by !== producer) return worldWrites[i]!.id; return ""; };
   /** Bound fields of each successful send's instance key, so a bound demand can be compared to the instance. */
   const boundByKey = new Map<string, Record<string, unknown>>();
   /** A shape is met when it is present and, if a hop demanded it, an instance added after the demand matches it. */
@@ -8456,7 +8466,7 @@ async function runGoalAsPoolWalkBody(
   let walkTerminationReason: string | undefined;
   /** The attempt in progress (one vesselResolveShape call): its sends, whether a refusal was structural, and the
    *  instance key of the send that produced. Sends of the attempt's own shape and its action sibling belong to it. */
-  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string } | null = null;
+  let curAttempt: { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }> } | null = null;
   let lastAttemptWasReattempt = false;
   /** Hop inputs the walk could not bind (walk-instances.ts UnmetInput), for the route-around record. */
   const unmetInputs: UnmetInput[] = [];
@@ -8465,7 +8475,8 @@ async function runGoalAsPoolWalkBody(
   /** May the satisfier attempt this shape now? The cap is read only when a re-attempt is otherwise due. */
   const mayAttempt = async (shape: string): Promise<boolean> => {
     const p = `satisfier:${shape}`;
-    const d = attemptLedger.decide(p, poolVersion());
+    const _bd = demands.get(shape);
+    const d = attemptLedger.decide(p, poolVersion(), currentWorld(p), _bd?.binding ? _bd.seq : undefined);
     if (d === "first") return true;
     if (d !== "needs-cap") return false;
     const cap = await walkBudgetField("max_attempts_per_producer", 1, 20);
@@ -8481,9 +8492,9 @@ async function runGoalAsPoolWalkBody(
     return true;
   };
   const attemptBegin = (shape: string): void => {
-    lastAttemptWasReattempt = attemptLedger.begin(`satisfier:${shape}`).reattempt;
+    lastAttemptWasReattempt = attemptLedger.begin(`satisfier:${shape}`, currentWorld(`satisfier:${shape}`)).reattempt;
     if (lastAttemptWasReattempt) tap(`[goal-host-vessel] walk(${opts.surface}): RE-ATTEMPT satisfier:${shape} (pool version ${poolVersion()}, re-attempts this walk ${attemptLedger.reattempts})`);
-    curAttempt = { shape, sends: [], structural: false };
+    curAttempt = { shape, sends: [], structural: false, world: currentWorld(`satisfier:${shape}`), boundInputs: [] };
   };
   /** A structural refusal (never re-eligible this walk); returns null for the refusing return. */
   const attemptStructural = (): null => { if (curAttempt) curAttempt.structural = true; return null; };
@@ -8503,6 +8514,19 @@ async function runGoalAsPoolWalkBody(
       demands.note({ shape: E, since: poolVersion(), forHop: hopShape, reason: reason.slice(0, 200), ...(binding ? { binding } : {}) });
       tap(`[goal-host-vessel] walk(${opts.surface}): unmet input ${hopShape}.${m.field} — demanding ${E} (newer than pool version ${poolVersion()})`);
     }
+  };
+  /** BOUND DEMAND: a hop refused curably although its from_shape input was bound demands a NEW instance of that input,
+   *  with the same bound fields as the instance it consumed, added after the refusal. The walk's selection (the
+   *  satisfier and the producer scan, through mayAttempt) re-runs the producer; nothing here resolves it. */
+  const boundDemands: Array<{ shape: string; binding: Record<string, unknown>; for_hop: string; field: string; since: number }> = [];
+  const noteBoundDemand = (hopShape: string, field: string, inputShape: string, inputKey: string, reason: string): void => {
+    const [E] = writeDoorShapes([inputShape], changeAdmitted, "target", writeDoorHash, tap);
+    if (!E) return;
+    const binding = boundByKey.get(inputKey) ?? {};
+    target.add(E);
+    demands.note({ shape: E, binding, since: poolVersion(), forHop: hopShape, reason: reason.slice(0, 200), seq: attemptLedger.tick() });
+    boundDemands.push({ shape: E, binding, for_hop: hopShape, field, since: poolVersion() });
+    tap(`[goal-host-vessel] walk(${opts.surface}): bound demand — ${hopShape} refused with ${hopShape}.${field} bound to ${E}; demanding a new instance of ${E} with binding ${stableJSON(binding).slice(0, 200)} (newer than pool version ${poolVersion()})`);
   };
 
   async function llmExtractPointerArgs(shape: string, correction?: string): Promise<Record<string, unknown> | null> {
@@ -9200,6 +9224,8 @@ async function runGoalAsPoolWalkBody(
     // FROM_SHAPE (the producer's own contract names the shape a field is bound from): an unbound such field takes the
     // NEWEST instance of that shape, so a re-attempt after the evidence arrives carries it.
     const _fromShape = new Map<string, string>();
+    // The from_shape fields this send carries bound to the newest instance of their shape (for a bound demand).
+    const _boundFrom: Array<{ field: string; shape: string; key: string }> = [];
     if (_contract?.known === true && Array.isArray(_contract.fields)) {
       const _env = typeof _contract.envelope === "string" ? _contract.envelope.trim() : "";
       const _holder = _env ? (pointer[_env] !== null && typeof pointer[_env] === "object" && !Array.isArray(pointer[_env]) ? pointer[_env] as Record<string, unknown> : null) : pointer;
@@ -9212,6 +9238,10 @@ async function runGoalAsPoolWalkBody(
           const _imp = _newest ? poolImpulses.find((i) => i.id === _newest.id) : undefined;
           if (_imp && shapeMet(f.from_shape)) _holder[f.name] = _imp.content;
         }
+        const _nw = poolInstances.newest(f.from_shape);
+        const _nwImp = _nw ? poolImpulses.find((i) => i.id === _nw.id) : undefined;
+        // An input bound to an admitted WRITE is the world change itself, not evidence to re-make: never demanded.
+        if (_holder && _nw && _nwImp && !worldWrites.some((w) => w.id === _nw.id) && _holder[f.name] !== undefined && stableJSON(_holder[f.name]) === stableJSON(_nwImp.content)) _boundFrom.push({ field: f.name, shape: f.from_shape, key: _nw.key });
       }
     }
     const _bind = bindRequiredInputs({ shape, pointer, contract: _contract, goal, upstream: poolImpulses });
@@ -9230,8 +9260,9 @@ async function runGoalAsPoolWalkBody(
     sent.names = _contract?.known === true && Array.isArray(_contract.fields)
       ? _contract.fields.map((f) => String(f?.name ?? "")).filter(Boolean)
       : [...new Set([...Object.keys(extraArgs ?? {}), ..._bind.synthesized])];
+    if (attemptSendOf(shape, site) && curAttempt && shape === curAttempt.shape) curAttempt.boundInputs = _boundFrom;
     // AN IDENTICAL INSTANCE IS NOT RE-SENT: a send of an earlier attempt with the same key failed (not transiently).
-    if (attemptSendOf(shape, site) && attemptLedger.failedBefore(instanceKey(shape, pointer, sent.names))) {
+    if (attemptSendOf(shape, site) && attemptLedger.failedBefore(withWorld(instanceKey(shape, pointer, sent.names), curAttempt?.world ?? ""))) {
       noteRawResolveFailure(shape, "identical instance already failed in this walk");
       tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — identical instance already failed in this walk`);
       return null;
@@ -9366,7 +9397,7 @@ async function runGoalAsPoolWalkBody(
   const result = await rawResolveOnce();
   if (attemptSendOf(shape, site) && curAttempt) {
     if (sent.structural) curAttempt.structural = true;
-    const _k = sent.names && sent.pointer ? instanceKey(shape, sent.pointer, sent.names) : undefined;
+    const _k = sent.names && sent.pointer ? withWorld(instanceKey(shape, sent.pointer, sent.names), curAttempt.world) : undefined;
     curAttempt.sends.push({ reachedEgress: sent.reachedEgress === true, ok: result != null, transient: result == null && lastRawResolveTransient, ...(_k ? { key: _k } : {}) });
     if (result != null && _k && shape === curAttempt.shape) { curAttempt.okKey = _k; boundByKey.set(_k, boundFieldsOf(sent.pointer, sent.names ?? [])); }
   }
@@ -9446,9 +9477,11 @@ If one of those sibling shapes is the action that would create what the goal ask
     curAttempt = null;
     const r = await vesselResolveShapeInner(shape);
     if (r) unboundFor(opts.variables?.dispatch_id)?.noteAccepted(shape);
-    const _a = curAttempt as { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string } | null;
+    const _a = curAttempt as { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }> } | null;
     curAttempt = null;
-    if (_a) attemptLedger.end(`satisfier:${shape}`, attemptOutcome({ ok: r != null && emptyResultSetReason(r.content) === null, structural: _a.structural, sends: _a.sends }), poolVersion(), _a.sends);
+    const _out = _a ? attemptOutcome({ ok: r != null && emptyResultSetReason(r.content) === null, structural: _a.structural, sends: _a.sends }) : null;
+    if (_a && _out) attemptLedger.end(`satisfier:${shape}`, _out, poolVersion(), _a.sends, _a.world);
+    if (_a && _out === "curable") for (const b of _a.boundInputs) noteBoundDemand(shape, b.field, b.shape, b.key, lastRawResolveReason ?? "refused");
     return r && _a?.okKey ? { ...r, instanceKey: _a.okKey } : r;
   };
   const vesselResolveShapeInner = async (shape: string): Promise<{ content: unknown; effect?: string } | null> => {
@@ -9729,7 +9762,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     const recordExecutorCommand = (args: Record<string, unknown>): void => {
       for (const k of ["command", "cmd", "script", "sql"]) {
         const val = args[k];
-        if (typeof val === "string" && val.trim()) { executorCommands.set(shape, val); return; }
+        if (typeof val === "string" && val.trim()) { recordCommand(executorCommands, bankReplays, shape, val); return; }
       }
       // NEVER LEAVE THE JUDGE WITHOUT PROVENANCE.
       //
@@ -9751,7 +9784,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         .map(([k, v]) => `${k}=${String(v).slice(0, 400)}`)
         .join(" ");
       if (_fallback) {
-        executorCommands.set(shape, `(no command field; resolve args) ${_fallback}`);
+        recordCommand(executorCommands, bankReplays, shape, `(no command field; resolve args) ${_fallback}`);
         console.log(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" had no command/cmd/script/sql arg — recorded raw args as provenance so the reach judge is not graded blind`);
       }
     };
@@ -11137,6 +11170,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     });
     (rec as { poolOutputs?: unknown }).poolOutputs = poolOutputs;
     rec.pendingTargets = [...target].filter((s) => !shapeMet(s));
+    if (boundDemands.length > 0) (rec as { boundDemands?: unknown }).boundDemands = boundDemands.map((d) => ({ ...d, met: shapeMet(d.shape) }));
     // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
     // the record EACH iteration so goalWalkState surfaces WHY the walk is doing
     // what it's doing WHILE it runs. Previously rec.walkLog was assigned once, at
@@ -11486,7 +11520,10 @@ If one of those sibling shapes is the action that would create what the goal ask
           tap(`[goal-host-vessel] walk(${opts.surface}): satisfier "${satisfiableNow}" REFUSED — ${_emptyRead}; leaving the shape unsatisfied so a real producer can be selected`);
           lastRawResolveReason = _emptyRead.slice(0, 200);
         }
-        if (resolved && !_emptyRead) {
+        // NO PROGRESS: a successful RE-attempt whose output is an identical instance already in the pool adds nothing.
+        const _satDup = !!resolved && !_emptyRead && lastAttemptWasReattempt && poolInstances.hasKey(poolKeyFor(satisfiableNow, { producedBy: `satisfier:${satisfiableNow}` }, resolved.instanceKey));
+        if (_satDup) tap(`[goal-host-vessel] walk(${opts.surface}): re-attempt of satisfier:${satisfiableNow} produced an identical instance already in the pool — no progress`);
+        if (resolved && !_emptyRead && !_satDup) {
           const _satImpId = addToPool(satisfiableNow, resolved.content, `vessel-resolve satisfier (${satisfiableNow})`, { producedBy: `satisfier:${satisfiableNow}` }, resolved.instanceKey);
           if (resolved.effect) effectLedger.add(resolved.effect);
           // Record the satisfier as a GENUINE step: synthesize a minimal
@@ -11602,7 +11639,7 @@ If one of those sibling shapes is the action that would create what the goal ask
           consecutiveNoProgress = 0;
           continue; // shape is now in the pool; re-evaluate target/candidates
         }
-        console.log(`[goal-host-vessel] walk(${opts.surface}): vessel-resolve satisfier for "${satisfiableNow}" returned no content — proceeding to candidate/bridge path`);
+        if (!_satDup) console.log(`[goal-host-vessel] walk(${opts.surface}): vessel-resolve satisfier for "${satisfiableNow}" returned no content — proceeding to candidate/bridge path`);
         if (lastAttemptWasReattempt) {
           // A failed RE-attempt is a step without progress, so MAX_NO_PROGRESS_STEPS bounds a run of them.
           const _rc = decideContinuation({ producedShape: "", noProgressCount: consecutiveNoProgress, terminationReason: null, satisfiesTarget: false, madeProgress: false, maxNoProgressSteps: MAX_NO_PROGRESS_STEPS, maxWalkSteps: Number.POSITIVE_INFINITY, stepIndex: chain.length - 1 });
@@ -12232,10 +12269,16 @@ If one of those sibling shapes is the action that would create what the goal ask
               if (_vrEndpoint && _scanShape !== undefined) {
                 tap(`[goal-host-vessel] walk: vessel-resolver candidate found for shape ${missingShape} via ${_vrEndpoint} — injecting vesselResolve step`);
                 const _vrSeqBefore = rawResolveSeq;
+                const _vrDemandsBefore = boundDemands.length;
                 const _vrWriteMark = appliedWrites.mark();
                 const _vrResolved = await vesselResolveShape(missingShape);
                 if (!_vrResolved) satisfierFailures.set(missingShape, resolveFailureSince(_vrSeqBefore));
-                if (_vrResolved) {
+                // A refusal that raised a bound demand gave selection something new to seek: re-select, do not stop.
+                if (!_vrResolved && boundDemands.length > _vrDemandsBefore) { tap(`[goal-host-vessel] walk(${opts.surface}): ${missingShape} refused with a bound input — re-selecting for the bound demand`); continue; }
+                // NO PROGRESS (as at the satisfier): an identical instance from a re-attempt is not a step.
+                const _vrDup = !!_vrResolved && lastAttemptWasReattempt && poolInstances.hasKey(poolKeyFor(missingShape, { producedBy: `satisfier:${missingShape}` }, _vrResolved.instanceKey));
+                if (_vrDup) tap(`[goal-host-vessel] walk(${opts.surface}): re-attempt of satisfier:${missingShape} produced an identical instance already in the pool — no progress`);
+                if (_vrResolved && !_vrDup) {
                   const _vrImpId = addToPool(missingShape, _vrResolved.content, `vessel-resolve injected (${missingShape})`, { producedBy: `satisfier:${missingShape}` }, _vrResolved.instanceKey);
                   const _vrSatId = `satisfier:${missingShape}`;
                   const _vrSynthTrace: ExecutionTrace = {
@@ -12296,7 +12339,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       routeAround = buildRouteAround({
         goalHash: goalHashOf(goal), target, produced: producedShapes, missing: missingNow,
         satisfierFailures, pickFailures, termination: walkTerminationReason ?? "no pick", secrets: [API_KEY],
-        unmetInputs, reattemptRefusals: [...new Set(reattemptRefusals.values())],
+        unmetInputs, reattemptRefusals: [...new Set(reattemptRefusals.values())], boundDemands,
       });
       appendRouteAround(opts.variables.dispatch_id, routeAround);
       tap(`[goal-host-vessel] ${opts.surface}: walk: ROUTE-AROUND ${routeAround.kind} missing=[${routeAround.missing_producer.join(",")}] failed_producers=${routeAround.failed_producers.length} (${routeAround.failed_producers.slice(0, 3).map((f) => `${f.producer}: ${f.reason.slice(0, 60)}`).join(" | ")})`);

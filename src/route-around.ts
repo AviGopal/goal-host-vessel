@@ -37,6 +37,8 @@ export interface RouteAroundRecord {
   unmet_inputs?: Array<{ hop: string; field: string; shape: string | null; reason: string }>;
   /** Producers whose due re-attempt was refused (cap absent, cap reached, step budget), with why. */
   reattempt_refused?: string[];
+  /** Bound demands the walk raised: a hop refused with a from_shape input bound demands a new instance of it. */
+  bound_demands?: Array<{ shape: string; binding: string; for_hop: string; field: string; since: number }>;
 }
 
 export const ROUTE_AROUND_FAILED_CAP = 24;
@@ -79,6 +81,7 @@ export function buildRouteAround(a: {
   now?: number;
   unmetInputs?: ReadonlyArray<{ hop: string; field: string; shape: string | null; reason: string }>;
   reattemptRefusals?: ReadonlyArray<string>;
+  boundDemands?: ReadonlyArray<{ shape: string; binding: Record<string, unknown>; for_hop: string; field: string; since: number }>;
 }): RouteAroundRecord {
   const failed: FailedProducer[] = [];
   const clean = (r: string) => scrubReason(String(r), a.secrets ?? []).slice(0, 240);
@@ -97,6 +100,7 @@ export function buildRouteAround(a: {
     routes_taken: [],
     ...(a.unmetInputs && a.unmetInputs.length > 0 ? { unmet_inputs: a.unmetInputs.map((u) => ({ ...u, reason: clean(u.reason) })) } : {}),
     ...(a.reattemptRefusals && a.reattemptRefusals.length > 0 ? { reattempt_refused: a.reattemptRefusals.slice(0, ROUTE_AROUND_FAILED_CAP).map(clean) } : {}),
+    ...(a.boundDemands && a.boundDemands.length > 0 ? { bound_demands: a.boundDemands.slice(0, ROUTE_AROUND_FAILED_CAP).map((d) => ({ ...d, binding: clean(JSON.stringify(d.binding) ?? "{}") })) } : {}),
   };
 }
 

@@ -11,9 +11,11 @@
  *      rides in every pointer is not part of the key, so "identical" means the same shape with the same value of every
  *      bound field (key order ignored).
  *   2. The ATTEMPT LEDGER, keyed by producer: a producer may be attempted again only after the pool gained an impulse
- *      it did not hold at the last attempt, and only within the walk budget's max_attempts_per_producer. An absent
- *      budget field means no re-attempt after a failure. Attempts are counted since the producer's last success; a
- *      transient outcome observed nothing, so it does not move the version the next attempt is compared against.
+ *      it did not hold at the last attempt (or a bound demand for its shape was raised after it), and only within the
+ *      walk budget's max_attempts_per_producer. An absent budget field means no re-attempt. A re-run after a success
+ *      under the SAME world-state key is a re-attempt too (counted and capped); a changed world-state key makes it a
+ *      new instance. A transient outcome observed nothing, so it does not move the version the next attempt is
+ *      compared against.
  *   3. DEMANDS: an unmet input of a hop becomes a demanded shape. A demand is met only by an instance added after the
  *      demand was raised and, when the demand carries a binding, only by an instance whose bound fields equal it.
  */
@@ -49,6 +51,12 @@ export function boundFieldsOf(pointer: Record<string, unknown> | null | undefine
 /** shape + "#" + the first 16 hex of sha256 over the canonical bound fields. */
 export function instanceKey(shape: string, pointer: Record<string, unknown> | null | undefined, boundFieldNames: Iterable<string>): string {
   return `${shape}#${createHash("sha256").update(stableJSON(boundFieldsOf(pointer, boundFieldNames))).digest("hex").slice(0, 16)}`;
+}
+
+/** The WORLD-STATE KEY's part of an instance key: the id of the newest pool impulse a hop produced that the walk's write
+ *  door admitted as a write ("" = none). The same bound inputs before and after such a write are two instances. */
+export function withWorld(key: string, world: string): string {
+  return world ? `${key}@${world}` : key;
 }
 
 /** The key of an impulse whose adder names no instance: one instance per (shape, producer), so a site that adds the
@@ -91,7 +99,7 @@ export function attemptOutcome(a: { ok: boolean; structural: boolean; sends: rea
 /** Why a producer may or may not be attempted now. "needs-cap": a re-attempt is due and only the cap decides. */
 export type AttemptDecision = "first" | "suppressed" | "structural" | "no-new-impulse" | "needs-cap";
 
-export interface ProducerAttempts { attempts: number; lastAttemptVersion: number; lastOutcome?: AttemptOutcome }
+export interface ProducerAttempts { attempts: number; lastAttemptVersion: number; lastOutcome?: AttemptOutcome; lastWorld?: string; lastSeq?: number }
 
 export class AttemptLedger {
   private readonly byProducer = new Map<string, ProducerAttempts>();
@@ -99,20 +107,26 @@ export class AttemptLedger {
   private readonly failed = new Set<string>();
   /** Re-attempts made this walk; each one counts against the walk's step budget. */
   reattempts = 0;
+  private seq = 0;
+  /** A walk-local event order shared with demands: a bound demand raised after a producer's last attempt re-arms it. */
+  tick(): number { return ++this.seq; }
 
   /** `suppressed`: producers never attempted this walk (structural from the start). */
   constructor(suppressed: Iterable<string> = []) { this.suppressed = new Set(suppressed); }
 
   state(p: string): ProducerAttempts | undefined { return this.byProducer.get(p); }
 
-  /** In this order: suppressed or structural -> no; never attempted since the last success -> first; no impulse added
-   *  since the last attempt -> no; otherwise the cap decides. */
-  decide(p: string, poolVersion: number): AttemptDecision {
+  /** In this order: suppressed or structural -> no; never attempted -> first; a success under a different world-state
+   *  key -> first (a new instance); no impulse added and no bound demand raised since the last attempt -> no;
+   *  otherwise the cap decides. `demandSeq`: the tick of a bound demand for the producer's shape, if any. */
+  decide(p: string, poolVersion: number, world = "", demandSeq?: number): AttemptDecision {
     if (this.suppressed.has(p)) return "suppressed";
     const s = this.byProducer.get(p);
     if (s?.lastOutcome === "structural") return "structural";
     if (!s || s.attempts === 0) return "first";
-    if (!(poolVersion > s.lastAttemptVersion)) return "no-new-impulse";
+    if (s.lastOutcome === "ok" && (s.lastWorld ?? "") !== world) return "first";
+    const rearmed = demandSeq !== undefined && demandSeq > (s.lastSeq ?? 0);
+    if (!(poolVersion > s.lastAttemptVersion) && !rearmed) return "no-new-impulse";
     return "needs-cap";
   }
 
@@ -122,9 +136,11 @@ export class AttemptLedger {
     return (this.byProducer.get(p)?.attempts ?? 0) < cap;
   }
 
-  /** Start an attempt. Returns whether it is a re-attempt (counted in `reattempts`). */
-  begin(p: string): { reattempt: boolean } {
+  /** Start an attempt. Returns whether it is a re-attempt (counted in `reattempts`). After a success, a changed
+   *  world-state key starts a new instance: its count starts again. */
+  begin(p: string, world = ""): { reattempt: boolean } {
     const s = this.byProducer.get(p) ?? { attempts: 0, lastAttemptVersion: -1 };
+    if (s.lastOutcome === "ok" && (s.lastWorld ?? "") !== world) s.attempts = 0;
     const reattempt = s.attempts > 0;
     if (reattempt) this.reattempts++;
     s.attempts++;
@@ -133,12 +149,14 @@ export class AttemptLedger {
   }
 
   /** End an attempt. `poolVersion` is read after the attempt (its own output, if any, included), so nothing the attempt
-   *  itself added can re-arm it. A success resets the count; a transient outcome leaves the version where it was. The
-   *  failed non-transient sends' keys join the failed instances (they block identical sends of LATER attempts). */
-  end(p: string, outcome: AttemptOutcome, poolVersion: number, sends: readonly AttemptSend[] = []): void {
+   *  itself added can re-arm it. A success does NOT reset the count: a re-run under the same world-state key is a
+   *  re-attempt. A transient outcome leaves the version where it was. The failed non-transient sends' keys join the
+   *  failed instances (they block identical sends of LATER attempts). */
+  end(p: string, outcome: AttemptOutcome, poolVersion: number, sends: readonly AttemptSend[] = [], world = ""): void {
     const s = this.byProducer.get(p) ?? { attempts: 1, lastAttemptVersion: -1 };
     s.lastOutcome = outcome;
-    if (outcome === "ok") s.attempts = 0;
+    s.lastWorld = world;
+    s.lastSeq = this.tick();
     if (outcome !== "transient") s.lastAttemptVersion = poolVersion;
     this.byProducer.set(p, s);
     if (outcome !== "ok") for (const x of sends) if (x.key && x.reachedEgress && !x.ok && !x.transient) this.failed.add(x.key);
@@ -178,8 +196,8 @@ export class InstanceIndex {
 /** A hop input the walk could not bind: the field, and the shape the producer's contract binds it from (null: none). */
 export interface UnmetInput { hop: string; field: string; shape: string | null; reason: string }
 
-/** A demand key is {shape, binding?}: an absent binding is shape-level. */
-export interface Demand { shape: string; binding?: Record<string, unknown>; since: number; forHop: string; reason: string }
+/** A demand key is {shape, binding?}: an absent binding is shape-level. `seq`: the ledger tick it was raised at. */
+export interface Demand { shape: string; binding?: Record<string, unknown>; since: number; forHop: string; reason: string; seq?: number }
 
 /** The demand's bound fields all equal the instance's bound fields (canonical comparison). */
 export function bindingMatches(binding: Record<string, unknown> | undefined, bound: Record<string, unknown> | undefined): boolean {
@@ -188,11 +206,26 @@ export function bindingMatches(binding: Record<string, unknown> | undefined, bou
   return Object.keys(binding).every((k) => k in b && stableJSON(binding[k]) === stableJSON(b[k]));
 }
 
+/** THE SIBLING RULE for the walk's command ledger (shape -> command): never overwrite an entry that equals the banked
+ *  replay for the shape. A second instance's different command would otherwise make a replay that succeeded read as
+ *  failed (failedBankReplays). Returns whether the command was recorded. */
+export function recordCommand(commands: Map<string, string>, banked: ReadonlyMap<string, string>, shape: string, command: string): boolean {
+  const cur = commands.get(shape);
+  if (cur !== undefined && cur !== command && cur === banked.get(shape)) return false;
+  commands.set(shape, command);
+  return true;
+}
+
 export class DemandBook {
   private readonly demands = new Map<string, Demand>();
   /** Raise (or renew) the demand for a shape. A later demand replaces an earlier one: what was in the pool when it was
-   *  raised did not satisfy the hop. */
-  note(d: Demand): void { this.demands.set(d.shape, { ...d }); }
+   *  raised did not satisfy the hop. A demand without a binding never replaces an open bound one: the hop still needs
+   *  that binding. */
+  note(d: Demand): void {
+    const open = this.demands.get(d.shape);
+    if (open?.binding && !d.binding) return;
+    this.demands.set(d.shape, { ...d });
+  }
   get(shape: string): Demand | undefined { return this.demands.get(shape); }
   all(): Demand[] { return [...this.demands.values()]; }
   /** Present, and (when demanded) an instance added after the demand whose bound fields match its binding. With no
