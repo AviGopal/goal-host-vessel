@@ -501,9 +501,11 @@ export interface WalkOutputText { text: string; chars: number; truncated: boolea
 export interface KeptWalkTrace { executionId: string; shape: string; producedBy: string; output: WalkOutputText }
 /** Keep a walk execution's trace output on its dispatch record (record.walkTraces[impulse id]), bounded like a pool
  *  output, so goalWalkOutput serves it after the walk and its retries end. */
-export function keepWalkTrace(rec: { walkTraces?: unknown }, impulse: { id: string; content?: unknown; metadata?: Record<string, unknown> }, executionId: string, producedBy: string): void {
+export function keepWalkTrace(rec: { walkTraces?: unknown }, impulse: { id: string; content?: unknown; metadata?: Record<string, unknown> }, executionId: string, producedBy: string, delivery?: { status: number | null; class: string; outcome: string }): void {
+  // The kept copy carries the delivery outcome of the record it delivered (the delivered record cannot carry its own).
+  const kept = delivery && impulse.content && typeof impulse.content === "object" ? { ...(impulse.content as Record<string, unknown>), delivery } : impulse.content;
   let text: string;
-  try { text = JSON.stringify(impulse.content); } catch { text = String(impulse.content); }
+  try { text = JSON.stringify(kept); } catch { text = String(kept); }
   const prior = rec.walkTraces && typeof rec.walkTraces === "object" ? (rec.walkTraces as Record<string, KeptWalkTrace>) : {};
   rec.walkTraces = { ...prior, [impulse.id]: { executionId, shape: String(impulse.metadata?.["shape"] ?? ""), producedBy, output: walkOutputKeeper()(text, false) } };
 }

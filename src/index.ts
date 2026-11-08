@@ -15671,11 +15671,42 @@ async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: Walk
   let pool: readonly Impulse[] = [];
   const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p) => { pool = p; } });
   const outputs = walkOutputs(walk, result, pool);
+  const delivery = outputs[0] ? await deliverWalkTrace(walk, result, outputs[0], (m) => { console.log(m); opts.stepSink?.push(m); }) : undefined;
   // A4: the walk's executionTrace output is kept on its dispatch record by impulse id with its execution id, and is
-  // served by goalWalkOutput {dispatchId, impulseId} after the walk ends.
+  // served by goalWalkOutput {dispatchId, impulseId} after the walk ends; the kept copy carries the delivery outcome.
   const _rec = typeof opts.variables.dispatch_id === "string" ? executionStore.get(opts.variables.dispatch_id) : undefined;
-  if (_rec && outputs[0]) keepWalkTrace(_rec as { walkTraces?: unknown }, outputs[0], walk.executionId, WALK_ACTIVITY_ID);
+  if (_rec && outputs[0]) keepWalkTrace(_rec as { walkTraces?: unknown }, outputs[0], walk.executionId, WALK_ACTIVITY_ID, delivery);
   return { result, outputs };
+}
+/** A1: THE WALK DELIVERS ITS OWN TRACE by a search -> call hop: discovery /resolve for activityExecutionTrace_write, whose
+ *  producer (activity-api src/routes/impulses.ts, the activityExecutionTrace_write case) takes pointer.traceData as the
+ *  body of its execution-traces POST /, which requires execution_id and template_id. The outcome is returned (and kept
+ *  with the trace), tapped once, and never fails the walk; a refusal is not an observation (it re-arms nothing). */
+async function deliverWalkTrace(walk: WalkIdentity, result: GoalSeekResult, record: Impulse, tap: (m: string) => void): Promise<{ status: number | null; class: string; outcome: string }> {
+  let status: number | null = null;
+  let reason: string;
+  try {
+    const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+      body: JSON.stringify({ pointer: { type: "activityExecutionTrace_write", traceData: { execution_id: walk.executionId, template_id: WALK_ACTIVITY_ID, status: result.status, execution_trace: record.content } } }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    status = r.status;
+    if (r.ok) {
+      tap(`[goal-host-vessel] walk-activity: trace ${walk.executionId} delivered via activityExecutionTrace_write (HTTP ${r.status})`);
+      return { status, class: "delivered", outcome: "delivered" };
+    }
+    reason = `HTTP ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`;
+  } catch (e) {
+    reason = String((e as Error)?.message ?? e).slice(0, 200);
+  }
+  const cls = isTransientFailure(reason, status ?? undefined) ? "transient" : "non_transient";
+  const outcome = status === 403 && /caller_lacks_write_scope/.test(reason) ? "caller_lacks_write_scope"
+    : status === null || status === 404 ? "no_producer_or_unreachable"
+    : `refused_http_${status}`;
+  tap(`[goal-host-vessel] walk-activity: trace ${walk.executionId} NOT delivered via activityExecutionTrace_write: ${outcome} (${cls}; ${reason})`);
+  return { status, class: cls, outcome };
 }
 host.catalogue.register(walkActivityTemplate());
 // The walk's pool stops being served when the walk ends, on every exit path (the resolver's finally).

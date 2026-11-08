@@ -38,7 +38,7 @@ async function replay(sc: unknown): Promise<Replay> {
 
 /** H5's shape (one hop that keeps failing, walkBudget max_attempts_per_producer 5), with discovery answering the
  *  producer lookup with `lookup`. */
-const scenario = (id: string, lookup: { status: number; json: unknown }) => ({
+const scenario = (id: string, lookup: { status: number; json: unknown }, extraRoutes: unknown[] = []) => ({
   id,
   description: "producer lookup test (not part of the verdict-diff corpus)",
   fleet: { vessels: [
@@ -47,6 +47,7 @@ const scenario = (id: string, lookup: { status: number; json: unknown }) => ({
   ] },
   routes: [
     { id: "discovery:producer-lookup", method: "POST", type: "discoverByShapesQuery", respond: lookup },
+    ...extraRoutes,
     { id: "llm:target-inference", method: "POST", caller: "goal-host:goal_target_inference", respond: { llm: JSON.stringify({ target_shapes: ["hopZ"], confidence: 0.9, alternatives: [] }) } },
     { id: "schema:hopZ", method: "POST", type: "resolver_schema", body: ['"shape":"hopZ"'], respond: { json: { success: true, shape: "resolver_schema", body: { shape: "hopZ", known: true, fields: [] } } } },
     { id: "llm:arg-extraction", method: "POST", caller: "goal-host:pointer_arg_extraction", respond: { llm: "{}" } },
@@ -174,7 +175,10 @@ describe.skipIf(!HERMETIC)("the walk's trace output is kept and served by goalWa
     expect(body.producerExecutionId).toBe(r.walkTraceOutputs[0]!.executionId);
     const rec = JSON.parse(body.content);
     expect(rec.execution_id).toBe(r.walkTraceOutputs[0]!.executionId);
-    expect(rec).toEqual(r.walkTraceOutputs[0]!.executionTrace[0]);
+    // The kept copy is the engine-side record plus the delivery outcome of that record (A1).
+    const { delivery, ...asDelivered } = rec;
+    expect(asDelivered).toEqual(r.walkTraceOutputs[0]!.executionTrace[0]);
+    expect(typeof delivery?.outcome).toBe("string");
     expect((rec.route_around?.failed_producers ?? []).some((f: { producer: string }) => f.producer === "lookup:learned-pathway")).toBe(true);
   }, 120_000);
 });
@@ -194,5 +198,37 @@ describe.skipIf(!HERMETIC)("the deliverable-shapes absence is observable on the 
     const f = (ra?.failed_producers ?? []).find((x: { producer: string }) => x.producer === "lookup:deliverable-shapes");
     expect(f?.reason).toBe("deliverable-shapes lookup: no producer (no shape advertised)");
     expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
+  }, 120_000);
+});
+
+// A1: the walk delivers its own executionTrace output by a search -> call hop (discovery /resolve,
+// activityExecutionTrace_write); the outcome is kept with the walk's trace (goalWalkOutput) and tapped, never fails it.
+const deliverRoute = (respond: unknown) => ({ id: "discovery:trace-write", method: "POST", type: "activityExecutionTrace_write", respond });
+const keptDelivery = (r: Replay) => JSON.parse(r.walkTraceServed[0]!.json.body.content).delivery;
+describe.skipIf(!HERMETIC)("the walk delivers its own trace and keeps the outcome", () => {
+  test("2xx: delivered; the hop carries the store's required fields; the delivered record does not carry the outcome", async () => {
+    const r = await replay(scenario("deliver-2xx", { status: 404, json: NOT_FOUND }, [deliverRoute({ json: { success: true, shape: "activityExecutionTrace_write_result" } })]));
+    const sent = r.requests.find((q) => q.body?.pointer?.type === "activityExecutionTrace_write")!;
+    const td = sent.body.pointer.traceData;
+    expect(td.execution_id).toBe(r.walkTraceOutputs[0]!.executionId);
+    expect(td.template_id).toBe("goal-host-vessel:walk");
+    expect(td.execution_trace.execution_id).toBe(td.execution_id);
+    expect(td.execution_trace.delivery).toBeUndefined();
+    expect(keptDelivery(r)).toEqual({ status: 200, class: "delivered", outcome: "delivered" });
+    expect(r.log).toContain("delivered via activityExecutionTrace_write (HTTP 200)");
+    expect(r.walkTraceOutputs[0]!.executionTrace[0].delivery).toBeUndefined();
+  }, 120_000);
+  test("403 caller_lacks_write_scope: kept as that outcome; the walk is not failed and nothing re-arms", async () => {
+    const r = await replay(scenario("deliver-403", { status: 404, json: NOT_FOUND }, [deliverRoute({ status: 403, json: { error: "caller_lacks_write_scope", shape: "activityExecutionTrace_write" } })]));
+    expect(keptDelivery(r)).toMatchObject({ status: 403, class: "non_transient", outcome: "caller_lacks_write_scope" });
+    expect(r.log).toContain("NOT delivered via activityExecutionTrace_write: caller_lacks_write_scope");
+    expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
+    expect(String(r.record?.goalReachReason ?? "")).not.toContain("activityExecutionTrace_write");
+  }, 120_000);
+  test("404 (no producer): kept as no_producer_or_unreachable; the three outcomes are distinct by text", async () => {
+    const r = await replay(scenario("deliver-404", { status: 404, json: NOT_FOUND }, [deliverRoute({ status: 404, json: { error: "Not found", shape: "activityExecutionTrace_write" } })]));
+    expect(keptDelivery(r)).toMatchObject({ status: 404, class: "non_transient", outcome: "no_producer_or_unreachable" });
+    expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
+    expect(new Set(["delivered", "caller_lacks_write_scope", "no_producer_or_unreachable"]).size).toBe(3);
   }, 120_000);
 });
