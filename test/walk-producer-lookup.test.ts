@@ -382,3 +382,26 @@ describe.skipIf(!HERMETIC)("delivery is confirmed on the store's body", () => {
     expect(keptDelivery(r)).toEqual({ status: 200, class: "delivered", outcome: "delivered" });
   }, 120_000);
 });
+
+// F4 (agf_4twee11e4aik): within ONE satisfier attempt, a corrector that rewrites the command X -> X does not re-run X.
+// The executor's own degeneracy verdict fails the send that produced it, the identical-instance check also reads the
+// attempt's own failed sends, and the self-correction loop stops on that refusal. An ok send (an LLM re-send) is free.
+describe.skipIf(!HERMETIC)("F4: an identical rewrite within one attempt is not re-run", () => {
+  test("MUST-FAIL: X -> X is refused before egress with the identical-instance line, and the corrections stop", async () => {
+    const r = await replay(shellScenario("executor-repeat"));
+    const walk1 = firstWalk(r.log);
+    const sends = shellSends(r).filter((q) => JSON.stringify(q.body).includes(PS));
+    // One egress of the command per walk execution (the dispatch's retry is its own walk with a fresh ledger).
+    const walks = r.log.split("walk-activity: dispatched ").length - 1;
+    expect(walks).toBeGreaterThanOrEqual(1);
+    expect(sends.length).toBe(walks);
+    expect(walk1).toContain("NOT sent — identical instance already failed in this walk");
+    expect(walk1).toContain("repeated an identical instance — stopping the corrections");
+  }, 120_000);
+  test("no spin: the refused rewrite ends the corrections at once (no second correction, no new egress)", async () => {
+    const r = await replay(shellScenario("executor-repeat-nospin"));
+    expect(r.log).not.toMatch(/self-correction attempt 2 /);
+    expect(r.log.split("repeated an identical instance — stopping the corrections").length - 1).toBe(r.log.split("walk-activity: dispatched ").length - 1);
+    expect(shellSends(r).length).toBe(r.log.split("walk-activity: dispatched ").length - 1);
+  }, 120_000);
+});

@@ -9188,8 +9188,11 @@ async function runGoalAsPoolWalkBody(
       ? _contract.fields.map((f) => String(f?.name ?? "")).filter(Boolean)
       : [...new Set([...Object.keys(extraArgs ?? {}), ..._bind.synthesized])];
     if (attemptSendOf(shape, site) && curAttempt && shape === curAttempt.shape) curAttempt.boundInputs = _boundFrom;
-    // AN IDENTICAL INSTANCE IS NOT RE-SENT: a send of an earlier attempt with the same key failed (not transiently).
-    if (attemptSendOf(shape, site) && attemptLedger.failedBefore(withWorld(instanceKey(shape, pointer, sent.names), curAttempt?.world ?? ""))) {
+    // AN IDENTICAL INSTANCE IS NOT RE-SENT: a send with the same key failed (not transiently) in an earlier attempt, or
+    // in this one (its sends reach the ledger only at its end). An ok send stays free to repeat (an LLM may answer the
+    // same prompt differently); an executor run the executor itself judged degenerate is a failed send.
+    const _sameKey = withWorld(instanceKey(shape, pointer, sent.names), curAttempt?.world ?? "");
+    if (attemptSendOf(shape, site) && (attemptLedger.failedBefore(_sameKey) || (curAttempt?.sends ?? []).some((x) => x.key === _sameKey && x.reachedEgress && !x.ok && !x.transient))) {
       noteRawResolveFailure(shape, "identical instance already failed in this walk");
       tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — identical instance already failed in this walk`);
       return null;
@@ -10148,6 +10151,15 @@ If one of those sibling shapes is the action that would create what the goal ask
       const _bannedHosts = new Set<string>();
       const _hostOf = (cmd: string): string | null => { const m = cmd.match(/https?:\/\/([^\/'"\s]+)/i); return m?.[1]?.toLowerCase() ?? null; };
       let _deg = _degenerateReason(direct);
+      // THE EXECUTOR'S OWN DEGENERACY VERDICT FAILS THE SEND THAT PRODUCED IT: rawResolve recorded it ok (it returned
+      // content), but a run the executor judges degenerate is a failed run, so an identical re-send is refused.
+      const _failDegenerateSend = (): void => {
+        const _ls = curAttempt?.sends[curAttempt.sends.length - 1];
+        if (_ls && _ls.reachedEgress && _ls.ok) _ls.ok = false;
+        const _ws = walkSends[walkSends.length - 1];
+        if (_ws && !_ws.refused_before_egress && _ws.ok) _ws.ok = false;
+      };
+      if (_deg) _failDegenerateSend();
       // AN INSPECTION TURN IS NOT A FAILED ANSWER, SO IT MUST NOT COST ONE.
       //
       // The corrector is explicitly told, when a fetch fails, to PRINT THE RAW RESPONSE rather than
@@ -10518,6 +10530,12 @@ If one of those sibling shapes is the action that would create what the goal ask
         directArgsRaw = { ...directArgsRaw, ..._reSyn };
         directArgs = bindBody(directArgsRaw);
         const _re = await rawResolve(shape, ep.endpoint, ep.resolvePath, directArgs);
+        // The corrector rewrote the command to an instance this walk already ran and the executor judged degenerate
+        // (refused before egress): asking it again only spins, so the corrections stop here.
+        if (_re == null && lastRawResolveReason === "identical instance already failed in this walk") {
+          tap(`[goal-host-vessel] walk(${opts.surface}): executor "${shape}" self-correction attempt ${_tries} repeated an identical instance — stopping the corrections`);
+          break;
+        }
         // An attempt no response arrived for leaves its server query running; the next would only pile on.
         if (unanswered(_re, lastRawResolveStatus, lastRawResolveReason)) {
           _execUnanswered = true;
@@ -10526,6 +10544,7 @@ If one of those sibling shapes is the action that would create what the goal ask
         }
         if (_re != null) direct = _re;
         _deg = _degenerateReason(direct);
+        if (_deg && _re != null) _failDegenerateSend();
         // LOG THE COMMAND, NOT JUST THE COMPLAINT.
         //
         // This tap reported an 80-char slice of stderr and never the command that produced it,
