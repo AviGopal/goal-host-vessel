@@ -5474,6 +5474,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
+import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, type WalkIdentity, type WalkRun } from "./walk-activity";
 import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
@@ -15809,6 +15810,20 @@ const host = new GoalHost({
   ...(DISABLE_SUBSCRIBERS ? { subscriberTemplates: [] } : {}),
 });
 { const _proc = (host as unknown as { proc?: { run: (command: string[], options?: unknown) => Promise<unknown> } }).proc; if (_proc && typeof _proc.run === "function") { const _run = _proc.run.bind(_proc); _proc.run = (command: string[], options?: unknown) => { const _id = dispatchContext.getStore()?.dispatchId; return _run(_id ? ["env", `SUBSTRATE_EXECUTION_ID=${_id}`, ...command] : command, options); }; } }
+
+// THE WALK ACTIVITY (walk-activity.ts): the one record and its one resolver, registered at boot (idempotent: both
+// registries are Maps keyed by id). The resolver IS the walk body; the walk's engine-minted execution id roots its steps.
+type WalkActivityOpts = Parameters<typeof runGoalAsPoolWalkBody>[1];
+async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: WalkIdentity): Promise<WalkRun<GoalSeekResult>> {
+  try {
+    const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain, walk.executionId] });
+    return { result, outputs: [] };
+  } finally {
+    forgetLivePool(opts.variables.dispatch_id);
+  }
+}
+host.catalogue.register(walkActivityTemplate());
+host.runtime.resolvers.register(walkActivityResolver<WalkActivityOpts, GoalSeekResult>(walkActivityBody, (variables) => ({ variables, surface: WALK_ACTIVITY_ID })));
 
 
 // ─────────────────────────────────────────────────────────────────────────────
