@@ -16,7 +16,7 @@ const HERMETIC = !existsSync("/workspace") && !existsSync("/vessels");
 const SRC = readFileSync(join(TREE, "src", "index.ts"), "utf8");
 const NOT_FOUND = { error: "Not found", shape: "discoverByShapesQuery" };
 
-interface Replay { log: string; record: any; requests: Array<{ url: string; body: any }>; walkTraceOutputs: Array<{ executionId: string; executionTrace: any[] }>; walkTraceServed: Array<{ status?: number; json?: any }>; walkLog: string[] }
+interface Replay { log: string; record: any; requests: Array<{ url: string; body: any }>; walkTraceOutputs: Array<{ executionId: string; executionTrace: any[] }>; walkTraceServed: Array<{ status?: number; json?: any }>; walkLog: string[]; walkLogAtSend: Array<{ seq: number; walkLog: string[] }> }
 async function replay(sc: unknown): Promise<Replay> {
   const ws = mkdtempSync(join(tmpdir(), "producer-lookup-"));
   try {
@@ -29,8 +29,8 @@ async function replay(sc: unknown): Promise<Replay> {
     const rec = JSON.parse(readFileSync(out, "utf8")) as { fatal?: string; requests?: Replay["requests"]; steps?: Array<{ record?: unknown; walkLog?: string[] }> };
     if (rec.fatal) throw new Error(`child fatal: ${rec.fatal}`);
     const logPath = out.replace(/\.json$/, ".log.json");
-    const side = existsSync(logPath) ? (JSON.parse(readFileSync(logPath, "utf8")) as { logs?: string[]; walkTraceOutputs?: Replay["walkTraceOutputs"]; walkTraceServed?: Replay["walkTraceServed"] }) : {};
-    return { log: (side.logs ?? []).join("\n"), record: rec.steps?.[0]?.record ?? null, requests: rec.requests ?? [], walkTraceOutputs: side.walkTraceOutputs ?? [], walkTraceServed: side.walkTraceServed ?? [], walkLog: rec.steps?.[0]?.walkLog ?? [] };
+    const side = existsSync(logPath) ? (JSON.parse(readFileSync(logPath, "utf8")) as { logs?: string[]; walkTraceOutputs?: Replay["walkTraceOutputs"]; walkTraceServed?: Replay["walkTraceServed"]; walkLogAtSend?: Replay["walkLogAtSend"] }) : {};
+    return { log: (side.logs ?? []).join("\n"), record: rec.steps?.[0]?.record ?? null, requests: rec.requests ?? [], walkTraceOutputs: side.walkTraceOutputs ?? [], walkTraceServed: side.walkTraceServed ?? [], walkLog: rec.steps?.[0]?.walkLog ?? [], walkLogAtSend: side.walkLogAtSend ?? [] };
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
@@ -318,6 +318,23 @@ describe.skipIf(!HERMETIC)("F1: the walk's executor sends are in its trace outpu
       expect(text).toContain("[redacted]");
       for (const secret of ["verdict-diff-key", "mb-SEEDEDKEY0123456789", "mb-STDERRKEY987654321"]) expect(text).not.toContain(secret);
     }
+  }, 120_000);
+});
+
+// F2 (agf_8aeyennv2jqv): a line the walk taps is on its dispatch record at once, inside the same iteration, not at the
+// next per-iteration mirror. The self-correction loop runs inside one iteration: its "attempt 1" line must already be on
+// the record (what goalWalkState serves) when the next correction's command is sent.
+describe.skipIf(!HERMETIC)("F2: walk-log taps reach the record within the iteration", () => {
+  test("MUST-FAIL: at the third shell send, the record's walk log already carries the first correction's line", async () => {
+    const s = shellScenario("walklog-live");
+    const rs = s.routes as Array<Record<string, unknown>>;
+    const arg = rs.find((x) => x["id"] === "llm:arg-extraction")!;
+    delete arg["respond"];
+    arg["sequence"] = ["ps -e | wc -l", "ps aux | wc -l", "ls /proc | wc -l", "ps -A | wc -l"].map((c) => ({ llm: JSON.stringify({ command: c }) }));
+    const r = await replay(s);
+    expect(r.walkLogAtSend.length).toBeGreaterThanOrEqual(3);
+    const atThird = r.walkLogAtSend[2]!.walkLog.join("\n");
+    expect(atThird).toContain("cold-command self-correction attempt 1");
   }, 120_000);
 });
 

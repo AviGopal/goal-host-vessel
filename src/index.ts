@@ -8046,7 +8046,16 @@ async function runGoalAsPoolWalkBody(
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
   // stepSink (if provided). Additive — never alters control flow.
-  const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
+  // Each tap is also mirrored onto THIS dispatch's record (the live walk log goalWalkState and goal_status read), so a
+  // line tapped inside an iteration is visible while that iteration runs, not only at the next per-iteration mirror.
+  const tap = (m: string): void => {
+    console.log(m);
+    if (!opts.stepSink) return;
+    opts.stepSink.push(m);
+    const _wid = opts.variables.dispatch_id;
+    const _rec = typeof _wid === "string" ? executionStore.get(_wid) : undefined;
+    if (_rec) _rec.walkLog = opts.stepSink.slice(-60);
+  };
   // THE WRITE DOORS (write-door.ts): admission is decided by the caller, never re-derived from the goal text here.
   const changeAdmitted = opts.changeAdmitted === true;
   const writeDoorHash = goalHashOf(goal);

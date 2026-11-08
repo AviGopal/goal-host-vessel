@@ -498,6 +498,9 @@ globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
       route: route?.id ?? fleet?.id ?? "unmatched",
       status: spec.throw ? `throw:${spec.throw}` : (spec.status ?? 200),
     });
+    if (process.env["VD_WALK_TRACE_OUTPUTS"] === "1" && storeForSnapshot && typeOf(parsed) === "shellResult") {
+      walkLogAtSend.push({ seq: reqSeq, walkLog: [...storeForSnapshot.values()].flatMap((r) => (Array.isArray(r["walkLog"]) ? (r["walkLog"] as unknown[]).map(String) : [])) });
+    }
   }
   await Promise.resolve();
   activity++;
@@ -597,6 +600,10 @@ type Mod = {
 // read BY SHAPE from that execution's outputImpulseIds when its trace is recorded. Written to the .log.json side file
 // only, so the verdict JSON (the golden) is unchanged.
 const walkTraceOutputs: Array<{ executionId: unknown; executionTrace: unknown[] }> = [];
+// OPT-IN, as above: the dispatch records' walk logs as they stand at each shellResult send (what goalWalkState serves at
+// that moment), so a test can see whether a line tapped earlier in the same iteration is already on the record.
+const walkLogAtSend: Array<{ seq: number; walkLog: string[] }> = [];
+let storeForSnapshot: Map<string, Record<string, unknown>> | undefined;
 
 const RECORD_FIELDS = ["status", "reached", "goalReachReason", "selectedTemplateId", "executionId", "completionShapes", "attempts", "attemptCount", "executionPath", "abstain", "learning", "answerBody", "humanGraded", "humanReachNotes", "error", "trigger", "stage", "grounded", "inferenceConfidence", "requeueOf", "routeArounds"];
 const MARKERS: Array<[string, RegExp]> = [
@@ -631,6 +638,7 @@ function reasonClass(reason: unknown): string | null {
 async function main(): Promise<void> {
   const mod = (await drivePromise(import(INDEX_PATH) as Promise<Mod>, "import")).value;
   if (!mod) throw new Error("index.ts import did not settle");
+  if (process.env["VD_WALK_TRACE_OUTPUTS"] === "1") storeForSnapshot = mod.__vd_executionStore;
   if (process.env["VD_WALK_TRACE_OUTPUTS"] === "1" && mod.__vd_host) {
     const rt = mod.__vd_host.runtime;
     const record = rt.traceSink.record.bind(rt.traceSink);
@@ -749,7 +757,7 @@ async function main(): Promise<void> {
       walkTraceServed.push(r.value ? { status: r.value.status, json: await r.value.json().catch(() => null) } : { error: r.error ?? null });
     }
   }
-  const logsOut = { scenario: scenario.id, logs, ...(process.env["VD_WALK_TRACE_OUTPUTS"] === "1" ? { walkTraceOutputs, walkTraceServed } : {}) };
+  const logsOut = { scenario: scenario.id, logs, ...(process.env["VD_WALK_TRACE_OUTPUTS"] === "1" ? { walkTraceOutputs, walkTraceServed, walkLogAtSend } : {}) };
   nodeFs.writeFileSync(OUT_PATH, JSON.stringify(out, null, 2) + "\n");
   nodeFs.writeFileSync(OUT_PATH.replace(/\.json$/, ".log.json"), JSON.stringify(logsOut, null, 2) + "\n");
 }
