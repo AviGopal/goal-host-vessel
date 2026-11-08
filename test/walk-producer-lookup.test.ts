@@ -405,3 +405,22 @@ describe.skipIf(!HERMETIC)("F4: an identical rewrite within one attempt is not r
     expect(shellSends(r).length).toBe(r.log.split("walk-activity: dispatched ").length - 1);
   }, 120_000);
 });
+
+// F1 (widened): the kept executionTrace carries what the walk worked toward and with: the dispatch's recalled concept
+// ids, the walk's target set, and W1's unmet inputs and bound demands, each bounded and redacted.
+describe.skipIf(!HERMETIC)("F1 widened: the walk's targets, recalled concepts and demands are on its trace", () => {
+  test("read by shape from goalWalkOutput's kept copy: target, recalled_concept_ids, unmet_inputs, bound_demands", async () => {
+    const sc = scenario("walk-context", { status: 404, json: NOT_FOUND });
+    const rs = sc.routes as Array<Record<string, unknown>>;
+    rs.find((x) => x["id"] === "schema:hopZ")!["respond"] = { json: { success: true, shape: "resolver_schema", body: { shape: "hopZ", known: true, fields: [{ name: "evidence", required: true, type: "string", from_shape: "evidenceRecord" }] } } };
+    const r = await replay(sc);
+    const served = r.walkTraceServed.find((x) => x.status === 200)!;
+    expect(served.json.body.shape).toBe("executionTrace");
+    const rec = JSON.parse(served.json.body.content);
+    expect(rec.target).toContain("hopZ");
+    expect(Array.isArray(rec.recalled_concept_ids)).toBe(true);
+    expect(Array.isArray(rec.bound_demands)).toBe(true);
+    expect(rec.unmet_inputs.some((u: { hop: string; field: string; shape: string }) => u.hop === "hopZ" && u.field === "evidence" && u.shape === "evidenceRecord")).toBe(true);
+    expect(rec.target).toContain("evidenceRecord");
+  }, 120_000);
+});

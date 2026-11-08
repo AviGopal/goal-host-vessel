@@ -160,7 +160,10 @@ export function walkSendOf(producer: string, pointer: Record<string, unknown> | 
   return { producer, command: bound(cmd), exit_status: exit, stderr_excerpt: bound(stderr), ok, ...(reachedEgress ? {} : { refused_before_egress: true as const }) };
 }
 
-export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: readonly Impulse[], sends: readonly WalkSend[] = []): Impulse[] {
+/** What the walk worked toward and with, as its trace carries it (prepared, bounded and redacted by the caller). */
+export interface WalkContext { recalled_concept_ids: string[]; target: string[]; unmet_inputs: unknown[]; bound_demands: unknown[] }
+
+export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: readonly Impulse[], sends: readonly WalkSend[] = [], context?: WalkContext): Impulse[] {
   const produced = pool.filter((i) => (i.metadata as Record<string, unknown> | undefined)?.["producedBy"] !== "seed");
   const trace: Impulse = {
     id: `${walk.executionId}-trace`,
@@ -178,6 +181,7 @@ export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: read
       attempts: verdict.attempts,
       // the executor sends behind those steps, including runs that never became a step (failed or refused)
       sends: sends.map((x) => ({ ...x })),
+      ...(context ? { recalled_concept_ids: [...context.recalled_concept_ids], target: [...context.target], unmet_inputs: [...context.unmet_inputs], bound_demands: [...context.bound_demands] } : {}),
       outputs: produced.map((i) => ({ id: i.id, shape: (i.metadata as Record<string, unknown> | undefined)?.["shape"] ?? null })),
       // a snapshot: the dispatcher later notes the retry route it took on the live record (noteRouteTaken)
       route_around: verdict.routeAround === undefined ? null : structuredClone(verdict.routeAround),

@@ -330,7 +330,7 @@ import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, ob
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeViewParts, DELIVERABLE_CAP, type JudgeCut, type JudgeViewPart, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
-import { buildRouteAround, noteRouteTaken, scrubReason, transientProducerFailure, type RouteAroundRecord } from "./route-around";
+import { buildRouteAround, noteRouteTaken, scrubReason, ROUTE_AROUND_FAILED_CAP, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { AttemptLedger, DemandBook, InstanceIndex, attemptOutcome, boundFieldsOf, defaultInstanceKey, instanceKey, newestPerShape, recordCommand, stableJSON, withWorld, type AttemptSend, type UnmetInput } from "./walk-instances";
 import { asksForSecretValue } from "./secret-extraction";
 import { proseProducerOf, recalledCandidates } from "./shape-recall";
@@ -8041,7 +8041,7 @@ async function runGoalAsPoolWalkBody(
     changeAdmitted?: boolean;
     /** THE WALK ACTIVITY (walk-activity.ts): set only by walkActivityBody, which returns the pool's produced impulses as
      *  the walk execution's outputs. */
-    exposePool?: (pool: readonly Impulse[], sends: readonly WalkSend[]) => void;
+    exposePool?: (pool: readonly Impulse[], sends: readonly WalkSend[], context: () => { target: readonly string[]; unmetInputs: readonly UnmetInput[]; boundDemands: ReadonlyArray<{ shape: string; binding: Record<string, unknown>; for_hop: string; field: string; since: number }> }) => void;
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -8197,7 +8197,8 @@ async function runGoalAsPoolWalkBody(
   // THE WALK'S EXECUTOR SENDS (walk-activity.ts walkSendOf): each send of an attempt, recorded at rawResolve, for the
   // walk's trace output (a run that never became a step is otherwise invisible there).
   const walkSends: WalkSend[] = [];
-  opts.exposePool?.(poolImpulses, walkSends);
+  // read when the walk has returned (the target set and the demand lists are declared further down and only grow)
+  opts.exposePool?.(poolImpulses, walkSends, () => ({ target: [...target], unmetInputs, boundDemands }));
   // PROVENANCE (walk-pool.ts, agentic-floor B1): ids unique per dispatch, `producedBy` the real
   // producer, and the producing execution / consumed ids where the step knows them.
   const mkImpulse = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): Impulse => ({
@@ -15751,8 +15752,19 @@ type WalkActivityOpts = Parameters<typeof runGoalAsPoolWalkBody>[1];
 async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: WalkIdentity): Promise<WalkRun<GoalSeekResult>> {
   let pool: readonly Impulse[] = [];
   let sends: readonly WalkSend[] = [];
-  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p, s) => { pool = p; sends = s; } });
-  const outputs = walkOutputs(walk, result, pool, sends);
+  let walkContext: Parameters<NonNullable<WalkActivityOpts["exposePool"]>>[2] | undefined;
+  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p, s, c) => { pool = p; sends = s; walkContext = c; } });
+  // WHAT THE WALK WORKED TOWARD AND WITH, on its trace: the concepts the dispatch recalled, the target set, and the unmet
+  // inputs and bound demands (W1). Each list bounded like the route-around record's, text redacted like it.
+  const _clean = (t: string): string => scrubReason(t, [API_KEY]).slice(0, 512);
+  const _cx = walkContext?.();
+  const context = _cx ? {
+    recalled_concept_ids: dispatchRecalledConceptIds().slice(0, ROUTE_AROUND_FAILED_CAP),
+    target: _cx.target.slice(0, ROUTE_AROUND_FAILED_CAP),
+    unmet_inputs: _cx.unmetInputs.slice(0, ROUTE_AROUND_FAILED_CAP).map((u) => ({ ...u, reason: _clean(u.reason) })),
+    bound_demands: _cx.boundDemands.slice(0, ROUTE_AROUND_FAILED_CAP).map((d) => ({ ...d, binding: _clean(JSON.stringify(d.binding) ?? "{}") })),
+  } : undefined;
+  const outputs = walkOutputs(walk, result, pool, sends, context);
   const delivery = outputs[0] ? await deliverWalkTrace(walk, result, outputs[0], (m) => { console.log(m); opts.stepSink?.push(m); }) : undefined;
   // A4: the walk's executionTrace output is kept on its dispatch record by impulse id with its execution id, and is
   // served by goalWalkOutput {dispatchId, impulseId} after the walk ends; the kept copy carries the delivery outcome.
