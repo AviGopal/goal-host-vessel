@@ -35,7 +35,9 @@ describe("write doors are wired", () => {
     expect(src).toContain('const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target"');
     const seed = src.indexOf('if (seededOutputShapes) seededOutputShapes = writeDoorShapes(seededOutputShapes, false, "target"');
     expect(seed).toBeGreaterThan(0);
-    expect(seed).toBeLessThan(src.indexOf("reachingPathway = await recommendReachingPath(goal, seededOutputShapes ?? null);", seed));
+    // The learned-pathway lookup that used to read the seeded target here is gone (no producer advertised); the first
+    // walk dispatch is now the first reader of the doored seed.
+    expect(seed).toBeLessThan(src.indexOf("const _firstDispatch = await dispatchWalk(goal, {", seed));
   });
   test("satisfier and vesselResolve stay unconditional and count their refusals", () => {
     expect(src).toContain('noteWriteRefusal("satisfier", _fsBlocked.length);');

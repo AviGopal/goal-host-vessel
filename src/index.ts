@@ -7341,62 +7341,6 @@ async function resolvePathwayReusePolicy(): Promise<PathwayReusePolicy> {
     return PATHWAY_REUSE_FALLBACK;
   }
 }
-async function recommendReachingPath(goalText: string, targetShapes?: string[] | null): Promise<ReachingPathway | null> {
-  if (!goalText) return null;
-  try {
-    // NO SITUATIONAL HASH ON A RECOMMEND QUERY (OP-1). getCachedStateSignature() is the 8-hex SITUATIONAL hash (host
-    // load, trace statistics, catalogue size, rhythm). `state_signature` on the recommend routes is the 16-hex
-    // SHAPE-POOL signature, and /v2/activities/recommend rejected every one of these (2,515 "REJECTED (wrong form)" in
-    // 24h, all length 8). No receiver reads the situational hash under any other name, so the query sites send none.
-    // The /v2/goal-paths RECORD keeps state_signature: its receiver stores any string there (migration 211).
-    // Send the walk's inferred target shapes so the store can offer a NEARBY
-    // match when exact goal-text retrieval finds nothing. Retrieval there is
-    // keyed on md5 of the goal string, so a reworded goal misses a composition
-    // the system already proved out — measured at 78% of fresh goals landing on
-    // an already-known path signature. The shapes are the routing key the walk
-    // already computed; passing them costs nothing and is the only thing that
-    // lets the store recognise "same destination, different words".
-    const _shapes = (targetShapes ?? []).filter((s) => typeof s === "string" && s.length > 0);
-    const r = await fetch(`${ACTIVITY_API_ENDPOINT}/v2/goal-paths/recommend`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ goal_text: goalText, goal_category: "meta", ...(_shapes.length ? { target_shapes: _shapes } : {}), exploit_threshold: 0.9 }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!r.ok) return null;
-    const j: any = await r.json();
-    const paths: any[] = j?.recommended_paths ?? j?.body?.recommended_paths ?? [];
-    const pol = await resolvePathwayReusePolicy();
-    const countOf = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-    // Accept on the COUNTERS, not on the derived rate. The counters are written
-    // atomically and were never truncated; the rate was.
-    const eligible = paths.filter((p) =>
-      Array.isArray(p?.path_activities) && p.path_activities.length >= 1 &&
-      countOf(p?.successful_executions) >= pol.minSuccessfulExecutions &&
-      countOf(p?.total_executions) >= pol.minTotalExecutions);
-    if (eligible.length === 0) {
-      if (paths.length > 0) console.log(`[goal-host-vessel] pathway reuse: ${paths.length} recommended (mode: ${j?.mode}, shape-matched: ${j?.shape_matched_candidates ?? '?'}), 0 accepted (minSuccessful=${pol.minSuccessfulExecutions} minTotal=${pol.minTotalExecutions}) — no reusable pathway`);
-      return null;
-    }
-    // EXACT BEFORE NEARBY, then most-CONFIDENT first (Wilson lower bound, not raw
-    // success count — see pathway-rank.ts for why raw count and naive rate both
-    // rank pathways wrong).
-    eligible.sort(comparePathways);
-    const best = eligible[0];
-    const activities: string[] = best.path_activities.map((x: unknown) => String(x)).filter((s: string) => s.length > 0);
-    if (activities.length === 0) return null;
-    const _mode = best?.match_mode === "shape_signature" ? `shape_signature cover=${typeof best?.shape_cover === "number" ? best.shape_cover.toFixed(2) : "?"} borrowed_from_goal=${typeof best?.goal_hash === "string" ? best.goal_hash : "?"}` : "goal_hash";
-    console.log(`[goal-host-vessel] pathway reuse: accepted ${activities.length}-step pathway via ${_mode} (${countOf(best.successful_executions)}/${countOf(best.total_executions)} reached) of ${paths.length} recommended (mode: ${j?.mode}), dropped ${paths.length - eligible.length}`);
-    return {
-      activities,
-      borrowed: best?.match_mode === "shape_signature",
-      goalHash: typeof best.goal_hash === "string" ? best.goal_hash : null,
-      pathSignature: typeof best.path_signature === "string" ? best.path_signature : null,
-      successfulExecutions: countOf(best.successful_executions),
-      totalExecutions: countOf(best.total_executions),
-    };
-  } catch { return null; }
-}
 // In-flight approach-alteration (self-recovery DURING goal-seeking): recommend a
 // DIFFERENT activity for the goal, excluding approaches that already failed to
 // reach it this run. Returns the next template id to target, or null when no
@@ -8493,6 +8437,9 @@ async function runGoalAsPoolWalkBody(
   // per-shape reason that lastRawResolveReason (last-wins) loses by the time the walk stalls.
   const satisfierFailures = new Map<string, string>();
   const pickFailures = new Map<string, string>();
+  // A LEARNED PATHWAY has no advertised producer to ask for (no shape serves it), so every walk derives, and records that
+  // absence among its failed producers (the route-around record); it re-arms nothing and targets nothing.
+  pickFailures.set("lookup:learned-pathway", "learned-pathway lookup: no producer (no shape advertised)");
   // Each executed pick's declared output shapes (walkFailureMode: attribute a pick failure only to a shape never produced).
   const pickOutputs = new Map<string, string[]>();
   let routeAround: RouteAroundRecord | undefined;
@@ -14016,7 +13963,8 @@ async function runGoalWithRecoveryInner(
   // preference) and the recovery loop (as a seed target), so reuse costs one
   // lookup rather than one per path — and so both planes agree about which
   // composition this dispatch is reusing.
-  let reachingPathway: ReachingPathway | null = null;
+  // Stays null until a learned-pathway producer is advertised (the walk input of design P); typed so its readers stay.
+  const reachingPathway = null as ReachingPathway | null;
   let seededOutputShapes = opts.expectedOutputShapes;
   let terminalOutputShapes: string[] | undefined;
   let goalTargetDecision: GoalTargetDecision | null = null;
@@ -14702,12 +14650,8 @@ async function runGoalWithRecoveryInner(
         if (seededOutputShapes) seededOutputShapes = writeDoorShapes(seededOutputShapes, false, "target", goalHashOf(goal), tap);
         if (terminalOutputShapes) terminalOutputShapes = writeDoorShapes(terminalOutputShapes, false, "target", goalHashOf(goal), tap);
       }
-      // REUSE BEFORE DERIVE: consult the proven-composition store BEFORE the walk,
-      // not only in the recovery loop it used to be confined to. `ablation.disableReuse`
-      // suppresses it so a cold-derivation counterfactual arm stays cold.
-      if (!reachingPathway && goal && !opts.ablation?.disableReuse) {
-        reachingPathway = await recommendReachingPath(goal, seededOutputShapes ?? null);
-      }
+      // REUSE BEFORE DERIVE: no producer of a learned pathway is advertised (the store's recommend route was REST only,
+      // and that store is gone), so there is nothing to ask; each walk records the absence (lookup:learned-pathway).
       const _headAct = (reachingPathway?.activities as unknown[] | undefined)?.[0];
         const _pathHeadSat = typeof _headAct === "string" && _headAct.startsWith("satisfier:") ? _headAct.slice("satisfier:".length) : null;
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
@@ -15191,7 +15135,7 @@ async function runGoalWithRecoveryInner(
   if (!nextTarget && goal) {
     // Already consulted before the pool walk — reuse that result rather than
     // re-querying, so one dispatch means one lookup and both planes agree.
-    const reaching = reachingPathway ?? (opts.ablation?.disableReuse ? null : await recommendReachingPath(goal, seededOutputShapes ?? null));
+    const reaching = reachingPathway;
     if (reaching) {
       // The walk still SEEDS on the head of the pathway, but the whole ordered
       // pathway is now logged and available rather than discarded at the call

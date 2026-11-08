@@ -138,3 +138,22 @@ describe("guard 1 (pure): a failed lookup never changes the walk's failure label
     expect(withLookup).toEqual(without);
   });
 });
+
+// A2 (agf_1x05yvmnxbee): NO learned-pathway producer is advertised (the store's /v2/goal-paths/recommend was a REST route
+// with no resolve shape), so the walk asks nothing and records the absence among its failed producers on every walk.
+describe.skipIf(!HERMETIC)("the learned-pathway absence is observable on the walk's own trace", () => {
+  test("no recommend dial in the source; the absence is recorded once per walk, as a failed producer", () => {
+    expect(SRC.match(/fetch\(`\$\{ACTIVITY_API_ENDPOINT\}\/v2\/goal-paths\/recommend`/g)?.length ?? 0).toBe(0);
+    expect(SRC).not.toContain("async function recommendReachingPath(");
+    expect(SRC.match(/pickFailures\.set\("lookup:learned-pathway", "learned-pathway lookup: no producer \(no shape advertised\)"\);/g)?.length).toBe(1);
+  });
+  test("read BY SHAPE from the walk execution's executionTrace output: route_around names the absence; no recommend request; 0 RE-ATTEMPT", async () => {
+    const r = await replay(scenario("learned-pathway-absent", { status: 404, json: NOT_FOUND }));
+    expect(r.requests.some((q) => q.url.includes("/v2/goal-paths/recommend"))).toBe(false);
+    const ra = r.walkTraceOutputs[0]!.executionTrace[0].route_around;
+    const f = (ra?.failed_producers ?? []).find((x: { producer: string }) => x.producer === "lookup:learned-pathway");
+    expect(f?.reason).toBe("learned-pathway lookup: no producer (no shape advertised)");
+    expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
+    expect(firstWalk(r.log)).not.toContain("would be re-eligible");
+  }, 120_000);
+});
