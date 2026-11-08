@@ -132,6 +132,8 @@ export interface WalkVerdict {
   selectedTemplateId?: string;
   completionShapes: string[] | null;
   attempts: number;
+  /** The walk's route-around record (route-around.ts buildRouteAround), when the walk built one. */
+  routeAround?: unknown;
 }
 
 /** THE WALK'S OUTPUTS (R2): the trace record (shape executionTrace) first, then every impulse the walk's pool holds that
@@ -155,6 +157,8 @@ export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: read
       completion_shapes: verdict.completionShapes,
       attempts: verdict.attempts,
       outputs: produced.map((i) => ({ id: i.id, shape: (i.metadata as Record<string, unknown> | undefined)?.["shape"] ?? null })),
+      // a snapshot: the dispatcher later notes the retry route it took on the live record (noteRouteTaken)
+      route_around: verdict.routeAround === undefined ? null : structuredClone(verdict.routeAround),
     },
   };
   return [trace, ...produced.map((i) => ({ ...i, metadata: { ...i.metadata } }))];

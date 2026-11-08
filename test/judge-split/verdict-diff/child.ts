@@ -567,7 +567,7 @@ function drivePromise<T>(p: Promise<T>, label: string): Promise<{ value?: T; err
 }
 
 // ── import the tree ────────────────────────────────────────────────────────────────────────────
-const NEEDED_NAMES = ["handleRunGoal", "handleResolve", "executionStore", "registerBuiltinResolvers", "registerDevVesselProxies", "registerDiscoveryProxies"];
+const NEEDED_NAMES = ["handleRunGoal", "handleResolve", "executionStore", "registerBuiltinResolvers", "registerDevVesselProxies", "registerDiscoveryProxies", "host"];
 const INDEX_PATH = `${TREE.replace(/\/+$/, "")}/src/index.ts`;
 const escaped = INDEX_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 Bun.plugin({
@@ -591,7 +591,12 @@ type Mod = {
   __vd_registerDevVesselProxies: () => Promise<unknown>;
   __vd_registerDiscoveryProxies: () => Promise<unknown>;
   __vd_restoreDispatchStoreAtBoot?: () => Promise<void>;
+  __vd_host?: { runtime: { traceSink: { record: (t: Record<string, unknown>) => unknown }; store: { get: (id: string) => { metadata?: Record<string, unknown>; content?: unknown } | undefined } } };
 };
+// OPT-IN (VD_WALK_TRACE_OUTPUTS=1, test/walk-producer-lookup.test.ts): the executionTrace output of every walk execution,
+// read BY SHAPE from that execution's outputImpulseIds when its trace is recorded. Written to the .log.json side file
+// only, so the verdict JSON (the golden) is unchanged.
+const walkTraceOutputs: Array<{ executionId: unknown; executionTrace: unknown[] }> = [];
 
 const RECORD_FIELDS = ["status", "reached", "goalReachReason", "selectedTemplateId", "executionId", "completionShapes", "attempts", "attemptCount", "executionPath", "abstain", "learning", "answerBody", "humanGraded", "humanReachNotes", "error", "trigger", "stage", "grounded", "inferenceConfidence", "requeueOf", "routeArounds"];
 const MARKERS: Array<[string, RegExp]> = [
@@ -626,6 +631,17 @@ function reasonClass(reason: unknown): string | null {
 async function main(): Promise<void> {
   const mod = (await drivePromise(import(INDEX_PATH) as Promise<Mod>, "import")).value;
   if (!mod) throw new Error("index.ts import did not settle");
+  if (process.env["VD_WALK_TRACE_OUTPUTS"] === "1" && mod.__vd_host) {
+    const rt = mod.__vd_host.runtime;
+    const record = rt.traceSink.record.bind(rt.traceSink);
+    rt.traceSink.record = (t: Record<string, unknown>) => {
+      if (t["templateId"] === "goal-host-vessel:walk") {
+        const outs = ((t["outputImpulseIds"] as string[] | undefined) ?? []).map((id) => rt.store.get(id)).filter((i) => i?.metadata?.["shape"] === "executionTrace");
+        walkTraceOutputs.push({ executionId: t["id"], executionTrace: outs.map((i) => i!.content) });
+      }
+      return record(t);
+    };
+  }
   // THE VERDICT-CORPUS STATUS FIXTURE. The golden records walk and judge behaviour from BEFORE any credit hold
   // existed, and this harness is a move-equivalence tool, so it compares like with like: the tree's credit hold
   // (the same module instance index.ts imported) is given a fresh runner status that holds nothing
@@ -724,7 +740,7 @@ async function main(): Promise<void> {
     intervalsRegistered,
     harness: { aborted, virtualMsElapsed: now - EPOCH, timerFires: fires, pendingTimers: timers.size },
   });
-  const logsOut = { scenario: scenario.id, logs };
+  const logsOut = { scenario: scenario.id, logs, ...(process.env["VD_WALK_TRACE_OUTPUTS"] === "1" ? { walkTraceOutputs } : {}) };
   nodeFs.writeFileSync(OUT_PATH, JSON.stringify(out, null, 2) + "\n");
   nodeFs.writeFileSync(OUT_PATH.replace(/\.json$/, ".log.json"), JSON.stringify(logsOut, null, 2) + "\n");
 }

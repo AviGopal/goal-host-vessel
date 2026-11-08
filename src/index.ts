@@ -8399,6 +8399,36 @@ async function runGoalAsPoolWalkBody(
   const walkObservations: Array<{ id: string; shape: "walkObservation"; producer: string; instanceKey: string | null; reason: string }> = [];
   /** The pool's version: it only grows (the pool and the observations are append-only). */
   const poolVersion = (): number => poolImpulses.length + walkObservations.length;
+  /** THE PRODUCER LOOKUP is a search hop through discovery (R1): the walk asks discovery to resolve a
+   *  discoverByShapesQuery and reads the activity rows its producer answers. When no producer answers, the lookup fails
+   *  honestly, naming the shape: the failure goes to the walk's pickFailures (the route-around record's failed
+   *  producers), classed by the one shared transient rule (transient-failure.ts). It is not an observation (it does not
+   *  move the pool version, so it re-arms no producer), not a target and not a demand. */
+  const lookupProducers = async (query: Record<string, unknown>): Promise<any[]> => {
+    let status: number | undefined;
+    let reason: string;
+    try {
+      const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
+        body: JSON.stringify({ pointer: { type: "discoverByShapesQuery", ...query } }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (r.ok) {
+        const j: any = await r.json();
+        const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
+        return Array.isArray(rows) ? rows : [];
+      }
+      status = r.status;
+      reason = `HTTP ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`;
+    } catch (e) {
+      reason = String((e as Error)?.message ?? e).slice(0, 200);
+    }
+    const cls = isTransientFailure(reason, status) ? "transient" : "non_transient";
+    pickFailures.set("lookup:discoverByShapesQuery", `${status !== undefined ? `HTTP ${status} ` : ""}no producer (${cls}): ${reason}`.slice(0, 240));
+    tap(`[goal-host-vessel] walk(${opts.surface}): producer lookup: no producer answered discoverByShapesQuery (${reason}) — ${cls}, recorded among the walk's failed producers`);
+    return [];
+  };
   /** The pool key addToPool dedupes on: the send's instance key, else the adder's, else one per (shape, producer). */
   const poolKeyFor = (shape: string, prov?: PoolProvenance, sendKey?: string): string => sendKey ?? prov?.instanceKey ?? defaultInstanceKey(shape, prov?.producedBy);
   /** Pool ids (and producers) of the hop outputs the write door admitted as writes, in order (walk-instances.ts withWorld). */
@@ -11657,19 +11687,12 @@ If one of those sibling shapes is the action that would create what the goal ask
     let candidates: WalkCandidate[] = [];
     try {
       const _sig1 = (await getCachedStateSignature())?.signature_hash;
-      const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-        // No `state_signature` (OP-1): the situational hash is not the 16-hex shape-pool key and nothing reads it
-        // here; `signature` + `completion_shapes` are what
-        // the ψ readout guard destructures. Both are needed — see psi-inputs.ts.
-        body: JSON.stringify({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...psiInputs(_sig1, target) }),
-        signal: AbortSignal.timeout(20_000),
-      });
-      if (r.ok) {
-        const j: any = await r.json();
-        const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
-        candidates = (Array.isArray(rows) ? rows : [])
+      // No `state_signature` (OP-1): the situational hash is not the 16-hex shape-pool key and nothing reads it
+      // here; `signature` + `completion_shapes` are what
+      // the ψ readout guard destructures. Both are needed — see psi-inputs.ts.
+      const rows = await lookupProducers({ required_shapes: [...producedShapes], include_scores: true, mode: "backward", limit: 50, ...psiInputs(_sig1, target) });
+      {
+        candidates = rows
           .map((c: any) => readCandidateShapes(c, _blendK))
           .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id));
       }
@@ -11714,15 +11737,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         candidates.some((c) => c.outputShapes.some((s) => missingT.includes(s)));
       if (missingT.length > 0 && !haveTargetProducer) {
         try {
-          const fr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingT, include_scores: true, mode: "forward", limit: 50, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
-            signal: AbortSignal.timeout(20_000),
-          });
-          if (fr.ok) {
-            const fj: any = await fr.json();
-            const frows = fj?.activities ?? fj?.matches ?? fj?.body?.activities ?? fj?.results ?? [];
+          const frows = await lookupProducers({ required_shapes: missingT, include_scores: true, mode: "forward", limit: 50, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) });
+          {
             const seen = new Set(candidates.map((c) => normActivityId(c.id)));
             for (const c of (Array.isArray(frows) ? frows : []).map((c: any) => readCandidateShapes(c, _blendK))) {
               if (c && !seen.has(normActivityId(c.id)) && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id)) {
@@ -11857,15 +11873,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (T) {
         let forward: WalkCandidate[] = [];
         try {
-          const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: [T], include_scores: true, mode: "forward", limit: 50, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) }),
-            signal: AbortSignal.timeout(20_000),
-          });
-          if (r.ok) {
-            const j: any = await r.json();
-            const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
+          const rows = await lookupProducers({ required_shapes: [T], include_scores: true, mode: "forward", limit: 50, ...psiInputs((await getCachedStateSignature())?.signature_hash, target) });
+          {
             forward = (Array.isArray(rows) ? rows : []).map((c: any) => readCandidateShapes(c, _blendK)).filter((c): c is WalkCandidate => c !== null);
             // WRITE DOOR (template pick): the OR-edge's own forward fetch never passed through `candidates`.
             const _preForward = forward;
@@ -12114,15 +12123,8 @@ If one of those sibling shapes is the action that would create what the goal ask
       if (missingTargets.length > 0) {
         try {
           const _sig2 = (await getCachedStateSignature())?.signature_hash;
-          const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-            body: JSON.stringify({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...psiInputs(_sig2, target) }),
-            signal: AbortSignal.timeout(20_000),
-          });
-          if (r.ok) {
-            const j: any = await r.json();
-            const rows = j?.activities ?? j?.matches ?? j?.body?.activities ?? j?.results ?? [];
+          const rows = await lookupProducers({ required_shapes: missingTargets, include_scores: true, mode: "forward", limit: 50, ...psiInputs(_sig2, target) });
+          {
             const _found = (Array.isArray(rows) ? rows : [])
               .map((c: any) => readCandidateShapes(c, _blendK))
               .filter((c): c is WalkCandidate => c !== null && !exclude.has(normActivityId(c.id)) && !chain.includes(c.id))

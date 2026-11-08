@@ -22,7 +22,7 @@ const src = async () => await Bun.file(SRC).text();
 describe("selection wiring — the walk asks for edge evidence", () => {
   it("every discover-by-shapes request opts into scores", async () => {
     const s = await src();
-    const bodies = [...s.matchAll(/JSON\.stringify\(\{ required_shapes:[^\n]*?\}\)/g)].map((m) => m[0]);
+    const bodies = [...s.matchAll(/(?:JSON\.stringify|lookupProducers)\(\{ required_shapes:[^\n]*?\}\)/g)].map((m) => m[0]);
     expect(bodies.length).toBeGreaterThanOrEqual(5);
     for (const b of bodies) expect(b).toContain("include_scores: true");
   });

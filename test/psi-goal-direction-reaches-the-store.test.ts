@@ -47,17 +47,18 @@ async function source(): Promise<string> {
   return await Bun.file(SRC).text();
 }
 
-/** Every `discover-by-shapes` request body literal in the walk. */
+/** Every `discover-by-shapes` request body literal in the walk: the walk's producer lookups (`lookupProducers({...})`,
+ *  a discoverByShapesQuery through discovery) and the remaining direct dial (`/v2/activities/discover-by-shapes`). */
 function discoverBodies(src: string): string[] {
   const out: string[] = [];
-  const marker = "/v2/activities/discover-by-shapes";
+  for (const [marker, open] of [["/v2/activities/discover-by-shapes", "body: JSON.stringify({"], ["await lookupProducers({", "await lookupProducers({"]] as const) {
   let i = src.indexOf(marker);
   while (i !== -1) {
-    // The body: JSON.stringify({...}) sits within the fetch options that follow the URL.
+    // The body: the object literal that follows the URL's fetch options, or the lookup's argument.
     const window = src.slice(i, i + 900);
-    const b = window.indexOf("body: JSON.stringify({");
+    const b = window.indexOf(open);
     if (b !== -1) {
-      const start = b + "body: JSON.stringify(".length;
+      const start = b + open.length - 1;
       // Balanced-brace scan, so a nested `...(cond ? {a} : {})` spread cannot truncate it.
       let depth = 0;
       let end = start;
@@ -69,6 +70,7 @@ function discoverBodies(src: string): string[] {
       out.push(window.slice(start, end));
     }
     i = src.indexOf(marker, i + marker.length);
+  }
   }
   return out;
 }
