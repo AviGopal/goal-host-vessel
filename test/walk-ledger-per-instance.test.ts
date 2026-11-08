@@ -95,3 +95,44 @@ describe.skipIf(!HERMETIC)("a re-run after a success is decided per instance (ca
     expect(walk1).toContain("walk rawResolve bounded_shell (satisfier-direct): NOT sent — the same instance re-run is not re-attempted");
   }, 180_000);
 });
+
+/** noteS is produced by its action sibling noteS_make (the direct read always fails). hopR, on another vessel, needs noteS
+ *  and refuses it (curable), so its bound demand re-runs satisfier:noteS after that success. The re-run's direct read
+ *  fails again (an identical failed instance) and the action pick answers the SAME sibling call again. */
+const sibling = () => ({
+  id: "ledger-per-instance-sibling",
+  description: "walk ledger per-instance test (not part of the verdict-diff corpus)",
+  fleet: { vessels: [
+    { id: "note-vessel", endpoint: "http://note-vessel.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["noteS", "noteS_make"] },
+    { id: "hop-vessel", endpoint: "http://hop-vessel.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["hopR"] },
+  ] },
+  routes: [
+    { id: "llm:target-inference", method: "POST", caller: "goal-host:goal_target_inference",
+      respond: { llm: JSON.stringify({ target_shapes: ["noteS", "hopR"], confidence: 0.9, alternatives: [] }) } },
+    { id: "schema:hopR", method: "POST", type: "resolver_schema", body: ['"shape":"hopR"'],
+      respond: { json: { success: true, shape: "resolver_schema", body: { shape: "hopR", known: true, fields: [{ name: "n", required: true, type: "string", from_shape: "noteS" }] } } } },
+    { id: "schema:noteS", method: "POST", type: "resolver_schema", body: ['"shape":"noteS"'],
+      respond: { json: { success: true, shape: "resolver_schema", body: { shape: "noteS", known: true, fields: [{ name: "title", required: true, type: "string" }] } } } },
+    { id: "llm:arg-extraction", method: "POST", caller: "goal-host:pointer_arg_extraction", respond: { llm: JSON.stringify({ title: "t1" }) } },
+    { id: "llm:action", method: "POST", caller: "goal-host:action_shape_selection", respond: { llm: JSON.stringify({ shape: "noteS_make", args: { title: "t1" } }) } },
+    { id: "hop:noteS_make", method: "POST", type: "noteS_make", respond: { json: { success: true, shape: "noteS_make", body: { made: "t1" } } } },
+    { id: "hop:noteS", method: "POST", type: "noteS", respond: { json: { success: false, error: "noteS: t1 is not readable here" } } },
+    { id: "hop:hopR", method: "POST", type: "hopR", respond: { json: { success: false, error: "hopR: n is not the note this hop needs" } } },
+    { id: "judge", method: "POST", caller: "goal-host:reach_verification", respond: { llm: "{\"reached\": false, \"reason\": \"hopR refused\", \"completion_shapes\": []}" } },
+    { id: "floor:answer", method: "POST", caller: "goal-host:floor_tool_loop", respond: { json: { success: true, shape: "llmTextCompletion", body: { text: "UNKNOWN" } } } },
+  ],
+  steps: [{ op: "runGoal", body: { goal: "Make the note and report what the hop answers." } }],
+});
+
+describe.skipIf(!HERMETIC)("a re-run after a success checks its action sibling's send too (cap absent)", () => {
+  test("the same sibling call the earlier success made is not sent again", async () => {
+    const r = await replay(sibling());
+    const walk1 = firstWalk(r.log);
+    expect(walk1).toContain('satisfier action "noteS_make" produced');
+    expect(walk1).toContain("bound demand — hopR refused with hopR.n bound to noteS");
+    expect(walk1).toContain("walk rawResolve noteS_make (satisfier-action): NOT sent — the same instance re-run is not re-attempted");
+    expect(walk1).toContain('"producer":"satisfier:noteS"');
+    // one sibling call in the first walk (a recovery walk after it starts a fresh ledger)
+    expect(count(walk1, 'satisfier action "noteS_make" produced')).toBe(1);
+  }, 180_000);
+});

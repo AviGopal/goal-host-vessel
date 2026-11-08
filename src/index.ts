@@ -8376,7 +8376,9 @@ async function runGoalAsPoolWalkBody(
     return true;
   };
   /** R-B1: a re-run after a success sends once its inputs are bound; the instance key decides it, tapped once per
-   *  instance and decision. A new instance is first; the same instance is a re-attempt (cap, then step budget). */
+   *  instance and decision. A new instance is first; the same instance is a re-attempt (cap, then step budget). Every
+   *  send of the attempt is checked (its own shape and its action sibling) until one is admitted; `shape` is the
+   *  attempt's producer shape. */
   const instanceTapped = new Set<string>();
   const instanceMaySend = async (shape: string, key: string): Promise<boolean> => {
     const p = `satisfier:${shape}`;
@@ -9180,7 +9182,7 @@ async function runGoalAsPoolWalkBody(
       tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — identical instance already failed in this walk`);
       return null;
     }
-    if (attemptSendOf(shape, site) && curAttempt?.provisional && shape === curAttempt.shape && !(await instanceMaySend(shape, withWorld(instanceKey(shape, pointer, sent.names), curAttempt.world)))) {
+    if (attemptSendOf(shape, site) && curAttempt?.provisional && !(await instanceMaySend(curAttempt.shape, withWorld(instanceKey(shape, pointer, sent.names), curAttempt.world)))) {
       noteRawResolveFailure(shape, "the same instance was already sent after its success in this walk");
       tap(`[goal-host-vessel] walk rawResolve ${shape} (${site}): NOT sent — the same instance re-run is not re-attempted`);
       return null;
