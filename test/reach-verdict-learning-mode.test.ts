@@ -51,8 +51,7 @@ describe("an observe edit-intent dispatch abstains", () => {
     expect(o.abstain).toEqual({ kind: "observe-dry-run", cuts: [] });
     expect(o.goalReachReason).toBe("observe: dry run, not landed — feature_compose verdict=FAVORABLE; ops=2");
   });
-  test("[MUST-FAIL] all three observe returns of the edit-intent route are that abstain", () => {
-    expect(SRC.match(/\.\.\.observeComposeOutcome\(/g)?.length).toBe(3);
+  test("[MUST-FAIL] an observe dry run is that abstain, never a reason-only failure", () => {
     expect(SRC).not.toContain("goalReachReason: observeComposeReason(");
     expect(SRC).toContain('type GateAbstain = { kind: "cut-view" | "oracle-abstain" | "observe-dry-run"; cuts: JudgeCut[]; family?: string };');
   });

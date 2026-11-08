@@ -259,12 +259,11 @@ import { planAdaptation, nextBodyStep, type AdaptPlan } from "./pathway-adapt";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
 import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
-import { singleFileTargetLine } from "./edit-intent-target";
 import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } from "./refusal-decline";
 import { conceptRecallPointer } from "./concept-recall-pointer";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
 import { templateReachVerdict } from "./template-reach-rule";
-import { ADMISSION_REFUSE_CLASS_PREFIX, composeAdmissionRefusal, isNonAttemptOutcome } from "./compose-admission-refusal";
+import { isNonAttemptOutcome } from "./compose-admission-refusal";
 import { resolveBodyHonestyPolicy } from "./body-honesty-policy";
 import { resolveWalkBudget } from "./walk-budget";
 import { registryFieldFor, registryCountCommandFor, registryRatioFor, registryRatioCommandFor } from "./registry-field";
@@ -283,7 +282,7 @@ import { consensusSymbols } from "./goal-file-resolution";
 import { emptyResultSetReason } from "./empty-result-set";
 import { resolveReportBody } from "./resolve-report-body";
 import { decideContinuation } from "./walk-continuation.js";
-import { pickSatisfierProducer, pickComposeOwner, satisfierProvenBad } from "./satisfier-pick.js";
+import { satisfierProvenBad } from "./satisfier-pick.js";
 import { classifyExecutionPath, type WalkTier } from "./execution-path";
 import { makeProducerPickHelpers } from "./producer-pick.js";
 import { SHADOW_ROUTE_PREFIX, transportHopHeaders, routedComplete, routedText, flushRouterFeedback, unwrapLlmContent, peekRouterUsage, setRouterDispatchIdReader, peekDispatchUsage, takeDispatchUsageDelta } from "./llm-router";
@@ -306,7 +305,6 @@ import { BusForwardingEventSink, TranslatingTraceSink } from "@avigopal/ias-exec
 // import, so anything defined here is untestable and this parse has now produced both a
 // false green and a false red. See file-extension.ts for both incidents.
 import { parseFileExtension } from "./file-extension";
-import { decideEscalationTarget } from "./escalation-target";
 import { parseGoalNoteTitle, orderWriteSinks } from "./goal-note-title";
 import { attachWriteTasks, createAppliedWriteLedger, groundedForMint, hasVerifiedWriteAnchor, isAppliedWriteShape, readBackConfirms, settleVerifiedWrite, spliceStepWrites, walkResolveBody, writeReadShape, writtenRecordIdOf, type WriteTaskRecord } from "./applied-write";
 import { isSatisfierOnlyTrace, satisfierReachMetadata, satisfierStepAudit, thrownVerifyDurableTrace, withBetaWithheld } from "./satisfier-durable-trace";
@@ -324,7 +322,7 @@ import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, re
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations, verifyStatedBound, type JudgeShadow } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
-import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText, prohibitsAnyMutation, asksForDescriptionUnderChangeProhibition } from "./goal-intent";
+import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText } from "./goal-intent";
 import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
@@ -348,13 +346,12 @@ import { attributionFields } from "./dispatch-attribution";
 import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
-import { composeReportStage, cutCallerOutcome, cutCallerReason, newestLessonSince } from "./check-supply-ledger-reason";
-import { editIntentRouteDecision, editIntentRouteLine, inProcessLanding, landingSatisfiedBy, LANDING_TARGET_SHAPE, withLandingTarget } from "./edit-intent-route";
+import { inProcessLanding, landingSatisfiedBy, LANDING_TARGET_SHAPE, withLandingTarget } from "./edit-intent-route";
 import { admittedChange, DoorRefusals, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, templateRunRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
 // Templates a write door refused, per dispatch: refused again on any re-offer, taken at the terminal record write.
 const doorRefusals = new DoorRefusals();
 import { walkEgressFetch, isWalkEgressRefused, setWalkEgressLearningModeReader } from "./walk-egress-guard";
-import { observeComposeFields, observeComposeOutcome, observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeComposeRecord, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
+import { observeDropFrom, observeSkipCounters, observeSkips, observeTaggingSink, observeDecomposeFields, type ObserveComposeRecord, type ObserveSideEffect } from "./observe-mode";
 import { UNIVERSAL_READ_TOOLS } from "./floor-tools";
 import { isShapeName } from "./shape-name";
 import { confirmComposeLanding } from "./compose-landing-evidence";
@@ -368,7 +365,7 @@ import { spliceExecPlaceholders } from "./exec-placeholder";
 import { consumeOracleLabel, isCacheableLabelResponse, type OracleLabelRecord } from "./oracle-label-consumer";
 import { AWAITING_PERSON_VERDICT, awaitsPersonVerdict, personVerdictView } from "./pending-person-verdicts";
 import { ALPHA_WITHHELD_NO_EDGE, boundBankCandidate, deferralExpired, deferralWindowMs, effectiveOriginator, expireDeferral, expiryOutcome, judgeFallbackDeferral, isJudgeOnlyReach, mintTraceFromStore, openDeferral, retainsRecord, type DeferredReach } from "./person-verdict";
-import { operatorCredentialFromRequest, operatorCredentialHeaders } from "./operator-credential";
+import { operatorCredentialFromRequest } from "./operator-credential";
 import { authenticateInbound, GATED_RESOLVE_TYPES, SELF_PRINCIPAL, principalLabel, principalRecord, principalTag, operatorAuthority, dispatchAttribution, inboundAuthCounters, type Principal } from "./inbound-auth";
 import * as requestQueue from "./request-queue";
 import { setInProcessRunGoal } from "./in-process-dispatch";
@@ -1277,22 +1274,6 @@ export function deliverReachVerdict(
 
 const SHAPES = ["goal_execution", "activity_execution", "activeDispatches", "goalWalkState", "goalWalkOutput", "poolImpulse_write", "solicitationResponse_write", "solicitationHeartbeat_write", "goalDispatchAsync", "fleetActivityFeed", "bodyHonestyPolicy", "walkBudget", "lessonExecutionPolicy", "extractionPolicy", "pathwayReusePolicy", "requestLease", "requestLease_renew", "resolverRequest", "verdictCorpusRun", "verdictConsistency"] as const;
 const VERSION = "0.1.0";
-/** Each of several compose owners' free slots, from its own composeOwnership PLACEMENT answer (the read the placement
- *  rule already makes: {targets} on the pointer; development-vessel compose-placement.ts). Written onto the row as
- *  `compose_free` (null: no answer, or no capacity reported). Only asked when there is a choice to make. */
-async function readComposeFreeSlots(owners: Array<{ endpoint?: unknown; resolve_endpoint?: string; compose_free?: number | null }>, targets: string[]): Promise<void> {
-  if (owners.length < 2) return;
-  await Promise.all(owners.map(async (r) => {
-    r.compose_free = null;
-    try {
-      const u = `${String(r.endpoint ?? "").replace(/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
-      const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership", targets } } }), signal: AbortSignal.timeout(3_000) });
-      const j = await res.json() as { body?: { placement?: { capacity?: { free?: unknown } | null } }; content?: { placement?: { capacity?: { free?: unknown } | null } } };
-      const free = (j?.body ?? j?.content)?.placement?.capacity?.free;
-      if (typeof free === "number" && Number.isFinite(free)) r.compose_free = free;
-    } catch { /* an owner that does not answer reports no free slot */ }
-  }));
-}
 const DEV_VESSEL_ENDPOINT = process.env.DEVELOPMENT_VESSEL_ENDPOINT ?? "http://127.0.0.1:8090";
 // CONCEPT_DB_ENDPOINT (a pinned http://127.0.0.1:8260 default) is deliberately GONE.
 // Leaving it declared but unused invites the next call site to reach for it again, and
@@ -7594,118 +7575,6 @@ function tierFromChain(chainIds: string[]): WalkTier {
  * the correlation that makes reuse look effective (law 12).
  */
 /**
- * LAST-CHANCE LANDING CHECK — did this edit goal's commit reach origin/dev after we
- * stopped waiting?
- *
- * Measured 2026-09-03, twice, end to end. The EARLY EDIT-INTENT route to feature_compose
- * times out AT THE CALLER ("The operation timed out."), the walk falls through and grades
- * `deterministic:edit-intent-no-landed-edit` — correctly, at that instant — and the callee
- * then lands the commit anyway. Dispatch f7f15948 was graded failed while `edd2e44` sat on
- * origin/dev; e20c6a91 was graded failed while `82b030e` sat on origin/dev. Both were
- * verified against the deployed binary.
- *
- * The reconciler at the bottom of this file (:15968 region) already knows how to grade a
- * landed sha, but it reads /workspace/proposals/route-edit-<h>-compose-report.json, and a
- * retried attempt OVERWRITES that file with rolled_back:true after the successful landing
- * (measured: commit 04:39:57, report rewritten 04:56:16). So the report cannot be the
- * evidence. Git can: the cutover writes `route-edit-<goalHashOf(goal)>` into the commit
- * subject and the `Gap:` trailer, and goalHashOf is computed right here.
- *
- * This asks the SAME question the gate already asks — is there a landed sha? — only later.
- * It cannot manufacture a green the existing rule would refuse: the commit found by git log
- * must be a genuine cutover commit (verified via Gap trailer), AND match a new_git_sha in a
- * FAVORABLE compose report. Every failure path (bad vessel name, missing clone, git error,
- * no match, sha mismatch, missing/mismatched Gap trailer, revert commit) returns null and
- * leaves the caller's verdict untouched. Strictly false-negative → true-positive, never the
- * reverse.
- */
-async function landedShaForGoalHash(vessel: string, h: string): Promise<string | null> {
-  if (!vessel || vessel.includes("..") || !/^[0-9a-f]{8}$/.test(h)) return null;
-  try {
-    // Same shape as the `git -C dir show` probe above: /workspace/git/vessels/<vessel> is
-    // the clone host-pull-sync fast-forwards against origin/dev.
-    const proc = Bun.spawn(
-      ["git", "-C", `/workspace/git/vessels/${vessel}`, "log", "origin/dev", "-1", "--format=%H", `--grep=route-edit-${h}`],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const out = (await new Response(proc.stdout).text()).trim();
-    const code = await proc.exited;
-    if (code !== 0) return null;
-    if (!/^[0-9a-f]{40}$/.test(out)) return null;
-    // A COMMIT IS NOT AN ACHIEVEMENT. The sha proves work landed; it does not prove the
-    // work did what the goal asked. Measured 2026-09-03: 023f9b1 landed for
-    // route-edit-c10beb80, the goal was NOT met, and this helper graded it reached:true.
-    // Demand the corroboration the crash-recovery reconciler further down this file
-    // demands: a FAVORABLE compose report carrying a cutover new_git_sha. That report is
-    // trustworthy again since development-vessel ce10c8b stopped a failed retry from
-    // overwriting a favorable one. Every doubt below returns null, so this can only ever
-    // WITHHOLD a reach, never invent one.
-    // ADDITIONAL EVIDENCE BAR: verify the commit is a genuine cutover for this goal by
-    // checking its Gap trailer. A commit merely mentioning the goal hash in its message
-    // (e.g. a revert, a follow-up, or an unrelated reference) is not sufficient.
-    try {
-      const showProc = Bun.spawn(
-        ["git", "-C", `/workspace/git/vessels/${vessel}`, "show", "-s", "--format=%B", out],
-        { stdout: "pipe", stderr: "pipe" },
-      );
-      const commitMsg = (await new Response(showProc.stdout).text()).trim();
-      const showCode = await showProc.exited;
-      if (showCode !== 0) return null;
-      // Verify Gap trailer matches the goal hash exactly.
-      const gapTrailerMatch = commitMsg.match(/^Gap:\s*route-edit-([0-9a-f]{8})$/m);
-      if (!gapTrailerMatch || gapTrailerMatch[1] !== h) {
-        console.warn(`[goal-host-vessel] late-landing: commit ${out} for route-edit-${h} lacks matching Gap trailer; withholding reach`);
-        return null;
-      }
-      // Verify not a revert commit.
-      const subjectLine = commitMsg.split("\n")[0] ?? "";
-      if (subjectLine.startsWith("Revert ")) {
-        console.warn(`[goal-host-vessel] late-landing: commit ${out} for route-edit-${h} is a revert; withholding reach`);
-        return null;
-      }
-    } catch {
-      return null;
-    }
-    try {
-      // `h` is the 8-hex GOAL HASH parameter of this function. The report is named for the
-      // goal hash, NOT for the commit sha in `out`.
-      const reportFile = Bun.file(`/workspace/proposals/route-edit-${h}-compose-report.json`);
-      if (!(await reportFile.exists())) {
-        // AUDIBLE, DELIBERATE FALSE NEGATIVE. No compose report exists for this goal hash.
-        // That is the normal case for a landing made by the patch_with_tools ESCALATION,
-        // which files provenance under a `pwt-<file>-<hash>` gap id and writes no proposal
-        // artifact — measured 2026-09-04: 19 of 101 recent activity-api landings, none with
-        // a report. Such landings cannot be credited here, and that is chosen rather than
-        // overlooked: nothing records whether a pwt landing was judged good, and crediting
-        // one on the sha alone is exactly the false positive this gate exists to prevent.
-        // Log it so an operator can tell "no commit" from "commit exists, uncreditable".
-        console.warn(`[goal-host-vessel] late-landing: commit exists for route-edit-${h} but no compose report — uncreditable (patch_with_tools landings have none); withholding reach`);
-        return null;
-      }
-      const report = JSON.parse(await reportFile.text()) as Record<string, unknown>;
-      if (report.verdict !== "FAVORABLE") return null;
-      const cutovers = Array.isArray(report.cutovers) ? (report.cutovers as Array<Record<string, unknown>>) : [];
-      const landedShas: string[] = [];
-      for (const c of cutovers) {
-        const res = (c?.result ?? {}) as Record<string, unknown>;
-        if (typeof res.new_git_sha === "string" && res.new_git_sha.length > 0) {
-          landedShas.push(res.new_git_sha);
-        }
-      }
-      if (landedShas.length === 0) return null;
-      // The commit we found via git log MUST be one of the favorably-landed SHAs.
-      // A commit merely mentioning the goal hash in its message is not sufficient.
-      if (!landedShas.includes(out)) return null;
-    } catch {
-      return null;
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * ANY LANDING OF THIS GOAL SINCE THE DISPATCH STARTED (value-per-cost-selection 3.1).
  *
  * landedShaForGoalHash above also demands a FAVORABLE compose report in THIS container's
@@ -8695,16 +8564,6 @@ function dispatchNeedsInformation(): boolean {
   const id = dispatchContext.getStore()?.dispatchId;
   return typeof id === "string" && (unboundByDispatch.get(id)?.missing().length ?? 0) > 0;
 }
-/** A feature_compose report that is NOT an attempt: the compose lane's capacity verdicts (BUSY / DRAINING / CAPACITY,
- *  the same test as the RETRYABLE CAPACITY branch) or an environment failure_kind (a deferred landing). The same
- *  definition as development-vessel's isNonAttemptComposeResult, read here from the report. */
-function composeNonAttemptOutcome(body: Record<string, unknown> | null | undefined): DispatchOutcome | undefined {
-  if (!body) return undefined;
-  const verdict = String(body["verdict"] ?? "");
-  const fk = typeof body["failure_kind"] === "string" ? (body["failure_kind"] as string) : "";
-  if (!/^(BUSY|DRAINING|CAPACITY)/i.test(verdict) && fk !== "environment") return undefined;
-  return { kind: "non_attempt", failure_kind: fk || "capacity", ...(typeof body["refuse_class"] === "string" ? { refuse_class: body["refuse_class"] as string } : {}) };
-}
 interface GoalSeekResult {
   result: Awaited<ReturnType<typeof host.runGoal>> | null;
   status: "failed" | "completed";
@@ -8718,7 +8577,7 @@ interface GoalSeekResult {
    *  the outcome is unconfirmed, not a disconfirmation, so walk-complete neither evicts the cached command nor
    *  remembers a failure for it (evictReachedCommand / rememberUnconfirmedDispatchFailures). Absent otherwise. */
   callerCut?: boolean;
-  /** A named refusal stage (e.g. check_supply_goal_missed_edit_route), carried onto the dispatch record and served by
+  /** A named refusal stage, carried onto the dispatch record and served by
    *  GET /executions/:id so refusals of one kind can be counted. Absent on ordinary results. */
   stage?: string;
   /** A NON-SUCCESS that is not a failed attempt, named structurally (CHANGE-30): "non_attempt" (the receiver will
@@ -14433,53 +14292,6 @@ If one of those sibling shapes is the action that would create what the goal ask
   };
 }
 
-// ── Verbatim-excerpt spec anchor (gap edit-intent-spec-builder-emits-schematic-anchors-not-file-text) ──
-// Both edit-intent spec builders below forwarded ONLY file path + goal prose, so the
-// drafter reconstructed its edit-op anchors schematically (paraphrased/re-indented
-// "remembered" code) and the ops missed the real file. Port of development-vessel's
-// specFromGap grounding (gap-to-feature.ts): read the CURRENT target file from the
-// clone roots this file already uses, center a ~40-line window on the edit line when
-// the goal names one, else on a symbol the goal names, else head of file, and append
-// it as a clearly-delimited VERBATIM EXCERPT the drafter must copy anchors from
-// byte-exact. Fail-open: unreadable file (e.g. create-intent net-new path) => "".
-async function verbatimExcerptBlock(editFile: string, editLine: string | undefined, goalText: string): Promise<string> {
-  try {
-    const candidates = [`/workspace/git/super-repo/${editFile}`, `/vessels/${editFile.replace(/^repos\//, "")}`];
-    let raw: string | null = null;
-    for (const c of candidates) { try { raw = await Bun.file(c).text(); break; } catch { /* next candidate */ } }
-    if (raw === null || raw.length === 0) return "";
-    const lines = raw.split("\n");
-    let start = 0;                       // 0-based first line of the window
-    let label = "top of file";
-    const ln = editLine ? parseInt(editLine, 10) : NaN;
-    if (Number.isFinite(ln) && ln > 0) {
-      start = Math.max(0, ln - 15);
-      label = `near line ${ln}`;
-    } else {
-      // No line reference: try a SYMBOL the goal names — first goal identifier that
-      // appears in a declaration-ish position in the file. Word-char-only idents so
-      // the constructed RegExp needs no escaping.
-      const idents = [...new Set(goalText.match(/\b[A-Za-z_][A-Za-z0-9_]{4,}\b/g) ?? [])]
-        .filter((w) => !/^(repos|src|index|goal|line|file|edit|add|insert|append|change|modify|replace|remove|delete|update|rename|refactor|wire|guard|create|scaffold|vessel|resolver|shape|endpoint|module|should|which|where|there|these|those)$/i.test(w));
-      for (const id of idents) {
-        const declRe = new RegExp(`\\b(?:function|const|let|var|class|interface|type|case)\\s+${id}\\b|\\b${id}\\s*[(:=]`);
-        const idx = lines.findIndex((l) => declRe.test(l));
-        if (idx >= 0) { start = Math.max(0, idx - 5); label = `around symbol ${id}`; break; }
-      }
-    }
-    const excerpt = lines.slice(start, start + 40).join("\n");
-    if (excerpt.trim().length === 0) return "";
-    return [
-      "",
-      `VERBATIM EXCERPT of ${editFile} (${label}; lines ${start + 1}-${Math.min(lines.length, start + 40)} of ${lines.length}) — the REAL current file text:`,
-      "\u0060\u0060\u0060",
-      excerpt,
-      "\u0060\u0060\u0060",
-      "All edit-op anchors (old/existing text, context lines) MUST be copied BYTE-EXACT from this excerpt or from the current file content — never paraphrased, re-indented, or reconstructed from memory.",
-    ].join("\n");
-  } catch { return ""; }
-}
-
 // ── Deterministic POST-STATE edit oracle (edit-family analogue of the counting recompute oracles).
 // An "add <symbol>" edit goal REACHES only if the landed target file OBSERVABLY contains the
 // requested symbol — reach = f(post-edit file), independent of the drafter's self-verdict or the
@@ -14756,14 +14568,8 @@ async function runGoalWithRecoveryInner(
 ): Promise<GoalSeekResult> {
   // Reason-plane tap (outer): mirror goal-decomposition lines to the caller's sink.
   const tap = (m: string): void => { console.log(m); opts.stepSink?.push(m); };
-  // LANDED PROBE BOUNDS (value-per-cost-selection 3.1): a commit for this goal counts as this
-  // dispatch's landing only if it landed after this instant; the flag records that the early
-  // compose was cut at the caller while the callee may still land it.
-  const _dispatchStartMs = Date.now();
-  let _earlyComposeCutAtCaller = false;
-  let _earlyComposeCutAtS: number | null = null; // seconds from dispatch start to the cut (check-supply-ledger-reason.ts)
   // THE WRITE DOORS (write-door.ts): admitted as a change iff the caller declared a write shape (read here, before
-  // inference seeds anything) or the early edit-intent route hands this dispatch to feature_compose (set there).
+  // inference seeds anything) or the edit-intent routing rules name a file to change (set below, before the walk).
   let _changeAdmitted = admittedChange({ admittedEditRoute: false, declaredOutputShapes: opts.expectedOutputShapes });
   // DEFAULT strategy (2026-06-23): when there's a goal, the caller did NOT pin a
   // target, and no firstTarget is supplied, WALK THE SHAPE GRAPH across multiple
@@ -15479,406 +15285,21 @@ async function runGoalWithRecoveryInner(
       terminalOutputShapes = undefined;
     }
     noteDispatchedTargets(goal, seededOutputShapes);
-    // The edit-intent route switch (edit-intent-route.ts), read once per dispatch: one decision line (mask id, state,
-    // why) into the dispatch's decision log. Never throws: an unreadable pool is variant 0.
-    const _editIntentRoute = editIntentRouteDecision(new Date().toISOString(), await readVariantMasks());
-    tap(editIntentRouteLine(opts.surface, _editIntentRoute));
     try {
-      // EARLY edit-intent check: if the goal names a repos/<vessel>/<path>.<ext> file
-      // AND contains an edit verb, skip the walk entirely and go straight to feature_compose.
-      // The decision is the routing rules' (src/routing-rules/edit-intent.ts decideHandoff, clamped by the closed
-      // routing core), pinned by the routing corpus; the predicate and its history live there.
-      // THE SWITCH IS A SHAPED RECORD (edit-intent-route.ts): the activityVariantMask row for
-      // goal-host-vessel:edit-intent-route, read here once per dispatch and used by the early route, the post-walk
-      // edit check and the late route below. Variant 0, no row, an unreadable pool: route as before; variant 1: walk.
-      const earlyEditIntentEnabled = _editIntentRoute.route_enabled;
-      // CAPTURE (closed, src/judge/capture.ts): the route switch exactly as this check read it.
-      judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: earlyEditIntentEnabled });
-      // VARIANT 1: no feature_compose hand-off, but the goal is still a change. Ask the same routing rules whether they
-      // WOULD have handed it off (their refusals of a goal that forbids change included); if so, admit the dispatch as
-      // a change and seed the landing shape as a walk target, so backward-chaining starts from the landing.
-      if (!earlyEditIntentEnabled) {
-        const wouldHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });
-        if (wouldHandoff.route === "feature_compose" && wouldHandoff.target) {
-          _changeAdmitted = true; // admitted on the edit-intent rules' own decision, walked instead of composed
-          seededOutputShapes = withLandingTarget(seededOutputShapes, isFsWriteShape);
-          goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
-          noteDispatchedTargets(goal, seededOutputShapes);
-          tap(`[goal-host-vessel] ${opts.surface}: edit-intent-route variant=1: change admitted, walking toward ${LANDING_TARGET_SHAPE} instead of feature_compose ` +
-            JSON.stringify({ goal_hash: goalHashOf(goal), target_file: wouldHandoff.target, targets: seededOutputShapes, mask_id: _editIntentRoute.mask_id, mask_state: _editIntentRoute.mask_state }));
-        }
-      }
-      const earlyHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: earlyEditIntentEnabled });
-      if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {
-        _changeAdmitted = true; // admitted on the edit-intent route; a compose that falls through walks as a change
-        const earlyEditFile = earlyHandoff.target;
-        const earlyEditVessel = earlyEditFile.split("/")[1]!;
-        // Multi-file goals (2026-07-17): a goal may name SEVERAL repos paths; the
-        // single-path spec told feature_compose "this EXACT path only" and silently
-        // dropped the rest (gap spliceability-goal-host-index-edit-intent-region
-        // documents the coax trail). Enumerate every named path and union the
-        // vessels; single-file goals keep the exact wording below.
-        const earlyAllFiles = Array.from(new Set(goalForRouting.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? [earlyEditFile]));
-        const earlyAllVessels = Array.from(new Set(earlyAllFiles.map((f) => f.split("/")[1]!)));
-        const earlyAfterFile = goalForRouting.slice(goalForRouting.indexOf(earlyEditFile) + earlyEditFile.length);
-        const earlyEditLine = earlyAfterFile.match(/^:(\d+)/)?.[1] ?? goalForRouting.match(/\bline\s+~?(\d+)/i)?.[1];
-        const earlyEditSite = earlyEditLine ? `${earlyEditFile}:${earlyEditLine}` : earlyEditFile;
-        try {
-          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT DETECTED (pre-walk, names ${earlyEditFile}) — routing to feature_compose`);
-          const earlySpec = [
-            "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
-            earlyAllFiles.length > 1
-              ? `Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${earlyAllFiles.join(", ")}`
-              : singleFileTargetLine(earlyEditFile, opts.variables), // a check-supply goal CREATES its check file (edit-intent-target.ts)
-            "The change MUST typecheck.",
-            "",
-            `GOAL: ${goalForRouting}`,
-          ].join("\n") + await verbatimExcerptBlock(earlyEditFile, earlyEditLine, goalForRouting);
-          const earlyGapId = composeGapIdOf(goal, opts.variables);
-          // CAPTURE (closed, src/judge/capture.ts): this dispatch is handed to the compose producer.
-          judgeCapture.noteRoutingHandOff({ goal: String(goal ?? ""), composeGapId: earlyGapId, editSite: earlyEditSite });
-          let earlyComposeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
-          try {
-            const earlyDr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-              body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "feature_compose" } }),
-              signal: AbortSignal.timeout(5_000),
-            });
-            const earlyDj = await earlyDr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-            const earlyRows = (earlyDj?.content?.vessels ?? []) as Array<import("./satisfier-pick.js").SatisfierProducer & { owned_repos?: string[]; vesselId?: string }>;
-            const earlyTargetVessel = /^repos\/([^/]+)\//.exec(earlyEditFile)?.[1] ?? "";
-            if (earlyRows.length > 1 && !earlyRows.some((r) => Array.isArray(r.owned_repos))) {
-              await Promise.all(earlyRows.map(async (r) => {
-                try {
-                  const u = `${String(r.endpoint ?? "").replace(/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
-                  const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership" } } }), signal: AbortSignal.timeout(3_000) });
-                  const j = await res.json() as { body?: { owned_repos?: unknown }; content?: { owned_repos?: unknown } };
-                  const owned = j?.body?.owned_repos ?? j?.content?.owned_repos;
-                  if (Array.isArray(owned)) r.owned_repos = owned.map(String);
-                } catch { /* a producer that does not answer claims nothing */ }
-              }));
-            }
-            const earlyOwners = earlyRows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(earlyTargetVessel));
-            // SEVERAL OWNERS ARE ALLOWED (REALIGNMENT §4, user ruling: several owners, serialised by the landing lease).
-            // Who owns a repo is development-vessel's decision (its gap policy's owned vessels, answered as
-            // composeOwnership); goal-host no longer keeps its own rule that a second owner is a defect to file. Among
-            // several owners the one with free compose slots takes the edit (pickComposeOwner).
-            await readComposeFreeSlots(earlyOwners, earlyAllFiles);
-            const earlyV = earlyOwners.length > 0 ? pickComposeOwner(earlyOwners, (r) => (r as { compose_free?: number | null }).compose_free ?? null) : pickSatisfierProducer(earlyRows);
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ${earlyOwners.length === 1 ? `routed by ownership → ${earlyOwners[0]!.vesselId}` : earlyOwners.length > 1 ? `routed by owner capacity → ${String(earlyV?.vesselId ?? "?")} (free ${earlyOwners.map((r) => `${String(r.vesselId ?? "?")}=${(r as { compose_free?: number | null }).compose_free ?? "?"}`).join(",")})` : 'routed by pick'}`);
-            if (earlyV?.endpoint) {
-              earlyComposeUrl = `${earlyV.endpoint.replace(/\/+$/, "")}${asResolvePath(earlyV.resolve_endpoint)}`;
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose producer resolved via discovery → ${earlyComposeUrl}`);
-            }
-          } catch { /* discovery unreachable/empty → env fallback carries */ }
-          const earlyComposeInit: RequestInit = {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}), ...operatorCredentialHeaders(opts, earlyComposeUrl) },
-            body: JSON.stringify({
-              impulse: {
-                pointer: {
-                  type: "feature_compose",
-                  // DIRECTED WORK — someone asked for this edit. The gap-drain
-                  // lane is self-generated work that can wait, so
-                  // development-vessel's capacity cap reserves a slot for
-                  // directed composes: without it a busy boredom stream refuses
-                  // every operator dispatch outright (measured: "compose capacity
-                  // cap reached (2 in flight)" on a correctly-routed goal).
-                  //
-                  // Set EXPLICITLY, not inferred: this path also synthesises a gap
-                  // id (route-edit-*), so `pointer.gap` cannot tell the lanes
-                  // apart, and a naming convention is not a contract.
-                  directed: opts.operatorOrigin === true,
-                  authoring_execution_id: typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined,
-                  // THE CHECK SUPPLY'S MARKER (slice G): feature_compose verifies it against the gap's ledger and
-                  // decides the compose mode itself; goal-host sends no mode.
-                  check_supply: checkSupplyRouteOf(opts.variables) ?? undefined,
-                  spec: earlySpec,
-                  verify_vessels: earlyAllVessels.map((v) => `repos/${v}`),
-                  land: true,
-                  // OBSERVE (observe-mode.ts): an observe dispatch's compose may draft and verify, never land.
-                  ...observeComposeFields(opts.learningMode),
-                  gap: {
-                    id: earlyGapId,
-                    summary: goal.replace(/^(?:Close substrate gap [-\w:.!]+:\s*)+/, "").trim() || goal,
-                    category: "edit_intent_route",
-                    classification_metadata: { edit_site: earlyEditSite },
-                  },
-                },
-              },
-            }),
-            // 240s was BELOW THE FLOOR of the work this call waits on. Measured 2026-08-05 on a
-            // single goal-host MainPID: three EARLY EDIT-INTENT dispatches aborted at EXACTLY
-            // 240s (20:49:27→20:53:27, 21:09:15→21:13:15, 21:30:54→21:34:55), each logging
-            // "routing failed (The operation timed out.) — falling through to walk" and
-            // orphaning a live compose the caller can no longer cancel. This vessel's own drain
-            // drop-in (scripts/substrate/units/goal-host-vessel.service.d/drain-timeout.conf)
-            // already records that "a feature_compose edit runs 5-8 MINUTES". A ceiling under
-            // the callee's floor makes this route unable to succeed regardless of LLM health —
-            // the same by-construction defect as a drain budget set above its stop timeout.
-            //
-            // NOTE this exceeds GOAL_HOST_DRAIN_MS (240s under TimeoutStopUSec=5min), so a
-            // restart landing mid-compose could still SIGKILL the request. That hazard is now
-            // mitigated for the common cause: substrate-pull-sync defers a vessel restart while
-            // that vessel reports in-flight dispatches (see substrate-pull-sync.sh), so the
-            // convergence timer no longer lands on a live compose.
-            //
-            // RAISED 540s -> 900s because the ceiling was set below the QUEUE, not below the
-            // work. development-vessel serialises composes ("compose nudge skipped — a compose
-            // is already in flight") and the autonomous gap-closing loop keeps that lane busy:
-            // measured 1-19 compose starts per 10-minute window, continuously. An operator
-            // dispatch has no priority, so it waits behind several multi-minute drafts and the
-            // old ceiling expired mid-queue — reported as "The operation timed out", which reads
-            // like a slow model rather than a busy lane.
-            signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
-            // BUN CUTS A SILENT RESPONSE AT ~300 s REGARDLESS OF THE SIGNAL (value-per-cost-selection
-            //  3.3). Bun's fetch has its own idle timeout, checked coarsely, so it fires between 300 and
-            //  360 s: the journal shows this call cut at 315/342/345/359 s with TimeoutError code=23,
-            //  and a loopback probe on Bun 1.4.2 (server answering at 480 s) failed at 361.7 s both
-            //  with and without this 900 s signal and succeeded only with `timeout: false`. Without
-            //  this the 900 s budget above was never the real ceiling. Cast because bun-types omit it.
-            ...({ timeout: false } as RequestInit),
-          };
-          let earlyComposeResp = await fetch(earlyComposeUrl, earlyComposeInit);
-          // A DRAINING PRODUCER ANSWERS 503 — DO NOT SPEND THE FAST PATH ON IT.
-          //
-          // This is the route a named-file edit goal takes BEFORE the walk, and it
-          // is the one a restart actually lands on: measured 2026-08-12, restarting
-          // development-vessel mid-dispatch produced `EARLY EDIT-INTENT
-          // feature_compose HTTP 503 — falling through to walk` here, while the
-          // later compose call never saw the 503 at all. The `else` below treats
-          // 503 like any other bad status and abandons the compose, so the fast
-          // path is discarded for a producer that asked to be called back.
-          //
-          // Bounded: re-issue at Retry-After spacing (the producer sends 30) for up to 18 min — a cutover quiesce lasts up to the compose ceiling + restart —
-          // and capped at 60s, so a large or malformed header cannot park the goal.
-          for (const _drainStart = Date.now(); earlyComposeResp.status === 503 && Date.now() - _drainStart < 1_080_000; ) {
-            const ra = Number(earlyComposeResp.headers.get("retry-after") ?? "");
-            const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
-            await new Promise((r) => setTimeout(r, waitMs));
-            earlyComposeResp = await fetch(earlyComposeUrl, { ...earlyComposeInit, signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)) });
-          }
-          if (earlyComposeResp.ok) {
-            const earlyJ = await earlyComposeResp.json() as Record<string, unknown>;
-            const earlyBody = resolveReportBody(earlyJ);
-            const earlyVerdict = String(earlyBody.verdict ?? "");
-            // OBSERVE (observe-mode.ts): the compose ran as a dry run; nothing is graded, walked or escalated.
-            if (opts.learningMode === "observe") {
-              observeSkip("edit_intent_escalation");
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT observe dispatch: feature_compose verdict=${earlyVerdict || "(none)"} as a dry run; ending the dispatch (no landing, no walk, no escalation)`);
-              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(earlyVerdict, composeReportReason(earlyBody)), ...observeComposeRecord(earlyVerdict, earlyBody) };
-            }
-            if (earlyVerdict === "FAVORABLE") {
-              const earlyCutovers = Array.isArray(earlyBody.cutovers) ? earlyBody.cutovers as Array<Record<string, unknown>> : [];
-              let earlyLandedSha: string | null = null;
-              let earlyPushStatus: string | null = null;
-              for (const c of earlyCutovers) {
-                const rr = ((c ?? {}).result ?? {}) as Record<string, unknown>;
-                if (rr.push_status === "pushed" && typeof rr.new_git_sha === "string" && rr.new_git_sha.trim()) {
-                  earlyLandedSha = rr.new_git_sha.trim();
-                  earlyPushStatus = "pushed";
-                  break;
-                }
-              }
-              const earlySummary = typeof earlyBody.summary === "string" && earlyBody.summary.trim()
-                ? ` — ${earlyBody.summary.trim().slice(0, 160)}` : "";
-              const earlyVerdict = earlyPushStatus === "pushed" ? "FAVORABLE" : "UNFAVORABLE";
-              const earlyReason = earlyPushStatus === "pushed" ? "" : " staged-not-landed";
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT ROUTED to feature_compose for ${earlyEditFile} → verdict=${earlyVerdict}${earlyReason}`);
-              tap(`[goal-host-vessel] ${opts.surface}: landed SHA ${earlyLandedSha ?? "(staged)"}${earlySummary}`);
-              // SUBSTANCE GRADE: reached iff a real landing occurred (earlyLandedSha only on
-              // push_status==="pushed" + new_git_sha) AND — for an "add <symbol>" edit — the landed
-              // file OBSERVABLY contains the requested symbol (deterministic post-state oracle). A
-              // staged-not-landed edit, OR a landed edit that does not contain the asked-for change
-              // (hollow landing / orphan code), is NOT a reach. editPostOk is null for non-add /
-              // unreadable goals, so those keep grading on the landing sha alone (no regression).
-              const editPostOk = earlyLandedSha ? await verifyEditPostState(goal ?? "", earlyEditFile, earlyLandedSha) : null;
-              const editHollow = editPostOk === false;      // landed, but the symbol is not there
-              const earlyReached = !!earlyLandedSha && !editHollow;
-              // Record the grade, do not just apply it. `alphaBetaDelta` is the
-              // decision-transparency surface; six of eight grading sites discarded
-              // the return, so a dispatch that WAS graded reported [] and obsidian
-              // rendered "This run taught the system nothing" off exactly that.
-              if (!earlyLandedSha) { 
-          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); 
-          recordDeterministicLabel(goal ?? "", undefined, "feature_compose", { reached: false, reason: "deterministic:early-edit-intent-not-landed", deterministic: true });
-        }
-              else if (editHollow) { 
-          opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "landed-edit-missing-requested-symbol")); 
-          recordDeterministicLabel(goal ?? "", earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined, "feature_compose", { reached: false, reason: `deterministic:early-edit-intent-hollow ${earlyLandedSha ? ` ${earlyLandedSha}` : ""}`, deterministic: true });
-        }
-              recordDeterministicLabel(goal ?? "", earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined, "feature_compose", { reached: earlyReached, reason: `deterministic:early-edit-intent-${earlyReached ? "landed" : "not-landed"}${earlyLandedSha ? ` ${earlyLandedSha}` : ""}`, deterministic: true });
-              return {
-                result: null,
-                status: earlyReached ? ("completed" as const) : ("failed" as const),
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["fileEditResult"],
-                attempts: 1,
-                goalReachReason: `deterministic:early-edit-intent-${earlyReached ? "landed" : "not-landed"} — early edit-intent routed to feature_compose; ${
-                  !earlyLandedSha
-                    ? "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"
-                    : editHollow
-                      ? `landed ${earlyLandedSha} but the requested symbol is NOT observably present in ${earlyEditFile} — a hollow edit landing, not a reach`
-                      : `landed ${earlyLandedSha}${editPostOk === true ? " (post-state confirms the requested symbol is present)" : ""}`
-                }${earlySummary}`,
-                reached: earlyReached,
-                executionId: (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) ? earlyBody.execution_id : (earlyLandedSha ? `feature_compose:${earlyLandedSha}` : undefined),
-              };
-            }
-            // CAPACITY IS TRANSIENT, NOT A CAPABILITY VERDICT. When compose refuses for capacity
-            // (BUSY / draining), do NOT fall through to the walk: the walk cannot serve an edit
-            // goal at all — every target shape it infers for this class (fs_edit, fileEditResult,
-            // code_modification_proposal) has no producer — so it evicts as "no template produces
-            // the inferred target shapes" and files a phantom capability gap. The identical goal
-            // then succeeds or fails on lane timing rather than merit, and the honest reason
-            // (saturated, retry) is replaced by a misleading one. Refuse retryably instead.
-            // Measured 2026-08-23; closes compose-busy-falls-through-to-a-walk-that-cannot-edit.
-            if (/^(BUSY|DRAINING|CAPACITY)/i.test(earlyVerdict)) {
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict} — capacity, NOT falling through to a walk that cannot edit; refusing retryably`);
-              return {
-                result: null,
-                status: "failed" as const,
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["fileEditResult"],
-                attempts: 1,
-                outcome: composeNonAttemptOutcome(earlyBody as Record<string, unknown>),
-                goalReachReason: `RETRYABLE CAPACITY: edit-intent routed to feature_compose but the compose lane is at capacity (verdict=${earlyVerdict}). This is a transient capacity condition, not a capability gap: retry when the lane is free. The walk is deliberately NOT consulted — it cannot serve an edit goal and would mint a phantom capability gap for an unproducible shape.`,
-                reached: false,
-              };
-            }
-            // AN ADMISSION REFUSAL IS FINAL (compose-admission-refusal.ts): falling through to the walk would compose the
-            // same refused goal again on the post-walk route. Structured stage only.
-            const _earlyAdmissionStage = composeAdmissionRefusal(earlyBody);
-            if (_earlyAdmissionStage) {
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT refused at ADMISSION (stage=${_earlyAdmissionStage}); NOT falling through to the walk or escalating`);
-              return {
-                result: null,
-                status: "failed" as const,
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["fileEditResult"],
-                attempts: 1,
-                outcome: { kind: "refused", refuse_class: `${ADMISSION_REFUSE_CLASS_PREFIX}${_earlyAdmissionStage}` },
-                goalReachReason: `early edit-intent routed to feature_compose; refused at admission (stage=${_earlyAdmissionStage}): ${composeReportReason(earlyBody)} - an admission refusal is final, so it is neither walked nor escalated`,
-                reached: false,
-              };
-            }
-            // A CHECK-SUPPLY COMPOSE IS NEVER ESCALATED, WHATEVER STAGE REFUSED IT (L1b): its test-writing floors live in
-            // feature_compose only, and the walk would compose it again and escalate it to patch_with_tools, which has no
-            // test-writing scope rule. Keyed on the request's marker, never on the stage or the error text.
-            const _earlyCheckSupplyStop = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
-            if (_earlyCheckSupplyStop) {
-              const _stage = composeReportStage(earlyBody); // an UNFAVORABLE report names no stage; its refusal implies one
-              tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (verdict=${earlyVerdict || "(none)"}); NOT falling through to the walk`);
-              return {
-                result: null,
-                status: "failed" as const,
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["fileEditResult"],
-                attempts: 1,
-                ...(composeNonAttemptOutcome(earlyBody as Record<string, unknown>) ? { outcome: composeNonAttemptOutcome(earlyBody as Record<string, unknown>) } : {}),
-                goalReachReason: `early edit-intent routed to feature_compose; check_supply compose refused at ${_stage} (verdict=${earlyVerdict || "(none)"}): ${composeReportReason(earlyBody)} - a check-supply compose is final, so it is neither walked nor escalated`,
-                reached: false,
-              };
-            }
-            if (typeof earlyBody.execution_id === "string" && earlyBody.execution_id.length > 0) {
-              deliverReachVerdict(earlyBody.execution_id, false, ["fileEditResult"], "early-edit-intent-unfavorable", "deterministic:early-edit-intent-not-landed", goalHashOf(String(goal ?? "")), opts.betaWithheld);
-            }
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || "(none)"} — falling through to walk`);
-          } else {
-            if (earlyComposeResp.status === 503 || earlyComposeResp.status === 429) { tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — draining/capacity, NOT falling through to a walk; refusing retryably`); return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, goalReachReason: `RETRYABLE CAPACITY: edit-intent routed to feature_compose but the compose producer answered HTTP ${earlyComposeResp.status} (draining or at capacity). Transient; re-dispatch after the drain rather than editing through a generic walk.`, reached: false }; }
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT feature_compose HTTP ${earlyComposeResp.status} — falling through to walk`);
-          }
-        } catch (earlyErr) {
-          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failed (${String((earlyErr as Error)?.message ?? earlyErr)}) — falling through to walk`);
-          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT routing failure detail name=${String((earlyErr as Error)?.name ?? "")} cause=${String(((earlyErr as { cause?: unknown })?.cause as Error | undefined)?.message ?? (earlyErr as { cause?: unknown })?.cause ?? "")} code=${String((earlyErr as { code?: unknown })?.code ?? "")}`);
-          if ((earlyErr as Error)?.name === "TimeoutError" || /timed out|socket|closed|reset/i.test(String((earlyErr as Error)?.message ?? ""))) { _earlyComposeCutAtCaller = true; _earlyComposeCutAtS = Math.round((Date.now() - _dispatchStartMs) / 1000); }
-        }
-        // OBSERVE (observe-mode.ts): an observe dispatch whose dry-run compose failed or answered non-OK is not walked
-        // or escalated either: the post-walk route and patch_with_tools would compose the same edit again.
-        if (opts.learningMode === "observe") {
-          observeSkip("edit_intent_escalation");
-          return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome("(none)", "the compose did not answer OK; not walked or escalated"), ...observeComposeRecord("(none)", null) };
-        }
-        // A LANDING ENDS THE DISPATCH (value-per-cost-selection 3.1). Every successful compose
-        // outcome above returns, so reaching this line means timeout, exception, non-favourable
-        // verdict or bad status. The compose may have landed anyway: measured 2026-09-27, the
-        // caller was cut at 342 s (00:51:04) and c23b601 landed at 00:53:12, the walk ran on,
-        // and the post-walk route composed the same change again. Probe git for this goal's
-        // landing first; when the caller was cut mid-compose, keep probing until the compose
-        // ceiling (plus a tail for a response that lags its landing) instead of walking, since
-        // the walk cannot serve an edit goal.
-        {
-          const _probeGapId = composeGapIdOf(goal, opts.variables);
-          const _probeUntil = _earlyComposeCutAtCaller ? _dispatchStartMs + Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000) + 180_000 : 0;
-          let _probeSha = await landedCommitForGoal(earlyEditVessel, _probeGapId, _dispatchStartMs);
-          if (!_probeSha && Date.now() < _probeUntil) tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT compose was cut at the caller; polling origin/dev for ${_probeGapId} until the compose ceiling before any walk`);
-          while (!_probeSha && Date.now() < _probeUntil) {
-            await new Promise((r) => setTimeout(r, 30_000));
-            _probeSha = await landedCommitForGoal(earlyEditVessel, _probeGapId, _dispatchStartMs);
-          }
-          if (_probeSha) {
-            const _probePostOk = await verifyEditPostState(goal ?? "", earlyEditFile, _probeSha);
-            const _probeReached = _probePostOk !== false;
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT LANDED-PROBE found ${_probeSha} for ${_probeGapId} since dispatch start - ending the dispatch (reached=${_probeReached}), no walk and no second compose`);
-            recordDeterministicLabel(goal ?? "", `feature_compose:${_probeSha}`, "feature_compose", { reached: _probeReached, reason: `deterministic:early-edit-intent-${_probeReached ? "landed" : "hollow"} ${_probeSha} (landed-probe)`, deterministic: true });
-            return {
-              result: null,
-              status: _probeReached ? ("completed" as const) : ("failed" as const),
-              selectedTemplateId: "feature_compose",
-              completionShapes: ["fileEditResult"],
-              attempts: 1,
-              goalReachReason: `deterministic:early-edit-intent-${_probeReached ? "landed" : "hollow"} — the compose reply was lost or non-favourable, but git shows ${_probeSha} for ${_probeGapId} on origin/dev since this dispatch started${_probeReached ? (_probePostOk === true ? " (post-state confirms the requested symbol is present)" : "") : ` and the requested symbol is NOT observably present in ${earlyEditFile} — a hollow edit landing, not a reach`}`,
-              reached: _probeReached,
-              executionId: `feature_compose:${_probeSha}`,
-            };
-          }
-          // A CHECK-SUPPLY GOAL IS NOT WALKED (L1b follow-up). The compose threw, answered non-OK or was refused, and
-          // nothing landed: the walk's templates and shell satisfier are not provably write-free, and after it come the
-          // post-walk escalation and the recovery loop. Marker only (a malformed one included), never the failure kind.
-          const _earlyCheckSupplyNoWalk = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
-          if (_earlyCheckSupplyNoWalk) {
-            // No compose report here (the call was cut or failed): the compose's own outcome is on the gap row, newest
-            // lesson since this dispatch started, else stage=unknown (check-supply-ledger-reason.ts).
-            // The row is read once; the lesson check below reads the same row.
-            let _cutRow: Awaited<ReturnType<typeof readGapByIdForOracle>> = null;
-            const _cutOutcome = cutCallerOutcome(await readGapByIdForOracle(_probeGapId).catch(() => null).then((row) => (_cutRow = row)), _dispatchStartMs, _earlyComposeCutAtS ?? Math.round((Date.now() - _dispatchStartMs) / 1000));
-            // A cut is UNCONFIRMED only when the compose recorded no lesson of its own since the dispatch started: a
-            // lesson makes the outcome known (a real failure), so it is graded, evicted and remembered as before.
-            const _cutLessonKnown = newestLessonSince(_cutRow, _dispatchStartMs) !== null;
-            tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT check_supply compose failed at the call (no landing for ${_probeGapId}): no escalation; NOT falling through to the walk`);
-            return {
-              result: null,
-              status: "failed" as const,
-              selectedTemplateId: "feature_compose",
-              completionShapes: ["fileEditResult"],
-              attempts: 1,
-              goalReachReason: cutCallerReason(_probeGapId, _cutOutcome),
-              ...(_earlyComposeCutAtCaller && !_cutLessonKnown ? { callerCut: true } : {}),
-              reached: false,
-            };
-          }
-          tap(`[goal-host-vessel] ${opts.surface}: EARLY EDIT-INTENT LANDED-PROBE found no commit for ${_probeGapId} since dispatch start — falling through to walk`);
-        }
-      }
-      // A CHECK-SUPPLY GOAL THAT MISSED THE EDIT ROUTE IS NOT WALKED (L1b X). Every marked goal that entered the early
-      // edit-intent route returned inside it, so a marked goal here did not name a file with an edit verb. The walk's
-      // templates and shell satisfier are not provably write-free. Refuse with a named stage the dispatch record
-      // carries (GET /executions/:id), so the supply's misses are countable. Marker only, a malformed one included.
-      const _checkSupplyMissedEditRoute = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
-      if (_checkSupplyMissedEditRoute) {
-        tap(`[goal-host-vessel] ${opts.surface}: check_supply_goal_missed_edit_route: the goal did not enter the early edit-intent route; no escalation, NOT walking`);
-        return {
-          result: null,
-          status: "failed",
-          selectedTemplateId: undefined,
-          completionShapes: null,
-          attempts: 0,
-          stage: "check_supply_goal_missed_edit_route",
-          goalReachReason: `check_supply_goal_missed_edit_route: a check_supply goal is served only by the edit-intent route to feature_compose, and this goal's text did not enter it (no repos file named with an edit verb), so it is refused rather than walked`,
-          reached: false,
-        };
+      // CAPTURE (closed, src/judge/capture.ts): no compose hand-off route exists; the change is walked.
+      judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: false });
+      // A CHANGE GOAL IS WALKED. The edit-intent routing rules (src/routing-rules/edit-intent.ts decideHandoff, clamped
+      // by the closed routing core, pinned by the routing corpus) decide whether the goal names a file to change (their
+      // refusals of a goal that forbids change included); if so, the dispatch is admitted as a change and the landing
+      // shape is seeded as a walk target, so backward-chaining starts from the landing (edit-intent-route.ts).
+      const changeHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });
+      if (changeHandoff.route === "feature_compose" && changeHandoff.target) {
+        _changeAdmitted = true; // admitted on the edit-intent rules' own decision, walked as a change
+        seededOutputShapes = withLandingTarget(seededOutputShapes, isFsWriteShape);
+        goalTargetDecision = { shapes: seededOutputShapes, confidence: goalTargetDecision?.confidence ?? 0.6, alternatives: goalTargetDecision?.alternatives ?? [] };
+        noteDispatchedTargets(goal, seededOutputShapes);
+        tap(`[goal-host-vessel] ${opts.surface}: edit-intent change admitted, walking toward ${LANDING_TARGET_SHAPE} ` +
+          JSON.stringify({ goal_hash: goalHashOf(goal), target_file: changeHandoff.target, targets: seededOutputShapes }));
       }
       // WRITE DOOR (target): an inferred write shape is not a target of a goal not admitted as a change — dropped
       // before the pathway store, the floor shortcut, the walk and the recovery loop read it. With fs_edit kept, a
@@ -16313,18 +15734,16 @@ async function runGoalWithRecoveryInner(
           }
         }
       }
-      const editIntentGoal = _editIntentRoute.route_enabled && /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal);
       // A >0-step walk that "reached" via a source_code / analysis READ satisfier does
       // NOT serve an edit-intent goal (read != edit) — this is how a code-edit goal got
-      // hollow-satisfied as a source read, bypassing the edit-intent routing below. When
-      // the goal names a repos source file with edit language AND the walk produced only
-      // read/analysis shapes, fall through to edit-intent routing instead of returning.
+      // hollow-satisfied as a source read. When the goal names a repos source file with
+      // edit language AND the walk produced only read/analysis shapes, fall through to the
+      // recovery loop instead of returning.
       const goalIsEditIntent = isEditIntentGoal(goal);
-      const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
-      // Under edit-intent-route variant 1 the walk IS the change's route, so its landing shapes count as an edit too
-      // (a landed walk returns here instead of falling into the recovery loop and landing again). Variant 0: unchanged.
-      const EDIT_RESULT_SHAPES_IN_FORCE = _editIntentRoute.variant === 1 ? [...EDIT_RESULT_SHAPES, "cutoverapplied", "vesselmitosiscutoverresult"] : EDIT_RESULT_SHAPES;
-      const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES_IN_FORCE.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
+      // The walk IS a change's route, so its landing shapes count as an edit too (a landed walk returns here instead of
+      // falling into the recovery loop and landing again).
+      const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult", "cutoverapplied", "vesselmitosiscutoverresult"];
+      const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
       // PROSE-OVER-SOURCE GROUNDING (2026-07-27). EVIDENCE (live probes): summarize/explain-
       // a-named-file goals hollow-REACH — either mis-select an irrelevant learned composite,
       // or resolve a BARE tool-less llm_completion_dispatch that CONFABULATES from memory
@@ -16379,688 +15798,9 @@ async function runGoalWithRecoveryInner(
         } catch { /* fail-open */ }
       }
       if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
-      // EDIT-INTENT ROUTING (2026-07-02): a 0-step walk that NAMES a concrete source
-      // file is a plain code-change goal the shape-walk cannot serve. Its only
-      // fileEditResult producer is local-tools-vessel (a raw path+content writer,
-      // unsatisfiable from prose), so the walk takes 0 steps, falls to recommend, and
-      // picks an unrelated MAINTENANCE tick (reached:false). The real authoring
-      // capability — feature_compose (a dev-vessel resolver: draft→typecheck→cutover)
-      // — is only ever reached by explicit dispatch, never by the walk from intent.
-      // Route edit-intent goals THERE before the recommend loop. Strictly additive +
-      // guarded: fires ONLY on 0-step walks that name a repos/<vessel>/.../<file>.<ext>,
-      // a case that ALWAYS fails into a tick today — no regression surface. Flag-off or
-      // any throw falls through to the existing authorFallback/recommend path unchanged.
-      // The late route reads the same switch record as the early one: under variant 1 nothing is handed to feature_compose.
-      if (_editIntentRoute.route_enabled) {
-        const fileMatch = goal.match(/repos\/([\w.-]+)\/[\w./-]+\.\w+/);
-        // The late route reads the same refusals as the early hand-off (goal-intent.ts): a goal that forbids every change,
-        // or asks for a description and forbids change, is never handed to a landing compose here either.
-        const lateRouteForbidden = !!fileMatch && (prohibitsAnyMutation(goal) || asksForDescriptionUnderChangeProhibition(goal));
-        if (lateRouteForbidden) tap(`[goal-host-vessel] ${opts.surface}: LATE EDIT-INTENT declined — the goal forbids change (goal_hash=${goalHashOf(goal)})`);
-        if (fileMatch && !lateRouteForbidden) {
-          const editFile = fileMatch[0];
-          const editVessel = fileMatch[1]!;
-          // Multi-file goals: mirror of the early block's enumeration (see there).
-          const allEditFiles = Array.from(new Set(goal.match(/repos\/[\w.-]+\/[\w.\/\-]+\.\w+/g) ?? [editFile]));
-          const allEditVessels = Array.from(new Set(allEditFiles.map((f) => f.split("/")[1]!)));
-          // Carry a line reference from the goal TEXT into edit_site (2026-07-02):
-          // dev-vessel's near-edit-site grounding parses ':<n>' / 'line <n>' from
-          // edit_site; without it the excerpt defaults to top-of-file. Accept either
-          // '<file>:<n>' immediately after the matched path or a 'line <n>' mention.
-          const afterFile = goal.slice(goal.indexOf(editFile) + editFile.length);
-          const editLine = afterFile.match(/^:(\d+)/)?.[1] ?? goal.match(/\bline\s+~?(\d+)/i)?.[1];
-          const editSite = editLine ? `${editFile}:${editLine}` : editFile;
-          try {
-            {
-              // POST-WALK DOUBLE COMPOSE. A dispatch whose early compose already landed keeps walking; when the walk ends
-              // hollow, this route used to start a SECOND compose of the same edit (graded run 11, 09-26: C's dispatch 918cbd15
-              // landed, walked on, and a second compose landed d3cd630 inside the next run). Same test as the escalation
-              // guard: skip only while this goal's route-edit commit is still the file's latest change on origin/dev.
-              const _pwSha = await landedShaForGoalHash(editVessel, goalHashOf(goal));
-              let _pwLatest = false;
-              if (_pwSha) {
-                try {
-                  const _pwRel = editFile.split("/").slice(2).join("/");
-                  const _pwLp = Bun.spawn(["git", "-C", `/workspace/git/vessels/${editVessel}`, "log", "origin/dev", "-1", "--format=%H", "--", _pwRel], { stdout: "pipe", stderr: "pipe" });
-                  const _pwLatestSha = (await new Response(_pwLp.stdout).text()).trim();
-                  _pwLatest = (await _pwLp.exited) === 0 && _pwLatestSha === _pwSha;
-                } catch {
-                  _pwLatest = false;
-                }
-              }
-              // ANY LANDING SINCE THIS DISPATCH STARTED (value-per-cost-selection 3.1). The test
-              // below also requires a local compose report and that the commit is still the file's
-              // latest; an ownership-routed landing has no local report, and another commit can
-              // become the latest in minutes, so c23b601 was composed again as 194df79.
-              const _pwGapId = composeGapIdOf(goal, opts.variables);
-              const _pwAny = _pwSha && _pwLatest ? null : await landedCommitForGoal(editVessel, _pwGapId, _dispatchStartMs);
-              if (_pwAny) {
-                const _pwPostOk = await verifyEditPostState(goal, editFile, _pwAny);
-                tap(`[goal-host-vessel] ${opts.surface}: POST-WALK EDIT-INTENT SKIPPED for ${editFile} - ${_pwGapId} landed as ${_pwAny} since this dispatch started; a second compose would apply the same change twice`);
-                return {
-                  result: null,
-                  status: _pwPostOk === false ? "failed" : "completed",
-                  selectedTemplateId: "feature_compose",
-                  completionShapes: ["mitosisCutoverReport"],
-                  attempts: 1,
-                  goalReachReason: `late-landing confirmed before a second compose: commit ${_pwAny} for ${_pwGapId} landed on origin/dev after this dispatch started${_pwPostOk === false ? `, but the requested symbol is NOT observably present in ${editFile} — a hollow edit landing, not a reach` : ""}`,
-                  reached: _pwPostOk !== false,
-                  executionId: `feature_compose:${_pwAny}`,
-                };
-              }
-              if (_pwSha && _pwLatest) {
-                tap(`[goal-host-vessel] ${opts.surface}: POST-WALK EDIT-INTENT SKIPPED for ${editFile} - route-edit-${goalHashOf(goal)} already landed as ${_pwSha} and is the file's latest commit`);
-                return {
-                  result: null,
-                  status: "completed",
-                  selectedTemplateId: "feature_compose",
-                  completionShapes: ["mitosisCutoverReport"],
-                  attempts: 1,
-                  goalReachReason: `late-landing confirmed before a second compose: commit ${_pwSha} for route-edit-${goalHashOf(goal)} is on origin/dev and is the file's latest change`,
-                  reached: true,
-                  executionId: `feature_compose:${_pwSha}`,
-                };
-              }
-            }
-            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT DETECTED (0-step walk names ${editFile}) — routing to feature_compose`);
-            // CREATE-INTENT (2026-07-10): a goal authoring a NET-NEW file (a new
-            // resolver/module/vessel) must be allowed to create_file — otherwise
-            // feature_compose is told "edit in place, do NOT create", tries an `edit`
-            // op on a nonexistent path, fails ENOENT → UNFAVORABLE, and the goal falls
-            // to the author_new_resolver scaffolder which only emits a `// TODO` stub.
-            // For create-intent we permit create_file on the target + the minimal
-            // sibling wiring a new resolver needs (three-place rule), so the drafter
-            // authors a REAL implementation. Verify (tsc + shape-dispatch) still gates.
-            const createIntent = /\b(create|scaffold|net-new)\b/i.test(goal) || /\bnew\s+(resolver|file|vessel|shape|endpoint|module)\b/i.test(goal);
-            const specBase = createIntent
-              ? [
-                  "Author the smallest, verifiable code change that satisfies this development goal, drafting a REAL working implementation — never a TODO/stub body.",
-                  allEditFiles.length > 1
-                    ? `Target files — every one of these named paths needs its full required change (create the ones that do not exist, edit the rest in place; no wired stubs): ${allEditFiles.join(", ")}`
-                    : `Primary target file: ${editFile}. CREATE it with a \`create_file\` op if it does not yet exist; edit it in place if it does.`,
-                  "You MAY also create a sibling test file and edit the vessel's resolver-registration files (e.g. src/config.ts and src/routes/impulses.ts, per the three-place rule) when wiring a new resolver requires it. Keep total edits minimal and strictly necessary; do not touch package.json.",
-                  "The change MUST typecheck AND pass the vessel's lint/shape-dispatch check.",
-                  "",
-                  `GOAL: ${goal}`,
-                ].join("\n")
-              : [
-                  "Make the SMALLEST concrete, verifiable code change to EXISTING vessel source that satisfies this development goal.",
-                  allEditFiles.length > 1
-                    ? `Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${allEditFiles.join(", ")}`
-                    : singleFileTargetLine(editFile, opts.variables),   // see the early-route sibling above
-                  "The change MUST typecheck.",
-                  "",
-                  `GOAL: ${goal}`,
-                ].join("\n");
-            // Anchored spec: append the real-file excerpt so every consumer below
-            // (feature_compose AND the patch_with_tools escalations) drafts against
-            // verbatim current file text, not a schematic reconstruction.
-            const spec = specBase + await verbatimExcerptBlock(editFile, editLine, goal);
-            const gapId = composeGapIdOf(goal, opts.variables);
-            // Resolve the feature_compose producer via DISCOVERY first (impulse-contract
-            // compliance: no hardcoded vessel endpoint). Same inline vesselCapability
-            // idiom as endpointForShape / the proxy resolver above. dev-vessel does not
-            // yet advertise feature_compose, so today this yields nothing and the env
-            // fallback (DEV_VESSEL_ENDPOINT → 127.0.0.1:8090) carries. One lookup per
-            // interception call; any discovery failure falls through silently.
-            let composeUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
-            try {
-              const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-                body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "feature_compose" } }),
-                signal: AbortSignal.timeout(5_000),
-              });
-              const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-              // PREFER A LOCAL PRODUCER — via the helper the EARLY edit-intent site
-              // above already uses, instead of taking whatever discovery listed first.
-              //
-              // `vessels[0]` is order-dependent and the order is not stable. Observed
-              // 2026-08-10: run 31 resolved feature_compose to http://localhost:8090
-              // and composed normally; a dispatch twenty minutes later drew
-              // http://127.0.0.1:8401 — the federation ingress proxy — and died with
-              // `failed to connect via relay with status NO_RESERVATION` while the
-              // local vessel sat healthy and registered. A hub outage transiently
-              // unregisters a healthy spoke, and in that window the federated entry is
-              // the only one left, so index 0 decides whether a compose runs at all.
-              //
-              // pickSatisfierProducer already encodes the rule (honour a pinned
-              // authoritative owner, then score priority with a local-over-libp2p
-              // tiebreak). Reuse, not a new preference — and note this leaves the
-              // env fallback (DEV_VESSEL_ENDPOINT) as the floor, so an empty registry
-              // still composes locally rather than not at all.
-              // ROUTE BY OWNERSHIP, like the early edit-intent site (decentralized-compose-ownership).
-              // Without it this compose went to the preferred producer even when another node owns
-              // the repo, so an edit already composed on the owner was composed again here (194df79).
-              const rows = (dj?.content?.vessels ?? []) as Array<import("./satisfier-pick.js").SatisfierProducer & { owned_repos?: string[]; vesselId?: string }>;
-              const targetVessel = /^repos\/([^/]+)\//.exec(editFile)?.[1] ?? "";
-              if (rows.length > 1 && !rows.some((r) => Array.isArray(r.owned_repos))) {
-                await Promise.all(rows.map(async (r) => {
-                  try {
-                    const u = `${String(r.endpoint ?? "").replace(/\/+$/, "")}${asResolvePath(r.resolve_endpoint)}`;
-                    const res = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) }, body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership" } } }), signal: AbortSignal.timeout(3_000) });
-                    const j = await res.json() as { body?: { owned_repos?: unknown }; content?: { owned_repos?: unknown } };
-                    const owned = j?.body?.owned_repos ?? j?.content?.owned_repos;
-                    if (Array.isArray(owned)) r.owned_repos = owned.map(String);
-                  } catch { /* a producer that does not answer claims nothing */ }
-                }));
-              }
-              const owners = rows.filter((r) => Array.isArray(r.owned_repos) && r.owned_repos.includes(targetVessel));
-              // Several owners: the one with free compose slots (pickComposeOwner), as at the early site.
-              await readComposeFreeSlots(owners, allEditFiles);
-              const v = owners.length > 0 ? pickComposeOwner(owners, (r) => (r as { compose_free?: number | null }).compose_free ?? null) : pickSatisfierProducer(rows);
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ${owners.length === 1 ? `routed by ownership → ${owners[0]!.vesselId}` : owners.length > 1 ? `routed by owner capacity → ${String(v?.vesselId ?? "?")} (free ${owners.map((r) => `${String(r.vesselId ?? "?")}=${(r as { compose_free?: number | null }).compose_free ?? "?"}`).join(",")})` : 'routed by pick'}`);
-              if (v?.endpoint) {
-                composeUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
-                tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose producer resolved via discovery → ${composeUrl}`);
-              }
-            } catch { /* discovery unreachable/empty → env fallback carries */ }
-            const composeInit = () => ({
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}), ...operatorCredentialHeaders(opts, composeUrl) },
-              body: JSON.stringify({
-                impulse: {
-                  pointer: {
-                    type: "feature_compose",
-                    directed: opts.operatorOrigin === true,   // see the note at the sibling site above
-                    authoring_execution_id: typeof opts.variables.dispatch_id === "string" ? opts.variables.dispatch_id : undefined,
-                    check_supply: checkSupplyRouteOf(opts.variables) ?? undefined,   // see the sibling site above
-                    spec,
-                    verify_vessels: allEditVessels.map((v) => `repos/${v}`),
-                    land: true,
-                    ...observeComposeFields(opts.learningMode),   // see the early site: observe never lands
-                    gap: {
-                      id: gapId,
-                      summary: goal.replace(/^(?:Close substrate gap [-\w:.!]+:\s*)+/, '').trim() || goal,
-                      category: "edit_intent_route",
-                      classification_metadata: { edit_site: editSite },
-                    },
-                  },
-                },
-              }),
-              signal: AbortSignal.timeout(Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000)),
-              ...({ timeout: false } as RequestInit),   // Bun's own ~300 s fetch cut; see the early site
-            });
-            // Transient-failure retry (capability-gap-edit-intent-compose-transient-failure-retry):
-            // a single socket closure / timeout / BUSY must not dump an edit goal onto the
-            // recommend path, where non-editing tick templates get selected and β-penalised.
-            let resp: Response;
-            _dispatchSentCompose.set(opts, Date.now());   // the landed latch in runGoalWithRecovery reads this
-            try {
-              resp = await fetch(composeUrl, composeInit());
-            } catch (err1) {
-              const m = String((err1 as Error)?.message ?? "");
-              if (!isTransientFailure(m)) throw err1; // transient-failure.ts — the one shared classifier
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT transient compose failure (${m}) — retrying once in 5s`);
-              await new Promise((r) => setTimeout(r, 5000));
-              resp = await fetch(composeUrl, composeInit());
-            }
-            // A DRAINING PRODUCER ANSWERS; IT DOES NOT THROW.
-            //
-            // The retry above fires only from `catch`, on a THROWN message. A vessel
-            // that is restarting returns an ordinary HTTP 503 with Retry-After, so
-            // control falls straight through to `resp.json()` below, the drain body
-            // carries no `verdict`, and the dispatch dies as `verdict=(none)` — the
-            // same signature bad drafting produces. So a compose that was never asked
-            // is recorded as a compose that failed, and the arm is β-penalised for
-            // work it never did.
-            //
-            // Bounded: re-issue at Retry-After spacing for up to 18 min (a cutover quiesce + restart), honouring Retry-After when the producer sends a
-            // sane one and capped at 60s so a large or malformed header cannot park
-            // an edit goal past its dispatch timeout.
-            for (const _drainStart = Date.now(); resp.status === 503 && Date.now() - _drainStart < 1_080_000; ) {
-              const ra = Number(resp.headers.get("retry-after") ?? "");
-              const waitMs = Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 10_000, 60_000);
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT compose producer draining (503) — re-issuing in ${waitMs}ms against the fresh instance`);
-              await new Promise((r) => setTimeout(r, waitMs));
-              resp = await fetch(composeUrl, composeInit());
-            }
-            let j: any = await resp.json().catch(() => ({}));
-            let body = resolveReportBody(j) as Record<string, any>;
-            let verdict = String(body.verdict ?? "");
-            // OBSERVE (observe-mode.ts): a dry run is the whole route — no BUSY retry, grade, landing probe or escalation.
-            if (opts.learningMode === "observe") {
-              observeSkip("edit_intent_escalation");
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT observe dispatch: feature_compose verdict=${verdict || "(none)"} as a dry run; not escalated`);
-              return { result: null, status: "failed" as const, selectedTemplateId: "feature_compose", completionShapes: ["fileEditResult"], attempts: 1, ...observeComposeOutcome(verdict, composeReportReason(body)), ...observeComposeRecord(verdict, body) };
-            }
-            if (verdict === "BUSY") {
-              console.log("[edit-intent] EDIT-INTENT compose BUSY — waiting 45 s before retry");
-              await new Promise<void>((r) => setTimeout(r, 45_000));
-              const busyRetryRes = await fetch(composeUrl, composeInit());
-              j = await busyRetryRes.json().catch(() => ({}));
-              body = resolveReportBody(j) as Record<string, any>;
-              verdict = String(body.verdict ?? "");
-            }
-            // BUSY IS NOT A VERDICT — IT IS "ASK AGAIN LATER".
-            //
-            // If the retry above is still refused for capacity, control used to fall
-            // through to the escalation path below, which sends the edit to the
-            // byte-anchored patch_with_tools route: no semantic judge, lands ungraded.
-            // So load — not drafting quality — decided whether a change got judged.
-            //
-            // Observed 2026-08-11, minutes after the concurrency cap went live:
-            //   EDIT-INTENT ROUTED ... -> verdict=BUSY (compose capacity cap reached (2 in flight))
-            //   EDIT-INTENT ESCALATION -- verdict=BUSY ...; escalating to patch_with_tools
-            // twice in 25 seconds, on two different files. The cap that stopped the
-            // compose storm was quietly diverting the overflow to the unjudged route.
-            //
-            // This is the same class as the transport fix below (a compose that never
-            // RAN is not a compose that drafted badly), and the `verdict` truthiness
-            // check there does not catch it because "BUSY" is truthy. Refuse honestly
-            // instead: the gap stays open and is retried when there is capacity, which
-            // is exactly what the cap's own refusal message promises.
-            if (verdict === "BUSY") {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT capacity-refused for ${editFile} — compose still BUSY after retry; NOT escalating to the ungraded byte-anchored route, the gap stays open for a later tick`);
-              return {
-                result: null,
-                status: "failed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: null,
-                attempts: 2,
-                goalReachReason: `routed edit-intent to feature_compose; refused for CAPACITY (BUSY) after one retry — no draft was produced, so there is nothing to judge and nothing to escalate; retry when a compose slot frees`,
-                reached: false,
-                executionId: `feature_compose:busy:${goalHashOf(goal as string)}`,
-              };
-            }
-            // AN ADMISSION REFUSAL IS FINAL (compose-admission-refusal.ts): feature_compose refused this compose before
-            // drafting (not compose work, held, or an unverifiable check-supply ledger). The escalation below would hand
-            // the same edit to patch_with_tools, which has no admission and lands through a mitosis tick. Structured stage only.
-            const _admissionStage = composeAdmissionRefusal(body);
-            if (_admissionStage) {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT refused at ADMISSION for ${editFile} (stage=${_admissionStage}); NOT escalating to patch_with_tools`);
-              return {
-                result: null,
-                status: "failed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: null,
-                attempts: 1,
-                outcome: { kind: "refused", refuse_class: `${ADMISSION_REFUSE_CLASS_PREFIX}${_admissionStage}` },
-                goalReachReason: `routed edit-intent to feature_compose; refused at admission (stage=${_admissionStage}): ${String(body.error ?? "").slice(0, 200)} - an admission refusal is final, so it is not escalated to the byte-anchored route`,
-                reached: false,
-                executionId: `feature_compose:refused:${goalHashOf(goal as string)}`,
-              };
-            }
-            const cutovers = Array.isArray(body.cutovers) ? body.cutovers : [];
-            let landedSha: string | null = null;
-            for (const c of cutovers) {
-              const rr = ((c ?? {}).result ?? {}) as Record<string, unknown>;
-              if (rr.push_status === "pushed" && typeof rr.new_git_sha === "string" && rr.new_git_sha.trim()) {
-                landedSha = rr.new_git_sha.trim();
-                break;
-              }
-            }
-            if (verdict === "FAVORABLE") {
-              // Reason-plane: a reached routed dispatch should say WHAT was done, not
-              // just that it landed — append the compose report's own summary.
-              const summary = typeof body.summary === "string" && body.summary.trim()
-                ? ` — ${body.summary.trim().slice(0, 160)}` : "";
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=FAVORABLE${landedSha ? ` landed=${landedSha}` : " (staged)"}${summary}`);
-              try {
-                // SUBSTANCE GATE for the durable reached:true tag the ribosome/Thompson READ.
-                // landedSha alone is NOT reach: a fail-open (LLM-judge-down) or mis-localized
-                // FAVORABLE can commit yet not do what the goal asked (observed live 2026-07-22:
-                // a mis-localized edit landed reached:true under an LLM outage). Require the same
-                // DETERMINISTIC diff-substance the walk favorable-compose gate uses: the code-set
-                // semantic_gate.verified:true (an LLM cannot forge it) AND a non-empty grep-derived
-                // reachable_symbols. Unverified-but-landed => tag dispatcher_used:goal-host so
-                // classifyReach returns 'ungraded' (SKIP: no alpha, no beta) — the honest 'cannot
-                // grade synchronously' outcome; retroactive downstream-use credit still applies if
-                // the output is later consumed. Never a strong alpha on an unverified green.
-                const editSubstanceVerified = (() => {
-                  const sg = body.semantic_gate as Record<string, unknown> | undefined;
-                  const rs = sg?.reachable_symbols;
-                  return !!(sg && sg.verified === true && Array.isArray(rs) && rs.length > 0);
-                })();
-                void persistSatisfierTrace({
-                  id: landedSha ? `feature_compose:${landedSha}` : `feature_compose:staged-${editSite}`,
-
-                  templateId: "feature_compose",
-                  templateName: "feature_compose (edit-intent)",
-                  status: "completed",
-                  inputImpulseIds: [],
-                  outputImpulseIds: landedSha ? [`git:${landedSha}`] : [],
-                  // Durable trace the ribosome/Thompson READ: tag reached from the landed sha,
-                  // not unconditionally. A staged (non-landed) FAVORABLE must not persist a
-                  // reached:true trace (that is a hollow green feeding the learning loop even though
-                  // the RETURN is already honest via reached:!!landedSha).
-                  tags: [...(opts.tags ?? []), landedSha ? (editSubstanceVerified ? "reached:true" : "dispatcher_used:goal-host") : "reached:false", ...(landedSha && editSubstanceVerified ? ["completion_shapes:fileEditResult"] : []), "edit_intent:true"],
-                  metadata: { satisfier: false, edit_intent: true, landed_sha: landedSha, edit_file: editFile, edit_site: editSite, summary: body.summary, op_count: body.op_count, applied: body.applied },
-                  tasks: (Array.isArray(body.applied) ? body.applied : [null]).map((op: any, i: number) => ({
-                    taskId: `compose-op-${i + 1}`,
-                    description: `feature_compose op ${i + 1}`,
-                    resolverId: "feature_compose",
-                    resolverTier: "pattern" as const,
-                    inputImpulseIds: [],
-                    outputImpulseIds: [],
-                    outputShapes: ["fileEditResult"],
-                    success: op ? !!op.ok : true,
-                  })),
-                });
-              } catch { /* durable edit-intent trace is best-effort */ }
-              // SUBSTANCE GRADE: reached iff a real landing occurred (landedSha set only on
-              // push_status==="pushed" + new_git_sha). "staged FAVORABLE" is not a reach.
-              if (!landedSha) { opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("feature_compose", "staged-favorable-not-landed")); }
-              recordDeterministicLabel(goal ?? "", landedSha ? `feature_compose:${landedSha}` : undefined, "feature_compose", { reached: !!landedSha, reason: `deterministic:edit-intent-${landedSha ? `landed ${landedSha}` : "staged-not-landed"}`, deterministic: true });
-              return {
-                result: null,
-                status: landedSha ? "completed" : "failed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["fileEditResult"],
-                attempts: 1,
-                goalReachReason: `deterministic:edit-intent-${landedSha ? "landed" : "staged-not-landed"} — routed edit-intent to feature_compose; ${landedSha ? `landed ${landedSha}` : "staged FAVORABLE but NOT landed (typecheck-clean, not committed/pushed to origin/dev) — a staged clone is not a reach"}${summary}`,
-                reached: !!landedSha,
-                executionId: (typeof body.execution_id === "string" && body.execution_id.length > 0) ? body.execution_id : (landedSha ? `feature_compose:${landedSha}` : undefined),
-              };
-            }
-            // Reason-plane (GAP B): surface the WHY from the compose report instead of
-            // dropping it. Preference order: first failed applied[] op's parsed detail
-            // → semantic_gate.reason → body.error → explicit "no detail" marker.
-            let failDetail = "";
-            const applied = Array.isArray(body.applied) ? body.applied : [];
-            const failedOp = applied.find((a: any) => a && a.ok === false);
-            if (failedOp) {
-              const rawDetail = typeof failedOp.detail === "string" ? failedOp.detail : JSON.stringify(failedOp.detail ?? "");
-              let parsedErr = "";
-              try { parsedErr = String(JSON.parse(rawDetail)?.error ?? ""); } catch { /* not JSON */ }
-              failDetail = (parsedErr || rawDetail || "op failed with no detail").slice(0, 160);
-            } else if (Array.isArray(body.verify) && (body.verify as any[]).some((v: any) => v && v.ok === false)) {
-              // Verify (typecheck/shape-dispatch) failure: quote the error lines so the
-              // walk log carries the WHY without host journal access.
-              const fv = (body.verify as any[]).find((v: any) => v && v.ok === false);
-              const out = typeof fv.output === "string" ? fv.output : "";
-              const errLines = out.split("\n").filter((l: string) => (/error|EXIT=[1-9]/.test(l) || l.includes("(fail)")) && !l.includes("(pass)")).slice(0, 3).join(" | ");
-              failDetail = `verify failed (${fv.vessel ?? "?"}): ${(errLines || out.slice(-200)).slice(0, 240)}`;
-            } else if (body.semantic_gate && typeof body.semantic_gate === "object" && typeof (body.semantic_gate as any).reason === "string" && (body.semantic_gate as any).reason.trim()) {
-              failDetail = `semantic_gate: ${String((body.semantic_gate as any).reason).trim().slice(0, 200)}`;
-            } else if (body.error) {
-              failDetail = String(body.error).slice(0, 200);
-            } else {
-              failDetail = "no failure detail in compose report";
-            }
-            const flags = [
-              body.apply_failed ? "apply_failed" : "",
-              body.rolled_back ? "rolled_back" : "",
-            ].filter(Boolean).join(", ");
-            const failWhy = `op_count=${body.op_count ?? "?"}${flags ? `, ${flags}` : ""}: ${failDetail}`;
-            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ROUTED to feature_compose for ${editFile} → verdict=${verdict || "(none)"} (${failWhy})`);
-            // A CHECK-SUPPLY COMPOSE IS NEVER ESCALATED, WHATEVER STAGE REFUSED IT (L1b). Its test-writing floors live in
-            // feature_compose only; patch_with_tools has no test-writing scope rule and wrote into the live
-            // development-vessel test/checks/ when a test_writing_diff_outside_tests refusal was escalated (d61d8b41).
-            // Keyed on the request's marker, never on the stage or the error text, so every future floor is covered.
-            const _checkSupplyStop = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
-            if (_checkSupplyStop) {
-              const _stage = String(body.stage ?? "(none)");
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT check_supply compose refused at ${_stage}: no escalation (${editFile}, verdict=${verdict || "(none)"})`);
-              return {
-                result: null,
-                status: "failed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: null,
-                attempts: 1,
-                ...(composeNonAttemptOutcome(body as Record<string, unknown>) ? { outcome: composeNonAttemptOutcome(body as Record<string, unknown>) } : {}),
-                goalReachReason: `routed edit-intent to feature_compose; check_supply compose refused at ${_stage} (verdict=${verdict || "unknown"}; ${failWhy}) - a check-supply compose is final, so it is not escalated to patch_with_tools`,
-                reached: false,
-                executionId: `feature_compose:check-supply-refused:${goalHashOf(goal as string)}`,
-              };
-            }
-
-            // STRATEGY ESCALATION (2026-07-10): prose goal-text drafting through
-            // feature_compose failed on this file. Measured posterior: byte-anchored
-            // tool-driven patching (patch_with_tools ReAct + typecheck verify-on-done)
-            // converges where prose drafting does not. Escalate ONCE before failing.
-            //
-            // NOT FOR REGION-NAMED GAPS (2026-08-07). Escalation is for the class where
-            // the FIX SHAPE is already agreed and only its application failed — a bad
-            // anchor, a missing old_string. It is the wrong instrument when JUDGEMENT is
-            // the load-bearing part, because the escalated route runs no semantic judge
-            // and its landings are not graded (gap escalated-pwt-landings-are-ungraded),
-            // so Thompson never learns the route produced a bad patch and posterior decay
-            // can never retire it.
-            //
-            // EVIDENCE: a human complaint naming region "sub-fleet-elapsed" ("the elapsed
-            // column keeps counting after a run has finished") failed compose twice on
-            // MECHANICAL anchor errors, escalated both times, and both times landed an
-            // unjudged patch on a different render site that simply HID the value
-            // (046d754, 49421ae — reverted 78c675d, 0022455). Region containment cannot
-            // stop this class: both patches touched the region line literally. The
-            // escalation was legitimate each time; the route it escalates TO is the
-            // problem.
-            //
-            // So this is routing, not a gate: a region-named gap goes through the path
-            // that has the judge, and if the drafter never converges the gap honestly
-            // stays open rather than closing on a wrong patch. Fail-open by design — if
-            // the phrasing is absent, escalation proceeds exactly as before.
-            //
-            // Mirrors gap-to-feature's canonical `in the region "<x>"` summary phrasing
-            // (development-vessel regionFromProposalText); duplicated across repos on
-            // purpose rather than coupling the two vessels.
-            const namedRegion = (String(spec).match(/\bin the region\s+"([^"]{2,120})"/i)?.[1] ?? "").trim();
-            // SUPPRESS ONLY WHEN THERE IS A VERDICT TO PREFER.
-            //
-            // The suppression above is a routing preference between two ROUTES THAT
-            // BOTH RAN: keep a region-named gap on the judged compose path rather
-            // than letting it land an ungraded byte patch. That reasoning requires
-            // the compose to have actually produced a verdict.
-            //
-            // It did not check. Observed 2026-08-10: a directed edit resolved the
-            // feature_compose producer to the federation ingress proxy (:8401)
-            // during a window when the local registration had dropped, and the call
-            // died with `ingress proxy failed ... NO_RESERVATION`. `verdict` was
-            // empty — nothing drafted, nothing judged — and this branch still fired,
-            // removing the only remaining route and reporting the dispatch as a
-            // compose rejection. A transport failure was dressed up as a drafting
-            // decision.
-            //
-            // A guard that selects on a property of the REQUEST (the spec names a
-            // region) must also read the KIND of the FAILURE. With no verdict there
-            // is nothing to prefer, so fall through and let escalation try.
-            // AN ANCHOR FAILURE IS AN ADDRESSING FAILURE, NOT A QUALITY SIGNAL.
-            //
-            // This suppression exists to keep a region-named gap on the JUDGED
-            // compose path rather than letting the byte-anchored route land an
-            // ungraded patch. That trade is right when the compose produced a
-            // draft and the judge disliked it.
-            //
-            // It is wrong when the compose failed to ADDRESS the file at all.
-            // Measured 2026-08-11 on a 13,867-line file, with verified-unique
-            // anchors supplied in the window (`[fc-anchors]` fired twice for this
-            // exact file):
-            //
-            //   apply_failed: "old_string not found in file. NOTHING resembling
-            //   your anchor occurs in this 13867-line file — you are editing from
-            //   memory, not from the file."
-            //
-            // feature_compose drafts from an excerpt; patch_with_tools READS the
-            // file with code_search / code_read_lines and binds anchors it has
-            // actually seen — in earlier trials it located real anchors in this
-            // same file. So for precisely this failure the escalation target is
-            // strictly better at the thing that failed, and suppressing it leaves
-            // the gap with no route at all.
-            //
-            // Same shape as the BUSY fix above: a guard selecting on a property of
-            // the REQUEST must also read the KIND of the failure.
-            const anchorFailure = /old_string not found|no_unique_anchor|anchor_not_found|apply_failed/i.test(failWhy);
-            // NO VERDICT IS NOT EVIDENCE FOR ESCALATION. Escalation is justified by an
-            // ANCHOR failure, where the byte-anchored route is strictly better at the
-            // thing that failed. A compose that returned nothing - HTTP 503 while the
-            // vessel drains for a restart, observed 2026-09-10 06:54 - reports no failure
-            // kind at all, and routing on that basis sends work to a lane that runs no
-            // semantic judge and lands ungraded. Suppress when there is no verdict, so
-            // the caller retries against a live compose instead. The region-named case
-            // below is unchanged.
-            if ((namedRegion || !verdict) && !anchorFailure) {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SUPPRESSED for ${editFile} — the spec names region "${namedRegion}", and the byte-anchored route runs no semantic judge and lands ungraded; a region-named gap stays on the judged compose path (${failWhy})`);
-              return {
-                result: null,
-                status: "failed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: null,
-                attempts: 1,
-                goalReachReason: `routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy}); escalation suppressed — the spec names region "${namedRegion}" and the byte-anchored route runs no semantic judge`,
-                reached: false,
-                executionId: `feature_compose:rejected:${goalHashOf(goal as string)}`,
-              };
-            }
-            // ALREADY LANDED IS NOT AN ANCHOR FAILURE. A retry of an edit that has already
-            // landed fails no_unique_anchor (the inserted text now contains the anchor), which
-            // the guard above counts as an anchor failure. Escalating then hands a landed edit
-            // to patch_with_tools, which reads the file and applies it a second time (31d07cd
-            // duplicated 128f51f this way). Ask git first, with the same evidence bar as the
-            // late-landing check below: a sha on origin/dev for this goal hash means done.
-            const _preLandedSha = await landedShaForGoalHash(String(editFile).split("/")[1] ?? "", goalHashOf(goal as string));
-            // ONLY WHILE THAT COMMIT IS STILL THE FILE'S LATEST CHANGE. Fixtures that re-send
-            // identical goal text (the graded canary R/restore/C) have older landings for the
-            // same goal hash that a later commit has since superseded; those must still
-            // escalate. If the goal-hash commit is the newest commit touching the file, its
-            // edit is in effect now and a second application would duplicate it.
-            let _preLandedIsLatest = false;
-            if (_preLandedSha) {
-              try {
-                const _vessel = String(editFile).split("/")[1] ?? "";
-                const _rel = String(editFile).split("/").slice(2).join("/");
-                const _lp = Bun.spawn(
-                  ["git", "-C", `/workspace/git/vessels/${_vessel}`, "log", "origin/dev", "-1", "--format=%H", "--", _rel],
-                  { stdout: "pipe", stderr: "pipe" },
-                );
-                const _latest = (await new Response(_lp.stdout).text()).trim();
-                _preLandedIsLatest = (await _lp.exited) === 0 && _latest === _preLandedSha;
-              } catch {
-                _preLandedIsLatest = false;
-              }
-            }
-            if (_preLandedSha && _preLandedIsLatest) {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION SKIPPED for ${editFile} - route-edit-${goalHashOf(goal as string)} already landed as ${_preLandedSha} on origin/dev`);
-              return {
-                result: null,
-                status: "completed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["mitosisCutoverReport"],
-                attempts: 1,
-                goalReachReason: `late-landing confirmed before escalation: commit ${_preLandedSha} for route-edit-${goalHashOf(goal as string)} is on origin/dev; the compose retry failed (${failWhy}) because the edit was already applied, so patch_with_tools was not called`,
-                reached: true,
-                executionId: `feature_compose:${_preLandedSha}`,
-              };
-            }
-            // A NEW file escalates only with is_new_file, and only when it is absent from origin/dev,
-            // the push clone and the runtime tree; an excluded target makes no call (escalation-target.ts).
-            const _escTarget = decideEscalationTarget(String(editFile));
-            if (_escTarget.kind === "refuse") {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION REFUSED for ${editFile}: ${_escTarget.reason} — returning the compose failure`);
-            } else try {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION — feature_compose verdict=${verdict || "(none)"} for ${editFile}; escalating to patch_with_tools (byte-anchored route)`);
-              const pwtResp = await fetch(composeUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-                body: JSON.stringify({ impulse: { pointer: { type: "patch_with_tools", proposal_text: `${spec}\n\nPRIOR FEATURE-COMPOSE FAILURE ON THIS FILE (do not repeat it): ${failWhy}`, target_file: editFile, max_attempts: 2, ...(_escTarget.kind === "new_file" ? { is_new_file: true } : {}) } } }),
-                signal: AbortSignal.timeout(240_000),
-              });
-              if (pwtResp.ok) {
-                const pwtJson = await pwtResp.json() as { success?: boolean; shape?: string; body?: Record<string, unknown> };
-                const pwtBody = resolveReportBody(pwtJson);
-                // SUBSTANCE GRADE (landed == reached): patch_with_tools now carries landed:true +
-                // landed_sha/new_git_sha when its cutover actually committed+pushed to origin/dev.
-                // Mirror the feature_compose positive (reached:true + fileEditResult) BEFORE the
-                // staged branch so a REAL deterministic landing is not mis-graded staged-not-landed.
-                const pwtLandedSha = (pwtBody["landed"] === true && typeof pwtBody["landed_sha"] === "string" && (pwtBody["landed_sha"] as string).trim())
-                  ? (pwtBody["landed_sha"] as string).trim()
-                  : (typeof pwtBody["new_git_sha"] === "string" && (pwtBody["new_git_sha"] as string).trim() ? (pwtBody["new_git_sha"] as string).trim() : null);
-                if (pwtJson.success !== false && pwtLandedSha) {
-                  tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools LANDED ${pwtLandedSha} for ${editFile} — grading reached:true`);
-                  recordDeterministicLabel(goal ?? "", `patch_with_tools:${pwtLandedSha}`, "patch_with_tools", { reached: true, reason: `deterministic:escalation-landed ${pwtLandedSha}`, deterministic: true });
-                  return {
-                    result: null,
-                    status: "completed",
-                    selectedTemplateId: "patch_with_tools",
-                    completionShapes: ["fileEditResult"],
-                    attempts: 2,
-                    goalReachReason: `landed ${pwtLandedSha} — feature_compose verdict=${verdict || "unknown"} (${failWhy}); escalated to patch_with_tools which committed/pushed a typecheck-verified patch for ${editFile} to origin/dev`,
-                    reached: true,
-                    executionId: `patch_with_tools:${pwtLandedSha}`,
-                  };
-                }
-                if (pwtJson.success !== false && (pwtJson.shape === "mitosisStaged" || pwtBody["dispatched"] === true)) {
-                  // SUBSTANCE GRADE (staged != landed): mitosisStaged is definitionally
-                  // pre-landing — the patch is typecheck-clean in the clone but NOT committed/
-                  // pushed to origin/dev (landing is a separate async mitosis cutover). Grading
-                  // this reached=true was the hollow green (dispatch 40d343e6: reached=yes, origin
-                  // unchanged). A staged clone is not a reach; grade honest-not-reached so the
-                  // posterior learns the truth and escalation can fire. Fail-CLOSED: staged is
-                  // itself proof of not-landed, so no git check is needed here.
-                  tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools STAGED (NOT landed) mitosis for ${editFile} (${String(pwtBody["mitosis_version_id"] ?? "")}) — grading staged-not-landed`);
-                  opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate("patch_with_tools", "staged-not-landed"));
-                  return {
-                    result: null,
-                    status: "failed",
-                    selectedTemplateId: "patch_with_tools",
-                    completionShapes: ["mitosisCutoverReport"],
-                    attempts: 2,
-                    goalReachReason: `staged-not-landed — feature_compose verdict=${verdict || "unknown"} (${failWhy}); escalated to patch_with_tools which STAGED a typecheck-verified mitosis for ${editFile} but it is not committed/pushed to origin/dev (cutover pending/failed); a staged clone is not a reach`,
-                    reached: false,
-                    executionId: `patch_with_tools:${goalHashOf(goal as string)}`,
-                  };
-                }
-                tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools did not stage (shape=${String(pwtJson.shape)} detail=${JSON.stringify(pwtBody).slice(0, 160)})`);
-              } else {
-                tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools HTTP ${pwtResp.status}`);
-              }
-            } catch (escErr) {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT ESCALATION patch_with_tools call failed (${(escErr as Error).message}) — returning the compose failure`);
-            }
-            // The compose call may have timed out at THIS caller while the callee went on
-            // to land the commit. Ask git before declaring not-reached — same evidence bar
-            // (a sha on origin/dev), read later. Null on any failure ⇒ verdict unchanged.
-            const _landedSha = await landedShaForGoalHash(String(editFile).split("/")[1] ?? "", goalHashOf(goal as string));
-            if (_landedSha) {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT LATE-LANDING ${_landedSha} found on origin/dev for route-edit-${goalHashOf(goal as string)} — the compose call failed at the caller but the edit LANDED; grading reached:true`);
-              return {
-                result: null,
-                status: "completed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: ["mitosisCutoverReport"],
-                attempts: 1,
-                goalReachReason: `late-landing confirmed: commit ${_landedSha} for route-edit-${goalHashOf(goal as string)} is on origin/dev; the caller's compose call failed (${failWhy}) but the edit landed`,
-                reached: true,
-                executionId: `feature_compose:${_landedSha}`,
-              };
-            }
-            return {
-              result: null,
-              status: "completed",
-              selectedTemplateId: "feature_compose",
-              completionShapes: ["fileEditResult"],
-              attempts: 1,
-              goalReachReason: `deterministic:edit-intent-accepted-${verdict ? String(verdict).toLowerCase() : "unknown"} — routed edit-intent to feature_compose; verdict=${verdict || "unknown"} (${failWhy})`,
-              reached: String(verdict).toUpperCase() === "FAVORABLE",
-              // Durable id for the oracle corpus: gate rejections must be labelable.
-              // Maps 1:1 to /workspace/proposals/route-edit-<goal_hash>-compose-report.json.
-              executionId: `feature_compose:accepted:${goalHashOf(goal as string)}`,
-            };
-          } catch (e) {
-            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
-            tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT feature_compose failure detail name=${String((e as Error)?.name ?? "")} cause=${String(((e as { cause?: unknown })?.cause as Error | undefined)?.message ?? (e as { cause?: unknown })?.cause ?? "")} code=${String((e as { code?: unknown })?.code ?? "")}`);
-            // A CHECK-SUPPLY GOAL DOES NOT FALL THROUGH TO authorFallback/recommend (L1b follow-up): the recovery loop
-            // runs a recommended template for the goal's shapes, and fileEditResult producers write. Marker only.
-            const _checkSupplyComposeThrew = checkSupplyRouteOf(opts.variables) !== null || opts.variables?.check_supply === true;
-            if (_checkSupplyComposeThrew) {
-              tap(`[goal-host-vessel] ${opts.surface}: EDIT-INTENT check_supply compose threw for ${editFile}: no escalation; NOT falling through to authorFallback/recommend`);
-              return {
-                result: null,
-                status: "failed",
-                selectedTemplateId: "feature_compose",
-                completionShapes: null,
-                attempts: 1,
-                goalReachReason: `routed edit-intent to feature_compose; the check_supply compose call threw (${String((e as Error)?.message ?? e).slice(0, 200)}) - a check-supply goal is never escalated or recovered through another template`,
-                reached: false,
-              };
-            }
-            // fall through to the existing behaviour unchanged
-          }
-        }
-      }
       // ACTIVITY-REPAIR interception (2026-07-02): the activity analogue of the
-      // edit-intent block above, one artifact level up. Vessels are maintained by
-      // editing bytes (feature_compose); ACTIVITIES are maintained by minting
+      // edit-intent change, one artifact level up. Vessels are maintained by
+      // editing bytes; ACTIVITIES are maintained by minting
       // VARIANTS (template_repair → activity_create_variant; promotion stays with
       // the Thompson evidence gate). Without this, a 0-step walk on "fix the flaky
       // <id> activity" falls to recommend and grabs a keyword-similar maintenance

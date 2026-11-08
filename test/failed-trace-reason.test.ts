@@ -144,9 +144,4 @@ describe("an early compose refusal with no error still carries a reason", () => 
     expect(m.composeReportReason({ error: "admission: goal names no repos file", failure_kind: "terminal_refusal" })).toBe("admission: goal names no repos file");
     expect(m.composeReportReason({})).toBe("no failure detail in compose report");
   });
-
-  test("both early refusal sites use it in place of the bare error", () => {
-    expect(INDEX).toContain("refused at admission (stage=${_earlyAdmissionStage}): ${composeReportReason(earlyBody)}");
-    expect(INDEX).toContain("check_supply compose refused at ${_stage} (verdict=${earlyVerdict || \"(none)\"}): ${composeReportReason(earlyBody)}");
-  });
 });

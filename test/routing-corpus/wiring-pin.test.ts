@@ -1,7 +1,7 @@
 // PROTECTED: production routes through the entries the routing corpus pins (DESIGN §6.3). A corpus-green rule that
 // production does not call is a hollow gate, so this reads src/index.ts as text and asserts, by anchor (never by line):
 //   - the /run-goal door calls the core's resolveDoorGoal (not resolvePathlessCodeChangeGoal directly);
-//   - the early edit-intent hand-off asks the core's handoffRoute and branches on its route and target;
+//   - the edit-intent change admission asks the core's handoffRoute and branches on its route and target;
 //   - gap-record hydration composes the hand-off goal with the core's goalForRoutingOf;
 //   - the moved expressions (the inline hand-off predicate and the inline hydration text) are gone from index.ts.
 // Every anchor must be FOUND: a missing anchor is red, never vacuous. Each assertion is shown red on a mutant.
@@ -14,9 +14,9 @@ const INDEX = readFileSync(join(import.meta.dir, "..", "..", "src", "index.ts"),
 const MUST_CALL = [
   'import { resolveDoorGoal, handoffRoute as routingHandoff, goalForRoutingOf } from "./routing-core/entries";',
   ": await resolveDoorGoal(rawGoal, _routeRec.search(searchWorkspaceForTerm), _routeRec.tap((m) =>",
-  "const earlyHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: earlyEditIntentEnabled });",
-  'if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {',
-  "const earlyEditFile = earlyHandoff.target;",
+  "const changeHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });",
+  'if (changeHandoff.route === "feature_compose" && changeHandoff.target) {',
+  "target_file: changeHandoff.target",
   "if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });",
 ];
 /** The moved expressions. Each was in index.ts before the split; none may come back as a local copy. */
@@ -47,11 +47,11 @@ describe("wiring pin: index.ts routes through the routing core", () => {
     expect(wiringOffences(INDEX.replace(": await resolveDoorGoal(rawGoal,", ": await resolvePathlessCodeChangeGoal(rawGoal,")).length).toBeGreaterThan(0);
   });
   test("MUTANT a local copy of the hand-off predicate is red", () => {
-    const m = INDEX.replace(MUST_CALL[3]!, 'const earlyEditVerb = /\\b(edit|fix)\\b/i.test(goalForRouting);\n      if (earlyEditVerb && earlyHandoff.target) {');
+    const m = INDEX.replace(MUST_CALL[3]!, 'const earlyEditVerb = /\\b(edit|fix)\\b/i.test(goalForRouting);\n      if (earlyEditVerb && changeHandoff.target) {');
     expect(wiringOffences(m).length).toBeGreaterThan(0);
   });
   test("MUTANT the branch ignoring the core's route is red", () => {
-    expect(wiringOffences(INDEX.replace(MUST_CALL[3]!, "if (earlyHandoff.target) {")).length).toBeGreaterThan(0);
+    expect(wiringOffences(INDEX.replace(MUST_CALL[3]!, "if (changeHandoff.target) {")).length).toBeGreaterThan(0);
   });
   test("MUTANT inline hydration text is red", () => {
     const m = INDEX.replace(MUST_CALL[5]!, "if (hydFile) goalForRouting = `${goal} (gap cites file: ${hydFile}; fix per gap record: x)`;");

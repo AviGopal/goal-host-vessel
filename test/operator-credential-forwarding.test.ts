@@ -47,15 +47,11 @@ describe("operator credential forwarding", () => {
     expect(isLoopbackUrl("http://192.168.1.2:1/")).toBe(false);
   });
 
-  it("index.ts carries the request's Authorization into opts and onto BOTH feature_compose calls", async () => {
+  it("index.ts carries the request's Authorization into opts, and every directed call site also sends the credential header", async () => {
     const src = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     expect(src).toContain('operatorCredential: trigger === "operator" ? operatorCredentialFromRequest(req.headers.get("authorization")) : undefined');
-    expect(src).toContain("...operatorCredentialHeaders(opts, earlyComposeUrl)");
-    expect(src).toContain("...operatorCredentialHeaders(opts, composeUrl)");
-    // every feature_compose call site that sends directed also sends the credential header
     const directedSites = src.split("directed: opts.operatorOrigin === true").length - 1;
     const headerSites = src.split("...operatorCredentialHeaders(opts, ").length - 1;
-    expect(directedSites).toBe(2);
     expect(headerSites).toBe(directedSites);
   });
 });

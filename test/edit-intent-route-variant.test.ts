@@ -1,29 +1,22 @@
-// THE EDIT-INTENT ROUTE SWITCH IS A SHAPED RECORD (src/edit-intent-route.ts), NOT AN ENV VAR.
+// A CHANGE GOAL IS WALKED (src/edit-intent-route.ts); THERE IS NO COMPOSE HAND-OFF AND NO SWITCH.
 //
-// The switch is the activityVariantMask pool row for goal-host-vessel:edit-intent-route, read once per dispatch:
-// variant 0 / no row / unreadable pool = route to feature_compose as before; variant 1 = no feature_compose hand-off,
-// the dispatch is admitted as a change and walks toward the landing shape (cutoverApplied). A walk step whose output
-// already landed in process (patch_with_tools: landed:true / new_git_sha) satisfies that target, so no second landing
-// step is sought.
+// When the edit-intent routing rules name a file to change, the dispatch is admitted as a change and walks toward the
+// landing shape (cutoverApplied), unconditionally: no mask or env switch is read, and index.ts POSTs no feature_compose.
+// A walk step whose output already landed in process (patch_with_tools: landed:true / new_git_sha) satisfies that
+// target, so no second landing step is sought.
 //
-// Seam: index.ts boots the vessel on import, so (as check-supply-missed-edit-route.test.ts) the dispatch cannot be
-// driven end to end here. The decisions are tested on the smallest exported functions that make them
-// (editIntentRouteDecision, the routing core's handoffRoute, withLandingTarget, landingSatisfiedBy, the write-door
-// predicates), and their wiring in index.ts is pinned as text by anchor.
+// Seam: index.ts boots the vessel on import, so the dispatch cannot be driven end to end here. The decisions are tested
+// on the smallest exported functions that make them (the routing core's handoffRoute, withLandingTarget,
+// landingSatisfiedBy, the write-door predicates), and their wiring in index.ts is pinned as text by anchor.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { editIntentRouteDecision, editIntentRouteLine, EDIT_INTENT_ROUTE_ACTIVITY, inProcessLanding, LANDING_TARGET_SHAPE, landingSatisfiedBy, withLandingTarget } from "../src/edit-intent-route";
+import { inProcessLanding, LANDING_TARGET_SHAPE, landingSatisfiedBy, withLandingTarget } from "../src/edit-intent-route";
 import { handoffRoute } from "../src/routing-core/entries";
 import { isFsWriteShape } from "../src/fs-write-shapes";
 import { refusedWrite } from "../src/write-door";
 
 const INDEX = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
-const NOW = new Date().toISOString(); // the dispatch reads the record at its own now
-const FROM = "2000-01-01T00:00:00.000Z";
-const UNTIL = "2099-01-01T00:00:00.000Z";
-const mask = (active_variant: unknown, over: Record<string, unknown> = {}) =>
-  [{ id: "mask-edit-intent-route", body: { activity_id: EDIT_INTENT_ROUTE_ACTIVITY, active_variant, from: FROM, until: UNTIL, reason: "fixture", by: "operator", ...over } }];
 const EDIT_GOAL = "Fix the off-by-one in repos/goal-host-vessel/src/edit-intent-route.ts so the window end is exclusive.";
 
 /** Brace depth of `to` relative to `from` in index.ts, skipping comments and string/template text. */
@@ -47,92 +40,54 @@ function braceDepth(from: number, to: number): number {
   return depth;
 }
 const at = (s: string, from = 0): number => INDEX.indexOf(s, from);
-const EARLY_IF = 'if (earlyHandoff.route === "feature_compose" && earlyHandoff.target) {';
-const LATE_IF = "if (_editIntentRoute.route_enabled) {";
+const ADMIT_IF = 'if (changeHandoff.route === "feature_compose" && changeHandoff.target) {';
 
-describe("[CONTROL] variant 0, no record, an unreadable pool: route to feature_compose exactly as before", () => {
-  test("variant 0 in force", () => {
-    const d = editIntentRouteDecision(NOW, mask(0));
-    expect(d).toMatchObject({ variant: 0, route_enabled: true, mask_id: "mask-edit-intent-route", mask_state: "in_force" });
-  });
-  test("no record for this activity, or none whose [from, until) holds now", () => {
-    for (const rows of [[], mask(1, { activity_id: "goal-host:failure-recall" }), mask(1, { until: FROM }), mask(1, { from: UNTIL })]) {
-      expect(editIntentRouteDecision(NOW, rows)).toMatchObject({ variant: 0, route_enabled: true, mask_id: null, mask_state: "no_mask" });
-    }
-  });
-  test("unreadable pool", () => {
-    expect(editIntentRouteDecision(NOW, null)).toMatchObject({ variant: 0, route_enabled: true, mask_state: "unread" });
-  });
-  test("unknown variant is variant 0", () => {
-    for (const v of [7, "1", null]) expect(editIntentRouteDecision(NOW, mask(v))).toMatchObject({ variant: 0, route_enabled: true, mask_state: "in_force" });
-  });
-  test("route enabled: the routing core hands the edit goal to feature_compose", () => {
-    const h = handoffRoute({ goal_for_routing: EDIT_GOAL, route_enabled: editIntentRouteDecision(NOW, mask(0)).route_enabled });
+describe("[MUST-FAIL] no compose hand-off: the goal is admitted as a change and targets cutoverApplied", () => {
+  test("the routing core names the file to change (its route label is the rules' own decision, not a POST)", () => {
+    const h = handoffRoute({ goal_for_routing: EDIT_GOAL, route_enabled: true });
     expect(h.route).toBe("feature_compose");
     expect(h.target).toBe("repos/goal-host-vessel/src/edit-intent-route.ts");
-  });
-  test("the decision line names mask id, state and why", () => {
-    const line = editIntentRouteLine("run-goal", editIntentRouteDecision(NOW, null));
-    expect(line).toContain("edit-intent-route variant=0 route=feature_compose");
-    expect(line).toContain('"mask_state":"unread"');
-    expect(line).toContain('"mask_id":null');
-  });
-});
-
-describe("[MUST-FAIL] variant 1: no feature_compose hand-off; the goal is admitted as a change and targets cutoverApplied", () => {
-  test("variant 1 in force disables the route", () => {
-    const d = editIntentRouteDecision(NOW, mask(1));
-    expect(d).toMatchObject({ variant: 1, route_enabled: false, mask_id: "mask-edit-intent-route", mask_state: "in_force" });
-    expect(editIntentRouteLine("run-goal", d)).toContain("route=walk");
-  });
-  test("the routing core does not hand off with the route disabled, and would with it enabled", () => {
-    expect(handoffRoute({ goal_for_routing: EDIT_GOAL, route_enabled: false }).route).not.toBe("feature_compose");
-    expect(handoffRoute({ goal_for_routing: EDIT_GOAL, route_enabled: true }).route).toBe("feature_compose");
   });
   test("the walk target gains cutoverApplied, once", () => {
     expect(withLandingTarget(["fileEditResult"])).toEqual(["fileEditResult", LANDING_TARGET_SHAPE]);
     expect(withLandingTarget(undefined)).toEqual([LANDING_TARGET_SHAPE]);
     expect(withLandingTarget([LANDING_TARGET_SHAPE])).toEqual([LANDING_TARGET_SHAPE]);
   });
-  test("[MUST-FAIL] variant 1 drops targets the walk can never produce (filesystem writes) and keeps the rest", () => {
+  test("[MUST-FAIL] the landing target drops targets the walk can never produce (filesystem writes) and keeps the rest", () => {
     expect(withLandingTarget(["fs_edit", "fileEditResult", "code_replace_lines", "sourceCode"], isFsWriteShape)).toEqual(["sourceCode", LANDING_TARGET_SHAPE]);
     expect(INDEX).toContain("seededOutputShapes = withLandingTarget(seededOutputShapes, isFsWriteShape);");
   });
-  test("wiring: no env switch is read; the early check reads the record decided once per dispatch", () => {
+  test("[MUST-FAIL] index.ts POSTs no feature_compose and reads no route switch", () => {
+    expect(INDEX.split('type: "feature_compose"').length - 1).toBe(0);
     expect(INDEX).not.toContain("process.env.ROUTE_EDIT_INTENT_TO_COMPOSE");
     expect(INDEX).not.toContain('process.env["ROUTE_EDIT_INTENT_TO_COMPOSE"]');
-    const decided = at("const _editIntentRoute = editIntentRouteDecision(new Date().toISOString(), await readVariantMasks());");
-    const early = at("const earlyEditIntentEnabled = _editIntentRoute.route_enabled;");
-    expect(decided).toBeGreaterThan(0);
-    expect(early).toBeGreaterThan(decided);
-    expect(INDEX.slice(early, early + 400)).toContain("judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: earlyEditIntentEnabled });");
+    for (const gone of ["editIntentRouteDecision", "editIntentRouteLine", "_editIntentRoute", "earlyHandoff", "earlyEditIntentEnabled", "EARLY EDIT-INTENT"]) {
+      expect({ gone, present: INDEX.includes(gone) }).toEqual({ gone, present: false });
+    }
   });
-  test("wiring: the variant-1 block admits the change and seeds cutoverApplied before the walk", () => {
-    const block = at("if (!earlyEditIntentEnabled) {");
-    const early = at(EARLY_IF);
-    expect(block).toBeGreaterThan(0);
-    expect(early).toBeGreaterThan(block);
-    const body = INDEX.slice(block, early);
-    expect(body).toContain("routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true })");
+  test("wiring: the change is admitted and cutoverApplied seeded unconditionally, before the walk", () => {
+    const capture = at('judgeCapture.noteRouteEnabled({ goal: String(goal ?? ""), enabled: false });');
+    const handoff = at("const changeHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });");
+    const admit = at(ADMIT_IF);
+    expect(capture).toBeGreaterThan(0);
+    expect(handoff).toBeGreaterThan(capture);
+    expect(admit).toBeGreaterThan(handoff);
+    // The admission sits directly in the dispatch's try block: no enclosing switch condition.
+    expect(braceDepth(capture, admit)).toBe(0);
+    const body = INDEX.slice(admit, at("// WRITE DOOR (target):", admit));
     expect(body).toContain("_changeAdmitted = true;");
     expect(body).toContain("seededOutputShapes = withLandingTarget(seededOutputShapes, isFsWriteShape);");
     expect(body).toContain("noteDispatchedTargets(goal, seededOutputShapes);");
+    expect(body).not.toContain("mask");
     const walk = at("let walk = await runGoalAsPoolWalk(goal, {");
-    expect(walk).toBeGreaterThan(early);
+    expect(walk).toBeGreaterThan(admit);
   });
-  test("wiring: every feature_compose POST sits inside a route gated by the record (early or late)", () => {
-    const early = at(EARLY_IF);
-    const late = at(LATE_IF);
-    expect(early).toBeGreaterThan(0);
-    expect(late).toBeGreaterThan(early);
-    const posts: number[] = [];
-    for (let i = at('type: "feature_compose",'); i >= 0; i = at('type: "feature_compose",', i + 1)) posts.push(i);
-    expect(posts.length).toBeGreaterThan(0);
-    for (const p of posts) {
-      const inEarly = p > early && p < late && braceDepth(early, p) > 0;
-      const inLate = p > late && braceDepth(late, p) > 0;
-      expect({ at: p, gated: inEarly || inLate }).toEqual({ at: p, gated: true });
-    }
+  test("wiring: a landed walk counts as an edit (its landing shapes are edit results), so it is not recovered again", () => {
+    const shapes = at("const EDIT_RESULT_SHAPES = [");
+    expect(shapes).toBeGreaterThan(0);
+    const line = INDEX.slice(shapes, INDEX.indexOf("\n", shapes));
+    expect(line).toContain('"cutoverapplied"');
+    expect(line).toContain('"vesselmitosiscutoverresult"');
   });
 });
 

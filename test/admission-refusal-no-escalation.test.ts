@@ -48,26 +48,6 @@ describe("an admission refusal from feature_compose is final", () => {
     });
   }
 
-  test("[MUST-FAIL] wiring (post-walk route): the stop sits after the BUSY stop and before the escalation, and its return names no patch_with_tools", () => {
-    const busyStop = INDEX.indexOf("executionId: `feature_compose:busy:${goalHashOf(goal as string)}`,");
-    const stop = INDEX.indexOf("const _admissionStage = composeAdmissionRefusal(body);");
-    const escalate = INDEX.indexOf("const pwtResp = await fetch(composeUrl, {");
-    expect(busyStop).toBeGreaterThan(0);
-    expect(stop).toBeGreaterThan(busyStop);
-    expect(stop).toBeLessThan(escalate);
-    const block = INDEX.slice(stop, INDEX.indexOf("const cutovers = Array.isArray(body.cutovers)", stop));
-    expect(block).toContain("return {");
-    expect(block).not.toMatch(/fetch\(|type: "patch_with_tools"/);
-  });
-
-  test("[MUST-FAIL] wiring (early route): an admission refusal returns instead of falling through to the walk (which composes again and escalates)", () => {
-    const stop = INDEX.indexOf("const _earlyAdmissionStage = composeAdmissionRefusal(earlyBody);");
-    const fallThrough = INDEX.indexOf("EARLY EDIT-INTENT feature_compose verdict=${earlyVerdict || \"(none)\"} — falling through to walk");
-    expect(stop).toBeGreaterThan(0);
-    expect(stop).toBeLessThan(fallThrough);
-    expect(INDEX.slice(stop, fallThrough)).toContain("return {");
-  });
-
   test("[CONTROL] an apply/anchor failure still escalates: apply_failed, old_string not found, a verify failure, no stage", () => {
     if (!refusal) return;
     for (const body of [

@@ -182,14 +182,6 @@ describe("the early hand-off and a goal that forbids every change", () => {
       expect(goalDemandsLandedEdit(g)).toBe(false);
     });
   }
-  it("[WIRING] the late edit-intent route declines a goal that forbids change, before it composes", () => {
-    const idx = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8");
-    const decl = idx.indexOf("const lateRouteForbidden = !!fileMatch && (prohibitsAnyMutation(goal) || asksForDescriptionUnderChangeProhibition(goal));");
-    expect(decl).toBeGreaterThan(0);
-    const branch = idx.indexOf("if (fileMatch && !lateRouteForbidden) {", decl);
-    expect(branch).toBeGreaterThan(decl);
-    expect(branch - decl).toBeLessThan(400);
-  });
   for (const g of EDITS_UNDER_DESCRIPTION) {
     it(`[CONTROL] a real edit still composes onto its file — ${g.slice(0, 70)}…`, () => {
       expect(route(g)).toEqual({ route: "feature_compose", target: g.match(/repos\/[\w.\/-]+\.\w+/)![0] });

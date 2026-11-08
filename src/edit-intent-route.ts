@@ -1,67 +1,16 @@
-// THE EDIT-INTENT ROUTE SWITCH, AS A SHAPED RECORD (law 1: behaviour is read from shaped impulses at use time, never
-// from an env var frozen at process start).
-//
-// A goal that names a repos/<vessel>/<path> file with an edit verb used to be handed to feature_compose before the walk
-// whenever the env switch ROUTE_EDIT_INTENT_TO_COMPOSE was not "0". The switch is now the activityVariantMask pool
-// record for the activity "goal-host-vessel:edit-intent-route", read once per dispatch:
-//   - variant 0 (the control), no record in force, an unreadable pool, an unknown variant: route to feature_compose,
-//     exactly as before;
-//   - variant 1: no feature_compose hand-off (neither the early route nor the late one). The goal is still a change:
-//     the dispatch is admitted as one and walks with the landing shape (LANDING_TARGET_SHAPE) seeded as a target, so
-//     backward-chaining has somewhere to start (patch_with_tools lands in process; a staged patch is landed by
-//     development-vessel:mitosis-tick).
+// A CHANGE GOAL IS WALKED. A goal that names a repos/<vessel>/<path> file with an edit verb (the edit-intent routing
+// rules' decision) is admitted as a change and walks with the landing shape (LANDING_TARGET_SHAPE) seeded as a target,
+// so backward-chaining has somewhere to start (patch_with_tools lands in process; a staged patch is landed by
+// development-vessel:mitosis-tick). There is no compose hand-off: the walk is the change's only route.
 //
 // NO DOUBLE LANDING (inProcessLanding): patch_with_tools drafts, verifies AND lands in its own process, and says so in
 // its output body (landed / new_git_sha). A walk that targets the landing shape treats such an output as the landing
 // itself, so it never runs a second landing step (mitosis-tick / vessel_mitosis_cutover) for the same change.
 
-export const EDIT_INTENT_ROUTE_ACTIVITY = "goal-host-vessel:edit-intent-route";
-/** The walk target a variant-1 change goal is seeded with: the landing development-vessel's cutover reports. */
+/** The walk target a change goal is seeded with: the landing development-vessel's cutover reports. */
 export const LANDING_TARGET_SHAPE = "cutoverApplied";
-const EDIT_INTENT_ROUTE_VARIANTS = [0, 1] as const;
 
-export type EditIntentMaskState = "in_force" | "no_mask" | "unread";
-export interface EditIntentRouteDecision {
-  /** 0 = route to feature_compose (control); 1 = walk the change instead. */
-  variant: number;
-  /** the hand-off may route to feature_compose (variant !== 1) */
-  route_enabled: boolean;
-  mask_id: string | null;
-  mask_state: EditIntentMaskState;
-  why: string;
-}
-
-type MaskRow = { id?: string; body?: unknown };
-
-/** The variant in force at `nowIso` from the open activityVariantMask rows: the first row for the edit-intent route
- *  whose [from, until) holds now. Rows unread (null): variant 0. No row in force: variant 0. Unknown variant: 0. */
-export function editIntentRouteDecision(nowIso: string, rows: readonly MaskRow[] | null): EditIntentRouteDecision {
-  const done = (variant: number, mask_id: string | null, mask_state: EditIntentMaskState, why: string): EditIntentRouteDecision =>
-    ({ variant, route_enabled: variant !== 1, mask_id, mask_state, why });
-  if (rows === null) return done(0, null, "unread", "mask pool unread: variant-0");
-  const now = Date.parse(nowIso);
-  for (const r of rows) {
-    const b = (r?.body ?? {}) as Record<string, unknown>;
-    if (b["activity_id"] !== EDIT_INTENT_ROUTE_ACTIVITY) continue;
-    const from = Date.parse(String(b["from"] ?? "")), until = Date.parse(String(b["until"] ?? ""));
-    if (!Number.isFinite(from) || !Number.isFinite(until) || now < from || now >= until) continue;
-    const id = r?.id === undefined ? null : String(r.id);
-    const v = b["active_variant"];
-    if (typeof v !== "number" || !(EDIT_INTENT_ROUTE_VARIANTS as readonly number[]).includes(v)) {
-      return done(0, id, "in_force", `mask ${String(id)} names unknown variant ${JSON.stringify(v)}: variant-0`);
-    }
-    return done(v, id, "in_force", `mask ${String(id)} [${String(b["from"])}, ${String(b["until"])}) by ${String(b["by"])}: ${String(b["reason"])}`);
-  }
-  return done(0, null, "no_mask", "no mask in force: variant-0");
-}
-
-/** The one log line per decision (mask id, state, why), as the dispatch's decision log carries it. */
-export function editIntentRouteLine(surface: string, d: EditIntentRouteDecision): string {
-  return `[goal-host-vessel] ${surface}: edit-intent-route variant=${d.variant} route=${d.route_enabled ? "feature_compose" : "walk"} ` +
-    JSON.stringify({ mask_id: d.mask_id, mask_state: d.mask_state, why: d.why });
-}
-
-/** The walk targets of a variant-1 change goal: the dispatch's targets plus the landing shape (deduplicated). */
+/** The walk targets of a change goal: the dispatch's targets plus the landing shape (deduplicated). */
 export function withLandingTarget(shapes: readonly string[] | null | undefined, unproducible: (shape: string) => boolean = () => false): string[] {
   // A walk-side filesystem write is refused at every door (fs-write-shapes.ts), so a target such as fs_edit could never
   // be met: it is dropped, and the landing is the change's target.

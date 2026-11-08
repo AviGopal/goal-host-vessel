@@ -45,20 +45,10 @@ describe("compose gap id of a supply-dispatched edit-intent goal", () => {
   });
 
   test("[MUST-FAIL] index.ts: no compose-attribution site reads the gap id from the goal text alone", () => {
-    // gapIdOfGoal(goal) was called at five sites (two pointers, three landed-commit probes); each must go through
-    // composeGapIdOf(goal, <variables>) so the pointer and the Gap: trailer probes agree on one id.
+    // Every site that attributes a landing to a goal goes through composeGapIdOf(goal, <variables>), so the Gap:
+    // trailer probes agree on one id (the remaining site is the landed-commit probe).
     expect(INDEX.match(/\bgapIdOfGoal\(/g) ?? []).toEqual([]);
-    expect((INDEX.match(/\bcomposeGapIdOf\(goal(?: as string)?, opts\.variables\)/g) ?? []).length).toBe(5);
-  });
-
-  test("[MUST-FAIL] index.ts: both feature_compose pointers carry the check_supply marker and no compose_mode", () => {
-    // Each pointer literal, from its type line to its gap: object.
-    const sites = [...INDEX.matchAll(/type: "feature_compose",\n/g)].map((m) => INDEX.slice(m.index!, INDEX.indexOf("gap: {", m.index!)));
-    expect(sites.length).toBe(2);
-    for (const s of sites) {
-      expect(s).toContain("check_supply: checkSupplyRouteOf(opts.variables) ?? undefined");
-      expect(s).not.toContain("compose_mode");
-    }
+    expect((INDEX.match(/\bcomposeGapIdOf\(goal(?: as string)?, opts\.variables\)/g) ?? []).length).toBe(1);
   });
 
   test("[CONTROL] no marker: the text-derived id, exactly as today", () => {

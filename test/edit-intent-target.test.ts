@@ -30,11 +30,6 @@ describe("a check-supply goal is told to create its check file", () => {
     expect(INDEX.includes("EDIT IT IN PLACE")).toBe(false);
   });
 
-  test("MUST-FAIL: both single-file spec sites build the line from the goal's variables", () => {
-    expect(INDEX).toContain(": singleFileTargetLine(earlyEditFile, opts.variables)");
-    expect(INDEX).toContain(": singleFileTargetLine(editFile, opts.variables)");
-  });
-
   test("MUST-FAIL: the check supply's goal for its check file is told to create_file it, never not to create a file", async () => {
     const { singleFileTargetLine } = await helper();
     const line = singleFileTargetLine(CHECK_FILE, SUPPLY);
@@ -49,11 +44,6 @@ describe("a check-supply goal is told to create its check file", () => {
 describe("every other goal is told what it was told before", () => {
   test("CONTROL: the old line, byte for byte, still exists in the tree", () => {
     expect(INDEX + HELPER_SRC).toContain("`Target file — EDIT IT IN PLACE: emit \\`edit\\` ops on this EXACT path only; do NOT create a new file, vessel, or package.json: ${");
-  });
-
-  test("CONTROL: the multi-file wording is unchanged at both sites", () => {
-    const multi = "`Target files — apply ops ONLY on these exact paths, creating any path that does not yet exist and editing the rest in place; EVERY named file needs its full required change (no wired stubs); no other new files, vessels, or package.json changes: ${";
-    expect(INDEX.split(multi).length - 1).toBe(2);
   });
 
   test("CONTROL: an ordinary goal, a check-supply goal naming a src file, and a check file without the supply keep the old line", async () => {

@@ -36,12 +36,6 @@ describe("route-around record", () => {
     expect(n).toBeGreaterThan(0);
     expect(src.slice(n, n + 400)).toContain("const reused = await universalToolFallback(");
   });
-  test("must-fail control: an early edit-intent dispatch routes to feature_compose before any walk (no stall to record)", () => {
-    const early = src.indexOf("EARLY EDIT-INTENT DETECTED (pre-walk");
-    const firstWalk = src.indexOf("let walk = await runGoalAsPoolWalk(goal, {");
-    expect(early).toBeGreaterThan(0);
-    expect(firstWalk).toBeGreaterThan(early);
-  });
 });
 
 describe("qa follow-ups (source)", () => {

@@ -5,8 +5,6 @@
 // a full owner took the edit and answered BUSY while another owner sat idle.
 //
 //   [MUST-FAIL] two eligible owners, the preferred one full: the pick is the owner with free slots.
-//   [MUST-FAIL] index.ts files no duplicate-owner gap, reads the owners' free slots and picks with pickComposeOwner at
-//               both edit-intent sites.
 //   [CONTROL]   one owner is picked as today (full or not); no owner observably free keeps the priority pick among the
 //               owners; the most free slots wins.
 import { describe, expect, it } from "bun:test";
@@ -24,17 +22,6 @@ describe("a repo's compose owners: the one with free slots takes the edit", () =
     expect(typeof pick).toBe("function");
     expect(pick!([row("dv-a", 0, 5), row("dv-b", 1, 0)], free)?.vesselId).toBe("dv-b");
     expect(pick!([row("dv-a", 0, 5), row("dv-b", null, 9), row("dv-c", 2, 0)], free)?.vesselId).toBe("dv-c");
-  });
-
-  it("[MUST-FAIL] index.ts: no duplicate-owner gap, free slots read, pickComposeOwner at both edit-intent sites", () => {
-    expect(SRC).not.toContain("compose-ownership-duplicate-");
-    expect(SRC).not.toContain("_dupOwnerFiled");
-    expect(SRC).toContain("await readComposeFreeSlots(earlyOwners, earlyAllFiles);");
-    expect(SRC).toContain("await readComposeFreeSlots(owners, allEditFiles);");
-    expect(SRC).toContain("const earlyV = earlyOwners.length > 0 ? pickComposeOwner(earlyOwners,");
-    expect(SRC).toContain("const v = owners.length > 0 ? pickComposeOwner(owners,");
-    // the free-slot read is the existing composeOwnership placement read (targets on the pointer), not a new shape
-    expect(SRC).toContain('body: JSON.stringify({ impulse: { pointer: { type: "composeOwnership", targets } } })');
   });
 
   it("[CONTROL] one owner is today's route; none observably free keeps the priority pick among owners; most free wins", () => {

@@ -49,15 +49,6 @@ const ADMISSION_REASON = "early edit-intent routed to feature_compose; refused a
 const JUDGED = "the judge found the fixture summary lists five families where the goal asked for one";
 
 describe("[MUST-FAIL] an admission-refused dispatch is retained and not remembered", () => {
-  test("both admission returns carry the CHANGE-30 refused outcome with the stage as its class", () => {
-    const early = INDEX.indexOf("const _earlyAdmissionStage = composeAdmissionRefusal(earlyBody);");
-    expect(early).toBeGreaterThan(0);
-    expect(INDEX.slice(early, early + 1200)).toContain('outcome: { kind: "refused", refuse_class: `${ADMISSION_REFUSE_CLASS_PREFIX}${_earlyAdmissionStage}` },');
-    const post = INDEX.indexOf("const _admissionStage = composeAdmissionRefusal(body);");
-    expect(post).toBeGreaterThan(0);
-    expect(INDEX.slice(post, post + 1200)).toContain('outcome: { kind: "refused", refuse_class: `${ADMISSION_REFUSE_CLASS_PREFIX}${_admissionStage}` },');
-  });
-
   test("walk-complete reads the outcome for both decisions, after the caller-cut branch and before the pinned calls", () => {
     const evict = INDEX.indexOf("else if (isNonAttemptOutcome(seek.outcome)) evictReachedCommand(");
     const remember = INDEX.indexOf("else if (isNonAttemptOutcome(seek.outcome)) rememberUnconfirmedDispatchFailures(");
@@ -130,11 +121,6 @@ describe("CONTROL: graded failures are unchanged", () => {
   test("a semantic-gate UNFAVORABLE check-supply refusal is judged content: no admission outcome, still evicted and remembered", () => {
     // the compose ran and the semantic gate judged its change; that return sets no admission outcome
     const judged = "early edit-intent routed to feature_compose; check_supply compose refused at semantic_gate (verdict=UNFAVORABLE): semantic_gate: the fixture change does not address the gap - a check-supply compose is final, so it is neither walked nor escalated";
-    const stop = INDEX.indexOf("if (_earlyCheckSupplyStop) {");
-    const block = INDEX.slice(stop, INDEX.indexOf("if (typeof earlyBody.execution_id === \"string\"", stop));
-    expect(block).toContain("const _stage = composeReportStage(earlyBody);");
-    expect(block).not.toContain("refuse_class");
-    expect(block).not.toContain("isNonAttemptOutcome");
     if (typeof isNonAttempt === "function") expect(isNonAttempt({ kind: "refused", refuse_class: "semantic_gate" })).toBe(false);
     const goal = "edit repos/fixture-vessel/src/k.ts to add the fixture check (semantic gate dissent)";
     expect(m.rememberDispatchFailures(goal, [], judged, "feature_compose", ["fileEditResult"], 1)).toEqual([judged]);
@@ -155,7 +141,6 @@ describe("CONTROL: graded failures are unchanged", () => {
     const goal = "edit repos/fixture-vessel/src/h.ts to add the fixture symbol (capacity)";
     expect(m.rememberDispatchFailures(goal, [], capacity, "feature_compose", ["fileEditResult"], 1)).toEqual([capacity]);
     expect(remembered(goal)).toEqual([]);
-    expect(INDEX).toContain("outcome: composeNonAttemptOutcome(earlyBody as Record<string, unknown>),");
     // with the allowlist, walk-complete takes the non-attempt branch for it: the same effect, retained and not remembered
     if (typeof isNonAttempt === "function") {
       expect(isNonAttempt({ kind: "non_attempt", failure_kind: "capacity" })).toBe(true);

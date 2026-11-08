@@ -120,10 +120,6 @@ describe("judge capture wiring pin: every decision site calls the closed capture
     expect(LINES[attach + 1]).toContain("executionStore.set(dispatchId, record);");
   });
 
-  test("routing: the feature_compose hand-off records the route and its compose gap id", () => {
-    callAfter("const earlyGapId = composeGapIdOf(goal, opts.variables);", "judgeCapture.noteRoutingHandOff({ goal: String(goal ?? \"\"), composeGapId: earlyGapId, editSite: earlyEditSite });", 2);
-  });
-
   test("routing: the gap-record hydration records its routing hint after the routing goal is decided", () => {
     const decided = lineOf("if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });");
     const cap = callAfter("if (hydFile) goalForRouting = goalForRoutingOf(goal, { cited_file: hydFile, summary: String(hydGap.summary ?? \"\") });", "judgeCapture.noteGapHydration({ goal, gapId: hydGap.id, citedFile: hydFile ?? null, applied: goalForRouting !== goal, summary: String(hydGap.summary ?? \"\") });", 4);
@@ -135,8 +131,9 @@ describe("judge capture wiring pin: every decision site calls the closed capture
     expect(block.match(/\bgoalForRouting\s*=(?!=)/g)?.length).toBe(1);
   });
 
-  test("routing: the early edit-intent check records the route switch it decided with", () => {
-    callAfter(`const earlyEditIntentEnabled = _editIntentRoute.route_enabled;`, "judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: earlyEditIntentEnabled });", 2);
+  test("routing: the edit-intent check records that no compose hand-off route exists (the change is walked)", () => {
+    const cap = callAfter("// CAPTURE (closed, src/judge/capture.ts): no compose hand-off route exists; the change is walked.", "judgeCapture.noteRouteEnabled({ goal: String(goal ?? \"\"), enabled: false });", 1);
+    expect(LINES.slice(cap + 1, cap + 8).join("\n")).toContain("const changeHandoff = routingHandoff({ goal_for_routing: goalForRouting, route_enabled: true });");
   });
 
   test("binding: the /run-goal dispatch binds its record for every capture below it", () => {

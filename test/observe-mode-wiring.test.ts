@@ -93,24 +93,7 @@ describe("each side effect asks observeSkip first", () => {
   });
 });
 
-describe("the feature_compose hand-off under observe", () => {
-  test("both edit-intent pointers carry the dispatch's learning mode beside land:true", () => {
-    const m = src.match(/type: "feature_compose",[\s\S]{0,2600}?land: true,\n[^\n]*\n?\s*\.\.\.observeComposeFields\(opts\.learningMode\),/g);
-    expect(m?.length).toBe(2);
-  });
-  test("an observe dispatch ends at the compose's answer: no grade, walk, landing probe or patch_with_tools escalation", () => {
-    const early = src.indexOf('const earlyVerdict = String(earlyBody.verdict ?? "");');
-    const earlyObs = src.indexOf('if (opts.learningMode === "observe") {', early);
-    expect(earlyObs).toBeGreaterThan(early);
-    expect(earlyObs).toBeLessThan(src.indexOf('if (earlyVerdict === "FAVORABLE") {', early));
-    const probe = src.indexOf("// A LANDING ENDS THE DISPATCH (value-per-cost-selection 3.1).");
-    expect(src.lastIndexOf('if (opts.learningMode === "observe") {', probe)).toBeGreaterThan(src.lastIndexOf("} catch (earlyErr) {", probe));
-    const post = src.indexOf('let verdict = String(body.verdict ?? "");');
-    const postObs = src.indexOf('if (opts.learningMode === "observe") {', post);
-    expect(postObs).toBeGreaterThan(post);
-    expect(postObs).toBeLessThan(src.indexOf('if (verdict === "BUSY") {', post));
-    expect(postObs).toBeLessThan(src.indexOf('type: "patch_with_tools"', post));
-  });
+describe("observe skips are published", () => {
   test("the skip counters are published on /health", () => {
     expect(src).toContain("observe_skips: observeSkipCounters(),");
   });

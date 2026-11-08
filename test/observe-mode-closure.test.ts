@@ -129,11 +129,10 @@ describe("N1 landed latch: an observe dispatch returns before the latch", () => 
     expect(obs).toBeLessThan(b.indexOf("await new Promise((res) => setTimeout(res, 30_000));"));
     expect(obs).toBeLessThan(b.indexOf("recordDeterministicLabel(goal, `feature_compose:${sha}`"));
   });
-  test("control (learn): the latch itself is unchanged, and the post-walk compose still arms it", () => {
+  test("control (learn): the latch itself is unchanged", () => {
     const b = latch();
     expect(b).toContain('if (r.reached === true || typeof goal !== "string" || !_dispatchSentCompose.has(opts)) return r;');
     expect(b).toContain("reached: true,\n    executionId: `feature_compose:${sha}`,");
-    expect(src).toContain("_dispatchSentCompose.set(opts, Date.now());");
   });
 });
 
@@ -182,21 +181,10 @@ describe("N5 would-be ops: an observe dispatch's record carries them as a struct
     expect(rec("", null)?.observe).toEqual({ landed: false, verdict: "(none)", would_be_ops: [], would_be_ops_total: 0 });
     expect(rec("UNFAVORABLE", { would_be_ops: "not-a-list" })?.observe?.would_be_ops).toEqual([]);
   });
-  test("[MUST-FAIL] all three observe returns carry it, /run-goal puts it on the record, GET /executions/:id serves it", () => {
-    expect(src.match(/\.\.\.observeComposeOutcome\([^\n]*\), \.\.\.observeComposeRecord\(/g)?.length).toBe(3);
-    expect(src).toContain("...observeComposeRecord(earlyVerdict, earlyBody) };");
-    expect(src).toContain("...observeComposeRecord(verdict, body) };");
-    expect(src).toContain('...observeComposeRecord("(none)", null) };');
+  test("[MUST-FAIL] /run-goal puts it on the record, GET /executions/:id serves it", () => {
     expect(src).toContain("if (seek.observe) record.observe = seek.observe;");
     const get = src.indexOf('if (req.method === "GET" && url.pathname.startsWith("/executions/")) {');
     expect(src.slice(get, get + 5000)).toContain("observe: record.observe ?? null,");
-  });
-  test("control (learn): a learn dispatch never reaches those returns, so its record has no observe field", () => {
-    // each return sits inside its `if (opts.learningMode === "observe")` block (observe-mode-wiring.test.ts pins the blocks)
-    for (const call of ["...observeComposeRecord(earlyVerdict, earlyBody) };", "...observeComposeRecord(verdict, body) };", '...observeComposeRecord("(none)", null) };']) {
-      const i = src.indexOf(call);
-      expect(i - src.lastIndexOf('if (opts.learningMode === "observe") {', i)).toBeLessThan(800);
-    }
   });
 });
 

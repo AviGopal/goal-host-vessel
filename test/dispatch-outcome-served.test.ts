@@ -8,9 +8,7 @@
 //
 //   [MUST-FAIL] the outcome rides the whole probe path: GoalSeekResult.outcome -> the dispatch record -> the served
 //               GET /executions/:id body (which is built key by key; an unnamed key is dropped silently).
-//   [MUST-FAIL] the capacity/deferral returns (early RETRYABLE CAPACITY, both check_supply refusal returns) set it
-//               through ONE helper, composeNonAttemptOutcome, and the 429 record carries kind "refused" with the
-//               breaker's own retry_after_s.
+//   [MUST-FAIL] the 429 record carries kind "refused" with the breaker's own retry_after_s.
 //   [CONTROL]   the /resolve caller of the breaker still gets its string reason (dispatchRateRefusal unchanged).
 //
 // Source pins (the module is not imported: importing src/index.ts reads the live dispatch store and arms timers).
@@ -29,11 +27,7 @@ describe("the dispatch outcome is served where a caller probes", () => {
     expect(served.slice(0, 2500)).toContain("outcome: record.outcome ?? null,");
   });
 
-  it("[MUST-FAIL] the non-attempt returns name it through one helper; the 429 names its refusal and window", () => {
-    expect(SRC).toContain("function composeNonAttemptOutcome(");
-    // early RETRYABLE CAPACITY + the two check_supply refusal returns
-    expect(count("composeNonAttemptOutcome(earlyBody as Record<string, unknown>)")).toBeGreaterThanOrEqual(2);
-    expect(count("composeNonAttemptOutcome(body as Record<string, unknown>)")).toBeGreaterThanOrEqual(1);
+  it("[MUST-FAIL] the 429 names its refusal and window", () => {
     expect(SRC).toMatch(/const outcome: DispatchOutcome = \{ kind: "refused", refuse_class: "spend_rate", retry_after_s: rateDecision!\.retry_after_s \};/);
     expect(SRC).toMatch(/selectedTemplateId: "spend-rate-refused", goalReachReason: reason, outcome \};/);
     expect(SRC).toContain('"Retry-After": String(outcome.retry_after_s)');

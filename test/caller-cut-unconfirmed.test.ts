@@ -7,7 +7,7 @@
 // evictReachedCommand never matched it. The cut is carried structurally (GoalSeekResult.callerCut) instead.
 //
 // The route itself runs inside runGoalWithRecoveryInner behind a compose ceiling and the /run-goal record path writes the
-// dispatch store, so the wiring is pinned in the source (as check-supply-ledger-reason-wiring.test.ts does), and the two
+// dispatch store, so the wiring is pinned in the source, and the two
 // decision functions are driven directly. Evictions are driven only on paths that RETAIN: the cache file path is fixed
 // at the module's first import, which in a whole-suite process may be another file's.
 //
@@ -56,14 +56,6 @@ const CUT = cutCallerReason("fixture-gap-for-a-cut-compose", " stage=unknown (ca
 const JUDGED = "the judge found the summary lists five families where the goal asked for one";
 
 describe("[MUST-FAIL] a caller-cut compose is retained and not remembered", () => {
-  test("the no-walk return marks the cut structurally, only when the call was cut at the caller", () => {
-    const stop = INDEX.indexOf("if (_earlyCheckSupplyNoWalk) {");
-    expect(stop).toBeGreaterThan(0);
-    const block = INDEX.slice(stop, stop + 2000);
-    // the cut was timed at the caller; a narrower condition (no lesson of the compose's own) may join it
-    expect(block).toMatch(/\.\.\.\(_earlyComposeCutAtCaller( && [!\w]+)? \? \{ callerCut: true \} : \{\}\),/);
-  });
-
   test("walk-complete passes the cut into both decisions; the pinned calls stay the uncut branch", () => {
     expect(INDEX).toContain("if (seek.callerCut === true) evictReachedCommand(goalHashOf(record.goal), `reach graded false: ${String((seek.walkReachReason || record.goalReachReason) ?? \"no reason recorded\").slice(0, 120)}`, true);");
     expect(INDEX).toContain("if (seek.callerCut === true) rememberUnconfirmedDispatchFailures(record.goal, walkStepSink, record.goalReachReason, seek.selectedTemplateId, seek.completionShapes, seek.attempts);");
@@ -158,15 +150,6 @@ const AT_START = rowWith([{ at: iso(START), stage: "test_writing", reason: "fixt
 const OLDER = rowWith([{ at: iso(START - 60_000), stage: "semantic_gate", reason: "an earlier attempt's lesson" }]);
 
 describe("[MUST-FAIL] a timed cut whose compose recorded a lesson is graded, not unconfirmed", () => {
-  test("the no-walk return sets callerCut only when no lesson was recorded since the dispatch started", () => {
-    const stop = INDEX.indexOf("if (_earlyCheckSupplyNoWalk) {");
-    const block = INDEX.slice(stop, stop + 2500);
-    expect(block).toContain("const _cutLessonKnown = newestLessonSince(_cutRow, _dispatchStartMs) !== null;");
-    expect(block).toContain("...(_earlyComposeCutAtCaller && !_cutLessonKnown ? { callerCut: true } : {}),");
-    // one gap-row read serves both the outcome and the lesson check
-    expect(block.split("readGapByIdForOracle(").length - 1).toBe(1);
-  });
-
   test("a lesson at or after the dispatch start is found as a record", () => {
     expect(typeof (ledger as Record<string, unknown>)["newestLessonSince"]).toBe("function");
     const find = (ledger as Record<string, any>)["newestLessonSince"];
