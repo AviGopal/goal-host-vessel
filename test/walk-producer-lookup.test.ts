@@ -16,7 +16,7 @@ const HERMETIC = !existsSync("/workspace") && !existsSync("/vessels");
 const SRC = readFileSync(join(TREE, "src", "index.ts"), "utf8");
 const NOT_FOUND = { error: "Not found", shape: "discoverByShapesQuery" };
 
-interface Replay { log: string; record: any; requests: Array<{ url: string; body: any }>; walkTraceOutputs: Array<{ executionId: string; executionTrace: any[] }>; walkTraceServed: Array<{ status?: number; json?: any }> }
+interface Replay { log: string; record: any; requests: Array<{ url: string; body: any }>; walkTraceOutputs: Array<{ executionId: string; executionTrace: any[] }>; walkTraceServed: Array<{ status?: number; json?: any }>; walkLog: string[] }
 async function replay(sc: unknown): Promise<Replay> {
   const ws = mkdtempSync(join(tmpdir(), "producer-lookup-"));
   try {
@@ -26,11 +26,11 @@ async function replay(sc: unknown): Promise<Replay> {
     const proc = Bun.spawn([process.execPath, join(HARNESS_DIR, "child.ts"), TREE, scPath, DEFAULTS_PATH, out], { cwd: ws, env: childEnv(ws, { VD_WALK_TRACE_OUTPUTS: "1" }), stdout: "pipe", stderr: "pipe" });
     const [code, , stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     if (!existsSync(out)) throw new Error(`child produced no output (exit ${code}): ${stderr.slice(-1500)}`);
-    const rec = JSON.parse(readFileSync(out, "utf8")) as { fatal?: string; requests?: Replay["requests"]; steps?: Array<{ record?: unknown }> };
+    const rec = JSON.parse(readFileSync(out, "utf8")) as { fatal?: string; requests?: Replay["requests"]; steps?: Array<{ record?: unknown; walkLog?: string[] }> };
     if (rec.fatal) throw new Error(`child fatal: ${rec.fatal}`);
     const logPath = out.replace(/\.json$/, ".log.json");
     const side = existsSync(logPath) ? (JSON.parse(readFileSync(logPath, "utf8")) as { logs?: string[]; walkTraceOutputs?: Replay["walkTraceOutputs"]; walkTraceServed?: Replay["walkTraceServed"] }) : {};
-    return { log: (side.logs ?? []).join("\n"), record: rec.steps?.[0]?.record ?? null, requests: rec.requests ?? [], walkTraceOutputs: side.walkTraceOutputs ?? [], walkTraceServed: side.walkTraceServed ?? [] };
+    return { log: (side.logs ?? []).join("\n"), record: rec.steps?.[0]?.record ?? null, requests: rec.requests ?? [], walkTraceOutputs: side.walkTraceOutputs ?? [], walkTraceServed: side.walkTraceServed ?? [], walkLog: rec.steps?.[0]?.walkLog ?? [] };
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
@@ -231,4 +231,27 @@ describe.skipIf(!HERMETIC)("the walk delivers its own trace and keeps the outcom
     expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
     expect(new Set(["delivered", "caller_lacks_write_scope", "no_producer_or_unreachable"]).size).toBe(3);
   }, 120_000);
+});
+
+// A5: walk-log taps (no behaviour change): lines that were console-only now reach the dispatch record's walkLog, the
+// selection's top draws and W1's cap / step-budget refusals are tapped. The oracles' ABSTAINED lines run outside the
+// walk scope and stay console-only.
+describe.skipIf(!HERMETIC)("walk-log taps reach the dispatch record", () => {
+  test("reach-input, recordGoalPath PRECONDITIONS and walk-activity: dispatched are in the record's walkLog", async () => {
+    const sc = scenario("walklog-taps", { status: 404, json: NOT_FOUND }, [deliverRoute({ json: { success: true } })]);
+    (sc.routes as Array<Record<string, unknown>>).find((x) => x["id"] === "hop:hopZ")!["respond"] = { json: { success: true, shape: "hopZ", body: { answer: "hopZ answered" } } };
+    const r = await replay(sc);
+    expect(r.record?.reached).toBe(true);
+    const log = r.walkLog.join("\n");
+    expect(log).toContain("walk-activity: dispatched ");
+    expect(log).toContain("delivered via activityExecutionTrace_write (HTTP 200)");
+    expect(log).toContain("reach-input: cmdEvidenceLen=");
+    expect(log).toContain("recordGoalPath PRECONDITIONS chain=");
+  }, 120_000);
+  test("the selection draws and the W1 cap / step-budget refusals are tapped (once per pool version)", () => {
+    expect(SRC).toContain("selection draws (top ${Math.min(5, candidates.length)} of ${candidates.length})");
+    expect(SRC.match(/if \(!reattemptRefusals\.has\(tapKey\)\) tap\(`\[goal-host-vessel\] walk\(\$\{opts\.surface\}\): re-attempt refused at pool version/g)?.length).toBe(2);
+    expect(SRC).toContain("tap(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=");
+    expect(SRC).toContain("tap(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=");
+  });
 });

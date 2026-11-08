@@ -8368,8 +8368,8 @@ async function runGoalAsPoolWalkBody(
       reattemptRefusals.set(tapKey, `${p}: cap absent (attempts ${st?.attempts ?? 0}, last attempt at pool version ${st?.lastAttemptVersion}, pool version ${poolVersion()})`);
       return false;
     }
-    if (!attemptLedger.withinCap(p, cap)) { reattemptRefusals.set(tapKey, `${p}: cap ${cap} reached (attempts ${st?.attempts ?? 0})`); return false; }
-    if (!attemptLedger.budgetAllowsReattempt(chain.length, MAX_STEPS)) { reattemptRefusals.set(tapKey, `${p}: step budget (chain ${chain.length} + re-attempts ${attemptLedger.reattempts}, max ${MAX_STEPS})`); return false; }
+    if (!attemptLedger.withinCap(p, cap)) { const _why = `${p}: cap ${cap} reached (attempts ${st?.attempts ?? 0})`; if (!reattemptRefusals.has(tapKey)) tap(`[goal-host-vessel] walk(${opts.surface}): re-attempt refused at pool version ${poolVersion()}: ${_why}`); reattemptRefusals.set(tapKey, _why); return false; }
+    if (!attemptLedger.budgetAllowsReattempt(chain.length, MAX_STEPS)) { const _why = `${p}: step budget (chain ${chain.length} + re-attempts ${attemptLedger.reattempts}, max ${MAX_STEPS})`; if (!reattemptRefusals.has(tapKey)) tap(`[goal-host-vessel] walk(${opts.surface}): re-attempt refused at pool version ${poolVersion()}: ${_why}`); reattemptRefusals.set(tapKey, _why); return false; }
     return true;
   };
   const attemptBegin = (shape: string): void => {
@@ -11945,6 +11945,8 @@ If one of those sibling shapes is the action that would create what the goal ask
         // 2. A scaffold producer is acceptable ONLY for a target with no live
         //    resolver (not bridge-authorable) — otherwise prefer bridge-authoring.
         ?? candidates.find((c) => feasibleProducer(c) && !bridgeableTarget(c));
+      // SELECTION TAP: the top candidates by their sampled draw (betaSample over α/β), and the pick.
+      if (candidates.length > 0) tap(`[goal-host-vessel] walk(${opts.surface}): selection draws (top ${Math.min(5, candidates.length)} of ${candidates.length}): ${[...candidates].sort((a, b) => (b.sampledScore ?? -1) - (a.sampledScore ?? -1)).slice(0, 5).map((c) => `${c.id}(alpha=${c.alpha ?? "?"},beta=${c.beta ?? "?"},draw=${typeof c.sampledScore === "number" ? c.sampledScore.toFixed(3) : "?"})`).join(", ")} -> pick=${pick?.id ?? "none"}`);
       // RECURSE: if the only target-producers have UNSATISFIED inputs, produce
       // those inputs first (add as sub-targets) rather than executing the
       // producer prematurely — this is how the chain is built backward.
@@ -12498,7 +12500,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // scrutiny. Whether it did is undetermined and only observable here, so print exactly what
       // the grader is handed: an empty commandEvidence means it graded a bare number with no
       // provenance, which is a different defect from a judge that saw the provenance and shrugged.
-      console.log(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=${commandEvidence.length} shapes=${[...producedShapes].join(",").slice(0, 120)} digestLen=${(contentDigest ?? "").length} cmdEvidence=${JSON.stringify(commandEvidence.slice(0, 240))}`);
+      tap(`[goal-host-vessel] walk(${opts.surface}): reach-input: cmdEvidenceLen=${commandEvidence.length} shapes=${[...producedShapes].join(",").slice(0, 120)} digestLen=${(contentDigest ?? "").length} cmdEvidence=${JSON.stringify(commandEvidence.slice(0, 240))}`);
       // Terminal writes this walk READ BACK and confirmed (a satisfier's verified write with a recorded read-back):
       // the hollow-walklog cap does not apply to a walk that has one (verifyGoalReachedUnrestricted).
       const confirmedTerminalWrites = confirmedTerminalWritesOf(verifiedWrites, confirmedReadBacks, (sh) => terminalShapes.has(sh) || target.has(sh));
@@ -13506,7 +13508,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     // original did not. This line is deliberately outside every guard: it prints on each pass
     // and names both operands, so one run decides between the candidates instead of another
     // dispatched guess.
-    console.log(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
+    tap(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=${chain.length} learningMode=${String(opts.learningMode)} reached=${reached} goal="${goal.slice(0, 60)}"`);
     // ABSTAIN (§9.2): the path row's POST applies failure_delta / thompson_beta on reached=false, so an
     // ungraded walk records no path row at all.
     if (opts.learningMode !== "observe" && !walkAbstain) void recordGoalPath(goal, chain, reached, totalDurationMs, totalCostUsd, commandReuseFired ? "learned_pathway" : tierFromChain(chain), [...chainProduced], [...target], pathwayReusePicks > 0 ? (opts.preferPathwayOrigin ?? null) : null, [...effectLedger].sort()).then((ok) => { if (ok && opts.learningSink) opts.learningSink.goalPathRecorded = true; }, () => {});
@@ -15718,7 +15720,7 @@ async function dispatchWalk(goal: string, opts: WalkActivityOpts): Promise<{ wal
   if (!record) throw new Error(`${WALK_ACTIVITY_ID}: the walk record is not registered`);
   const { result, walkExecutionId } = await dispatchWalkCall<WalkActivityOpts, GoalSeekResult>(goal, opts, () =>
     host.runTemplate(record, { goal }, { impulses: [goalImpulse(goal, host.runtime.random.id("goal"))], parentExecutionId: opts.parentExecutionId, compositionChain: opts.compositionChain, tags: opts.tags, goalContext: { goal } }));
-  console.log(`[goal-host-vessel] walk-activity: dispatched ${walkExecutionId} parent=${opts.parentExecutionId ?? "none"}`);
+  { const _line = `[goal-host-vessel] walk-activity: dispatched ${walkExecutionId} parent=${opts.parentExecutionId ?? "none"}`; console.log(_line); opts.stepSink?.push(_line); }
   return { walk: result, walkExecutionId };
 }
 
