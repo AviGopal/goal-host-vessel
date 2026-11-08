@@ -178,3 +178,21 @@ describe.skipIf(!HERMETIC)("the walk's trace output is kept and served by goalWa
     expect((rec.route_around?.failed_producers ?? []).some((f: { producer: string }) => f.producer === "lookup:learned-pathway")).toBe(true);
   }, 120_000);
 });
+
+// A3: no producer of the learned DELIVERABLE-shapes vocabulary is advertised (the store's deliverable-shapes route was
+// REST only), so the walk's inference vocabulary asks nothing for it and every walk records the absence.
+describe.skipIf(!HERMETIC)("the deliverable-shapes absence is observable on the walk's own trace", () => {
+  test("no deliverable-shapes dial in the source; the absence is recorded once per walk", () => {
+    expect(SRC.match(/\/v2\/activities\/deliverable-shapes`/g)?.length ?? 0).toBe(0);
+    expect(SRC).not.toContain("async function fetchLearnedDeliverableShapes(");
+    expect(SRC.match(/pickFailures\.set\("lookup:deliverable-shapes", "deliverable-shapes lookup: no producer \(no shape advertised\)"\);/g)?.length).toBe(1);
+  });
+  test("read BY SHAPE from the walk execution's executionTrace output: route_around names the absence; no request; 0 RE-ATTEMPT", async () => {
+    const r = await replay(scenario("deliverable-shapes-absent", { status: 404, json: NOT_FOUND }));
+    expect(r.requests.some((q) => q.url.includes("/v2/activities/deliverable-shapes"))).toBe(false);
+    const ra = r.walkTraceOutputs[0]!.executionTrace[0].route_around;
+    const f = (ra?.failed_producers ?? []).find((x: { producer: string }) => x.producer === "lookup:deliverable-shapes");
+    expect(f?.reason).toBe("deliverable-shapes lookup: no producer (no shape advertised)");
+    expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
+  }, 120_000);
+});

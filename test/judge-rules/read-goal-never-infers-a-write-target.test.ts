@@ -45,7 +45,9 @@ describe("a read goal never infers a write target", () => {
     expect(SN.isShapeName("code_quality with substantive assessment content")).toBe(false);
     for (const ok of ["code_quality", "obsidian:write_note", "lifecycle:task:completed", "development-vessel:coverage-tick", "webSearchResult"]) expect(SN.isShapeName(ok)).toBe(true);
     const src = readFileSync(new URL("../../src/index.ts", import.meta.url), "utf8");
-    expect(src).toContain("const shapes = rawShapes.filter(isShapeName);");
+    // The deliverable-shapes feed's half is gone: the second feed no longer exists (no producer advertised; the walk
+    // records its absence). The remaining feeds (fetchKnownShapes' isShapeName filter, the caller's declared shapes) stay.
+    expect(src).toContain("if (isShapeName(s)) return true;");
     expect(src).toContain("(body.expected_output_shapes as unknown[]).filter((s): s is string => { const ok = isShapeName(s);");
   });
 

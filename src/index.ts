@@ -6126,60 +6126,6 @@ async function fetchPeerRegistryShapes(): Promise<string[]> {
   peerShapesCache = { shapes: [...out], fetchedAt: now };
   return peerShapesCache.shapes;
 }
-let learnedDeliverableCache: { shapes: string[]; fetchedAt: number } | null = null;
-// B2 companion caller: fetch the curated set of learned-composite DELIVERABLE shapes
-// (terminal = produced-minus-consumed within a composite, evidence-gated, hygiene- and
-// frequency-filtered, capped) from activity-api. Fail-open: any error yields the cached
-// set or [] so fetchKnownShapes falls back to exactly the registry+peer vocabulary.
-async function fetchLearnedDeliverableShapes(): Promise<string[]> {
-  const now = Date.now();
-  if (learnedDeliverableCache && now - learnedDeliverableCache.fetchedAt < KNOWN_SHAPES_TTL_MS) {
-    return learnedDeliverableCache.shapes;
-  }
-  try {
-    const r = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/deliverable-shapes`, {
-      method: "GET",
-      headers: { ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      signal: AbortSignal.timeout(8_000),
-    });
-    // A FAILED LOOKUP IS NOT AN EMPTY ANSWER — the same conflation that collapsed the
-    // shape space onto shellResult at the producer-discovery call site. There, an 8s
-    // timeout against an endpoint measured at 55-77s returned null, the walk read it as
-    // "this shape has no producer", and the reached-command cache ended up 98.5%
-    // shellResult (1178/1196). This endpoint was measured >100s during the same window.
-    //
-    // Falling back to the CACHE is right (it is the last known-good vocabulary). Falling
-    // back to [] when there is no cache is not: it silently narrows the shape space the
-    // walk will consider, and it does so most aggressively exactly when the store is
-    // slowest — i.e. under the load where the walk most needs its full vocabulary.
-    // Distinguish the two, and say which happened.
-    if (!r.ok) {
-      console.log(`[deliverable-shapes] lookup answered http ${r.status} — keeping ${learnedDeliverableCache ? "last known-good vocabulary" : "EMPTY vocabulary (no cache yet); the walk is narrower than the substrate"}`);
-      return learnedDeliverableCache?.shapes ?? [];
-    }
-    const j: any = await r.json();
-    // CHANGE-35: only shape NAMES enter the vocabulary (shape-name.ts); a prose string is refused and counted.
-    const rawShapes = (Array.isArray(j?.shapes) ? j.shapes : []).map((x: unknown) => String(x)).filter(Boolean);
-    const shapes = rawShapes.filter(isShapeName);
-    if (shapes.length < rawShapes.length) console.warn(`[deliverable-shapes] refused ${rawShapes.length - shapes.length} non-shape name(s): ${JSON.stringify(rawShapes.filter((x: string) => !isShapeName(x)).slice(0, 3))}`);
-    if (shapes.length === 0) {
-      if (learnedDeliverableCache && learnedDeliverableCache.shapes.length > 0) {
-        console.log(`[deliverable-shapes] lookup answered an EMPTY set — keeping last known-good vocabulary of ${learnedDeliverableCache.shapes.length} shapes`);
-        learnedDeliverableCache = { shapes: learnedDeliverableCache.shapes, fetchedAt: now };
-        return learnedDeliverableCache.shapes;
-      } else {
-        console.log("[deliverable-shapes] lookup answered an EMPTY set and no cache exists — the walk's vocabulary is narrower than the substrate");
-        learnedDeliverableCache = { shapes: [], fetchedAt: now };
-        return [];
-      }
-    }
-    learnedDeliverableCache = { shapes, fetchedAt: now };
-    return shapes;
-  } catch (e) {
-    console.log(`[deliverable-shapes] lookup unreachable (${(e as Error).message}) — a failed lookup is not evidence of absence; keeping ${learnedDeliverableCache ? "last known-good vocabulary" : "EMPTY vocabulary (no cache yet); the walk is narrower than the substrate"}`);
-    return learnedDeliverableCache?.shapes ?? [];
-  }
-}
 /** Non-shape names refused from the vocabulary (logged once each). */
 const refusedVocabularyNames = new Set<string>();
 async function fetchKnownShapes(): Promise<string[]> {
@@ -6202,12 +6148,8 @@ async function fetchKnownShapes(): Promise<string[]> {
     const shapes = [...new Set([
       ...local,
       ...(await fetchPeerRegistryShapes()),
-      // B2 (2026-07-31): learned-composite DELIVERABLE shapes, terminal+evidence+hygiene
-      // filtered server-side by activity-api. Additive + fail-open. Without this a shape
-      // produced ONLY by learned composites (e.g. conceptDescription) is never in the
-      // inference vocabulary, so goal->target inference can never AIM a goal at it and the
-      // learned pathway is unreachable (the reuse ceiling stays dark).
-      ...(await fetchLearnedDeliverableShapes()),
+      // Learned-composite DELIVERABLE shapes: no producer is advertised (the store's deliverable-shapes route was REST
+      // only, and that store is gone), so none are asked for; each walk records the absence (lookup:deliverable-shapes).
     ])].filter((s) => {
       // CHANGE-35: only shape NAMES enter the vocabulary, whichever feed supplied them (shape-name.ts). The registry
       // itself advertised a prose "shape" (development-vessel config.ts, a 07-01 substrate-authored resolver) that
@@ -7298,48 +7240,6 @@ interface ReachingPathway {
   pathSignature: string | null;
   successfulExecutions: number;
   totalExecutions: number;
-}
-interface PathwayReusePolicy {
-  minSuccessfulExecutions: number;
-  minTotalExecutions: number;
-}
-const PATHWAY_REUSE_FALLBACK: PathwayReusePolicy = { minSuccessfulExecutions: 1, minTotalExecutions: 1 };
-async function resolvePathwayReusePolicy(): Promise<PathwayReusePolicy> {
-  try {
-    // Resolve through DISCOVERY's universal proxy, which forwards any non-discovery
-    // shape to its registered producer and takes a FLAT { pointer } body. Not through
-    // activity-api: its /v2/impulses/resolve switches on pointer.type and the default
-    // branch answers 404 use_vessel_discovery for any shape it does not itself store,
-    // so a policy read there could never resolve and law-1 compliance would be
-    // decorative.
-    const res = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ pointer: { type: "pathwayReusePolicy" } }),
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) {
-      console.log(`[goal-host-vessel] pathwayReusePolicy unresolved (http ${res.status}) — FALLING BACK to literal acceptance (minSuccessful=${PATHWAY_REUSE_FALLBACK.minSuccessfulExecutions} minTotal=${PATHWAY_REUSE_FALLBACK.minTotalExecutions}) (law-1 fallback, logged)`);
-      return PATHWAY_REUSE_FALLBACK;
-    }
-    const o = await res.json() as Record<string, unknown>;
-    const c = o["content"] as Record<string, unknown> | undefined;
-    const bv = o["body"] ?? (c && typeof c === "object" ? (c["body"] ?? c["value"] ?? c) : undefined) ?? o;
-    const b = (typeof bv === "object" && bv !== null && !Array.isArray(bv)) ? (bv as Record<string, unknown>) : null;
-    if (!b) return PATHWAY_REUSE_FALLBACK;
-    const num = (k: string, d: number): number => {
-      const v = b[k];
-      const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
-      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : d;
-    };
-    return {
-      minSuccessfulExecutions: num("minSuccessfulExecutions", PATHWAY_REUSE_FALLBACK.minSuccessfulExecutions),
-      minTotalExecutions: num("minTotalExecutions", PATHWAY_REUSE_FALLBACK.minTotalExecutions),
-    };
-  } catch (e) {
-    console.log(`[goal-host-vessel] pathwayReusePolicy resolve FAILED (${String((e as Error)?.message ?? e).slice(0, 120)}) — FALLING BACK to literal acceptance (law-1 fallback, logged)`);
-    return PATHWAY_REUSE_FALLBACK;
-  }
 }
 // In-flight approach-alteration (self-recovery DURING goal-seeking): recommend a
 // DIFFERENT activity for the goal, excluding approaches that already failed to
@@ -8440,6 +8340,7 @@ async function runGoalAsPoolWalkBody(
   // A LEARNED PATHWAY has no advertised producer to ask for (no shape serves it), so every walk derives, and records that
   // absence among its failed producers (the route-around record); it re-arms nothing and targets nothing.
   pickFailures.set("lookup:learned-pathway", "learned-pathway lookup: no producer (no shape advertised)");
+  pickFailures.set("lookup:deliverable-shapes", "deliverable-shapes lookup: no producer (no shape advertised)");
   // Each executed pick's declared output shapes (walkFailureMode: attribute a pick failure only to a shape never produced).
   const pickOutputs = new Map<string, string[]>();
   let routeAround: RouteAroundRecord | undefined;
