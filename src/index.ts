@@ -338,7 +338,7 @@ import { ComposedLedger, authorComposite, authorProducer, compositesToRetire, co
 // B2: composites a dispatch's walks minted, read back at its verdict (a non-reached first run retires a NEW mint).
 const composedByDispatch = new ComposedLedger();
 import { attributionFields } from "./dispatch-attribution";
-import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
+import { findingsDigest, involvedSteps, lastStepCulpability, chainCarrierChains, walkRetrieved, isWriteShape, writerFindings, WRITER_EVIDENCE_FRAME, boundConsumption, poolImpulseId, poolIdsOf, declaredBound, stepEdgeOf, hasRealEdge, carryForward, carryForTarget, rememberLivePool, forgetLivePool, livePool, walkStateImpulse, walkOutputKeeper, walkOutputOf, keepWalkTrace, type WalkOutputText, isSatisfierSearchImpulse, searchProvenanceFor, PROVENANCE_FETCH_SHAPES, type PoolProvenance, type StepEdge, type CarriedStep } from "./walk-pool";
 import { FS_WRITE_SHAPES, isFsWriteShape } from "./fs-write-shapes";
 import { firstUnregisteredStep, unregisteredStepReason } from "./unregistered-step";
 import { admittedChange, DoorRefusals, noteWriteRefusal, refusedWrite, taskWriteDoor, templateRefused, templateRunRefused, type WriteDoorPass, writeDoorCounters, writeDoorFilter, writeDropLine, writeDoorShapes } from "./write-door";
@@ -15769,7 +15769,12 @@ type WalkActivityOpts = Parameters<typeof runGoalAsPoolWalkBody>[1];
 async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: WalkIdentity): Promise<WalkRun<GoalSeekResult>> {
   let pool: readonly Impulse[] = [];
   const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p) => { pool = p; } });
-  return { result, outputs: walkOutputs(walk, result, pool) };
+  const outputs = walkOutputs(walk, result, pool);
+  // A4: the walk's executionTrace output is kept on its dispatch record by impulse id with its execution id, and is
+  // served by goalWalkOutput {dispatchId, impulseId} after the walk ends.
+  const _rec = typeof opts.variables.dispatch_id === "string" ? executionStore.get(opts.variables.dispatch_id) : undefined;
+  if (_rec && outputs[0]) keepWalkTrace(_rec as { walkTraces?: unknown }, outputs[0], walk.executionId, WALK_ACTIVITY_ID);
+  return { result, outputs };
 }
 host.catalogue.register(walkActivityTemplate());
 // The walk's pool stops being served when the walk ends, on every exit path (the resolver's finally).
@@ -19112,6 +19117,7 @@ function pruneStore(): void {
     d["walkLog"] = [];
     d["poolProvenance"] = [];
     d["poolOutputs"] = {};
+    d["walkTraces"] = {};
     d["poolEvents"] = [];
     d["compacted"] = true;
   }

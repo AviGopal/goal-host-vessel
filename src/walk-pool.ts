@@ -497,6 +497,17 @@ export const WALK_OUTPUTS_RECORD_CAP_CHARS = 2_000_000;
 export interface WalkOutputText { text: string; chars: number; truncated: boolean; contentType: "text" | "json" }
 
 /** A keeper for ONE mirror pass: each call keeps the next output in pool order, under both caps. */
+/** A walk execution's executionTrace output as the dispatch record keeps it (keyed by its impulse id). */
+export interface KeptWalkTrace { executionId: string; shape: string; producedBy: string; output: WalkOutputText }
+/** Keep a walk execution's trace output on its dispatch record (record.walkTraces[impulse id]), bounded like a pool
+ *  output, so goalWalkOutput serves it after the walk and its retries end. */
+export function keepWalkTrace(rec: { walkTraces?: unknown }, impulse: { id: string; content?: unknown; metadata?: Record<string, unknown> }, executionId: string, producedBy: string): void {
+  let text: string;
+  try { text = JSON.stringify(impulse.content); } catch { text = String(impulse.content); }
+  const prior = rec.walkTraces && typeof rec.walkTraces === "object" ? (rec.walkTraces as Record<string, KeptWalkTrace>) : {};
+  rec.walkTraces = { ...prior, [impulse.id]: { executionId, shape: String(impulse.metadata?.["shape"] ?? ""), producedBy, output: walkOutputKeeper()(text, false) } };
+}
+
 export function walkOutputKeeper(): (serialized: string, isText: boolean) => WalkOutputText {
   let left = WALK_OUTPUTS_RECORD_CAP_CHARS;
   return (serialized, isText) => {
@@ -511,12 +522,19 @@ export function walkOutputKeeper(): (serialized: string, isText: boolean) => Wal
  *  `chars: 0` row) is served as empty text. A record mirrored before outputs were kept has only the preview: it is
  *  served as the preview, `truncated` when it is shorter than `chars`, so this read never denies an output
  *  goalWalkState lists. */
-export function walkOutputOf(rec: { dispatchId: string; status?: unknown; poolProvenance?: unknown; poolOutputs?: unknown }, impulseId: string): {
+export function walkOutputOf(rec: { dispatchId: string; status?: unknown; poolProvenance?: unknown; poolOutputs?: unknown; walkTraces?: unknown }, impulseId: string): {
   dispatchId: string; status: unknown; impulseId: string; shape: string | null; producedBy: string | null; producerExecutionId: string | null;
   contentType: "text" | "json" | null; content: string; chars: number; truncated: boolean;
 } | null {
   const prov = Array.isArray(rec.poolProvenance) ? (rec.poolProvenance as Array<Record<string, unknown>>).find((p) => p && p["id"] === impulseId) : undefined;
-  if (!prov) return null;
+  if (!prov) {
+    // A WALK EXECUTION'S OWN TRACE OUTPUT (its executionTrace impulse), kept on the dispatch record by impulse id with
+    // its execution id (keepWalkTrace), served in the same body as a pool output.
+    const traces = rec.walkTraces && typeof rec.walkTraces === "object" ? (rec.walkTraces as Record<string, KeptWalkTrace | undefined>) : {};
+    const t = Object.prototype.hasOwnProperty.call(traces, impulseId) ? traces[impulseId] : undefined;
+    if (!t) return null;
+    return { dispatchId: rec.dispatchId, status: rec.status ?? null, impulseId, shape: t.shape, producedBy: t.producedBy, producerExecutionId: t.executionId, contentType: t.output.contentType, content: t.output.text, chars: t.output.chars, truncated: t.output.truncated };
+  }
   const outputs = rec.poolOutputs && typeof rec.poolOutputs === "object" ? (rec.poolOutputs as Record<string, WalkOutputText | undefined>) : {};
   const kept = Object.prototype.hasOwnProperty.call(outputs, impulseId) ? outputs[impulseId] : undefined;
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null);

@@ -740,7 +740,16 @@ async function main(): Promise<void> {
     intervalsRegistered,
     harness: { aborted, virtualMsElapsed: now - EPOCH, timerFires: fires, pendingTimers: timers.size },
   });
-  const logsOut = { scenario: scenario.id, logs, ...(process.env["VD_WALK_TRACE_OUTPUTS"] === "1" ? { walkTraceOutputs } : {}) };
+  // OPT-IN, as above: each walk execution's trace output read back through goalWalkOutput {dispatchId, impulseId}.
+  const walkTraceServed: unknown[] = [];
+  if (process.env["VD_WALK_TRACE_OUTPUTS"] === "1" && lastDispatch) {
+    for (const w of walkTraceOutputs) {
+      const req = new Request("http://goal-host.test.invalid/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...callerCredential() }, body: JSON.stringify({ type: "goalWalkOutput", dispatchId: lastDispatch, impulseId: `${String(w.executionId)}-trace` }) });
+      const r = await drivePromise(mod.__vd_handleResolve(req), "walk-trace-served");
+      walkTraceServed.push(r.value ? { status: r.value.status, json: await r.value.json().catch(() => null) } : { error: r.error ?? null });
+    }
+  }
+  const logsOut = { scenario: scenario.id, logs, ...(process.env["VD_WALK_TRACE_OUTPUTS"] === "1" ? { walkTraceOutputs, walkTraceServed } : {}) };
   nodeFs.writeFileSync(OUT_PATH, JSON.stringify(out, null, 2) + "\n");
   nodeFs.writeFileSync(OUT_PATH.replace(/\.json$/, ".log.json"), JSON.stringify(logsOut, null, 2) + "\n");
 }

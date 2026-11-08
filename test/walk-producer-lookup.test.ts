@@ -16,7 +16,7 @@ const HERMETIC = !existsSync("/workspace") && !existsSync("/vessels");
 const SRC = readFileSync(join(TREE, "src", "index.ts"), "utf8");
 const NOT_FOUND = { error: "Not found", shape: "discoverByShapesQuery" };
 
-interface Replay { log: string; record: any; requests: Array<{ url: string; body: any }>; walkTraceOutputs: Array<{ executionId: string; executionTrace: any[] }> }
+interface Replay { log: string; record: any; requests: Array<{ url: string; body: any }>; walkTraceOutputs: Array<{ executionId: string; executionTrace: any[] }>; walkTraceServed: Array<{ status?: number; json?: any }> }
 async function replay(sc: unknown): Promise<Replay> {
   const ws = mkdtempSync(join(tmpdir(), "producer-lookup-"));
   try {
@@ -29,8 +29,8 @@ async function replay(sc: unknown): Promise<Replay> {
     const rec = JSON.parse(readFileSync(out, "utf8")) as { fatal?: string; requests?: Replay["requests"]; steps?: Array<{ record?: unknown }> };
     if (rec.fatal) throw new Error(`child fatal: ${rec.fatal}`);
     const logPath = out.replace(/\.json$/, ".log.json");
-    const side = existsSync(logPath) ? (JSON.parse(readFileSync(logPath, "utf8")) as { logs?: string[]; walkTraceOutputs?: Replay["walkTraceOutputs"] }) : {};
-    return { log: (side.logs ?? []).join("\n"), record: rec.steps?.[0]?.record ?? null, requests: rec.requests ?? [], walkTraceOutputs: side.walkTraceOutputs ?? [] };
+    const side = existsSync(logPath) ? (JSON.parse(readFileSync(logPath, "utf8")) as { logs?: string[]; walkTraceOutputs?: Replay["walkTraceOutputs"]; walkTraceServed?: Replay["walkTraceServed"] }) : {};
+    return { log: (side.logs ?? []).join("\n"), record: rec.steps?.[0]?.record ?? null, requests: rec.requests ?? [], walkTraceOutputs: side.walkTraceOutputs ?? [], walkTraceServed: side.walkTraceServed ?? [] };
   } finally {
     rmSync(ws, { recursive: true, force: true });
   }
@@ -155,5 +155,26 @@ describe.skipIf(!HERMETIC)("the learned-pathway absence is observable on the wal
     expect(f?.reason).toBe("learned-pathway lookup: no producer (no shape advertised)");
     expect(firstWalk(r.log)).not.toContain("RE-ATTEMPT");
     expect(firstWalk(r.log)).not.toContain("would be re-eligible");
+  }, 120_000);
+});
+
+// A4: the walk's executionTrace output is KEPT on its dispatch record (by impulse id, with its execution id) and SERVED
+// through the existing goalWalkOutput shape after the walk ends; the body is goalWalkOutput's own.
+describe.skipIf(!HERMETIC)("the walk's trace output is kept and served by goalWalkOutput", () => {
+  test("resolve goalWalkOutput {dispatchId, impulseId: <walk execution id>-trace}: the executionTrace record, route_around included", async () => {
+    const r = await replay(scenario("walk-trace-served", { status: 404, json: NOT_FOUND }));
+    expect(r.walkTraceServed.length).toBe(r.walkTraceOutputs.length);
+    expect(r.walkTraceServed.length).toBeGreaterThanOrEqual(1);
+    const served = r.walkTraceServed[0]!;
+    expect(served.status).toBe(200);
+    const body = served.json.body;
+    expect(Object.keys(body).sort()).toEqual(["chars", "content", "contentType", "dispatchId", "impulseId", "producedBy", "producerExecutionId", "shape", "status", "truncated"]);
+    expect(body.shape).toBe("executionTrace");
+    expect(body.producedBy).toBe("goal-host-vessel:walk");
+    expect(body.producerExecutionId).toBe(r.walkTraceOutputs[0]!.executionId);
+    const rec = JSON.parse(body.content);
+    expect(rec.execution_id).toBe(r.walkTraceOutputs[0]!.executionId);
+    expect(rec).toEqual(r.walkTraceOutputs[0]!.executionTrace[0]);
+    expect((rec.route_around?.failed_producers ?? []).some((f: { producer: string }) => f.producer === "lookup:learned-pathway")).toBe(true);
   }, 120_000);
 });
