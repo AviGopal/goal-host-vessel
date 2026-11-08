@@ -8394,8 +8394,13 @@ async function runGoalAsPoolWalkBody(
     }
     return _imp.id;
   };
-  /** The pool's version: it only grows (the pool is append-only). */
-  const poolVersion = (): number => poolImpulses.length;
+  /** OBSERVATIONS (the P3-a ruling): a curable refusal is folded verbatim into the walk as a `walkObservation` impulse,
+   *  in its own partition: counted in the pool version and shown in goalWalkState, never in poolImpulses (so pool vars,
+   *  findings, judge evidence, edges, carry and producedShapes are unchanged). A producer's own observation is added
+   *  before its attempt ends, so it never re-arms that producer; another producer's observation does. */
+  const walkObservations: Array<{ id: string; shape: "walkObservation"; producer: string; instanceKey: string | null; reason: string }> = [];
+  /** The pool's version: it only grows (the pool and the observations are append-only). */
+  const poolVersion = (): number => poolImpulses.length + walkObservations.length;
   /** The pool key addToPool dedupes on: the send's instance key, else the adder's, else one per (shape, producer). */
   const poolKeyFor = (shape: string, prov?: PoolProvenance, sendKey?: string): string => sendKey ?? prov?.instanceKey ?? defaultInstanceKey(shape, prov?.producedBy);
   /** Pool ids (and producers) of the hop outputs the write door admitted as writes, in order (walk-instances.ts withWorld). */
@@ -9480,6 +9485,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     const _a = curAttempt as { shape: string; sends: AttemptSend[]; structural: boolean; okKey?: string; world: string; boundInputs: Array<{ field: string; shape: string; key: string }> } | null;
     curAttempt = null;
     const _out = _a ? attemptOutcome({ ok: r != null && emptyResultSetReason(r.content) === null, structural: _a.structural, sends: _a.sends }) : null;
+    if (_a && _out === "curable") walkObservations.push({ id: `walk-observation-${walkObservations.length + 1}`, shape: "walkObservation", producer: `satisfier:${shape}`, instanceKey: [..._a.sends].reverse().find((x) => x.key)?.key ?? null, reason: lastRawResolveReason ?? "refused" });
     if (_a && _out) attemptLedger.end(`satisfier:${shape}`, _out, poolVersion(), _a.sends, _a.world);
     if (_a && _out === "curable") for (const b of _a.boundInputs) noteBoundDemand(shape, b.field, b.shape, b.key, lastRawResolveReason ?? "refused");
     return r && _a?.okKey ? { ...r, instanceKey: _a.okKey } : r;
@@ -11171,6 +11177,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     (rec as { poolOutputs?: unknown }).poolOutputs = poolOutputs;
     rec.pendingTargets = [...target].filter((s) => !shapeMet(s));
     if (boundDemands.length > 0) (rec as { boundDemands?: unknown }).boundDemands = boundDemands.map((d) => ({ ...d, met: shapeMet(d.shape) }));
+    if (walkObservations.length > 0) (rec as { walkObservations?: unknown }).walkObservations = walkObservations.map((o) => ({ ...o }));
     // Live "why" (2026-07-06): mirror the accumulating walk decision trail onto
     // the record EACH iteration so goalWalkState surfaces WHY the walk is doing
     // what it's doing WHILE it runs. Previously rec.walkLog was assigned once, at

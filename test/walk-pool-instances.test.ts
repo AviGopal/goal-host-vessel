@@ -275,3 +275,85 @@ describe.skipIf(!HERMETIC)("a successful re-attempt that adds an identical insta
     expect(testRunSends(r).map((q) => q.body.impulse.pointer.cmd)).toEqual(["run-tests", "run-tests"]);
   }, 120_000);
 });
+
+// ── W1b: a curable refusal is an observation (its own partition) ──
+/** ev1 is produced, then hopA refuses (curable), then hopB refuses with ev1 bound (the bound demand re-selects). The
+ *  re-run of ev1 adds an identical instance, so the pool gains nothing: only hopB's observation is new for hopA. */
+export const observed = () => hopScenario("w1b-observation-rearms", {
+  targets: ["ev1", "hopA", "hopB"], shapes: ["hopA", "hopB", "ev1"],
+  schemas: { hopA: [], hopB: [{ name: "ev", required: true, type: "string", from_shape: "ev1" }], ev1: [] },
+  routes: [producing("ev1"), failing("hopA"), failing("hopB")],
+  walkBudget: { max_attempts_per_producer: 2 },
+});
+
+describe.skipIf(!HERMETIC)("a curable refusal is an observation that re-arms OTHER producers, never its own", () => {
+  test("hopB's refusal (an observation, not a pool impulse) re-arms hopA; nothing entered the pool", async () => {
+    const r = await replay(observed());
+    const walk1 = firstWalk(r.log);
+    expect(walk1).toContain("bound demand — hopB refused with hopB.ev bound to ev1");
+    expect(walk1).toContain("re-attempt of satisfier:ev1 produced an identical instance already in the pool — no progress");
+    expect(count(walk1, "RE-ATTEMPT satisfier:hopA")).toBe(1);
+    expect(walk1).not.toContain("pool: instance #");
+    // ev1 twice (the second is the deduped re-run); hopA's re-attempt sends nothing: its identical instance already failed
+    expect(sendsOf(r, "ev1").length).toBeGreaterThanOrEqual(2);
+    expect(walk1).toContain("walk rawResolve hopA (satisfier-direct): NOT sent — identical instance already failed in this walk");
+  }, 120_000);
+});
+
+// ── H6: two SUCCESSFUL instances of one shape reach the composite, the path record and the ribosome ──
+/** As H2, with a persisted write (fix_write, read back through `fix`) so the walk reaches, and the landing ledger served
+ *  so the reach goes on to the path record and the mint. */
+export const h6 = () => {
+  const sc = hopScenario("h6-two-instances-reach", {
+    targets: ["testRun", "hopY", "fix_write"],
+    shapes: ["hopY", "testRun", "fix_write", "fix", "unaccounted_landing_scan"],
+    schemas: {
+      hopY: [{ name: "out", required: true, type: "string", from_shape: "testRun" }, { name: "fix", required: true, type: "string", from_shape: "fix_write" }],
+      ...RUN_FIELDS,
+      fix_write: [{ name: "patch", required: true, type: "string" }],
+    },
+    routes: [
+      { id: "ledger:scan", method: "POST", type: "unaccounted_landing_scan", respond: { json: { success: true, shape: "unaccounted_landing_scan", body: { unaccounted: [] } } } },
+      { id: "hop:testRun", method: "POST", type: "testRun", sequence: [
+        { json: { success: true, shape: "testRun", body: "RUN-1 before the fix" } },
+        { json: { success: true, shape: "testRun", body: "RUN-2 after the fix" } },
+      ] },
+      { id: "hop:fix_write", method: "POST", type: "fix_write", respond: { json: { success: true, shape: "fix_write", body: { id: "fix-1", applied: true } } } },
+      { id: "hop:fix", method: "POST", type: "fix", respond: { json: { success: true, shape: "fix", body: { id: "fix-1", patch: "p1" } } } },
+      { id: "hop:hopY-after-fix", method: "POST", type: "hopY", body: ["RUN-2 after the fix"], respond: { json: { success: true, shape: "hopY", body: { answer: "hopY ran on the run after the fix" } } } },
+      { id: "hop:hopY", method: "POST", type: "hopY", respond: { json: { success: false, error: "hopY: out is a run from before the fix" } } },
+    ],
+    argAnswers: [{ cmd: "run-tests", patch: "p1" }],
+    walkBudget: { max_attempts_per_producer: 3 },
+  });
+  return { ...sc, steps: [{ op: "runGoal", body: { goal: "Run the tests, write the fix, and report what hopY answers." } }] };
+};
+
+describe.skipIf(!HERMETIC)("H6: two successful instances of one shape, through the composite, the path record and the ribosome", () => {
+  test("both instances are in the path record in order; the composite accounts for every step (kept or dropped with a traced reason); nothing is silently deduped", async () => {
+    const r = await replay(h6());
+    const walk1 = firstWalk(r.log);
+    expect(walk1).toContain("pool: instance #2 of testRun from satisfier:testRun");
+    expect(r.log).toContain("REACHED via 4-step chain");
+    const chain = ["satisfier:testRun", "satisfier:fix_write", "satisfier:testRun", "satisfier:hopY"];
+    // the path record: both instances, in production order
+    const path = r.requests.find((q) => q.route === "default:goal-path-record" && Array.isArray(q.body?.path_activities));
+    expect(path?.body.path_activities).toEqual(chain);
+    expect(path?.body.reached).toBe(true);
+    // the composite: one task per kept step with its own output id, every dropped step named (twice for testRun)
+    const comp = r.requests.find((q) => q.route === "default:trace-write" && q.body?.metadata?.composite === true);
+    expect(comp).toBeDefined();
+    const meta = comp!.body.metadata as { chain: string[]; dropped_unconsumed_steps?: string[] };
+    const tasks = comp!.body.execution_trace.tasks as Array<{ output_impulse_ids: string[] }>;
+    expect(tasks.length).toBe(meta.chain.length);
+    for (const t of tasks) expect(t.output_impulse_ids.length).toBe(1);
+    expect(new Set(tasks.map((t) => t.output_impulse_ids[0])).size).toBe(tasks.length);
+    expect(comp!.body.composition_chain.length).toBe(chain.length);
+    const accounted = [...meta.chain, ...(meta.dropped_unconsumed_steps ?? [])].sort();
+    expect(accounted).toEqual([...chain].sort());
+    if ((meta.dropped_unconsumed_steps ?? []).length > 0) expect(r.log).toContain(`composite keeps ${meta.chain.length}/${chain.length} step(s); dropped unconsumed ${meta.dropped_unconsumed_steps!.join(", ")}`);
+    // the ribosome extracts exactly the composite's kept steps (or a traced reach->mint line says why not)
+    const ran = r.log.includes(`reach→mint: ran ribosome-extract for ${comp!.body.execution_id} (taskCount=${tasks.length},`);
+    expect(ran || /reach->mint: (SKIP|REFUSED|DEFER)/.test(r.log)).toBe(true);
+  }, 120_000);
+});
