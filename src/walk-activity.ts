@@ -140,7 +140,27 @@ export interface WalkVerdict {
  *  is not a seed (the goal and the dispatch's variables enter the pool as `producedBy: "seed"`). Copies: the pool is not
  *  touched. The engine keeps each with its own shape (the task declares no output shapes, K7). The trace record is never
  *  degraded, so the engine's all-degraded check cannot refuse the walk's outputs. */
-export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: readonly Impulse[]): Impulse[] {
+/** One executor send of the walk (a resolve that reached, or was refused before, egress), as its trace carries it. */
+export interface WalkSend { producer: string; command: string | null; exit_status: number | null; stderr_excerpt: string | null; ok: boolean; refused_before_egress?: true }
+
+/** The trace's record of one send: the command it ran (command / cmd / script / sql), the exit status and a stderr excerpt
+ *  read from the result (or the refusal reason when there was no result), each bounded to 512 chars and passed through
+ *  `scrub` (the caller's credential redaction). */
+export function walkSendOf(producer: string, pointer: Record<string, unknown> | undefined, result: unknown, reachedEgress: boolean, ok: boolean, reason: string | null, scrub: (text: string) => string): WalkSend {
+  const bound = (v: unknown): string | null => (v === undefined || v === null || v === "" ? null : scrub(String(v)).slice(0, 512));
+  const cmd = pointer ? (pointer["command"] ?? pointer["cmd"] ?? pointer["script"] ?? pointer["sql"]) : undefined;
+  let o: Record<string, unknown> | null = null;
+  if (result && typeof result === "object") o = result as Record<string, unknown>;
+  else if (typeof result === "string") { try { const j = JSON.parse(result); if (j && typeof j === "object") o = j as Record<string, unknown>; } catch { /* plain text */ } }
+  // a resolver envelope ({ success, body | content }) carries the run under body or content
+  for (const k of ["body", "content"]) { const inner = o?.[k]; if (inner && typeof inner === "object" && !Array.isArray(inner) && !("stderr" in (o as object))) { o = inner as Record<string, unknown>; break; } }
+  const exitRaw = o ? (o["exit_code"] ?? o["exitCode"] ?? o["exit"]) : undefined;
+  const exit = typeof exitRaw === "number" ? exitRaw : typeof exitRaw === "string" && exitRaw.trim() !== "" && Number.isFinite(Number(exitRaw)) ? Number(exitRaw) : null;
+  const stderr = o && "stderr" in o ? o["stderr"] : result == null ? reason : null;
+  return { producer, command: bound(cmd), exit_status: exit, stderr_excerpt: bound(stderr), ok, ...(reachedEgress ? {} : { refused_before_egress: true as const }) };
+}
+
+export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: readonly Impulse[], sends: readonly WalkSend[] = []): Impulse[] {
   const produced = pool.filter((i) => (i.metadata as Record<string, unknown> | undefined)?.["producedBy"] !== "seed");
   const trace: Impulse = {
     id: `${walk.executionId}-trace`,
@@ -156,6 +176,8 @@ export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: read
       selected_template_id: verdict.selectedTemplateId ?? null,
       completion_shapes: verdict.completionShapes,
       attempts: verdict.attempts,
+      // the executor sends behind those steps, including runs that never became a step (failed or refused)
+      sends: sends.map((x) => ({ ...x })),
       outputs: produced.map((i) => ({ id: i.id, shape: (i.metadata as Record<string, unknown> | undefined)?.["shape"] ?? null })),
       // a snapshot: the dispatcher later notes the retry route it took on the live record (noteRouteTaken)
       route_around: verdict.routeAround === undefined ? null : structuredClone(verdict.routeAround),

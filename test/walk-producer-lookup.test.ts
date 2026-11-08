@@ -255,3 +255,68 @@ describe.skipIf(!HERMETIC)("walk-log taps reach the dispatch record", () => {
     expect(SRC).toContain("tap(`[goal-host-vessel] recordGoalPath PRECONDITIONS chain=");
   });
 });
+
+// A shell executor scenario: one vessel serves shellResult, the corrector's commands come from llm:arg-extraction.
+const PS = "ps -e | wc -l";
+const shellScenario = (id: string, extraRoutes: unknown[] = []) => ({
+  id,
+  description: "executor repeat test (not part of the verdict-diff corpus)",
+  fleet: { vessels: [{ id: "tools-vessel", endpoint: "http://tools.test.invalid", resolve_endpoint: "/v2/impulses/resolve", shapes: ["shellResult"] }] },
+  routes: [
+    { id: "discovery:producer-lookup", method: "POST", type: "discoverByShapesQuery", respond: { status: 404, json: NOT_FOUND } },
+    ...extraRoutes,
+    { id: "llm:target-inference", method: "POST", caller: "goal-host:goal_target_inference", respond: { llm: JSON.stringify({ target_shapes: ["shellResult"], confidence: 0.9, alternatives: [] }) } },
+    { id: "schema:shellResult", method: "POST", type: "resolver_schema", body: ['"shape":"shellResult"'], respond: { json: { success: true, shape: "resolver_schema", body: { shape: "shellResult", known: true, fields: [{ name: "command", required: true, type: "string" }] } } } },
+    { id: "llm:arg-extraction", method: "POST", caller: "goal-host:pointer_arg_extraction", respond: { llm: JSON.stringify({ command: PS }) } },
+    { id: "tools:shell", method: "POST", type: "shellResult", respond: { json: { success: true, shape: "shellResult", body: { stdout: "", stderr: "bash: ps: command not found", exit_code: 127 } } } },
+    { id: "judge", method: "POST", caller: "goal-host:reach_verification", respond: { llm: "{\"reached\": false, \"reason\": \"no count\", \"completion_shapes\": []}" } },
+    { id: "floor:answer", method: "POST", caller: "goal-host:floor_tool_loop", respond: { json: { success: true, shape: "llmTextCompletion", body: { text: "UNKNOWN" } } } },
+  ],
+  steps: [{ op: "runGoal", body: { goal: "Count the running processes on this host." } }],
+});
+const shellSends = (r: Replay) => r.requests.filter((q) => q.body?.impulse?.pointer?.type === "shellResult" || q.body?.pointer?.type === "shellResult");
+
+
+// F1 (agf_oe9rj34wgpt9): the walk's executor sends, including runs that never became a step, are in its trace output as
+// `sends` (attempts keeps its step meaning), bounded and credential-redacted, in the kept copy and the delivered body.
+describe.skipIf(!HERMETIC)("F1: the walk's executor sends are in its trace output", () => {
+  const CMDS = ["echo verdict-diff-key | wc -c", "echo mb-SEEDEDKEY0123456789 | wc -c", "ps -e | wc -l"];
+  const sc = () => {
+    const s = shellScenario("executor-sends");
+    const rs = s.routes as Array<Record<string, unknown>>;
+    const arg = rs.find((x) => x["id"] === "llm:arg-extraction")!;
+    delete arg["respond"];
+    arg["sequence"] = [...CMDS, ...CMDS].map((c) => ({ llm: JSON.stringify({ command: c }) }));
+    rs.find((x) => x["id"] === "tools:shell")!["respond"] = { json: { success: true, shape: "shellResult", body: { stdout: "", stderr: "bash: mb-STDERRKEY987654321: command not found", exit_code: 127 } } };
+    return s;
+  };
+  test("N degenerate shell runs give N send entries (attempts stays 0 steps), each with command, exit status and stderr", async () => {
+    const r = await replay(sc());
+    // every walk execution's own output (engine side; one dispatch's walks are also kept and served below)
+    const all = r.walkTraceOutputs.map((w) => w.executionTrace[0]);
+    const egress = all.flatMap((k) => (k.sends ?? []).filter((x: { refused_before_egress?: boolean }) => !x.refused_before_egress));
+    const kept = r.walkTraceServed.filter((x) => x.status === 200).map((x) => JSON.parse(x.json.body.content));
+    expect(kept.length).toBeGreaterThanOrEqual(1);
+    expect(kept[0].sends).toEqual(all[0].sends);
+    expect(egress.length).toBeGreaterThanOrEqual(3);
+    expect(egress.length).toBe(shellSends(r).length);
+    for (const k of kept) expect(k.attempts).toBe(0);
+    for (const x of egress) {
+      expect(x.producer).toBe("satisfier:shellResult");
+      expect(typeof x.command).toBe("string");
+      expect(x.exit_status).toBe(127);
+      expect(String(x.stderr_excerpt)).toContain("command not found");
+      expect(String(x.command).length).toBeLessThanOrEqual(512);
+    }
+  }, 120_000);
+  test("a key-like value in the command and in stderr appears in neither the kept trace nor the delivered body", async () => {
+    const r = await replay(sc());
+    const kept = r.walkTraceServed.filter((x) => x.status === 200).map((x) => x.json.body.content).join("\n");
+    expect(kept.length).toBeGreaterThan(0);
+    const delivered = JSON.stringify(r.requests.filter((q) => q.body?.pointer?.type === "activityExecutionTrace_write").map((q) => q.body.pointer.traceData));
+    for (const text of [kept, delivered]) {
+      expect(text).toContain("[redacted]");
+      for (const secret of ["verdict-diff-key", "mb-SEEDEDKEY0123456789", "mb-STDERRKEY987654321"]) expect(text).not.toContain(secret);
+    }
+  }, 120_000);
+});

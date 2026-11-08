@@ -330,7 +330,7 @@ import { stripDispatchIds, nearFailures, failureFeedbackText, contentTermsOf, ob
 import { buildJudgeView, restrictCompletionShapes, capturedPoolEntries, judgeViewParts, DELIVERABLE_CAP, type JudgeCut, type JudgeViewPart, type PoolEntry } from "./judge-view";
 import { verifyGroundedReport, groundedReportPolicyFrom, poolEvidenceOf, type PoolEvidence, type GroundedReportVerdict } from "./grounded-report";
 import { verifyAggregateReport, reportClassForTargets, producedContentOf, parseMaybeJson, REPORT_CLASS_SHAPE } from "./aggregate-report-verifier";
-import { buildRouteAround, noteRouteTaken, transientProducerFailure, type RouteAroundRecord } from "./route-around";
+import { buildRouteAround, noteRouteTaken, scrubReason, transientProducerFailure, type RouteAroundRecord } from "./route-around";
 import { AttemptLedger, DemandBook, InstanceIndex, attemptOutcome, boundFieldsOf, defaultInstanceKey, instanceKey, newestPerShape, recordCommand, stableJSON, withWorld, type AttemptSend, type UnmetInput } from "./walk-instances";
 import { asksForSecretValue } from "./secret-extraction";
 import { proseProducerOf, recalledCandidates } from "./shape-recall";
@@ -5476,7 +5476,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
-import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, type WalkIdentity, type WalkRun } from "./walk-activity";
+import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, walkSendOf, type WalkSend, type WalkIdentity, type WalkRun } from "./walk-activity";
 import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
@@ -8041,7 +8041,7 @@ async function runGoalAsPoolWalkBody(
     changeAdmitted?: boolean;
     /** THE WALK ACTIVITY (walk-activity.ts): set only by walkActivityBody, which returns the pool's produced impulses as
      *  the walk execution's outputs. */
-    exposePool?: (pool: readonly Impulse[]) => void;
+    exposePool?: (pool: readonly Impulse[], sends: readonly WalkSend[]) => void;
   },
 ): Promise<GoalSeekResult> {
   // Reason-plane tap: mirror a decision line to both stdout and the caller's
@@ -8185,7 +8185,10 @@ async function runGoalAsPoolWalkBody(
   // web_resource search-provenance check makes. The array is registered by reference, so every later
   // push is visible to that read.
   rememberLivePool(opts.variables.dispatch_id, poolImpulses);
-  opts.exposePool?.(poolImpulses);
+  // THE WALK'S EXECUTOR SENDS (walk-activity.ts walkSendOf): each send of an attempt, recorded at rawResolve, for the
+  // walk's trace output (a run that never became a step is otherwise invisible there).
+  const walkSends: WalkSend[] = [];
+  opts.exposePool?.(poolImpulses, walkSends);
   // PROVENANCE (walk-pool.ts, agentic-floor B1): ids unique per dispatch, `producedBy` the real
   // producer, and the producing execution / consumed ids where the step knows them.
   const mkImpulse = (shape: string, content: unknown, summary?: string, prov?: PoolProvenance): Impulse => ({
@@ -9320,6 +9323,7 @@ async function runGoalAsPoolWalkBody(
     if (sent.structural) curAttempt.structural = true;
     const _k = sent.names && sent.pointer ? withWorld(instanceKey(shape, sent.pointer, sent.names), curAttempt.world) : undefined;
     curAttempt.sends.push({ reachedEgress: sent.reachedEgress === true, ok: result != null, transient: result == null && lastRawResolveTransient, ...(_k ? { key: _k } : {}) });
+    walkSends.push(walkSendOf(`satisfier:${shape}`, sent.pointer as Record<string, unknown> | undefined, result, sent.reachedEgress === true, result != null, lastRawResolveReason ?? null, (t) => scrubReason(t, [API_KEY])));
     if (result != null && _k && shape === curAttempt.shape) { curAttempt.okKey = _k; boundByKey.set(_k, boundFieldsOf(sent.pointer, sent.names ?? [])); }
   }
   if (isAppliedWriteShape(shape)) appliedWrites.recordOutcome(shape, { site, endpoint, pointer: sent.pointer, result, reason: result == null ? lastRawResolveReason : null });
@@ -15714,8 +15718,9 @@ type WalkActivityOpts = Parameters<typeof runGoalAsPoolWalkBody>[1];
 // path record carry (they start at the caller's chain): activity-api credits every chain ancestor from each step's outcome.
 async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: WalkIdentity): Promise<WalkRun<GoalSeekResult>> {
   let pool: readonly Impulse[] = [];
-  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p) => { pool = p; } });
-  const outputs = walkOutputs(walk, result, pool);
+  let sends: readonly WalkSend[] = [];
+  const result = await runGoalAsPoolWalkBody(goal, { ...opts, parentExecutionId: walk.executionId, compositionChain: [...walk.compositionChain], exposePool: (p, s) => { pool = p; sends = s; } });
+  const outputs = walkOutputs(walk, result, pool, sends);
   const delivery = outputs[0] ? await deliverWalkTrace(walk, result, outputs[0], (m) => { console.log(m); opts.stepSink?.push(m); }) : undefined;
   // A4: the walk's executionTrace output is kept on its dispatch record by impulse id with its execution id, and is
   // served by goalWalkOutput {dispatchId, impulseId} after the walk ends; the kept copy carries the delivery outcome.
