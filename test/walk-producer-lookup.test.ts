@@ -424,3 +424,33 @@ describe.skipIf(!HERMETIC)("F1 widened: the walk's targets, recalled concepts an
     expect(rec.target).toContain("evidenceRecord");
   }, 120_000);
 });
+
+// agf_fvahxniq3wix: the store keeps a delivered trace's tasks only from execution_trace.tasks / tasks and the rest only
+// from metadata, so the walk's hop maps its sends to tasks and carries its own record under metadata.walk.
+describe.skipIf(!HERMETIC)("the delivered walk trace speaks the store's contract", () => {
+  test("MUST-FAIL: the POST body for a walk with sends carries tasks.length == sends.length and metadata.walk", async () => {
+    const s = shellScenario("deliver-store-contract");
+    const rs = s.routes as Array<Record<string, unknown>>;
+    const arg = rs.find((x) => x["id"] === "llm:arg-extraction")!;
+    delete arg["respond"];
+    arg["sequence"] = ["ps -e | wc -l", "ps aux | wc -l", "ls /proc | wc -l"].map((c) => ({ llm: JSON.stringify({ command: c }) }));
+    const r = await replay(s);
+    const tds = r.requests.filter((q) => q.body?.pointer?.type === "activityExecutionTrace_write").map((q) => q.body.pointer.traceData);
+    expect(tds.length).toBeGreaterThanOrEqual(1);
+    const td = tds[0];
+    const sends = td.execution_trace.sends as Array<{ producer: string; ok: boolean; refused_before_egress?: boolean }>;
+    expect(sends.length).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(td.tasks)).toBe(true);
+    expect(td.tasks.length).toBe(sends.length);
+    td.tasks.forEach((t: Record<string, unknown>, i: number) => {
+      expect(t["task_id"]).toBe(`send-${i + 1}`);
+      expect(t["resolver_id"]).toBe(sends[i]!.producer);
+      expect(t["success"]).toBe(sends[i]!.ok);
+      if (sends[i]!.refused_before_egress) { expect(t["status"]).toBe("skipped"); expect(t["skipped"]).toBe(true); }
+      else expect(String(t["description"])).toContain("exit 127");
+    });
+    expect(td.metadata.walk.attempts).toBe(td.execution_trace.attempts);
+    expect(td.metadata.walk.route_around).toEqual(td.execution_trace.route_around);
+    expect(td.metadata.walk.target).toEqual(td.execution_trace.target);
+  }, 120_000);
+});

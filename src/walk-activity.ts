@@ -206,6 +206,30 @@ export function deliveryConfirmed(bodyText: string, executionId: string): boolea
   return !!inner && inner["stored"] === true && inner["execution_id"] === executionId;
 }
 
+/** THE STORE'S CONTRACT FOR A DELIVERED WALK TRACE (agf_fvahxniq3wix): activity-api's execution-traces POST / keeps a
+ *  row's tasks only from `execution_trace.tasks` or `tasks`, each through normalizePersistedTask, and the rest only from
+ *  `metadata`. So the walk's executor sends become tasks in that reader's fields (task_id, description, status,
+ *  resolver_id, success, output_shapes, and skipped for a send refused before egress; a send's exit status and stderr
+ *  ride in its description, since that reader keeps no task-level failure field), and the walk's own record rides under
+ *  metadata.walk. Everything here is already bounded and redacted by walkSendOf / walkActivityBody. */
+export function walkTraceStoreFields(record: Record<string, unknown>): { tasks: Array<Record<string, unknown>>; metadata: { walk: Record<string, unknown> } } {
+  const sends = Array.isArray(record["sends"]) ? (record["sends"] as WalkSend[]) : [];
+  const tasks = sends.map((x, i) => {
+    const what = [x.command ?? "(no command)", x.exit_status !== null ? `exit ${x.exit_status}` : null, x.stderr_excerpt, x.refused_before_egress ? "refused before egress" : null].filter((p) => p !== null && p !== "").join(" | ");
+    return {
+      task_id: `send-${i + 1}`,
+      description: what.slice(0, 512),
+      status: x.refused_before_egress ? "skipped" : x.ok ? "success" : "failure",
+      resolver_id: x.producer,
+      success: x.ok,
+      output_shapes: [x.producer.replace(/^satisfier:/, "")],
+      ...(x.refused_before_egress ? { skipped: true } : {}),
+    };
+  });
+  const pick = (k: string): unknown => record[k] ?? null;
+  return { tasks, metadata: { walk: { attempts: pick("attempts"), route_around: pick("route_around"), outputs: pick("outputs"), target: pick("target"), recalled_concept_ids: pick("recalled_concept_ids"), unmet_inputs: pick("unmet_inputs"), bound_demands: pick("bound_demands") } } };
+}
+
 /** The goal as the walk's input impulse. */
 export function goalImpulse(goal: string, id: string): Impulse {
   return { id, pointer: { type: "goal", goal }, metadata: { shape: "goal" }, loaded: true, content: goal };

@@ -5476,7 +5476,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
-import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, walkSendOf, deliveryConfirmed, type WalkSend, type WalkIdentity, type WalkRun } from "./walk-activity";
+import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, walkSendOf, deliveryConfirmed, walkTraceStoreFields, type WalkSend, type WalkIdentity, type WalkRun } from "./walk-activity";
 import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
@@ -15783,7 +15783,7 @@ async function deliverWalkTrace(walk: WalkIdentity, result: GoalSeekResult, reco
     const r = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ pointer: { type: "activityExecutionTrace_write", traceData: { execution_id: walk.executionId, template_id: WALK_ACTIVITY_ID, status: result.status, execution_trace: record.content } } }),
+      body: JSON.stringify({ pointer: { type: "activityExecutionTrace_write", traceData: { execution_id: walk.executionId, template_id: WALK_ACTIVITY_ID, status: result.status, execution_trace: record.content, ...walkTraceStoreFields((record.content ?? {}) as Record<string, unknown>) } } }),
       signal: AbortSignal.timeout(20_000),
     });
     status = r.status;
