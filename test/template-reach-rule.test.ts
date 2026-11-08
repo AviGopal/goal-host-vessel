@@ -29,7 +29,7 @@ process.env["MEM_DUMP_PATH"] ||= join(TMP, "mem-dump.json");
 process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
 
 const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => { throw new TypeError("fetch refused (test: no network)"); }) as unknown as typeof fetch);
-const { GoalHost } = await import("@avigopal/ias-executor-ts");
+const { GoalHost, InMemoryTemplateProvider } = await import("@avigopal/ias-executor-ts");
 const m = await import("../src/index");
 
 afterAll(() => {
@@ -52,6 +52,13 @@ async function runPinned(templateId: string, outputs: Array<{ shape: string; con
       trace: { id: `exec-trr-${n}`, status: "completed", tasks: [{ taskId: "classify", resolverId: "ownCheckBaseline", success: true, outputShapes: outputs.map((o) => o.shape), outputImpulseIds: ids }] },
     };
   });
+  // FIXTURE: the pinned template is in the host's catalogue (a pin the dispatcher cannot fetch goes through the walk
+  // instead, agf_7b4l8praaak5); the first catalogue lookup of the id registers it in that catalogue.
+  const _origGet = InMemoryTemplateProvider.prototype.getTemplate;
+  const catalogueSpy = spyOn(InMemoryTemplateProvider.prototype, "getTemplate").mockImplementation(async function (this: InstanceType<typeof InMemoryTemplateProvider>, id: string) {
+    if (id === templateId) this.register({ id, name: id, tasks: [] });
+    return _origGet.call(this, id);
+  });
   const stepSink: string[] = [];
   // The judge chain's own log lines (verifyGoalReachedUnrestricted's oracles log as they decline): proof it ran.
   const logged: string[] = [];
@@ -62,6 +69,7 @@ async function runPinned(templateId: string, outputs: Array<{ shape: string; con
   } finally {
     logSpy.mockRestore();
     spy.mockRestore();
+    catalogueSpy.mockRestore();
   }
 }
 

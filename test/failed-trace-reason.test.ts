@@ -27,7 +27,7 @@ process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
 
 // No network from this file, the module's import-time work included.
 const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => { throw new TypeError("fetch refused (test: no network)"); }) as unknown as typeof fetch);
-const { GoalHost } = await import("@avigopal/ias-executor-ts");
+const { GoalHost, InMemoryTemplateProvider } = await import("@avigopal/ias-executor-ts");
 const m = await import("../src/index");
 const INDEX = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
 
@@ -42,12 +42,20 @@ async function runPinned(goal: string, trace: Trace | Error) {
     if (trace instanceof Error) throw trace;
     return { selectedTemplateId: "tpl-fixture", trace };
   });
+  // FIXTURE: the pinned template is in the host's catalogue (a pin the dispatcher cannot fetch goes through the walk
+  // instead, agf_7b4l8praaak5); the first catalogue lookup of the id registers it in that catalogue.
+  const _origGet = InMemoryTemplateProvider.prototype.getTemplate;
+  const catalogueSpy = spyOn(InMemoryTemplateProvider.prototype, "getTemplate").mockImplementation(async function (this: InstanceType<typeof InMemoryTemplateProvider>, id: string) {
+    if (id === "tpl-fixture") this.register({ id, name: id, tasks: [] });
+    return _origGet.call(this, id);
+  });
   const stepSink: string[] = [];
   try {
     const r = await m.runGoalWithRecovery(goal, { firstTarget: "tpl-fixture", callerPinned: true, maxAttempts: 1, variables: {}, surface: "test", stepSink, learningMode: "observe" } as never);
     return { r, stepSink };
   } finally {
     spy.mockRestore();
+    catalogueSpy.mockRestore();
   }
 }
 

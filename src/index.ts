@@ -8041,6 +8041,9 @@ async function runGoalAsPoolWalkBody(
     changeAdmitted?: boolean;
     /** THE WALK ACTIVITY (walk-activity.ts): set only by walkActivityBody, which returns the pool's produced impulses as
      *  the walk execution's outputs. */
+    /** A PINNED dispatch whose template the dispatcher could not fetch (agf_7b4l8praaak5): the walk takes no step, derives
+     *  nothing from the goal, and ends unreached naming the pin, with the absence on its route-around record. */
+    pinUnavailable?: { id: string; reason: string };
     exposePool?: (pool: readonly Impulse[], sends: readonly WalkSend[], context: () => { target: readonly string[]; unmetInputs: readonly UnmetInput[]; boundDemands: ReadonlyArray<{ shape: string; binding: Record<string, unknown>; for_hop: string; field: string; since: number }> }) => void;
   },
 ): Promise<GoalSeekResult> {
@@ -10946,6 +10949,18 @@ If one of those sibling shapes is the action that would create what the goal ask
   // WRITE DOOR (target): every walk call site's target passes here, a prepended pathway head and the retry framings included.
   const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
   observeDropFrom(target, opts.learningMode, dispatchContext.getStore()?.dispatchId, tap); // OBSERVE: no gap-write target
+  if (opts.pinUnavailable) {
+    const _pinWhy = `pinned template ${opts.pinUnavailable.id} unavailable`;
+    pickFailures.set(`pin:${opts.pinUnavailable.id}`, scrubReason(opts.pinUnavailable.reason, [API_KEY]).slice(0, 512));
+    const _pinRa = buildRouteAround({
+      goalHash: goalHashOf(goal), target, produced: producedShapes, missing: [...target],
+      satisfierFailures, pickFailures, termination: _pinWhy, secrets: [API_KEY],
+      unmetInputs, reattemptRefusals: [...new Set(reattemptRefusals.values())], boundDemands,
+    });
+    appendRouteAround(opts.variables.dispatch_id, _pinRa);
+    tap(`[goal-host-vessel] walk(${opts.surface}): ${_pinWhy} (${opts.pinUnavailable.reason.slice(0, 160)}) — no step taken, nothing derived from the goal`);
+    return { result: null, status: "failed", completionShapes: null, attempts: 0, reached: false, goalReachReason: _pinWhy, routeAround: _pinRa };
+  }
   // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): snapshot the
   // pool shapes present BEFORE any walk step ran. A reach judged solely on these
   // pre-existing seed shapes (e.g. active_note_path, open_note_paths) delivered no
@@ -13986,7 +14001,19 @@ async function runGoalWithRecoveryInner(
     const _pf = recallGoalFailures(goal);
     tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL — ${_pf.exact.length} prior hollow verdict(s) for goal_hash=${goalHashOf(goal)} + ${_pf.near.length} near-miss; fed into attempt 1${_priorExactFailures > 0 ? ", reached-command replay disabled" : ""}: ${_priorFailureFeedback.slice(0, 220).replace(/\n/g, " | ")}`);
   }
-  if (goal && !opts.callerPinned && !opts.firstTarget) {
+  // A PINNED DISPATCH (either door's firstTarget, or callerPinned) tries its pin ONCE, the error caught. A pin the
+  // catalogue or the template lookup holds runs as before (the recovery loop below). An unavailable pin no longer reaches
+  // the recovery loop's template fetch: the dispatch goes through the walk, which ends unreached naming the pin.
+  let _pinUnavailable: { id: string; reason: string } | undefined;
+  const _pinId = opts.firstTarget;
+  if (goal && _pinId) {
+    let _pinHit: unknown = null;
+    let _pinReason = "not found in the catalogue or the template store";
+    try { _pinHit = (await host.catalogue.getTemplate(_pinId)) ?? (await getTemplateLocalFirst(_pinId)); }
+    catch (e) { _pinReason = String((e as Error)?.message ?? e); }
+    if (!_pinHit) _pinUnavailable = { id: _pinId, reason: scrubReason(_pinReason, [API_KEY]).slice(0, 512) };
+  }
+  if (goal && ((!opts.callerPinned && !opts.firstTarget) || _pinUnavailable)) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
     // and pick the highest-Thompson tick regardless of goal relevance. Infer the
@@ -14640,6 +14667,7 @@ async function runGoalWithRecoveryInner(
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
         const _firstDispatch = await dispatchWalk(goal, {
         changeAdmitted: _changeAdmitted,
+        ...(_pinUnavailable ? { pinUnavailable: _pinUnavailable } : {}),
         recalledLessons: _dispatchLessons,
         priorVerdictFeedback: _priorFailureFeedback || undefined,
         variables: opts.variables,
@@ -14679,6 +14707,8 @@ async function runGoalWithRecoveryInner(
           })(),
       });
       let walk = _firstDispatch.walk;
+      // An unavailable pin ends here: no retry, re-frame or recovery derives the goal in its place (Q-4).
+      if (_pinUnavailable) return walk;
       // Q-3: every retry below is a SIBLING walk dispatch whose parentExecutionId is this first walk's execution id.
       const _firstWalkId = _firstDispatch.walkExecutionId;
       const _retryTap = (kind: string, retryId: string, retry: GoalSeekResult): void => tap(`[goal-host-vessel] ${opts.surface}: walk-retry tap: retry=${kind} first_walk=${_firstWalkId} retry_walk=${retryId} turned_unreached_into_reached=${retry.reached === true}`);

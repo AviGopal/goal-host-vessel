@@ -454,3 +454,37 @@ describe.skipIf(!HERMETIC)("the delivered walk trace speaks the store's contract
     expect(td.metadata.walk.target).toEqual(td.execution_trace.target);
   }, 120_000);
 });
+
+// F3 (agf_7b4l8praaak5): a PINNED dispatch whose template cannot be fetched (a dead template store) no longer reaches the
+// recovery loop's uncaught template fetch: it goes through the walk, which takes no step and ends unreached naming the pin.
+describe.skipIf(!HERMETIC)("F3: an unavailable pin ends unreached in the walk", () => {
+  const PIN = "development-vessel:probe-untraversed-edge";
+  const pinned = (id: string, templateRespond: Record<string, unknown>) => {
+    const s = scenario(id, { status: 404, json: NOT_FOUND });
+    (s.routes as Array<Record<string, unknown>>).unshift({ id: "aapi:template", method: "GET", urlRegex: "/v2/activities/templates/", respond: templateRespond });
+    (s.steps[0]!.body as Record<string, unknown>)["targetTemplateId"] = PIN;
+    return s;
+  };
+  test("MUST-FAIL: one walk, unreached with the pin's reason on its trace, no escaped error, no derivation", async () => {
+    const r = await replay(pinned("pin-dead-store", { throw: "ECONNREFUSED: Unable to connect" }));
+    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(1);
+    expect(r.log).not.toContain("async /run-goal error");
+    const served = r.walkTraceServed.find((x) => x.status === 200)!;
+    expect(served.json.body.shape).toBe("executionTrace");
+    const rec = JSON.parse(served.json.body.content);
+    expect(rec.reached).toBe(false);
+    expect(rec.goal_reach_reason).toBe(`pinned template ${PIN} unavailable`);
+    const f = (rec.route_around?.failed_producers ?? []).find((x: { producer: string }) => x.producer === `pin:${PIN}`);
+    expect(String(f?.reason)).toContain("ECONNREFUSED");
+    expect(rec.attempts).toBe(0);
+    expect(rec.sends).toEqual([]);
+    expect(r.log).not.toContain("walk rawResolve");
+    expect(r.record?.reached).toBe(false);
+    expect(r.record?.goalReachReason).toBe(`pinned template ${PIN} unavailable`);
+  }, 120_000);
+  test("control: a pin the template store serves still runs in the recovery loop, outside the walk", async () => {
+    const r = await replay(pinned("pin-served", { json: { id: PIN, name: "probe", inputShapes: ["goal"], outputShapes: ["hopZ"], tasks: [{ id: "t1", description: "hop", resolver: "hopZ" }] } }));
+    expect(r.log).not.toContain(`pinned template ${PIN} unavailable`);
+    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(0);
+  }, 120_000);
+});
