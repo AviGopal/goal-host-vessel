@@ -5476,7 +5476,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
-import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, walkSendOf, type WalkSend, type WalkIdentity, type WalkRun } from "./walk-activity";
+import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, walkOutputs, walkSendOf, deliveryConfirmed, type WalkSend, type WalkIdentity, type WalkRun } from "./walk-activity";
 import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
@@ -15745,7 +15745,7 @@ async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: Walk
  *  producer (activity-api src/routes/impulses.ts, the activityExecutionTrace_write case) takes pointer.traceData as the
  *  body of its execution-traces POST /, which requires execution_id and template_id. The outcome is returned (and kept
  *  with the trace), tapped once, and never fails the walk; a refusal is not an observation (it re-arms nothing). */
-async function deliverWalkTrace(walk: WalkIdentity, result: GoalSeekResult, record: Impulse, tap: (m: string) => void): Promise<{ status: number | null; class: string; outcome: string }> {
+async function deliverWalkTrace(walk: WalkIdentity, result: GoalSeekResult, record: Impulse, tap: (m: string) => void): Promise<{ status: number | null; class: string; outcome: string; detail?: string }> {
   let status: number | null = null;
   let reason: string;
   try {
@@ -15757,8 +15757,15 @@ async function deliverWalkTrace(walk: WalkIdentity, result: GoalSeekResult, reco
     });
     status = r.status;
     if (r.ok) {
-      tap(`[goal-host-vessel] walk-activity: trace ${walk.executionId} delivered via activityExecutionTrace_write (HTTP ${r.status})`);
-      return { status, class: "delivered", outcome: "delivered" };
+      const _body = await r.text().catch(() => "");
+      if (deliveryConfirmed(_body, walk.executionId)) {
+        tap(`[goal-host-vessel] walk-activity: trace ${walk.executionId} delivered via activityExecutionTrace_write (HTTP ${r.status})`);
+        return { status, class: "delivered", outcome: "delivered" };
+      }
+      // A 2xx the store's body does not confirm (an error, a duplicate, a system-track routing): accepted, unconfirmed.
+      const _detail = scrubReason(_body, [API_KEY]).slice(0, 512);
+      tap(`[goal-host-vessel] walk-activity: trace ${walk.executionId} accepted but NOT confirmed via activityExecutionTrace_write (HTTP ${r.status}): ${_detail.slice(0, 200)}`);
+      return { status, class: "accepted_unconfirmed", outcome: "accepted_unconfirmed", detail: _detail };
     }
     reason = `HTTP ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`;
   } catch (e) {

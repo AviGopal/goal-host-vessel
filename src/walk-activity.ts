@@ -186,6 +186,22 @@ export function walkOutputs(walk: WalkIdentity, verdict: WalkVerdict, pool: read
   return [trace, ...produced.map((i) => ({ ...i, metadata: { ...i.metadata } }))];
 }
 
+/** CONFIRM ON BODY (agf_60oyt7cvc7pt): a 2xx from the activityExecutionTrace_write hop counts as delivered only when the
+ *  store's own answer says it stored this execution id. The producer (activity-api) answers the resolve as
+ *  { success, content: "<the execution-traces POST / body as JSON>" }; that body is { success, execution_id, stored: true }
+ *  for an insert, but { stored: false, duplicate: true } for an id it already holds and { stored: "system_traces" } for a
+ *  system-track trace (neither readable by id as this walk's trace). Anything else is accepted but unconfirmed. */
+export function deliveryConfirmed(bodyText: string, executionId: string): boolean {
+  const parse = (t: unknown): Record<string, unknown> | null => {
+    if (t && typeof t === "object") return t as Record<string, unknown>;
+    if (typeof t !== "string") return null;
+    try { const j = JSON.parse(t); return j && typeof j === "object" ? (j as Record<string, unknown>) : null; } catch { return null; }
+  };
+  const outer = parse(bodyText);
+  const inner = parse(outer?.["content"] ?? outer?.["body"]) ?? outer;
+  return !!inner && inner["stored"] === true && inner["execution_id"] === executionId;
+}
+
 /** The goal as the walk's input impulse. */
 export function goalImpulse(goal: string, id: string): Impulse {
   return { id, pointer: { type: "goal", goal }, metadata: { shape: "goal" }, loaded: true, content: goal };

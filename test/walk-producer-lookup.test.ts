@@ -204,10 +204,15 @@ describe.skipIf(!HERMETIC)("the deliverable-shapes absence is observable on the 
 // A1: the walk delivers its own executionTrace output by a search -> call hop (discovery /resolve,
 // activityExecutionTrace_write); the outcome is kept with the walk's trace (goalWalkOutput) and tapped, never fails it.
 const deliverRoute = (respond: unknown) => ({ id: "discovery:trace-write", method: "POST", type: "activityExecutionTrace_write", respond });
+// The store's confirming answer (activity-api: the resolve envelope around the execution-traces POST / body) for the
+// harness's first walk execution id (the harness's ids are seeded, so the first walk is always this one).
+const FIRST_WALK = "exec_y9nyvr27";
+const storedBody = (id: string) => ({ json: { success: true, content: JSON.stringify({ success: true, execution_id: id, stored: true }) } });
 const keptDelivery = (r: Replay) => JSON.parse(r.walkTraceServed[0]!.json.body.content).delivery;
 describe.skipIf(!HERMETIC)("the walk delivers its own trace and keeps the outcome", () => {
   test("2xx: delivered; the hop carries the store's required fields; the delivered record does not carry the outcome", async () => {
-    const r = await replay(scenario("deliver-2xx", { status: 404, json: NOT_FOUND }, [deliverRoute({ json: { success: true, shape: "activityExecutionTrace_write_result" } })]));
+    const r = await replay(scenario("deliver-2xx", { status: 404, json: NOT_FOUND }, [deliverRoute(storedBody(FIRST_WALK))]));
+    expect(r.walkTraceOutputs[0]!.executionId).toBe(FIRST_WALK);
     const sent = r.requests.find((q) => q.body?.pointer?.type === "activityExecutionTrace_write")!;
     const td = sent.body.pointer.traceData;
     expect(td.execution_id).toBe(r.walkTraceOutputs[0]!.executionId);
@@ -238,7 +243,7 @@ describe.skipIf(!HERMETIC)("the walk delivers its own trace and keeps the outcom
 // walk scope and stay console-only.
 describe.skipIf(!HERMETIC)("walk-log taps reach the dispatch record", () => {
   test("reach-input, recordGoalPath PRECONDITIONS and walk-activity: dispatched are in the record's walkLog", async () => {
-    const sc = scenario("walklog-taps", { status: 404, json: NOT_FOUND }, [deliverRoute({ json: { success: true } })]);
+    const sc = scenario("walklog-taps", { status: 404, json: NOT_FOUND }, [deliverRoute(storedBody(FIRST_WALK))]);
     (sc.routes as Array<Record<string, unknown>>).find((x) => x["id"] === "hop:hopZ")!["respond"] = { json: { success: true, shape: "hopZ", body: { answer: "hopZ answered" } } };
     const r = await replay(sc);
     expect(r.record?.reached).toBe(true);
@@ -356,5 +361,24 @@ describe.skipIf(!HERMETIC)("(a): the extract-guard's value extraction goes throu
     const firings = r.log.split("extract-guard: degMatch=true").length - 1;
     expect(firings).toBeGreaterThanOrEqual(1);
     expect(r.requests.filter((q) => q.body?.caller === "goal-host:uf_tool_llm_completion" && q.body?.type === "llm_completion").length).toBe(firings);
+  }, 120_000);
+});
+
+// agf_60oyt7cvc7pt: a 2xx counts as delivered only when the store's body confirms it stored this execution id.
+describe.skipIf(!HERMETIC)("delivery is confirmed on the store's body", () => {
+  test("MUST-FAIL: a 200 whose body carries an error (or a duplicate / system-track answer) is accepted_unconfirmed, with the body text", async () => {
+    const r = await replay(scenario("deliver-200-error", { status: 404, json: NOT_FOUND }, [deliverRoute({ json: { success: false, error: "write resolver failed (status 500)" } })]));
+    const d = keptDelivery(r);
+    expect(d.outcome).toBe("accepted_unconfirmed");
+    expect(d.status).toBe(200);
+    expect(String(d.detail)).toContain("write resolver failed");
+    expect(r.log).toContain("accepted but NOT confirmed via activityExecutionTrace_write (HTTP 200)");
+    const dup = await replay(scenario("deliver-200-duplicate", { status: 404, json: NOT_FOUND }, [deliverRoute({ json: { success: true, content: JSON.stringify({ success: true, stored: false, duplicate: true }) } })]));
+    expect(keptDelivery(dup).outcome).toBe("accepted_unconfirmed");
+  }, 120_000);
+  test("a 200 whose body confirms the stored execution id is delivered", async () => {
+    const r = await replay(scenario("deliver-200-stored", { status: 404, json: NOT_FOUND }, [deliverRoute(storedBody(FIRST_WALK))]));
+    expect(r.walkTraceOutputs[0]!.executionId).toBe(FIRST_WALK);
+    expect(keptDelivery(r)).toEqual({ status: 200, class: "delivered", outcome: "delivered" });
   }, 120_000);
 });
