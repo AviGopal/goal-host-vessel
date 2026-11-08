@@ -103,11 +103,11 @@ describe("the retry seams continue from the pool (source)", () => {
     expect(src.indexOf("const seedShapes = new Set<string>(producedShapes);")).toBeLessThan(src.indexOf("for (const c of carryForTarget(opts.carryFrom ?? [], target))"));
   });
   test("FEEDBACK-RETRY, the satisfier retry and the re-frame each pass the prior walk's carry", () => {
-    const fb = src.indexOf("const fbWalk = await runGoalAsPoolWalk(goal, {");
+    const fb = src.indexOf("const { walk: fbWalk, walkExecutionId: _feedbackWalkId } = await dispatchWalk(goal, {");
     expect(src.slice(fb, fb + 1600)).toContain("carryFrom: walk.carry,");
-    const sr = src.indexOf("const retryWalk = await runGoalAsPoolWalk(goal, {");
+    const sr = src.indexOf("const { walk: retryWalk, walkExecutionId: _suppressWalkId } = await dispatchWalk(goal, {");
     expect(src.slice(sr, sr + 1600)).toMatch(/carryFrom: \(walk\.carry \?\? \[\]\)[\s\S]*!== suppressedShape/);
-    const rf = src.indexOf("const altWalkResult = await runGoalAsPoolWalk(goal, {");
+    const rf = src.indexOf("const { walk: altWalkResult, walkExecutionId: _reframeWalkId } = await dispatchWalk(goal, {");
     expect(src.slice(rf, rf + 800)).toContain("carryFrom: walk.carry,");
   });
 });

@@ -36,8 +36,8 @@ describe("the hollow-satisfier retry and a single-shape grader", () => {
     const orElse = block.indexOf("} else {", notWidened);
     expect(notWidened).toBeGreaterThan(0);
     expect(block.slice(notWidened, orElse)).toContain("_retryNotWidenedCount += 1;");
-    expect(block.slice(notWidened, orElse)).not.toContain("runGoalAsPoolWalk(");
-    for (const inRetry of ['noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");', "const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;", "const retryWalk = await runGoalAsPoolWalk(goal, {", "walk = retryWalk.attempts > 0 ? retryWalk : walk;"]) {
+    expect(block.slice(notWidened, orElse)).not.toContain("dispatchWalk(");
+    for (const inRetry of ['noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");', "const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;", "const { walk: retryWalk, walkExecutionId: _suppressWalkId } = await dispatchWalk(goal, {", "walk = retryWalk.attempts > 0 ? retryWalk : walk;"]) {
       expect(block.indexOf(inRetry)).toBeGreaterThan(orElse);
     }
     // and the bound case is what the field produces

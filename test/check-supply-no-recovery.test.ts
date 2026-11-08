@@ -94,7 +94,7 @@ describe("controls: an unmarked goal keeps every existing route", () => {
   }
 
   test("[CONTROL] the unmarked routes are still there: the walk, authorFallback and the recovery loop", () => {
-    expect(at("let walk = await runGoalAsPoolWalk(goal, {")).toBeGreaterThan(0);
+    expect(at("const _firstDispatch = await dispatchWalk(goal, {")).toBeGreaterThan(0);
     expect(at("try { authoredFallbackTarget = await opts.authorFallback(); }")).toBeGreaterThan(0);
     expect(at("result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {")).toBeGreaterThan(0);
   });

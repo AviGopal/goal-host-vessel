@@ -5474,7 +5474,7 @@ const c = _sj?.content ?? _sj?.body; if (c && c.known === true) { envelope = Str
 // error => {ok:false} (counted as a failed exec, never as grounding).
 import { AsyncLocalStorage } from "node:async_hooks";
 import { enterDispatchContext } from "./dispatch-context";
-import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, type WalkIdentity, type WalkRun } from "./walk-activity";
+import { WALK_ACTIVITY_ID, walkActivityTemplate, walkActivityResolver, dispatchWalkCall, goalImpulse, type WalkIdentity, type WalkRun } from "./walk-activity";
 import { beginRecallRecord, noteDispatchIds, noteRecalledConcepts, RECALLED_CONCEPT_IDS_CAP, type DispatchContextStore } from "./dispatch-context";
 // The dispatch a walk step belongs to, readable anywhere below runGoalWithRecovery. decomposeGapId is the dispatch's
 // structured variables.decompose_gap_id, so the reach gate (which has no variables parameter) grades that gap.
@@ -8109,13 +8109,6 @@ function readCandidateShapes(x: any, k: number = SELECTION_TUNING_DEFAULTS.edgeB
 // The walk's pool is registered for goalWalkState {impulseId} while it runs (walk-pool.ts) and
 // unregistered when the walk ends, on every exit path — so a finished walk's pool is never served
 // and a running walk's pool is never the one evicted to make room.
-async function runGoalAsPoolWalk(goal: string, opts: Parameters<typeof runGoalAsPoolWalkBody>[1]): Promise<GoalSeekResult> {
-  try {
-    return await runGoalAsPoolWalkBody(goal, opts);
-  } finally {
-    forgetLivePool(opts.variables.dispatch_id);
-  }
-}
 async function runGoalAsPoolWalkBody(
   goal: string,
   opts: {
@@ -14712,7 +14705,7 @@ async function runGoalWithRecoveryInner(
       const _headAct = (reachingPathway?.activities as unknown[] | undefined)?.[0];
         const _pathHeadSat = typeof _headAct === "string" && _headAct.startsWith("satisfier:") ? _headAct.slice("satisfier:".length) : null;
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
-        let walk = await runGoalAsPoolWalk(goal, {
+        const _firstDispatch = await dispatchWalk(goal, {
         changeAdmitted: _changeAdmitted,
         recalledLessons: _dispatchLessons,
         priorVerdictFeedback: _priorFailureFeedback || undefined,
@@ -14752,6 +14745,10 @@ async function runGoalWithRecoveryInner(
             return merged.length > 0 ? merged : undefined;
           })(),
       });
+      let walk = _firstDispatch.walk;
+      // Q-3: every retry below is a SIBLING walk dispatch whose parentExecutionId is this first walk's execution id.
+      const _firstWalkId = _firstDispatch.walkExecutionId;
+      const _retryTap = (kind: string, retryId: string, retry: GoalSeekResult): void => tap(`[goal-host-vessel] ${opts.surface}: walk-retry tap: retry=${kind} first_walk=${_firstWalkId} retry_walk=${retryId} turned_unreached_into_reached=${retry.reached === true}`);
       // ABSTAIN (§9.2): the gate declined to grade a deliverable it could not see whole. No defect was
       // named, so there is nothing for a retry, a suppression, a re-frame or the floor to correct:
       // the walk's result IS the dispatch's result, named as an abstain.
@@ -14783,12 +14780,12 @@ async function runGoalWithRecoveryInner(
       ) {
         noteRouteTaken(walk.routeAround, "retry:feedback");
         tap(`[goal-host-vessel] ${opts.surface}: walk: FEEDBACK-RETRY — re-running the same chain with the prior verdict fed into synthesis (hill-climb; banked commands that failed in this dispatch skipped) goal_hash=${goalHashOf(goal)}`);
-        const fbWalk = await runGoalAsPoolWalk(goal, {
+        const { walk: fbWalk, walkExecutionId: _feedbackWalkId } = await dispatchWalk(goal, {
           changeAdmitted: _changeAdmitted,
           recalledLessons: _dispatchLessons,
           variables: opts.variables,
           tags: opts.tags,
-          parentExecutionId: opts.parentExecutionId,
+          parentExecutionId: _firstWalkId,
           compositionChain: opts.compositionChain,
           expectedOutputShapes: seededOutputShapes,
           terminalOutputShapes,
@@ -14806,6 +14803,7 @@ async function runGoalWithRecoveryInner(
           carryFrom: walk.carry,
           priorVerdictFeedback: [_priorFailureFeedback, `- (this dispatch, the attempt just graded) ${walk.goalReachReason}`].filter(Boolean).join("\n"),
         });
+        _retryTap("feedback", _feedbackWalkId, fbWalk);
         _noteFailedReplays(fbWalk);
         if (fbWalk.reached) {
           // Same edit-intent guard as the suppress-retry: a hollow author/read satisfier must not
@@ -14879,12 +14877,12 @@ async function runGoalWithRecoveryInner(
           const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;
           const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
           if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
-          const retryWalk = await runGoalAsPoolWalk(goal, {
+          const { walk: retryWalk, walkExecutionId: _suppressWalkId } = await dispatchWalk(goal, {
             changeAdmitted: _changeAdmitted,
             recalledLessons: _dispatchLessons,
             variables: opts.variables,
             tags: opts.tags,
-            parentExecutionId: opts.parentExecutionId,
+            parentExecutionId: _firstWalkId,
             compositionChain: opts.compositionChain,
             expectedOutputShapes: _retryOutputShapes,
             terminalOutputShapes,
@@ -14903,6 +14901,7 @@ async function runGoalWithRecoveryInner(
             // ADDITIVE (V8): continue from what was built, minus the suppressed producer's output.
             carryFrom: (walk.carry ?? []).map((c) => ({ ...c, impulses: c.impulses.filter((i) => String((i.metadata as { shape?: unknown } | undefined)?.shape) !== suppressedShape) })).filter((c) => c.impulses.length > 0 && c.stepId !== walk.selectedTemplateId),
           });
+          _retryTap("suppress", _suppressWalkId, retryWalk);
           _noteFailedReplays(retryWalk);
           if (retryWalk.reached) {
             // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
@@ -14935,12 +14934,12 @@ async function runGoalWithRecoveryInner(
         for (const altShapes of altCandidates) {
           tap(`[goal-host-vessel] ${opts.surface}: walk: re-framing to alternative target shapes ${JSON.stringify(altShapes)} after no-pick/hollow termination`);
           noteRouteTaken(walk.routeAround, "reframe");
-          const altWalkResult = await runGoalAsPoolWalk(goal, {
+          const { walk: altWalkResult, walkExecutionId: _reframeWalkId } = await dispatchWalk(goal, {
             changeAdmitted: _changeAdmitted,
             recalledLessons: _dispatchLessons,
             variables: opts.variables,
             tags: opts.tags,
-            parentExecutionId: opts.parentExecutionId,
+            parentExecutionId: _firstWalkId,
             compositionChain: opts.compositionChain,
             expectedOutputShapes: altShapes,
             terminalOutputShapes: undefined,
@@ -14957,6 +14956,7 @@ async function runGoalWithRecoveryInner(
         learningMode: opts.learningMode,
             suppressSatisfierShapes: undefined,
           });
+          _retryTap("reframe", _reframeWalkId, altWalkResult);
           _noteFailedReplays(altWalkResult);
           // B1 punt-shape guard: the ALTERNATIVE-FRAMING retry only fires after the
           // original walk was HOLLOW, so a reframe that "reached" solely by producing
@@ -15824,6 +15824,16 @@ async function walkActivityBody(goal: string, opts: WalkActivityOpts, walk: Walk
 }
 host.catalogue.register(walkActivityTemplate());
 host.runtime.resolvers.register(walkActivityResolver<WalkActivityOpts, GoalSeekResult>(walkActivityBody, (variables) => ({ variables, surface: WALK_ACTIVITY_ID })));
+/** Dispatch the walk activity (W2): every place that runs the walk runs the registered record through the engine, so the
+ *  walk gets its own execution id, parented to `opts.parentExecutionId` within `opts.compositionChain`. */
+async function dispatchWalk(goal: string, opts: WalkActivityOpts): Promise<{ walk: GoalSeekResult; walkExecutionId: string }> {
+  const record = await host.catalogue.getTemplate(WALK_ACTIVITY_ID);
+  if (!record) throw new Error(`${WALK_ACTIVITY_ID}: the walk record is not registered`);
+  const { result, walkExecutionId } = await dispatchWalkCall<WalkActivityOpts, GoalSeekResult>(goal, opts, () =>
+    host.runTemplate(record, { goal }, { impulses: [goalImpulse(goal, host.runtime.random.id("goal"))], parentExecutionId: opts.parentExecutionId, compositionChain: opts.compositionChain, tags: opts.tags, goalContext: { goal } }));
+  console.log(`[goal-host-vessel] walk-activity: dispatched ${walkExecutionId} parent=${opts.parentExecutionId ?? "none"}`);
+  return { walk: result, walkExecutionId };
+}
 
 
 // ─────────────────────────────────────────────────────────────────────────────

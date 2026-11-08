@@ -93,7 +93,7 @@ describe("a re-framed walk's origin reaches the live reach gate and its capture"
   test("the re-framing retry hands the goal's own targets to the re-framed walk", () => {
     const i = SRC.indexOf(`noteRouteTaken(walk.routeAround, "reframe");`);
     expect(i).toBeGreaterThan(-1);
-    const call = SRC.slice(i, SRC.indexOf("});", SRC.indexOf("runGoalAsPoolWalk(goal, {", i)));
+    const call = SRC.slice(i, SRC.indexOf("});", SRC.indexOf("dispatchWalk(goal, {", i)));
     expect(call).toContain("expectedOutputShapes: altShapes,");
     expect(call).toContain("reframedFrom: Array.isArray(goalTargetDecision.shapes) ? goalTargetDecision.shapes.map((sh) => String(sh)) : undefined,");
   });

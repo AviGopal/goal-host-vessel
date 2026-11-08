@@ -28,9 +28,9 @@ describe("reached-command bank is gated, and a retry skips only the banked comma
   // ruling is that ablation flags are never set on a production dispatch. The retries skip only what failed.
   test("[MUST-FAIL on parent and on 1b08b1e] no retry after an in-dispatch failure sets an ablation flag", () => {
     expect(src.match(/ablation: \{ \.\.\.\(opts\.ablation \?\? \{\}\), disableReuse: true \},/g)).toBeNull();
-    const fb = src.indexOf("const fbWalk = await runGoalAsPoolWalk(goal, {");
-    const sat = src.indexOf("const retryWalk = await runGoalAsPoolWalk(goal, {");
-    const alt = src.indexOf("const altWalkResult = await runGoalAsPoolWalk(goal, {");
+    const fb = src.indexOf("const { walk: fbWalk, walkExecutionId: _feedbackWalkId } = await dispatchWalk(goal, {");
+    const sat = src.indexOf("const { walk: retryWalk, walkExecutionId: _suppressWalkId } = await dispatchWalk(goal, {");
+    const alt = src.indexOf("const { walk: altWalkResult, walkExecutionId: _reframeWalkId } = await dispatchWalk(goal, {");
     for (const at of [fb, sat, alt]) {
       expect(at).toBeGreaterThan(0);
       const call = src.slice(at, src.indexOf("});", at));
@@ -80,7 +80,7 @@ describe("reached-command bank is gated, and a retry skips only the banked comma
   });
   test("control: the first walk is unchanged — reuse off only on an exact-hash failure history, and no skip list", () => {
     expect(src).toContain("ablation: _priorExactFailures > 0 ? { ...(opts.ablation ?? {}), disableReuse: true } : opts.ablation,");
-    const first = src.indexOf("let walk = await runGoalAsPoolWalk(goal, {");
+    const first = src.indexOf("const _firstDispatch = await dispatchWalk(goal, {");
     expect(first).toBeGreaterThan(0);
     expect(src.slice(first, src.indexOf("// ABSTAIN (§9.2): the gate declined", first))).not.toContain("skipFailedReplays");
   });

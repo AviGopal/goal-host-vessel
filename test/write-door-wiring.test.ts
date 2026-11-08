@@ -43,7 +43,7 @@ describe("write doors are wired", () => {
   });
   test("admission: set only where the edit-intent routing rules name a file to change (the change is walked), carried to every walk", () => {
     expect(src).toContain("let _changeAdmitted = admittedChange({ admittedEditRoute: false, declaredOutputShapes: opts.expectedOutputShapes });");
-    expect(src.match(/runGoalAsPoolWalk\(goal, \{\n\s*changeAdmitted: _changeAdmitted,/g)?.length).toBe(4);
+    expect(src.match(/dispatchWalk\(goal, \{\n\s*changeAdmitted: _changeAdmitted,/g)?.length).toBe(4);
     expect(src).toContain("const changeAdmitted = opts.changeAdmitted === true;");
   });
   test("the counters are published on /health", () => {
@@ -103,7 +103,10 @@ describe("write doors: store and change classes are wired", () => {
   });
   test("task level: every template run the walk and the recovery loop make carries the door to the executor", () => {
     expect(src.match(/host\.runTemplate\([^)]*\{[^}]*goalContext: \{ goal \},\n\s*\/\/ WRITE DOOR \(task level\)[^\n]*\n\s*\.\.\.taskWriteDoor\(changeAdmitted, writeDoorProduct\),/g)?.length).toBe(2);
-    expect(src.match(/host\.runTemplate\(/g)?.length).toBe(2);
+    // The third run is the walk activity itself (dispatchWalk): its one task is the walk body, which puts the door on
+    // every step it runs (the two runs above); nothing else runs through it.
+    expect(src.match(/host\.runTemplate\(/g)?.length).toBe(3);
+    expect(src.match(/host\.runTemplate\(record, \{ goal \}, \{ impulses: \[goalImpulse\(goal, /g)?.length).toBe(1);
     expect(after("result = await host.runGoal(goal ?? `execute template ${nextTarget}`, {", 700)).toContain("...taskWriteDoor(_changeAdmitted, seededOutputShapes ?? opts.expectedOutputShapes ?? []),");
   });
   test("the executor's own drop counts are on /health, null on a dist without them", () => {

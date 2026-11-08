@@ -132,7 +132,7 @@ describe("the withhold record is filled at the decision, threaded to every walk,
 
   test("MUST-FAIL: every walk of the dispatch is handed the record", () => {
     const inner = fnBody("runGoalWithRecoveryInner");
-    const calls = inner.split("await runGoalAsPoolWalk(goal, {").slice(1);
+    const calls = inner.split("await dispatchWalk(goal, {").slice(1);
     expect(calls.length).toBeGreaterThanOrEqual(4);
     for (const c of calls) expect(c.slice(0, c.indexOf("});"))).toContain("betaWithheld: opts.betaWithheld,");
     const handler = fnBody("handleRunGoal");
