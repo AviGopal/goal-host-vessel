@@ -8,7 +8,7 @@
  *
  * This reads the evidence from OUTSIDE the producer: each (vessel, new_git_sha) the report names must be an ancestor of
  * origin/dev in that vessel's clone (/workspace/git/vessels/<vessel>, the clone pull-sync fast-forwards; a quiet fetch
- * first, as landedCommitForGoal does). Confirmed only if at least one named sha is on origin/dev. Every doubt (no pair,
+ * first). Confirmed only if at least one named sha is on origin/dev. Every doubt (no pair,
  * a bad name, a git error, not an ancestor) is NOT confirmed: the caller then falls through to its other checks,
  * never to a reach.
  */

@@ -26,13 +26,6 @@ describe("[MUST-FAIL] no compose hand-off: the goal is admitted as a change and 
       expect({ gone, present: INDEX.includes(gone) }).toEqual({ gone, present: false });
     }
   });
-  test("wiring: a landed walk counts as an edit (its landing shapes are edit results), so it is not recovered again", () => {
-    const shapes = at("const EDIT_RESULT_SHAPES = [");
-    expect(shapes).toBeGreaterThan(0);
-    const line = INDEX.slice(shapes, INDEX.indexOf("\n", shapes));
-    expect(line).toContain('"cutoverapplied"');
-    expect(line).toContain('"vesselmitosiscutoverresult"');
-  });
 });
 
 describe("[CONTROL] filesystem writes stay refused at vesselResolve", () => {

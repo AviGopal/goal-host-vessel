@@ -258,7 +258,7 @@ import { mintedCover } from "./minted-cover";
 import { planAdaptation, nextBodyStep, type AdaptPlan } from "./pathway-adapt";
 import { NAMED_SHAPE_EXCLUDE, inferGoalTargetShapes, inferGoalTargetDecision, inferenceCandidateFields, inferDerivationSplit, goalHashOf, isNamedShapeToken, isCodeInvestigationGoal, isGapInvestigationGoal, extractInvestigationSymbols, citationOracleApplicability, type GoalTargetDecision } from "./goal-target-inference";
 import { createOracleAbstainTally, type OracleFamilyCounts, type OracleOutcome } from "./oracle-abstain";
-import { composeGapIdOf, checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
+import { checkSupplyRouteOf, bindCheckSupplyDispatchId, gapIdOfGoalText, gapIdForGrading, recoverGapIdAtAdmission } from "./compose-gap-id";
 import { declineOfOutcome, declinedTags, declineMetadata, type RefusalDecline } from "./refusal-decline";
 import { conceptRecallPointer } from "./concept-recall-pointer";
 import { verifyGapInvestigationOutcome } from "./gap-investigation-outcome";
@@ -318,7 +318,7 @@ import { generaliseCommand, goalTreePath, instantiateRecipe, recipeAppliesTo, re
 import { isCountableQuestion, isQuantitativeRepoQuestion } from "./quantitative-goal";
 import { extractEmittedNumbers, extractEmittedTokens, gradeRecompute, gradeTokenRecompute, isReadOnlyShellCommand, parseAuthoredCommand, parseMeasuredNumber, parseMeasuredToken, reconcileDerivations, verifyStatedBound, type JudgeShadow } from "./independent-recompute";
 import { parseTwoSourceCompare, LANG_EXT, type TwoSrcParse } from "./two-source-parse";
-import { isEditIntentGoal, goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText } from "./goal-intent";
+import { goalRequestsDurableArtifact, goalDemandsLandedEdit, isGapRepairGoal, canonicalGoalText } from "./goal-intent";
 // Judge/routing input capture (closed core): records each reach-path and routing decision's inputs on the dispatch record.
 import * as judgeCapture from "./judge/capture";
 import * as verdictConsistency from "./judge/verdict-consistency";
@@ -5504,8 +5504,6 @@ function observeSkip(effect: ObserveSideEffect): boolean {
 // goal; with nothing tracking that, one goal recursed without bound (2026-09-26: load 26,
 // ~66 nested walks/min, every LLM provider exhausted). Deterministic and LLM-free on purpose:
 // the brake has to work when the LLM plane is the thing the storm exhausted.
-// GAP ID OF A GOAL: composeGapIdOf (./compose-gap-id) — the check supply's gap when it dispatched the goal
-// (structured variables), else the gap the goal text names, else route-edit-<hash>.
 const __resolveInFlight = new Map<string, number>();
 // SPEND-RATE BREAKER (value-per-cost-selection 4.4). A storm is many dispatches of ONE goal (the
 // 2026-09-26 recursion storm: ~3,080 walks of one goal in 3 h) or too many dispatches overall. Both
@@ -6748,46 +6746,6 @@ function tierFromChain(chainIds: string[]): WalkTier {
  * pathway the walk was OFFERED rather than the one it took would manufacture exactly
  * the correlation that makes reuse look effective (law 12).
  */
-/**
- * ANY LANDING OF THIS GOAL SINCE THE DISPATCH STARTED (value-per-cost-selection 3.1).
- *
- * landedShaForGoalHash above also demands a FAVORABLE compose report in THIS container's
- * /workspace/proposals. A compose routed by ownership to another node's development-vessel
- * writes its report on THAT node, so every ownership-routed landing was invisible to it
- * (measured 2026-09-27: "commit exists for route-edit-818d7e4e but no compose report"),
- * the post-walk guard let a second compose through, and the same change landed twice
- * (c23b601, then 194df79). This probe credits on git evidence alone, bounded in time:
- * fetch origin/dev, then take the NEWEST commit since `sinceMs` that mentions `gapId`.
- * It counts only if its `Gap:` trailer names `gapId` exactly and it is not a revert; a
- * revert newer than the landing returns null rather than crediting the reverted commit.
- * Callers still grade substance (verifyEditPostState) before calling it a reach. Every
- * failure returns null, which leaves the caller's verdict untouched.
- */
-async function landedCommitForGoal(vessel: string, gapId: string, sinceMs: number): Promise<string | null> {
-  if (!vessel || vessel.includes("..") || vessel.includes("/") || !gapId || !Number.isFinite(sinceMs)) return null;
-  const dir = `/workspace/git/vessels/${vessel}`;
-  try {
-    // origin/dev moves only when pull-sync or a fetch moves it, and a compose on another node
-    // pushes to the remote. A failed fetch (ref lock, offline) still lets the log read the last
-    // known origin/dev.
-    const f = Bun.spawn(["git", "-C", dir, "fetch", "--quiet", "origin", "dev"], { stdout: "ignore", stderr: "ignore", timeout: 20_000 });
-    await f.exited;
-    const since = new Date(sinceMs - 1_000).toISOString().replace(/\.\d{3}Z/, "Z");
-    const p = Bun.spawn(["git", "-C", dir, "log", "origin/dev", "-n", "20", `--since=${since}`, "--fixed-strings", `--grep=${gapId}`, "--format=%H%x1f%ct%x1f%B%x1e"], { stdout: "pipe", stderr: "ignore", timeout: 10_000 });
-    const out = await new Response(p.stdout).text();
-    if ((await p.exited) !== 0) return null;
-    const newest = out.split("\x1e").map((s) => s.trim()).find((s) => s.length > 0);
-    if (!newest) return null;
-    const [sha = "", ct = "", body = ""] = newest.split("\x1f");
-    if (!/^[0-9a-f]{40}$/.test(sha) || Number(ct) * 1000 < sinceMs - 1_000) return null;
-    if ((body.split("\n")[0] ?? "").startsWith("Revert ")) return null;
-    const trailerMatches = body.split("\n").some((l) => /^Gap:\s*/.test(l) && l.replace(/^Gap:\s*/, "").trim() === gapId);
-    return trailerMatches ? sha : null;
-  } catch {
-    return null;
-  }
-}
-
 async function landedShaForGo(goalHash: string): Promise<string | null> {
   try {
     // Note 2026-08-20: git log is NOT AUTHORITATIVE for whether a given commit SHA has
@@ -13699,74 +13657,13 @@ function effectTupleOf(shape: string, vesselEndpoint: string | undefined, conten
   return `${vessel}|${shape}|${kind}|${externals.join(",")}`;
 }
 
-/**
- * LANDED LATCH (value-per-cost-selection 3.2). A landing is terminal and sticky: once this
- * goal's commit is on origin/dev, no later step of the same dispatch may report failed or
- * reached:false. Inside the body every in-process landed verdict already returns at once;
- * the downgrade came from landings the body did not see. The callee landed after the caller
- * stopped waiting, then a hollow walk or a post-walk "refused for CAPACITY (BUSY) after one
- * retry" (while the first compose still held the slot) became the final verdict. So the latch
- * sits on the single exit: a dispatch that sent a post-walk compose and is about to return
- * unreached probes git for the goal's landing since it started (waiting out that compose's
- * own ceiling when the reply was lost to a timeout, since it may still land; a BUSY refusal
- * gets a single probe) and returns the landed verdict instead. A result that already judged
- * that very commit, or a landing whose requested symbol is absent, is left as it is.
- * A LANDING IS NOT A REACH: it proves a commit exists, not that the goal's condition holds. The
- * latch credits only when the post-state probe (verifyEditPostState) ran and confirmed the edit;
- * when it cannot decide, the landing is recorded and the dispatch is an oracle abstain (no α, no
- * β, no deterministic label).
- */
-const _dispatchSentCompose = new WeakMap<object, number>();
 /** Dispatches whose gap id was recovered from goal text at admission (recoverGapIdAtAdmission), since process start. */
 let _gapIdRecoveredFromText = 0;
 /** Hollow-satisfier retries not run because the goal's grader accepts only one shape (retry_not_widened), since process start. */
 let _retryNotWidenedCount = 0;
 async function runGoalWithRecovery(goal: string | undefined, opts: Parameters<typeof runGoalWithRecoveryInner>[1]): Promise<GoalSeekResult> {
-  const startMs = Date.now();
   const r = await runGoalWithRecoveryInner(goal, opts);
-  // OBSERVE (observe-mode.ts): an observe dispatch's compose is a dry run that cannot land, so there is no landing to
-  // latch: no git probe, no wait out of the compose ceiling, and no landed verdict over the dry run's abstain.
-  if (opts.learningMode === "observe") return r;
-  if (r.reached === true || typeof goal !== "string" || !_dispatchSentCompose.has(opts)) return r;
-  const sentAt = _dispatchSentCompose.get(opts) ?? startMs;
-  const fm = /repos\/([\w.-]+)\/[\w./-]+\.\w+/.exec(goal);
-  if (!fm) return r;
-  const gapId = composeGapIdOf(goal, opts.variables);
-  const mayStillLand = /timed out|timeout/i.test(String(r.goalReachReason ?? ""));
-  const until = mayStillLand ? sentAt + Number(process.env["EDIT_INTENT_COMPOSE_TIMEOUT_MS"] ?? 900_000) + 180_000 : 0;
-  let sha = await landedCommitForGoal(fm[1]!, gapId, startMs);
-  while (!sha && Date.now() < until) {
-    await new Promise((res) => setTimeout(res, 30_000));
-    sha = await landedCommitForGoal(fm[1]!, gapId, startMs);
-  }
-  if (!sha || r.executionId === `feature_compose:${sha}` || String(r.goalReachReason ?? "").includes(sha)) return r;
-  const postOk = await verifyEditPostState(goal, fm[0], sha);
-  if (postOk === false) {
-    console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed but the requested symbol is absent; keeping the unreached verdict`);
-    return r;
-  }
-  if (postOk !== true) {
-    const why = `${sha} for ${gapId} landed on origin/dev during this dispatch, but the post-state probe could not decide whether the goal's edit holds (the walk reported ${r.status}/reached:${String(r.reached)}: ${String(r.goalReachReason ?? "no reason").slice(0, 160)})`;
-    console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${why}; not credited`);
-    opts.stepSink?.push(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${why}; not credited`);
-    if (r.abstain) return { ...r, goalReachReason: `${String(r.goalReachReason ?? "")} [landed latch: ${why}]` };
-    await noteOracleDecision("edit-post-state", "abstain", goal, why);
-    const v = oracleAbstainVerdict("edit-post-state", why);
-    return { ...r, reached: false, goalReachReason: v.reason, abstain: v.abstain };
-  }
-  console.log(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed during this dispatch; the later ${r.status}/reached:${String(r.reached)} verdict does not downgrade it`);
-  opts.stepSink?.push(`[goal-host-vessel] ${opts.surface}: LANDED LATCH - ${sha} for ${gapId} landed during this dispatch; final verdict stays landed`);
-  recordDeterministicLabel(goal, `feature_compose:${sha}`, "feature_compose", { reached: true, reason: `deterministic:edit-intent-landed ${sha} (landed latch)`, deterministic: true });
-  return {
-    result: null,
-    status: "completed",
-    selectedTemplateId: "feature_compose",
-    completionShapes: ["fileEditResult"],
-    attempts: r.attempts,
-    goalReachReason: `deterministic:edit-intent-landed — ${sha} for ${gapId} landed on origin/dev during this dispatch (post-state confirms the requested edit); a later step reported ${r.status}/reached:${String(r.reached)} (${String(r.goalReachReason ?? "no reason").slice(0, 200)}), which a landing is not downgraded by`,
-    reached: true,
-    executionId: `feature_compose:${sha}`,
-  };
+  return r;
 }
 
 async function runGoalWithRecoveryInner(
@@ -14731,18 +14628,7 @@ async function runGoalWithRecoveryInner(
           _retryTap("suppress", _suppressWalkId, retryWalk);
           _noteFailedReplays(retryWalk);
           if (retryWalk.reached) {
-            // GATE-LAUNDERING FIX (operator bootstrap; gap suppress-satisfier-shapes-
-            // launders-hollow-into-reach): a suppressed-satisfier retry must NOT be
-            // accepted as reached for an EDIT-INTENT goal unless the retry actually
-            // produced an edit-result shape. Otherwise a hollow read/author satisfier,
-            // once suppressed, launders into a false reach that never edited the named
-            // file (observed dispatches 4c3300b3 / 51a5fcc2). When the goal names a
-            // repos source file with edit language and the retry produced no edit
-            // result, fall through to the edit-intent routing below instead of returning.
-            const _reEditIntent = /repos\/[\w.-]+\/[\w.\/-]+\.\w+/.test(goal) && /\b(edit|add|insert|append|prepend|change|modify|replace|fix|remove|delete|update|rename|refactor|wire|guard)\b/i.test(goal);
-            const _reEditShapes = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult"];
-            const _reRetryDidNotEdit = (retryWalk.completionShapes ?? []).every((s) => !_reEditShapes.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
-            if (!(_reEditIntent && _reRetryDidNotEdit)) return retryWalk;
+            return retryWalk;
           }
           if (retryWalk.abstain) return retryWalk; // ABSTAIN (§9.2), checked before the attempts>0 choice
           walk = retryWalk.attempts > 0 ? retryWalk : walk;
@@ -14877,17 +14763,7 @@ async function runGoalWithRecoveryInner(
           }
         }
       }
-      // A >0-step walk that "reached" via a source_code / analysis READ satisfier does
-      // NOT serve an edit-intent goal (read != edit) — this is how a code-edit goal got
-      // hollow-satisfied as a source read. When the goal names a repos source file with
-      // edit language AND the walk produced only read/analysis shapes, fall through to the
-      // recovery loop instead of returning.
-      const goalIsEditIntent = isEditIntentGoal(goal);
-      // The walk IS a change's route, so its landing shapes count as an edit too (a landed walk returns here instead of
-      // falling into the recovery loop and landing again).
-      const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult", "cutoverapplied", "vesselmitosiscutoverresult"];
-      const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
-      if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
+      if (walk.attempts > 0) return walk;
       console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
       // The walk (incl. the vessel-resolve satisfier) couldn't reach the goal via
       // existing/connected capability. NOW author a from-scratch template — only

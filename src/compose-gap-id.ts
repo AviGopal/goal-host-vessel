@@ -1,6 +1,3 @@
-// THE GAP A COMPOSE IS ATTRIBUTED TO. Every compose-attribution site of the edit-intent route (the two feature_compose
-// pointers and the landed-commit probes that grep the commit's `Gap:` trailer) must agree on one id, so they all ask
-// composeGapIdOf.
 import { goalHashOf, isGapInvestigationGoal } from "./goal-target-inference";
 
 // GAP ID OF A GOAL (contained-self-development, gap supply step 0). A compose is attributed to the
@@ -82,11 +79,6 @@ export function checkSupplyRouteOf(variables: Record<string, unknown> | undefine
   if (typeof gapId !== "string" || !/^[-\w:.!]{1,200}$/.test(gapId)) return null;
   if (typeof dispatchId !== "string" || dispatchId.length === 0) return null;
   return { gap_id: gapId, dispatch_id: dispatchId };
-}
-
-/** The gap id a compose of this goal is attributed to: the check supply's gap when it dispatched the goal, else the goal text's. */
-export function composeGapIdOf(goal: string, variables: Record<string, unknown> | undefined): string {
-  return checkSupplyRouteOf(variables)?.gap_id ?? gapIdOfGoalText(goal);
 }
 
 /**

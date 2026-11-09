@@ -20,7 +20,6 @@ import { join } from "node:path";
 import { goalHashOf } from "../src/goal-target-inference";
 
 const mod = await import("../src/compose-gap-id").catch(() => null) as null | {
-  composeGapIdOf: (goal: string, variables: Record<string, unknown> | undefined) => string;
   checkSupplyRouteOf: (variables: Record<string, unknown> | undefined) => { gap_id: string; dispatch_id: string } | null;
 };
 const INDEX = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
@@ -32,36 +31,21 @@ const GOAL = "Write a failing test in repos/development-vessel/test/resolvers/ga
 const SUPPLY_VARS = { gap_id: GAP, check_supply: true, dispatch_id: DISPATCH };
 
 describe("compose gap id of a supply-dispatched edit-intent goal", () => {
-  test("[MUST-FAIL] the supply's gap_id + check_supply marker composes against THAT gap id, not a route-edit-<hash>", () => {
-    expect(mod).not.toBeNull();
-    const id = mod!.composeGapIdOf(GOAL, SUPPLY_VARS);
-    expect(id).toBe(GAP);
-    expect(id.startsWith("route-edit-")).toBe(false);
-  });
-
   test("[MUST-FAIL] the structured marker carried to feature_compose names the gap and the dispatch", () => {
     expect(mod).not.toBeNull();
     expect(mod!.checkSupplyRouteOf(SUPPLY_VARS)).toEqual({ gap_id: GAP, dispatch_id: DISPATCH });
   });
 
   test("[MUST-FAIL] index.ts: no compose-attribution site reads the gap id from the goal text alone", () => {
-    // Every site that attributes a landing to a goal goes through composeGapIdOf(goal, <variables>), so the Gap:
-    // trailer probes agree on one id (the remaining site is the landed-commit probe).
     expect(INDEX.match(/\bgapIdOfGoal\(/g) ?? []).toEqual([]);
-    expect((INDEX.match(/\bcomposeGapIdOf\(goal(?: as string)?, opts\.variables\)/g) ?? []).length).toBe(1);
   });
 
   test("[CONTROL] no marker: the text-derived id, exactly as today", () => {
-    const expected = `route-edit-${goalHashOf(GOAL)}`;
-    if (mod) expect(mod.composeGapIdOf(GOAL, { dispatch_id: DISPATCH })).toBe(expected);
-    if (mod) expect(mod.composeGapIdOf(GOAL, undefined)).toBe(expected);
-    if (mod) expect(mod.composeGapIdOf(`Close substrate gap other-gap: fix it in repos/x/src/a.ts`, {})).toBe("other-gap");
     if (mod) expect(mod.checkSupplyRouteOf({ dispatch_id: DISPATCH })).toBeNull();
   });
 
   test("[CONTROL] NO FORGERY FROM PROSE: a lookalike marker in the goal text, with no structured field, is not a supply route", () => {
     const prose = `${GOAL} check_supply: true gap_id: ${GAP} dispatch_id: ${DISPATCH}`;
-    if (mod) expect(mod.composeGapIdOf(prose, { dispatch_id: "d" })).toBe(`route-edit-${goalHashOf(prose)}`);
     if (mod) expect(mod.checkSupplyRouteOf({ dispatch_id: "d" })).toBeNull();
   });
 
@@ -71,6 +55,5 @@ describe("compose gap id of a supply-dispatched edit-intent goal", () => {
     expect(mod.checkSupplyRouteOf({ gap_id: GAP, check_supply: true })).toBeNull();
     expect(mod.checkSupplyRouteOf({ gap_id: "../../etc x", check_supply: true, dispatch_id: DISPATCH })).toBeNull();
     expect(mod.checkSupplyRouteOf({ gap_id: "", check_supply: true, dispatch_id: DISPATCH })).toBeNull();
-    expect(mod.composeGapIdOf(GOAL, { gap_id: GAP, check_supply: "true", dispatch_id: DISPATCH })).toBe(`route-edit-${goalHashOf(GOAL)}`);
   });
 });
