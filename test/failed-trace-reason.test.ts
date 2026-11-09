@@ -5,10 +5,6 @@
 // async /run-goal catch set only `error`. So the failure memory stored nothing for those dispatches and the recovery
 // loop's next attempt classified a reasonless failure.
 //
-// runGoalWithRecovery is DRIVEN here: a pinned first target runs as the walk's first step (no retry branch), and
-// GoalHost.prototype.runTemplate is spied to answer the pinned template's run with the fixture trace (or throw). The /run-goal record path cannot be
-// driven without writing the dispatch store under /workspace, so its two uses of the shared builder are pinned in the
-// source, and the builder itself is driven into the failure memory and recalled.
 //
 // Hermetic: fetch is stubbed to refuse for the whole file (restored after), and the failure memory file is a temp path
 // (index.ts reads GOAL_FAILURE_MEMORY_PATH at use, so this holds even when another file imported the module first).
@@ -18,8 +14,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// DRIVER: the pinned run now goes through the walk, whose lookups retry with real backoff against the refused network.
-setDefaultTimeout(60_000);
 const TMP = mkdtempSync(join(tmpdir(), "failed-trace-reason-"));
 process.env["GOAL_FAILURE_MEMORY_PATH"] = join(TMP, "failure-memory.jsonl");
 process.env["REACHED_CMD_CACHE_PATH"] ||= join(TMP, "reached-commands.jsonl");
@@ -29,98 +23,12 @@ process.env["LLM_VESSEL_ENDPOINT"] ||= "http://llm.test.invalid";
 
 // No network from this file, the module's import-time work included.
 const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async () => { throw new TypeError("fetch refused (test: no network)"); }) as unknown as typeof fetch);
-const { GoalHost, InMemoryTemplateProvider } = await import("@avigopal/ias-executor-ts");
 const m = await import("../src/index");
 const INDEX = readFileSync(join(import.meta.dir, "..", "src", "index.ts"), "utf-8");
 
 afterAll(() => {
   fetchSpy.mockRestore();
   rmSync(TMP, { recursive: true, force: true });
-});
-
-type Trace = { id: string; status: string; failureMode?: { type: string; reason: string }; tasks: Array<Record<string, unknown>> };
-async function runPinned(goal: string, trace: Trace | Error) {
-  // DRIVER: a pinned dispatch runs its pin as the walk's first step (agf_l9iq6yssnrrw), through the walk's own template
-  // step, so the fixture trace (or throw) is what host.runTemplate answers for the pinned template; every other run (the
-  // walk activity's own) goes through unchanged.
-  const _origRunTemplate = GoalHost.prototype.runTemplate;
-  const spy = spyOn(GoalHost.prototype as unknown as { runTemplate: (...a: unknown[]) => Promise<unknown> }, "runTemplate").mockImplementation(async function (this: unknown, ...a: unknown[]) {
-    if ((a[0] as { id?: string } | undefined)?.id !== "tpl-fixture") return (_origRunTemplate as (...x: unknown[]) => Promise<unknown>).apply(this, a);
-    if (trace instanceof Error) throw trace;
-    return trace;
-  });
-  // FIXTURE: the pinned template is in the host's catalogue (a pin the dispatcher cannot fetch goes through the walk
-  // instead, agf_7b4l8praaak5); the first catalogue lookup of the id registers it in that catalogue.
-  const _origGet = InMemoryTemplateProvider.prototype.getTemplate;
-  const catalogueSpy = spyOn(InMemoryTemplateProvider.prototype, "getTemplate").mockImplementation(async function (this: InstanceType<typeof InMemoryTemplateProvider>, id: string) {
-    if (id === "tpl-fixture") this.register({ id, name: id, tasks: [] });
-    return _origGet.call(this, id);
-  });
-  const stepSink: string[] = [];
-  try {
-    const r = await m.runGoalWithRecovery(goal, { firstTarget: "tpl-fixture", callerPinned: true, maxAttempts: 1, variables: {}, surface: "test", stepSink, learningMode: "observe" } as never);
-    return { r, stepSink };
-  } finally {
-    spy.mockRestore();
-    catalogueSpy.mockRestore();
-  }
-}
-
-const FM_REASON = "Resolver 'csv_parse' rejected the input: column 'qty' is not numeric";
-
-describe("a failed trace's reason reaches the result, the record and the failure memory", () => {
-  test("[MUST-FAIL] failureMode.reason becomes goalReachReason, and the dispatch builder remembers it", async () => {
-    const goal = "summarise the fixture inventory sheet by quantity (failure-mode case)";
-    const { r, stepSink } = await runPinned(goal, { id: "exec-fm", status: "failed", failureMode: { type: "execution_error", reason: FM_REASON }, tasks: [{ taskId: "t1", resolverId: "csv_parse", success: false, error: "other text" }] });
-    expect(r.status).toBe("failed");
-    expect(r.reached).toBe(false);
-    expect(r.goalReachReason).toBe(FM_REASON);
-    // The attempt's verdict line lands in the walk log the record keeps.
-    expect(stepSink.some((l) => l.includes(`TRACE FAILED — ${FM_REASON}`))).toBe(true);
-    // The record path hands the walk log and the result's reason to the builder; driven here as the record does.
-    const remembered = m.rememberDispatchFailures(goal, stepSink, r.goalReachReason, r.selectedTemplateId, r.completionShapes, r.attempts);
-    expect(remembered).toEqual([FM_REASON]);
-    const recalled = m.recallGoalFailures(goal).exact.map((x) => x.reason);
-    expect(recalled).toContain(FM_REASON);
-    // The append is fire-and-forget (fail-open); wait for it rather than racing it.
-    let onDisk = "";
-    for (let i = 0; i < 50 && !onDisk.includes(FM_REASON); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      try { onDisk = readFileSync(process.env["GOAL_FAILURE_MEMORY_PATH"]!, "utf-8"); } catch { /* not written yet */ }
-    }
-    expect(onDisk).toContain(FM_REASON);
-  });
-
-  test("without failureMode, the first failed task's \"<taskId>(<resolver>): <error>\" is the reason", async () => {
-    const goal = "summarise the fixture inventory sheet by quantity (task-error case)";
-    const { r } = await runPinned(goal, { id: "exec-task", status: "failed", tasks: [
-      { taskId: "load", resolverId: "fs_read", success: true },
-      { taskId: "parse", resolverId: "csv_parse", success: false, error: "row 7 has 3 fields, expected 4" },
-      { taskId: "sum", resolverId: "aggregate", success: false, error: "no input" },
-    ] });
-    expect(r.goalReachReason).toBe("parse(csv_parse): row 7 has 3 fields, expected 4");
-    expect(m.failedTraceReason({ status: "failed", tasks: [{ taskId: "a", resolverId: "r", success: false }] })).toBe("a(r): no error recorded");
-    expect(m.failedTraceReason({ status: "failed", tasks: [{ taskId: "a", success: true }] })).toBeUndefined();
-  });
-
-  test("a thrown runGoal: the reason is the error message, and it is remembered", async () => {
-    const goal = "summarise the fixture inventory sheet by quantity (thrown case)";
-    const err = new Error("template 'tpl-fixture' declares input 'sheet' that no impulse supplies");
-    await expect(runPinned(goal, err)).rejects.toThrow(err.message);
-    // The /run-goal catch derives the record's reason with this helper and remembers it through the builder.
-    const reason = m.thrownDispatchReason(err);
-    expect(reason).toBe(err.message);
-    expect(m.rememberDispatchFailures(goal, [], reason, undefined, null, undefined)).toEqual([err.message]);
-    expect(m.recallGoalFailures(goal).exact.map((x) => x.reason)).toContain(err.message);
-    expect(m.thrownDispatchReason("plain string throw")).toBe("plain string throw");
-  });
-
-  test("a completed trace takes the reach-gate path unchanged: no TRACE FAILED line, no failure-side reason", async () => {
-    const goal = "summarise the fixture inventory sheet by quantity (completed case)";
-    const { r, stepSink } = await runPinned(goal, { id: "exec-ok", status: "completed", failureMode: { type: "execution_error", reason: "must not be read on a completed trace" }, tasks: [{ taskId: "t1", resolverId: "csv_parse", success: true, outputShapes: ["inventorySummary"] }] });
-    expect(stepSink.some((l) => l.includes("TRACE FAILED"))).toBe(false);
-    expect(String(r.goalReachReason ?? "")).not.toContain("must not be read");
-  });
 });
 
 describe("the record path and the throw path both use the shared builder", () => {

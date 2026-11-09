@@ -74,7 +74,6 @@ describe("the producer lookup's classes (the shared transient rule)", () => {
   test("the walk asks discovery /resolve for discoverByShapesQuery at all four lookup sites; no lookup dials the activity-api route", () => {
     expect(SRC.match(/await lookupProducers\(\{ required_shapes: /g)?.length).toBe(4);
     expect(SRC).toContain('body: JSON.stringify({ pointer: { type: "discoverByShapesQuery", ...query } }),');
-    expect(SRC.match(/\$\{PRODUCER_DISCOVERY_ENDPOINT\}\/v2\/activities\/discover-by-shapes/g)?.length).toBe(1); // fileReachabilityGap, OUT (debt)
   });
 });
 
@@ -89,7 +88,6 @@ describe.skipIf(!HERMETIC)("a failed producer lookup is a failed producer, never
     const f = lookupFailures(r);
     expect(f.length).toBeGreaterThanOrEqual(1);
     expect(f[0]!.reason).toContain("HTTP 404 no producer (non_transient)");
-    // The 4 lookups go to discovery; the only discover-by-shapes dial left is fileReachabilityGap's (OUT, debt).
     expect(r.requests.filter((q) => q.body?.pointer?.type === "discoverByShapesQuery").length).toBeGreaterThanOrEqual(4);
   }, 120_000);
   test("guard 2: the failed lookup is in the walk execution's executionTrace output (read by shape), verbatim from the route-around record", async () => {
@@ -452,113 +450,5 @@ describe.skipIf(!HERMETIC)("the delivered walk trace speaks the store's contract
     expect(td.metadata.walk.attempts).toBe(td.execution_trace.attempts);
     expect(td.metadata.walk.route_around).toEqual(td.execution_trace.route_around);
     expect(td.metadata.walk.target).toEqual(td.execution_trace.target);
-  }, 120_000);
-});
-
-// F3 (agf_7b4l8praaak5): a PINNED dispatch whose template cannot be fetched (a dead template store) no longer reaches the
-// recovery loop's uncaught template fetch: it goes through the walk, which takes no step and ends unreached naming the pin.
-describe.skipIf(!HERMETIC)("F3: an unavailable pin ends unreached in the walk", () => {
-  const PIN = "development-vessel:probe-untraversed-edge";
-  const pinned = (id: string, templateRespond: Record<string, unknown>) => {
-    const s = scenario(id, { status: 404, json: NOT_FOUND });
-    (s.routes as Array<Record<string, unknown>>).unshift({ id: "aapi:template", method: "GET", urlRegex: "/v2/activities/templates/", respond: templateRespond });
-    (s.steps[0]!.body as Record<string, unknown>)["targetTemplateId"] = PIN;
-    return s;
-  };
-  test("MUST-FAIL: one walk, unreached with the pin's reason on its trace, no escaped error, no derivation", async () => {
-    const r = await replay(pinned("pin-dead-store", { throw: "ECONNREFUSED: Unable to connect" }));
-    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(1);
-    expect(r.log).not.toContain("async /run-goal error");
-    const served = r.walkTraceServed.find((x) => x.status === 200)!;
-    expect(served.json.body.shape).toBe("executionTrace");
-    const rec = JSON.parse(served.json.body.content);
-    expect(rec.reached).toBe(false);
-    // EXPECTATION EXTENDED (agf_54ob7ghkvne0): the reason now names the lookup's class.
-    expect(rec.goal_reach_reason).toBe(`pinned template ${PIN} unavailable: template store unreachable (ECONNREFUSED: Unable to connect)`);
-    const f = (rec.route_around?.failed_producers ?? []).find((x: { producer: string }) => x.producer === `pin:${PIN}`);
-    expect(String(f?.reason)).toContain("ECONNREFUSED");
-    expect(rec.attempts).toBe(0);
-    expect(rec.sends).toEqual([]);
-    expect(r.log).not.toContain("walk rawResolve");
-    expect(r.record?.reached).toBe(false);
-    // EXPECTATION EXTENDED (agf_54ob7ghkvne0): the reason now names the lookup's class.
-    expect(r.record?.goalReachReason).toBe(`pinned template ${PIN} unavailable: template store unreachable (ECONNREFUSED: Unable to connect)`);
-  }, 120_000);
-  // EXPECTATION FLIPPED (agf_l9iq6yssnrrw): a served pin runs as the walk's first pick, no longer in the recovery loop.
-  test("control: a served pin runs as the walk's first pick", async () => {
-    const r = await replay(pinned("pin-served", { json: { id: PIN, name: "probe", inputShapes: ["goal"], outputShapes: ["hopZ"], tasks: [{ id: "t1", description: "hop", resolver: "hopZ" }] } }));
-    expect(r.log).not.toContain(`pinned template ${PIN} unavailable`);
-    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(1);
-    expect(r.log).toContain(`pinned template ${PIN} is this walk's first pick`);
-  }, 120_000);
-});
-
-// agf_l9iq6yssnrrw: an AVAILABLE pin runs AS THE WALK: the fetched template is the walk's first pick, run by the walk's
-// own template step (traced as a step of the walk execution), and the walk then goes on toward the goal's targets.
-// A pinned step is not a selection: it credits no posterior. The recovery loop's pin branch is gone.
-describe.skipIf(!HERMETIC)("a served pin runs as the walk", () => {
-  const PIN = "tpl-pinned-noop";
-  const NOOP = { id: PIN, name: "pinned noop", inputShapes: ["goal"], outputShapes: [], tasks: [{ id: "t1", description: "noop", resolver: "noop" }] };
-  const served = (id: string, judgeReached: boolean) => {
-    const s = scenario(id, { status: 404, json: NOT_FOUND });
-    const rs = s.routes as Array<Record<string, unknown>>;
-    rs.unshift({ id: "aapi:template", method: "GET", urlRegex: "/v2/activities/templates/", respond: { json: NOOP } });
-    rs.find((x) => x["id"] === "judge")!["respond"] = { llm: JSON.stringify({ reached: judgeReached, reason: judgeReached ? "hop answered" : "the answer does not address the goal", completion_shapes: [] }) };
-    (s.steps[0]!.body as Record<string, unknown>)["targetTemplateId"] = PIN;
-    return s;
-  };
-  const feedbackFor = (r: Replay, id: string) => r.requests.filter((q) => q.url.includes("/v2/activities/feedback") && q.body?.activity_id === id);
-  test("MUST-FAIL: the served pin is walk step 1 (its run is a child of the walk execution), one walk, no recovery-loop run", async () => {
-    const r = await replay(served("pin-walk-step", true));
-    expect(r.log.split("walk-activity: dispatched ").length - 1).toBe(1);
-    expect(r.log).toContain(`pinned template ${PIN} is this walk's first pick`);
-    const walkId = r.walkTraceOutputs[0]!.executionId;
-    const pinRun = r.requests.find((q) => q.body?.template_id === PIN && q.url.includes("/v2/activities/execution-traces"));
-    expect(pinRun?.body?.parent_execution_id).toBe(walkId);
-    expect(r.walkTraceServed.find((x) => x.status === 200)!.json.body.shape).toBe("executionTrace");
-    expect(r.log).not.toMatch(/goal-reach\([^)]*\) attempt \d+\/\d+/);
-    expect(r.requests.filter((q) => q.url.includes(`/v2/activities/templates/${PIN}`)).length).toBe(1);
-  }, 120_000);
-  test("a pinned step credits no posterior; a selector pick still does", async () => {
-    const r = await replay(served("pin-no-credit", false));
-    expect(feedbackFor(r, PIN).length).toBe(0);
-    // Both credit sites skip a pinned step (here the symmetric β-withhold rule fires first, so the guard is also pinned).
-    expect(SRC).toContain("} else if (pinnedStepIds.has(lastPick)) {");
-    expect(SRC).toContain("if (pinnedStepIds.has(_stepId)) { tap(");
-    // Control: a corpus walk whose selector pick (satisfier:shellResult) is graded hollow by a deterministic oracle.
-    const c = JSON.parse(readFileSync(join(HARNESS_DIR, "scenarios", "oracle-count-files-mismatch.json"), "utf8"));
-    const rc = await replay(c);
-    expect(feedbackFor(rc, "satisfier:shellResult").length).toBeGreaterThanOrEqual(1);
-  }, 240_000);
-  test("the recovery loop's pin branch is gone and every dispatch with a goal walks (callerPinned alone included)", () => {
-    expect(SRC).toContain("let nextTarget: string | undefined = (goal ? undefined : opts.firstTarget) ?? authoredFallbackTarget;");
-    expect(SRC).not.toContain("let nextTarget: string | undefined = opts.firstTarget ?? authoredFallbackTarget;");
-    expect(SRC).not.toMatch(/if \(goal && \(\(!opts\.callerPinned/);
-    expect(SRC).toContain("      if (_pin) return walk;");
-  });
-});
-
-// agf_54ob7ghkvne0 (b): the pin's lookup outcome is classed honestly. A refused or dead template store says nothing about
-// the template ("template store unreachable (<reason>)"); only an answer without it is a genuine miss ("template <id> not
-// found"). No new request is made: no discovery-placed shape answers a template object (activityTemplate answers markdown).
-describe.skipIf(!HERMETIC)("the pin's lookup outcome is classed honestly", () => {
-  const PIN = "development-vessel:probe-reachable-unlearned";
-  const pinned = (id: string, templateRespond: Record<string, unknown>) => {
-    const s = scenario(id, { status: 404, json: NOT_FOUND });
-    (s.routes as Array<Record<string, unknown>>).unshift({ id: "aapi:template", method: "GET", urlRegex: "/v2/activities/templates/", respond: templateRespond });
-    (s.steps[0]!.body as Record<string, unknown>)["targetTemplateId"] = PIN;
-    return s;
-  };
-  test("MUST-FAIL: a refused store records \"template store unreachable\", not a miss", async () => {
-    const r = await replay(pinned("pin-store-refused", { throw: "ECONNREFUSED: Unable to connect" }));
-    const why = String(r.record?.goalReachReason ?? "");
-    expect(why).toContain("template store unreachable (ECONNREFUSED");
-    expect(why).not.toContain("not found");
-  }, 120_000);
-  test("MUST-FAIL: a store that answers without the template records a genuine miss", async () => {
-    const r = await replay(pinned("pin-store-miss", { status: 404, json: { error: "Template not found" } }));
-    const why = String(r.record?.goalReachReason ?? "");
-    expect(why).toBe(`pinned template ${PIN} unavailable: template ${PIN} not found`);
-    expect(why).not.toContain("unreachable");
   }, 120_000);
 });

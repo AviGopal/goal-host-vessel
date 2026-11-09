@@ -6317,7 +6317,6 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
   }
 
   // REJECT WALK-ARTIFACT (2026-07-30): a _write / action / parameter-rooted shape is not an
-  // atomic producer to author — same cold-unreachable-by-design logic fileReachabilityGap uses
   // (e.g. solicitationHeartbeat_write). And a literal placeholder ("X"/"Y") or bare generic
   // decomposition noun (activity, trace, dispatch_id, human_judgment, root_causes, ...) is a
   // walk-decomposition artifact, NOT real capability demand — filing it mints a phantom
@@ -6383,104 +6382,6 @@ async function fileCapabilityGap(missingShape: string, goal: string, goalTargets
       signal: AbortSignal.timeout(15_000),
     });
     return r.ok && demanded ? id : null;
-  } catch { return null; }
-}
-/**
- * Shapes whose producer is a live resolver that cannot run until a payload has been synthesized
- * for it (a command, a script, a query, a prompt). They are unreachable "from cold" BY DESIGN —
- * the same property the `_write` / `obsidian:` / `fs_` skip above encodes — so failing to reach
- * one says nothing about whether the capability exists.
- */
-const EXECUTOR_ROOTED_SHAPES = new Set([
-  "shellResult",
-  "llm_completion",
-  "llm_completion_dispatch",
-  "codeSearchResult",
-  "sqlResult",
-  "http_fetch",
-  "httpResponse",
-]);
-
-async function fileReachabilityGap(shape: string, goal: string, goalTargets: string[]): Promise<string | null> {
-  if (observeSkip("gap_write")) return null; // OBSERVE (observe-mode.ts): an observe dispatch files no gap
-  if (!shape || shape.includes("{{") || shape.length < 2) return null; // skip unbound {{placeholder}} / garbage targets — not a real reachability gap
-  if (shape.endsWith("_write") || shape.startsWith("obsidian:") || /^(fs_|code[A-Z]|file[A-Z])/.test(shape)) { console.log("[reach-gap] skip " + shape + ": parameter-rooted action shape, cold-unreachable by design"); return null; }
-  // EXECUTOR shapes are parameter-rooted in exactly the same way as the action shapes above:
-  // their producer is a live vessel resolver that cannot run until a payload (command / script /
-  // sql / prompt) has been SYNTHESIZED for it. "Not reachable from cold" is their defining
-  // property, not a defect, so a failure to reach one is never evidence of a missing capability.
-  //
-  // Measured 2026-08-05: `reach-gap-shellresult` was filed while shellResult resolved perfectly
-  // on demand (`{"stdout":"alive\n","exit_code":0}`) — the walk had simply failed to synthesize a
-  // command because the LLM plane was timing out. The gap store held 105 `reach-gap-*` rows whose
-  // own summaries begin "shape X is advertised by a producer, but…", i.e. the system recorded
-  // that the capability EXISTS and filed a missing-capability gap anyway.
-  //
-  // This is not merely noise. Those gaps become "Close substrate gap reach-gap-…" goals, which is
-  // the largest and worst-performing goal family in the store (3,090 executions at 4% reach) — so
-  // a transient LLM outage was minting durable work items that describe a problem that does not
-  // exist, and the loop then failed to close them because there was nothing to close. Filing a
-  // gap for an unavailable dependency turns an outage into permanent backlog.
-  if (EXECUTOR_ROOTED_SHAPES.has(shape)) { console.log("[reach-gap] skip " + shape + ": executor shape, payload must be synthesized — cold-unreachable by design"); return null; }
-  // A LOOKUP THAT FAILED MUST ABSTAIN, NOT REPORT ABSENCE.
-  //
-  // This block used to swallow a transport failure and carry on to file the gap with
-  // producerId="" — indistinguishable from "discovery answered, and nothing produces
-  // this shape". The comment directly above already argues that filing a gap for an
-  // unavailable dependency turns an outage into permanent backlog; the code then did
-  // exactly that whenever the lookup timed out.
-  //
-  // Measured: this endpoint is 161ms called INSIDE the hub but 4.0-10.5s from a spoke
-  // across the network (3 consecutive samples: 10473ms, 6607ms, 3994ms), against an
-  // 8s budget — so the first call after any load spike fails open. Under hub saturation
-  // it measured 55-77s on 6/6 calls, i.e. it failed open EVERY time, and the walk logged
-  // "missing shapes [X] have no producer" while discovery listed two producers for X.
-  //
-  // The consequence is not a stray gap row. It is the shellResult monoculture: the
-  // forward-producer walk never succeeds, every goal re-frames onto the shellResult
-  // satisfier, and the reached-command cache ends up 98.5% shellResult (1178/1196).
-  // One fail-open timeout, read as absence, collapses the whole shape space onto one arm.
-  //
-  // So: three outcomes, kept distinct. Answered with producers -> proceed. Answered with
-  // none -> return null (nothing to file, same as before). Could not ask -> log and
-  // abstain, filing nothing. The timeout is also raised to 20s to match the sibling
-  // candidate-generation call, which already uses 20s against the same endpoint.
-  let producerId = ""; let producerInputs: string[] = [];
-  try {
-    const pr = await fetch(`${PRODUCER_DISCOVERY_ENDPOINT}/v2/activities/discover-by-shapes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ required_shapes: [shape], include_scores: true, mode: "forward" }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!pr.ok) {
-      console.log(`[reach-gap] ABSTAIN ${shape}: producer discovery answered http ${pr.status} — cannot distinguish "no producer" from "could not ask"; filing nothing`);
-      return null;
-    }
-    const pj = await pr.json() as { activities?: any[] };
-    if (!Array.isArray(pj?.activities) || pj.activities.length === 0) return null;
-    const a0 = pj.activities[0] || {};
-    producerId = String(a0.variant_id || a0.id || "");
-    producerInputs = Array.isArray(a0.input_schema?.required_shapes) ? a0.input_schema.required_shapes.map(String) : [];
-  } catch (e) {
-    console.log(`[reach-gap] ABSTAIN ${shape}: producer discovery unreachable (${(e as Error).message}) — a failed lookup is not evidence of absence; filing nothing`);
-    return null;
-  }
-  const slug = shape.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  const id = `reach-gap-${slug}`;
-  const summary = `Reachability gap: shape "${shape}" is advertised by a producer, but the walk could not reach it from cold — the producer's required input_shapes are not producible from the goal pool. If the producer's resolver self-grounds (does not consume that input), declare the gating input as optional_input_shapes (non-gating) so it becomes cold-feasible; otherwise author a producer for the missing input. Do NOT expand scope.`;
-  try {
-    const r = await fetch(`${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-      body: JSON.stringify({ impulse: { type: "substrateGap_write", pointer: { type: "substrateGap_write", gap: {
-        id, category: "unreachable_producer", source: "substrate_detected", status: "open", summary,
-        detected_at: new Date().toISOString(),
-        classification_metadata: { kind: "reachability_gap", unreachable_shape: shape, unreachable_producer_id: producerId, producer_required_inputs: producerInputs, goal, goal_target_shapes: goalTargets, scope_narrowed: true },
-      } } } }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    return r.ok ? id : null;
   } catch { return null; }
 }
 
@@ -7840,7 +7741,7 @@ interface WalkStep {
   at: number;
   selected: {
     templateId: string;
-    source: "thompson" | "satisfier" | "bridge" | "recovery" | "improvise" | "pinned";
+    source: "thompson" | "satisfier" | "bridge" | "recovery" | "improvise";
     sampledScore?: number;
     alpha?: number;
     beta?: number;
@@ -8040,10 +7941,6 @@ async function runGoalAsPoolWalkBody(
     changeAdmitted?: boolean;
     /** THE WALK ACTIVITY (walk-activity.ts): set only by walkActivityBody, which returns the pool's produced impulses as
      *  the walk execution's outputs. */
-    /** A PINNED dispatch (agf_7b4l8praaak5, agf_l9iq6yssnrrw): the dispatcher's one lookup of the pin. With a template, the
-     *  walk's FIRST pick is that template, run by the walk's own template step; with unavailableReason, the walk takes no
-     *  step, derives nothing from the goal, and ends unreached naming the pin, with the absence on its route-around. */
-    pin?: { id: string; template?: ActivityTemplate; unavailableReason?: string };
     exposePool?: (pool: readonly Impulse[], sends: readonly WalkSend[], context: () => { target: readonly string[]; unmetInputs: readonly UnmetInput[]; boundDemands: ReadonlyArray<{ shape: string; binding: Record<string, unknown>; for_hop: string; field: string; since: number }> }) => void;
   },
 ): Promise<GoalSeekResult> {
@@ -10949,18 +10846,6 @@ If one of those sibling shapes is the action that would create what the goal ask
   // WRITE DOOR (target): every walk call site's target passes here, a prepended pathway head and the retry framings included.
   const target = new Set<string>(writeDoorShapes(opts.expectedOutputShapes ?? [], changeAdmitted, "target", writeDoorHash, tap));
   observeDropFrom(target, opts.learningMode, dispatchContext.getStore()?.dispatchId, tap); // OBSERVE: no gap-write target
-  if (opts.pin && !opts.pin.template) {
-    const _pinWhy = `pinned template ${opts.pin.id} unavailable: ${(opts.pin.unavailableReason ?? "unavailable").slice(0, 300)}`;
-    pickFailures.set(`pin:${opts.pin.id}`, scrubReason(opts.pin.unavailableReason ?? "unavailable", [API_KEY]).slice(0, 512));
-    const _pinRa = buildRouteAround({
-      goalHash: goalHashOf(goal), target, produced: producedShapes, missing: [...target],
-      satisfierFailures, pickFailures, termination: _pinWhy, secrets: [API_KEY],
-      unmetInputs, reattemptRefusals: [...new Set(reattemptRefusals.values())], boundDemands,
-    });
-    appendRouteAround(opts.variables.dispatch_id, _pinRa);
-    tap(`[goal-host-vessel] walk(${opts.surface}): ${_pinWhy} (${(opts.pin.unavailableReason ?? "").slice(0, 160)}) — no step taken, nothing derived from the goal`);
-    return { result: null, status: "failed", completionShapes: null, attempts: 0, reached: false, goalReachReason: _pinWhy, routeAround: _pinRa };
-  }
   // ANSWER-DELIVERY REACH FIX (decision-transparency, 2026-07-07): snapshot the
   // pool shapes present BEFORE any walk step ran. A reach judged solely on these
   // pre-existing seed shapes (e.g. active_note_path, open_note_paths) delivered no
@@ -11221,21 +11106,8 @@ If one of those sibling shapes is the action that would create what the goal ask
   }
   const _adapting = _adaptPlan?.mode != null && _adaptPlan.mode !== "exact";
   const _adaptBody = new Set<string>(_adapting ? _adaptPlan!.steps.map((x) => x.id) : []);
-  // A PINNED TEMPLATE IS THE WALK'S FIRST PICK (agf_l9iq6yssnrrw): the dispatcher fetched it once; the walk runs it as
-  // its first step through its own template step below, then walks on toward the goal's targets as usual. A pinned step
-  // that cannot run or fails ends the walk unreached with the pin's failure recorded: nothing substitutes for it (Q-4).
-  let forcedPin: { pick: WalkCandidate; template: ActivityTemplate } | undefined;
-  if (opts.pin?.template) {
-    const _fp = readCandidateShapes({ ...opts.pin.template, template_id: opts.pin.id });
-    if (_fp) forcedPin = { pick: _fp, template: opts.pin.template };
-  }
-  let pinFailedReason: string | undefined;
   let lastFailedTraceReason: string | undefined;
-  // A PINNED STEP IS NOT A SELECTION: the walk ran it because the caller pinned it, so its outcome credits no posterior
-  // (no α, no β from the pick); every selector pick is credited as before.
-  const pinnedStepIds = new Set<string>();
   while (chain.length < MAX_STEPS && !targetMet()) {
-    if (pinFailedReason) { walkTerminationReason = pinFailedReason; tap(`[goal-host-vessel] walk(${opts.surface}): ${pinFailedReason} — the walk ends here; nothing substitutes for the pin`); break; }
     if (!attemptLedger.budgetLeft(chain.length, MAX_STEPS)) { walkTerminationReason = "step budget (re-attempts)"; break; }
     // Edge-blend half-life, resolved from the policy volume at USE TIME (law 1) rather
     // than read from a compiled-in constant. Unconfigured -> the previous literal, so
@@ -11246,12 +11118,9 @@ If one of those sibling shapes is the action that would create what the goal ask
     mirrorWalkState();
     const iterPoolBefore = [...producedShapes];
     let pickSource: WalkStep["selected"]["source"] = "thompson";
-    const _forcedNow = forcedPin;
-    forcedPin = undefined;
-    let pick: WalkCandidate | undefined = _forcedNow?.pick;
-    let candidates: WalkCandidate[] = _forcedNow ? [_forcedNow.pick] : [];
-    if (_forcedNow) { pickSource = "pinned"; pinnedStepIds.add(_forcedNow.pick.id); tap(`[goal-host-vessel] walk(${opts.surface}): pinned template ${_forcedNow.pick.id} is this walk's first pick`); }
-    selection: if (!_forcedNow) {
+    let pick: WalkCandidate | undefined;
+    let candidates: WalkCandidate[] = [];
+    {
     // (0) VESSEL-RESOLVE SATISFIER — resolve-FIRST, before ANY candidate /
     //     horizontal-bundle / bridge-author step. When a missing target shape
     //     has a LIVE resolver advertised by a connected vessel, satisfy it by a
@@ -12206,15 +12075,6 @@ If one of those sibling shapes is the action that would create what the goal ask
         const liveNow = await liveShapes();
         const codeGap = missingNow.find((s) => !liveNow.has(s)); // true capability gap: no live resolver to bridge
         if (codeGap) filedGap = await fileCapabilityGap(codeGap, goal, missingNow);
-        // REACHABILITY SELF-REPORT (priority #2): no codeGap means every missing target is advertised but not cold-reachable — self-report instead of stopping silently.
-        else filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
-      }
-      // REACHABILITY SELF-REPORT (priority #2, 2026-07-03): a 0-step walk whose missing
-      // targets are all advertised (no capability gap filed) means a producer EXISTS but
-      // is not cold-reachable. Emit an observable substrateGap instead of stopping
-      // silently — the mismatched producer self-reports (canonical fix: optional_input_shapes).
-      if (chain.length === 0 && !filedGap && missingNow.length > 0) {
-        filedGap = await fileReachabilityGap(missingNow[0], goal, missingNow);
       }
       // --- vessel-resolver producer scan (gap walk-blind-to-vessel-resolver-producers) ---
       let _vrCandidateInjected = false;
@@ -12327,7 +12187,7 @@ If one of those sibling shapes is the action that would create what the goal ask
     pickOutputs.set(pick.id, [...(pick.outputShapes ?? [])]);
     let template: ActivityTemplate | null = null;
     try {
-      template = _forcedNow ? _forcedNow.template : await getTemplateLocalFirst(pick.id);
+      template = await getTemplateLocalFirst(pick.id);
     } catch (e) {
       console.warn(`[goal-host-vessel] walk(${opts.surface}): getTemplate(${pick.id}) failed: ${(e as Error).message}`);
     }
@@ -12362,7 +12222,6 @@ If one of those sibling shapes is the action that would create what the goal ask
     if (await templateRunRefused(pick.id, pick.outputShapes ?? [], async () => template, changeAdmitted, pickSource === "improvise" ? "composite_pick" : pickSource === "bridge" ? "bridge_pick" : "template_pick", doorRefused, writeDoorHash, tap, writeDoorProduct)) {
       exclude.add(normActivityId(pick.id));
       pickFailures.set(pick.id, "refused at the write door: its run writes outside the goal's product on a goal not admitted as a change");
-      if (_forcedNow) pinFailedReason = `pinned template ${pick.id} refused at the write door`;
       tap(`[goal-host-vessel] walk(${opts.surface}): ${pick.id} REFUSED at the write door before execution — not dispatched, excluding`);
       continue;
     }
@@ -12385,7 +12244,6 @@ If one of those sibling shapes is the action that would create what the goal ask
     } catch (e) {
       exclude.add(normActivityId(pick.id));
       pickFailures.set(pick.id, `runTemplate threw: ${String((e as Error).message ?? e).slice(0, 200)}`);
-      if (_forcedNow) throw e; // a thrown pinned step ends the dispatch with its error (Q-4: nothing substitutes)
       console.warn(`[goal-host-vessel] walk(${opts.surface}): runTemplate(${pick.id}) threw: ${(e as Error).message} — excluding`);
       continue;
     }
@@ -12404,7 +12262,6 @@ If one of those sibling shapes is the action that would create what the goal ask
         tap(`[goal-host-vessel] goal-reach(${opts.surface}) walk step ${chain.length + 1} via ${pick.id}: TRACE FAILED \u2014 ${_failedWhy}`);
       }
     }
-    if (trace.status === "failed" && _forcedNow) pinFailedReason = `pinned template ${pick.id} failed: ${pickFailures.get(pick.id)}`;
     if (trace.status === "failed" && _adaptBody.has(normActivityId(pick.id))) tap(`[goal-host-vessel] walk(${opts.surface}): ADAPT body step ${pick.id} failed (${pickFailures.get(pick.id)}) — excluded; the walk continues as before`);
     if (trace.id) chainExecIds.push(trace.id);
     totalDurationMs += trace.durationMs ?? 0;
@@ -12634,10 +12491,7 @@ If one of those sibling shapes is the action that would create what the goal ask
       // the hollow-walklog cap does not apply to a walk that has one (verifyGoalReachedUnrestricted).
       const confirmedTerminalWrites = confirmedTerminalWritesOf(verifiedWrites, confirmedReadBacks, (sh) => terminalShapes.has(sh) || target.has(sh));
       const walkEv = { gapsFiled: opts.learningSink?.gapsFiled.length ?? 0, walkLog: opts.stepSink ?? [], confirmedTerminalWrites };
-      // A walk that ended because its PINNED step failed is not judged: the failed trace's own reason is the verdict (the
-      // recovery loop's rule for a failed run: its reach gate ran only on a completed trace).
-      let verdict = (pinFailedReason && lastFailedTraceReason ? ({ reached: false, reason: lastFailedTraceReason, completion_shapes: [] } as GoalReachVerdict) : null)
-        ?? earlyReachVerdict
+      let verdict = earlyReachVerdict
         ?? await verifyGoalReached(goal, [...producedShapes], chainSummary, contentDigest || undefined, commandEvidence || undefined, walkEv, judgeView, [...terminalShapes, ...target], poolEvidenceOf(poolImpulses), walkWriteEvidence());
       // The reach verifier can transiently blip (hub-relay / LLM plane). RE-CALL it with a short backoff
       // before failing closed, so a correct/grounded answer is not lost to a momentary verifier outage.
@@ -12924,8 +12778,6 @@ If one of those sibling shapes is the action that would create what the goal ask
         let _hollowBetaApplied = false;
         if (_declined) {
           tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — its own answer DECLINED (${_declined.class}: ${_declined.reason.slice(0, 160)}); a correct refusal is not a hollow`);
-        } else if (pinnedStepIds.has(lastPick)) {
-          tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but no β for ${lastPick} — a pinned step is not a selector pick`);
         } else if (!_noOracle && !_betaWithheldForSymmetry) {
           if (_betaWithheldForCulpability) tap(`[goal-host-vessel] walk(${opts.surface}): NOT REACHED but β WITHHELD for ${lastPick} — it did not produce the judged artifact (producer: ${_producerIds}); the producer is charged through the composite's consumed provenance`);
           else opts.learningSink?.alphaBetaDelta.push(await penaliseHollowTemplate(lastPick, verdict.reason ?? "goal not reached", goal).then((d) => { _hollowBetaApplied = d.dBeta > 0; return d; }));
@@ -13108,7 +12960,6 @@ If one of those sibling shapes is the action that would create what the goal ask
             .filter((id) => { if (_alreadyCredited.has(id)) { tap(`[goal-host-vessel] walk(${opts.surface}): α-credit for ${id} already applied in this dispatch — not credited twice`); return false; } return true; });
           if (_involved.length === 0) tap(`[goal-host-vessel] walk(${opts.surface}): WITHHELD α-credit — no involved step is creditable (unverified writes only)`);
           for (const _stepId of _involved) {
-            if (pinnedStepIds.has(_stepId)) { tap(`[goal-host-vessel] walk(${opts.surface}): no α-credit for ${_stepId} — a pinned step is not a selector pick`); continue; }
             const _abCredit = await creditReachedTemplate(_stepId, verdict.reason ?? "goal reached", goal);
             opts.learningSink?.alphaBetaDelta.push(_abCredit);
             // Report what HAPPENED, not what was attempted (a rejected or lost credit is named so).
@@ -14041,21 +13892,6 @@ async function runGoalWithRecoveryInner(
     const _pf = recallGoalFailures(goal);
     tap(`[goal-host-vessel] ${opts.surface}: FAILURE-RECALL — ${_pf.exact.length} prior hollow verdict(s) for goal_hash=${goalHashOf(goal)} + ${_pf.near.length} near-miss; fed into attempt 1${_priorExactFailures > 0 ? ", reached-command replay disabled" : ""}: ${_priorFailureFeedback.slice(0, 220).replace(/\n/g, " | ")}`);
   }
-  // A PINNED DISPATCH (either door's firstTarget) tries its pin ONCE, the error caught, and every dispatch with a goal,
-  // pinned or not (callerPinned alone included), goes through the walk: a template the lookup holds is the walk's first
-  // pick; an unavailable one ends the walk unreached naming the pin (agf_7b4l8praaak5, agf_l9iq6yssnrrw).
-  let _pin: { id: string; template?: ActivityTemplate; unavailableReason?: string } | undefined;
-  const _pinId = opts.firstTarget;
-  if (goal && _pinId) {
-    let _pinHit: ActivityTemplate | null = null;
-    // THE LOOKUP'S OWN OUTCOME, CLASSED HONESTLY (agf_54ob7ghkvne0): an answer with no template is a genuine miss; a
-    // throw (a refused connection, a masked or dead store) says nothing about the template, only that the store could
-    // not be asked.
-    let _pinReason = `template ${_pinId} not found`;
-    try { _pinHit = (await host.catalogue.getTemplate(_pinId)) ?? (await getTemplateLocalFirst(_pinId)); }
-    catch (e) { _pinReason = `template store unreachable (${String((e as Error)?.message ?? e)})`; }
-    _pin = _pinHit ? { id: _pinId, template: _pinHit } : { id: _pinId, unavailableReason: scrubReason(_pinReason, [API_KEY]).slice(0, 512) };
-  }
   if (goal) {
     // Lever 4 (2026-06-25): seed the walk's target from the goal. With no caller
     // expected_output_shapes and no pinned target, the walk would run OPPORTUNISTIC
@@ -14710,7 +14546,6 @@ async function runGoalWithRecoveryInner(
         if (_pathHeadSat) tap(`[goal-host-vessel] ${opts.surface}: pathway head satisfier:${_pathHeadSat} honoured as a required first step`);
         const _firstDispatch = await dispatchWalk(goal, {
         changeAdmitted: _changeAdmitted,
-        ...(_pin ? { pin: _pin } : {}),
         recalledLessons: _dispatchLessons,
         priorVerdictFeedback: _priorFailureFeedback || undefined,
         variables: opts.variables,
@@ -14750,9 +14585,6 @@ async function runGoalWithRecoveryInner(
           })(),
       });
       let walk = _firstDispatch.walk;
-      // A pinned dispatch ends with its walk: no retry, re-frame or recovery replaces the pin (Q-4; a pin was never
-      // re-selected).
-      if (_pin) return walk;
       // Q-3: every retry below is a SIBLING walk dispatch whose parentExecutionId is this first walk's execution id.
       const _firstWalkId = _firstDispatch.walkExecutionId;
       const _retryTap = (kind: string, retryId: string, retry: GoalSeekResult): void => tap(`[goal-host-vessel] ${opts.surface}: walk-retry tap: retry=${kind} first_walk=${_firstWalkId} retry_walk=${retryId} turned_unreached_into_reached=${retry.reached === true}`);
@@ -15056,94 +14888,6 @@ async function runGoalWithRecoveryInner(
       const EDIT_RESULT_SHAPES = ["fileeditresult", "filewriteresult", "codereplaceresult", "codeinsertresult", "codeaddimportresult", "gitcommitresult", "cutoverapplied", "vesselmitosiscutoverresult"];
       const walkDidNotEdit = (walk.completionShapes ?? []).every((s) => !EDIT_RESULT_SHAPES.includes(String(s).toLowerCase().replace(/[^a-z0-9]/g, "")));
       if (walk.attempts > 0 && !(goalIsEditIntent && walkDidNotEdit)) return walk;
-      // ACTIVITY-REPAIR interception (2026-07-02): the activity analogue of the
-      // edit-intent change, one artifact level up. Vessels are maintained by
-      // editing bytes; ACTIVITIES are maintained by minting
-      // VARIANTS (template_repair → activity_create_variant; promotion stays with
-      // the Thompson evidence gate). Without this, a 0-step walk on "fix the flaky
-      // <id> activity" falls to recommend and grabs a keyword-similar maintenance
-      // tick (proven mis-route). Same guarantees: flag-gated, additive, try-caught;
-      // an id that turns out not to be a real template falls THROUGH unchanged, so
-      // a false-positive match is harmless.
-      // DEMOTED to break-glass (2026-07-03): the walk-native seed template
-      // development-vessel:repair-activity-from-failures now reaches repair goals
-      // in a 1-step chain (via the optional_input_shapes primitive), so this
-      // hardcoded interception is redundant and defaults OFF. Set the env flag
-      // ROUTE_ACTIVITY_REPAIR=1 to re-enable it as a fallback.
-      // OBSERVE (observe-mode.ts): template_repair mints a variant, so an observe dispatch does not take this route.
-      if (process.env.ROUTE_ACTIVITY_REPAIR === "1" && !/repos\/[\w.-]+\//.test(goal) && !observeSkip("authoring_mint")) {
-        const actId =
-          goal.match(/activity:⟨([^⟩]+)⟩/)?.[1] ??
-          goal.match(/\b(?:activity|template)\s+[`"'‘’]?([a-z0-9][\w-]*(?::[\w-]+)+|[a-z0-9][\w-]*-[\w-]{2,})/i)?.[1] ??
-          goal.match(/[`"'‘’]?([a-z0-9][\w-]*(?::[\w-]+)+|[a-z0-9][\w-]*-[\w-]{2,})[`"'‘’]?\s+(?:activity|template)\b/i)?.[1];
-        if (actId) {
-          try {
-            tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR DETECTED (0-step walk names activity "${actId}") — routing to template_repair`);
-            // Discovery-first producer resolution, same idiom as feature_compose above.
-            let repairUrl = `${DEV_VESSEL_ENDPOINT}/v2/impulses/resolve`;
-            try {
-              const dr = await fetch(`${DISCOVERY_ENDPOINT}/resolve`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-                body: JSON.stringify({ pointer: { type: "vesselCapability", shape: "template_repair" } }),
-                signal: AbortSignal.timeout(5_000),
-              });
-              const dj = await dr.json() as { content?: { vessels?: Array<{ endpoint?: string; resolve_endpoint?: string }> } };
-              const v = dj?.content?.vessels?.[0];
-              if (v?.endpoint) {
-                repairUrl = `${v.endpoint.replace(/\/+$/, "")}${asResolvePath(v.resolve_endpoint)}`;
-                tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR template_repair producer resolved via discovery → ${repairUrl}`);
-              }
-            } catch { /* discovery unreachable/empty → env fallback carries */ }
-            const resp = await fetch(repairUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...(API_KEY ? { Authorization: `ApiKey ${API_KEY}` } : {}) },
-              body: JSON.stringify({ impulse: { pointer: { type: "template_repair", activity_id: actId, failure_window: 5 } } }),
-              signal: AbortSignal.timeout(120_000),
-            });
-            const j: any = await resp.json().catch(() => ({}));
-            const body = resolveReportBody(j) as Record<string, any>;
-            const verdict = String(body.verdict ?? "");
-            const errStr = typeof body.error === "string" ? body.error : "";
-            if (verdict === "FAVORABLE") {
-              const variantId = typeof body.variant_id === "string" && body.variant_id.trim() ? body.variant_id.trim() : null;
-              const nFail = Array.isArray(body.based_on_failures) ? body.based_on_failures.length : 0;
-              const summary = typeof body.summary === "string" && body.summary.trim() ? ` — ${body.summary.trim().slice(0, 160)}` : "";
-              tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR ROUTED to template_repair for "${actId}" → verdict=FAVORABLE${variantId ? ` variant=${variantId}` : ""} (grounded on ${nFail} failure trace(s))${summary}`);
-              return {
-                result: null,
-                status: "completed",
-                selectedTemplateId: "template_repair",
-                completionShapes: ["activityVariant_write"],
-                attempts: 1,
-                goalReachReason: `routed activity-repair to template_repair; ${variantId ? `minted variant ${variantId}` : "grounded repair spec"} from ${nFail} failure trace(s)${summary}`,
-                reached: true,
-                executionId: variantId ? `template_repair:${variantId}` : undefined,
-              };
-            }
-            // A non-template id (false-positive extraction) must not convert a goal
-            // that today reaches recommend into a hard failure — fall through.
-            if (/template not found/i.test(errStr)) {
-              tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR "${actId}" is not a fetchable template (${errStr.slice(0, 120)}) — falling through to authorFallback/recommend`);
-            } else {
-              const failWhy = (errStr || (typeof body.summary === "string" ? body.summary : "") || "no failure detail in repair report").slice(0, 200);
-              tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR ROUTED to template_repair for "${actId}" → verdict=${verdict || "(none)"} (${failWhy})`);
-              return {
-                result: null,
-                status: "failed",
-                selectedTemplateId: "template_repair",
-                completionShapes: null,
-                attempts: 1,
-                goalReachReason: `routed activity-repair to template_repair; verdict=${verdict || "unknown"} (${failWhy})`,
-                reached: false,
-              };
-            }
-          } catch (e) {
-            tap(`[goal-host-vessel] ${opts.surface}: ACTIVITY-REPAIR template_repair call failed (${(e as Error).message}) — falling through to authorFallback/recommend`);
-            // fall through to the existing behaviour unchanged
-          }
-        }
-      }
       console.log(`[goal-host-vessel] ${opts.surface}: pool-walk took 0 shape-feasible steps — falling back to single-template recovery loop`);
       // The walk (incl. the vessel-resolve satisfier) couldn't reach the goal via
       // existing/connected capability. NOW author a from-scratch template — only
@@ -15159,9 +14903,6 @@ async function runGoalWithRecoveryInner(
         try { authoredFallbackTarget = await opts.authorFallback(); } catch { /* author failed → recovery loop proceeds without a target */ }
       }
     } catch (e) {
-      // A pinned dispatch's thrown pinned step is the dispatch's error (as the recovery loop's thrown run was); nothing
-      // replaces the pin.
-      if (_pin) throw e;
       console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error (${(e as Error).message}) — falling back to single-template recovery loop`); console.warn(`[goal-host-vessel] ${opts.surface}: pool-walk error stack: ${String((e as Error).stack ?? "").split("\n").slice(0, 4).join(" | ")}`);
     }
   }
@@ -15174,8 +14915,6 @@ async function runGoalWithRecoveryInner(
   }
   const maxAttempts = opts.callerPinned || !goal ? 1 : opts.maxAttempts;
   const excluded: string[] = [];
-  // A pinned dispatch with a goal never gets here (it ends with its walk above); only a goal-less "execute template"
-  // dispatch still names its template here.
   let nextTarget: string | undefined = (goal ? undefined : opts.firstTarget) ?? authoredFallbackTarget;
   // Templates a door refused earlier in this dispatch (a walk's template_pick or composite door) stay refused here.
   const _doorRefused = doorRefusals.forDispatch(String(opts.variables?.dispatch_id ?? ""));

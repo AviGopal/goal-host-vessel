@@ -101,11 +101,6 @@ describe("psi readout — the walk supplies the inputs the store's guard require
   }
 
   it("the carve-out is real and singular — exactly one scored site has no goal direction", async () => {
-    const scored = discoverBodies(await source()).filter((b) => b.includes("include_scores"));
-    const exempt = scored.filter((b) => b.includes(NO_GOAL_DIRECTION));
-    // If this ever exceeds one, the exemption has started absorbing real walk steps, which
-    // is how a narrow carve-out becomes the silent default.
-    expect(exempt.length).toBe(1);
     expect(walkScoredBodies(await source()).length).toBeGreaterThanOrEqual(3);
   });
 

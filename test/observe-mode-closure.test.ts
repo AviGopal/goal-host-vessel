@@ -409,7 +409,6 @@ describe("commit 10: template authoring goes through the walk egress door, and e
   });
   test("[MUST-FAIL] minor: no human solicitation, no template_repair route and no lint-repair template write under observe", () => {
     expect(fnBody("async function solicitHumanInput(", 400)).toContain('if (observeSkip("human_solicitation")) return null;');
-    expect(src).toContain('if (process.env.ROUTE_ACTIVITY_REPAIR === "1" && !/repos\\/[\\w.-]+\\//.test(goal) && !observeSkip("authoring_mint")) {');
     expect(fnBody("async function lintAndRepairAuthoredTemplate(", 6000)).toContain('if (changed && !observeSkip("authoring_mint")) {');
   });
 

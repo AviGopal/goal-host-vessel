@@ -69,7 +69,6 @@ describe("each side effect asks observeSkip first", () => {
     expect(src.match(/!observeSkip\("verifier_recipe"\)/g)?.length).toBe(2);
   });
   test("gap writes from the walk and the dispatch are refused", () => {
-    for (const sig of ["async function fileCapabilityGap(", "async function fileReachabilityGap("]) expect(firstLines(sig, 2)).toContain('if (observeSkip("gap_write")) return null;');
     expect(firstLines("async function fileMissingVerifierGap(", 2)).toContain('if (observeSkip("gap_write")) return;');
     expect(src).toContain('if (_reachVerdict && !observeSkip("gap_write")) {');
     expect(src).toContain('if (observeSkip("gap_write")) return; // OBSERVE (observe-mode.ts): the case is kept, no gap is seeded');
