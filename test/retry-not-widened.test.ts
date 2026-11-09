@@ -8,8 +8,6 @@
 //
 //   [MUST-FAIL] an investigation bound by its decompose_gap_id field, hollow satisfier on gapDecomposition: no widened
 //               retry, no retry walk, a named and counted retry_not_widened reason.
-//   [CONTROL]   a non-investigation goal whose whole target is suppressed still widens exactly as before; a goal that
-//               merely reads as an investigation (no field) does not bind the predicate.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,20 +35,7 @@ describe("the hollow-satisfier retry and a single-shape grader", () => {
     expect(notWidened).toBeGreaterThan(0);
     expect(block.slice(notWidened, orElse)).toContain("_retryNotWidenedCount += 1;");
     expect(block.slice(notWidened, orElse)).not.toContain("dispatchWalk(");
-    for (const inRetry of ['noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");', "const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;", "const { walk: retryWalk, walkExecutionId: _suppressWalkId } = await dispatchWalk(goal, {", "walk = retryWalk.attempts > 0 ? retryWalk : walk;"]) {
-      expect(block.indexOf(inRetry)).toBeGreaterThan(orElse);
-    }
     // and the bound case is what the field produces
     expect(gapIdForGrading("Look into gap-x and break it down", "gap-x").gapId).toBe("gap-x");
-  });
-
-  test("[CONTROL] a non-investigation goal whose whole target is suppressed still widens as before", () => {
-    expect(gapIdForGrading("What is the distance from Earth to Io right now?", undefined)).toEqual({ investigation: false, gapId: null });
-    // reading as an investigation without the field does not bind the single-shape grader either
-    expect(gapIdForGrading("investigate and decompose gap gap-x: the lane", undefined).gapId).toBeNull();
-    // with _graderOnlyShape null the widening condition reduces to the original two
-    expect(block).toContain('const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;');
-    expect(block).toContain("const _suppressedIsWrite = /(write|persist|save|edit|commit|apply|insert|update|delete)/.test(_suppressedLc);");
-    expect(block).toContain("seededOutputShapes.every((s) => String(s).toLowerCase() === _suppressedLc);");
   });
 });

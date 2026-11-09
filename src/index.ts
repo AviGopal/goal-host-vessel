@@ -14849,14 +14849,6 @@ async function runGoalWithRecoveryInner(
         // model memory. A correctly-detected hollow verdict became a confident wrong number
         // because the retry had nowhere to go.
         //
-        // When the suppressed shape is the WHOLE target, widen to the retrieval shapes so the retry
-        // can go and get the value. Conditioned three ways so this cannot launder a different
-        // failure into a reach: the suppressed shape must be the entire expected output (a goal
-        // expecting other shapes keeps them), it must not be a write/edit shape (otherwise a hollow
-        // write would "reach" by fetching bytes, which the edit-intent gate below catches for
-        // repo edits but nothing catches for a memoryNote write), and the widening is announced in
-        // the walk log so a reader can see the target changed under the retry.
-        //
         // FOURTH: not when the goal's grader accepts only one shape. A gap investigation bound by its structured
         // decompose_gap_id (gapIdForGrading: the same field-only predicate that binds the CHANGE-35 oracle in the reach
         // gate) is reached only by a gapDecomposition the gap store confirms, so a retry widened to retrieval shapes
@@ -14881,9 +14873,6 @@ async function runGoalWithRecoveryInner(
           console.log(`[goal-host-vessel] ${opts.surface}: hollow satisfier verdict for "${suppressedShape}" — retrying walk once with that satisfier suppressed (bridge-mint/candidate route)`);
           tap(`[goal-host-vessel] ${opts.surface}: walk: hollow satisfier verdict — re-running with suppressSatisfierShapes`);
           noteRouteTaken(walk.routeAround, "retry:satisfier-suppressed");
-          const _widenRetryTarget = _suppressedIsWholeTarget && !_suppressedIsWrite;
-          const _retryOutputShapes = _widenRetryTarget ? ["shellResult", "httpResponse", "webSearchResult"] : seededOutputShapes;
-          if (_widenRetryTarget) tap(`[goal-host-vessel] ${opts.surface}: walk: retry WIDENED target shapes to [${(_retryOutputShapes ?? []).join(",")}] —"${suppressedShape}" was the only expected output and its producer is now suppressed, so the unwidened retry could not pick anything`);
           const { walk: retryWalk, walkExecutionId: _suppressWalkId } = await dispatchWalk(goal, {
             changeAdmitted: _changeAdmitted,
             recalledLessons: _dispatchLessons,
@@ -14891,7 +14880,6 @@ async function runGoalWithRecoveryInner(
             tags: opts.tags,
             parentExecutionId: _firstWalkId,
             compositionChain: opts.compositionChain,
-            expectedOutputShapes: _retryOutputShapes,
             terminalOutputShapes,
             surface: opts.surface,
             stepSink: opts.stepSink,
